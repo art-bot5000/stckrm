@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>STOCKROOM Admin</title>
+<style>
+  :root { --bg:#0f1117; --surface:#1a1d27; --border:#2a2d3a; --text:#e8e8f0; --muted:#6b7280;
+    --accent:#e8a838; --danger:#e05c5c; --ok:#4cbb8a; --mono:'JetBrains Mono',monospace; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,sans-serif; min-height:100vh; padding:24px 16px; }
+  h1 { color:var(--accent); font-size:20px; font-weight:800; letter-spacing:2px; margin-bottom:4px; }
+  .subtitle { color:var(--muted); font-size:12px; margin-bottom:24px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:16px; }
+  .card h2 { font-size:14px; font-weight:700; margin-bottom:14px; }
+  input { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:8px;
+    padding:9px 12px; color:var(--text); font-size:14px; outline:none; margin-bottom:10px; }
+  input:focus { border-color:var(--accent); }
+  input.otp { font-family:var(--mono); font-size:28px; letter-spacing:10px; text-align:center; padding:14px; }
+  button { padding:9px 18px; border-radius:8px; border:none; font-size:13px; font-weight:600;
+    cursor:pointer; margin-right:8px; margin-bottom:8px; transition:opacity .15s; }
+  .btn-primary { background:var(--accent); color:#111; }
+  .btn-danger  { background:var(--danger);  color:#fff; }
+  .btn-ghost   { background:transparent; border:1px solid var(--border); color:var(--muted); }
+  button:disabled { opacity:0.45; cursor:not-allowed; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th { text-align:left; color:var(--muted); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--border); }
+  td { padding:8px; border-bottom:1px solid var(--border); font-family:var(--mono); font-size:11px; vertical-align:middle; }
+  tr:hover td { background:rgba(255,255,255,0.02); }
+  .badge { display:inline-block; padding:2px 7px; border-radius:4px; font-size:10px; font-weight:700; }
+  .v1 { background:rgba(224,92,92,0.15); color:var(--danger); }
+  .v2 { background:rgba(76,187,138,0.15); color:var(--ok); }
+  #log { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px;
+    font-family:var(--mono); font-size:11px; line-height:1.7; white-space:pre-wrap; min-height:48px;
+    color:var(--muted); margin-top:12px; max-height:200px; overflow-y:auto; }
+  .log-ok   { color:var(--ok); }
+  .log-err  { color:var(--danger); }
+  .log-warn { color:var(--accent); }
+  #step-otp, #step-main { display:none; }
+  .timer { font-size:11px; color:var(--muted); margin-top:4px; }
+</style>
+</head>
+<body>
+
+<h1>📦 STOCKROOM</h1>
+<div class="subtitle">Admin Panel — keep this URL private</div>
+
+<div id="step-secret" class="card">
+  <h2>🔐 Admin sign-in</h2>
+  <input id="admin-secret" type="password" placeholder="ADMIN_SECRET" autocomplete="current-password"
+    onkeydown="if(event.key==='Enter')sendOtp()">
+  <button class="btn-primary" id="send-otp-btn" onclick="sendOtp()">Send verification code →</button>
+  <div id="log">Enter your admin secret to receive a one-time code at pete@artbot5000.com</div>
+</div>
+
+<div id="step-otp" class="card">
+  <h2>📧 Enter verification code</h2>
+  <p style="font-size:13px;color:var(--muted);margin-bottom:14px">A 6-digit code was sent to <strong style="color:var(--text)">pete@artbot5000.com</strong>. Valid for 10 minutes.</p>
+  <input id="otp-input" class="otp" type="text" inputmode="numeric" maxlength="6" placeholder="000000"
+    oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,6)"
+    onkeydown="if(event.key==='Enter')verifyOtp()">
+  <button class="btn-primary" id="verify-btn" onclick="verifyOtp()">Verify →</button>
+  <button class="btn-ghost" id="resend-btn" onclick="sendOtp(true)" disabled>Resend code</button>
+  <div class="timer" id="resend-timer"></div>
+  <div id="otp-err" style="font-size:12px;margin-top:8px"></div>
+</div>
+
+<div id="step-main">
+  <div class="card" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+    <div>
+      <div style="font-size:13px;font-weight:700;color:var(--ok)">✓ Signed in as pete@artbot5000.com</div>
+      <div class="timer" id="session-timer"></div>
+    </div>
+    <button class="btn-ghost" style="margin:0" onclick="signOut()">Sign out</button>
+  </div>
+
+  <div class="card">
+    <h2>👥 Accounts (<span id="account-count">0</span>)</h2>
+    <input id="search" type="text" placeholder="Filter by email or hash…" style="margin-bottom:10px" oninput="filterAccounts()">
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Email</th><th>Hash</th><th>Created</th><th>Crypto</th><th></th></tr></thead>
+        <tbody id="accounts-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🔧 Actions</h2>
+    <div style="margin-bottom:12px">
+      <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Delete by email hash</label>
+      <div style="display:flex;gap:8px">
+        <input id="delete-hash" type="text" placeholder="32-char email hash" style="margin:0;flex:1">
+        <button class="btn-danger" style="margin:0" onclick="deleteAccount()">Delete</button>
+      </div>
+    </div>
+    <button class="btn-ghost" onclick="loadCryptoStatus()">📊 Crypto status</button>
+    <button class="btn-ghost" onclick="refreshAccounts()">🔄 Refresh</button>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script>
+const WORKER_URL    = 'https://stockroom2.art-bot5000.deno.net';
+let adminSecret     = '';
+let adminToken      = '';
+let allAccounts     = [];
+let sessionExpiry   = 0;
+let sessionTimerInt = null;
+let resendInt       = null;
+
+function log(msg, cls='') {
+  const el = document.getElementById('log');
+  if (!el) return;
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = msg;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
+}
+function logClear() { const el=document.getElementById('log'); if(el) el.innerHTML=''; }
+function otpErr(msg, cls='log-err') {
+  const el=document.getElementById('otp-err');
+  if(el){ el.textContent=msg; el.className=cls; }
+}
+
+async function sendOtp(isResend=false) {
+  adminSecret = document.getElementById('admin-secret').value.trim();
+  if (!adminSecret) { log('Enter your admin secret first.','log-err'); return; }
+  const btn = document.getElementById('send-otp-btn');
+  if (btn) { btn.disabled=true; btn.textContent='⏳ Sending…'; }
+  if (!isResend) logClear();
+  try {
+    const res = await fetch(`${WORKER_URL}/admin/otp/send`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ adminSecret }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    document.getElementById('step-secret').style.display = 'none';
+    document.getElementById('step-otp').style.display    = 'block';
+    setTimeout(() => document.getElementById('otp-input')?.focus(), 100);
+    otpErr('Code sent — check pete@artbot5000.com', 'log-ok');
+    startResendCountdown();
+  } catch(e) {
+    log('Error: ' + e.message, 'log-err');
+    if (btn) { btn.disabled=false; btn.textContent='Send verification code →'; }
+  } finally {
+    if (btn) { btn.disabled=false; btn.textContent='Send verification code →'; }
+  }
+}
+
+function startResendCountdown() {
+  const btn=document.getElementById('resend-btn'), timer=document.getElementById('resend-timer');
+  let s=60;
+  if (btn) btn.disabled=true;
+  if (resendInt) clearInterval(resendInt);
+  resendInt = setInterval(() => {
+    s--;
+    if (timer) timer.textContent = s>0 ? `Resend available in ${s}s` : '';
+    if (s<=0) { clearInterval(resendInt); if(btn) btn.disabled=false; }
+  }, 1000);
+}
+
+async function verifyOtp() {
+  const otp = document.getElementById('otp-input')?.value.trim();
+  if (!otp || otp.length!==6) { otpErr('Enter the 6-digit code.','log-warn'); return; }
+  const btn = document.getElementById('verify-btn');
+  if (btn) { btn.disabled=true; btn.textContent='⏳ Verifying…'; }
+  otpErr('');
+  try {
+    const res = await fetch(`${WORKER_URL}/admin/otp/verify`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ adminSecret, otp }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    adminToken    = data.adminToken;
+    sessionExpiry = Date.now() + 15*60*1000;
+    document.getElementById('step-otp').style.display  = 'none';
+    document.getElementById('step-main').style.display = 'block';
+    startSessionTimer();
+    await refreshAccounts();
+  } catch(e) {
+    otpErr('Error: ' + e.message, 'log-err');
+  } finally {
+    if (btn) { btn.disabled=false; btn.textContent='Verify →'; }
+  }
+}
+
+function startSessionTimer() {
+  if (sessionTimerInt) clearInterval(sessionTimerInt);
+  sessionTimerInt = setInterval(() => {
+    const left = Math.max(0, Math.round((sessionExpiry - Date.now())/1000));
+    const el   = document.getElementById('session-timer');
+    if (el) el.textContent = left>0 ? `Session expires in ${Math.floor(left/60)}m ${left%60}s` : 'Session expired';
+    if (left===0) { clearInterval(sessionTimerInt); signOut(); }
+  }, 1000);
+}
+
+function signOut() {
+  adminToken=''; adminSecret=''; allAccounts=[];
+  if (sessionTimerInt) clearInterval(sessionTimerInt);
+  if (resendInt) clearInterval(resendInt);
+  document.getElementById('admin-secret').value='';
+  document.getElementById('otp-input').value='';
+  document.getElementById('step-secret').style.display='block';
+  document.getElementById('step-otp').style.display='none';
+  document.getElementById('step-main').style.display='none';
+  logClear(); log('Signed out.');
+}
+
+async function adminPost(path, extra={}) {
+  const res = await fetch(WORKER_URL+path, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ adminSecret, adminToken, ...extra }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+async function refreshAccounts() {
+  log('Loading accounts…');
+  try {
+    const data = await adminPost('/admin/list-accounts');
+    allAccounts = data.accounts || [];
+    document.getElementById('account-count').textContent = allAccounts.length;
+    renderTable(allAccounts);
+    log(`${allAccounts.length} account(s) loaded.`, 'log-ok');
+  } catch(e) { log('Error: ' + e.message, 'log-err'); }
+}
+
+function renderTable(accounts) {
+  document.getElementById('accounts-body').innerHTML = accounts.map(a => `
+    <tr>
+      <td>${a.email || '<span style="color:var(--muted)">unknown</span>'}</td>
+      <td style="color:var(--muted);font-size:10px">${a.emailHash}</td>
+      <td style="color:var(--muted)">${a.created ? new Date(a.created).toLocaleDateString() : '—'}</td>
+      <td><span class="badge ${a.cryptoVersion}">${a.cryptoVersion}${a.migrated?' ✓':''}</span></td>
+      <td><button class="btn-danger" style="padding:3px 9px;font-size:11px;margin:0"
+        onclick="confirmDelete('${a.emailHash}','${(a.email||a.emailHash).replace(/'/g,"\\'")}')">Delete</button></td>
+    </tr>`).join('');
+}
+
+function filterAccounts() {
+  const q = document.getElementById('search').value.toLowerCase();
+  renderTable(q ? allAccounts.filter(a=>(a.email||'').toLowerCase().includes(q)||a.emailHash.includes(q)) : allAccounts);
+}
+
+async function confirmDelete(emailHash, label) {
+  if (!confirm(`Delete account?\n\n${label}\n\nThis permanently removes all data, households, reminders and share targets. Cannot be undone.`)) return;
+  if (!confirm(`Absolutely sure?\n\n${label}`)) return;
+  document.getElementById('delete-hash').value = emailHash;
+  await deleteAccount();
+}
+
+async function deleteAccount() {
+  const emailHash = document.getElementById('delete-hash').value.trim();
+  if (!emailHash) { log('Enter an email hash.','log-warn'); return; }
+  log(`Deleting ${emailHash}…`, 'log-warn');
+  try {
+    const data = await adminPost('/admin/delete-account', { emailHash });
+    log(`Deleted: ${data.deleted}`, 'log-ok');
+    document.getElementById('delete-hash').value = '';
+    await refreshAccounts();
+  } catch(e) { log('Error: ' + e.message, 'log-err'); }
+}
+
+async function loadCryptoStatus() {
+  try {
+    const d = await adminPost('/admin/crypto-status');
+    log(`Crypto — v1: ${d.v1}  v2: ${d.v2}  total: ${d.total}  switchover: ${d.switchoverDate}`, 'log-ok');
+  } catch(e) { log('Error: ' + e.message, 'log-err'); }
+}
+</script>
+</body>
+</html>
