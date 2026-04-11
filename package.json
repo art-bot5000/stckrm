@@ -1,0 +1,18 @@
+{
+  "name": "stockroom-kv",
+  "version": "1.0.0",
+  "description": "STOCKROOM build tooling",
+  "private": true,
+  "scripts": {
+    "build:js":   "terser src/app.js --compress --mangle --comments false -o public/app.js && terser src/scanner.js --compress --mangle --comments false -o public/scanner.js",
+    "build:css":  "cleancss -o public/styles.css src/styles.css",
+    "build:html": "html-minifier-terser src/index.html --collapse-whitespace --remove-comments --remove-optional-tags --remove-redundant-attributes --remove-script-type-attributes --remove-tag-whitespace --minify-css true --minify-js true -o public/index.html",
+    "build:copy": "cp src/sw.js public/sw.js && cp src/manifest.json public/manifest.json && cp src/admin.html public/admin.html",
+    "build":      "mkdir -p public && npm run build:js && npm run build:css && npm run build:html && npm run build:copy"
+  },
+  "devDependencies": {
+    "clean-css-cli": "^5.6.3",
+    "html-minifier-terser": "^7.2.0",
+    "terser": "^5.39.0"
+  }
+}

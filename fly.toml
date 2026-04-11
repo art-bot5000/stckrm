@@ -1,0 +1,68 @@
+# ═══════════════════════════════════════════════════════════
+#  STOCKROOM — fly.toml
+#  Fly.io application configuration.
+#
+#  Before deploying:
+#    1. Run: fly launch --no-deploy  (sets app name + region)
+#    2. Set secrets:
+#         fly secrets set RESEND_API_KEY=re_xxxx
+#         fly secrets set FROM_EMAIL=stockroom@yourdomain.com
+#         fly secrets set APP_URL=https://your-app.fly.dev
+#         fly secrets set ADMIN_SECRET=your-secret-here
+#    3. Run: fly deploy
+# ═══════════════════════════════════════════════════════════
+
+app = "stockroom-kv"        # ← change to your chosen app name
+primary_region = "lhr"      # London — change to nearest: lhr, cdg, ams, ord, sjc…
+
+[build]
+  dockerfile = "Dockerfile"
+
+# ── HTTP service ─────────────────────────────────────────
+[[services]]
+  internal_port = 8080        # Caddy listens here
+  protocol = "tcp"
+  auto_stop_machines = true   # scale to zero when idle (free tier friendly)
+  auto_start_machines = true
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true         # redirect all HTTP → HTTPS
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"] # Fly terminates TLS, Caddy gets plain HTTP
+
+  [services.concurrency]
+    type = "requests"
+    hard_limit = 200
+    soft_limit = 150
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/ping"
+    protocol = "http"
+
+# ── Machine sizing ────────────────────────────────────────
+# shared-cpu-1x with 256MB is plenty for this workload.
+# Upgrade to 512MB if you see OOM errors with Deno KV under load.
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256
+
+# ── Deno KV persistent volume ─────────────────────────────
+# Deno KV on Fly uses a local SQLite file — mount a volume to persist it.
+# Create the volume first: fly volumes create stockroom_data --size 1
+[[mounts]]
+  source = "stockroom_data"
+  destination = "/data"
+
+# ── Environment variables ─────────────────────────────────
+# Non-secret config only — secrets go via `fly secrets set`
+[env]
+  DENO_KV_PATH = "/data/stockroom.db"
