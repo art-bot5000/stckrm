@@ -12,7 +12,7 @@
 #    3. Run: fly deploy
 # ═══════════════════════════════════════════════════════════
 
-app = "stockroom-kv"        # ← change to your chosen app name
+app = "stckrm"        # ← change to your chosen app name
 primary_region = "lhr"      # London — change to nearest: lhr, cdg, ams, ord, sjc…
 
 [build]
