@@ -1,3 +1,4 @@
+# Build v2 - 2026-04-12
 FROM node:22-slim AS builder
 WORKDIR /build
 COPY package.json ./
