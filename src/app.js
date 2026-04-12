@@ -1,1 +1,10936 @@
-const CATEGORIES=["Kitchen","Bathroom","Cleaning","Food & Drink","Health","Garden","Office","Other"],COUNTRIES=[{code:"GB",flag:"🇬🇧",name:"United Kingdom"},{code:"US",flag:"🇺🇸",name:"United States"},{code:"CA",flag:"🇨🇦",name:"Canada"},{code:"AU",flag:"🇦🇺",name:"Australia"},{code:"DE",flag:"🇩🇪",name:"Germany"},{code:"FR",flag:"🇫🇷",name:"France"},{code:"NL",flag:"🇳🇱",name:"Netherlands"},{code:"IE",flag:"🇮🇪",name:"Ireland"},{code:"ES",flag:"🇪🇸",name:"Spain"},{code:"IT",flag:"🇮🇹",name:"Italy"},{code:"SE",flag:"🇸🇪",name:"Sweden"},{code:"JP",flag:"🇯🇵",name:"Japan"},{code:"OTHER",flag:"🌍",name:"Other"}],STORES_BY_COUNTRY={GB:[{name:"🛒 Amazon UK",url:e=>`https://www.amazon.co.uk/s?k=${e}`},{name:"🏪 Costco UK",url:e=>`https://www.costco.co.uk/search?q=${e}`},{name:"🛍️ Ocado",url:e=>`https://www.ocado.com/search?entry=${e}`},{name:"🛍️ Tesco",url:e=>`https://www.tesco.com/groceries/en-GB/search?query=${e}`},{name:"🛍️ Sainsbury's",url:e=>`https://www.sainsburys.co.uk/gol-ui/SearchDisplayView?searchTerm=${e}`},{name:"🔍 Google Shop",url:e=>`https://www.google.co.uk/search?q=${e}&tbm=shop`},{name:"💰 CamelCamelCamel",url:e=>`https://uk.camelcamelcamel.com/search?sq=${e}`}],US:[{name:"🛒 Amazon US",url:e=>`https://www.amazon.com/s?k=${e}`},{name:"🏪 Costco US",url:e=>`https://www.costco.com/catalogsearch/results?q=${e}`},{name:"🛍️ Walmart",url:e=>`https://www.walmart.com/search?q=${e}`},{name:"🛍️ Target",url:e=>`https://www.target.com/s?searchTerm=${e}`},{name:"🔍 Google Shop",url:e=>`https://www.google.com/search?q=${e}&tbm=shop`},{name:"💰 CamelCamelCamel",url:e=>`https://camelcamelcamel.com/search?sq=${e}`}],CA:[{name:"🛒 Amazon CA",url:e=>`https://www.amazon.ca/s?k=${e}`},{name:"🏪 Costco CA",url:e=>`https://www.costco.ca/catalogsearch/results?q=${e}`},{name:"🛍️ Walmart CA",url:e=>`https://www.walmart.ca/search?q=${e}`},{name:"🔍 Google Shop",url:e=>`https://www.google.ca/search?q=${e}&tbm=shop`},{name:"💰 CamelCamelCamel",url:e=>`https://camelcamelcamel.com/search?sq=${e}`}],AU:[{name:"🛒 Amazon AU",url:e=>`https://www.amazon.com.au/s?k=${e}`},{name:"🏪 Costco AU",url:e=>`https://www.costco.com.au/search?q=${e}`},{name:"🛍️ Woolworths",url:e=>`https://www.woolworths.com.au/shop/search/products?searchTerm=${e}`},{name:"🛍️ Coles",url:e=>`https://www.coles.com.au/search?q=${e}`},{name:"🔍 Google Shop",url:e=>`https://www.google.com.au/search?q=${e}&tbm=shop`},{name:"💰 CamelCamelCamel",url:e=>`https://camelcamelcamel.com/search?sq=${e}`}],DE:[{name:"🛒 Amazon DE",url:e=>`https://www.amazon.de/s?k=${e}`},{name:"🛍️ REWE",url:e=>`https://shop.rewe.de/productList?search=${e}`},{name:"🛍️ dm",url:e=>`https://www.dm.de/search?query=${e}`},{name:"🔍 Google Shop",url:e=>`https://www.google.de/search?q=${e}&tbm=shop`},{name:"💰 CamelCamelCamel",url:e=>`https://camelcamelcamel.com/search?sq=${e}`}],FR:[{name:"🛒 Amazon FR",url:e=>`https://www.amazon.fr/s?k=${e}`},{name:"🛍️ Carrefour",url:e=>`https://www.carrefour.fr/recherche?query=${e}`},{name:"🔍 Google Shop",url:e=>`https://www.google.fr/search?q=${e}&tbm=shop`},{name:"💰 CamelCamelCamel",url:e=>`https://camelcamelcamel.com/search?sq=${e}`}],NL:[{name:"🛒 Amazon NL",url:e=>`https://www.amazon.nl/s?k=${e}`},{name:"🛍️ Bol.com",url:e=>`https://www.bol.com/nl/nl/s/?searchtext=${e}`},{name:"🛍️ Albert Heijn",url:e=>`https://www.ah.nl/zoeken?query=${e}`},{name:"🔍 Google Shop",url:e=>`https://www.google.nl/search?q=${e}&tbm=shop`}],IE:[{name:"🛒 Amazon UK",url:e=>`https://www.amazon.co.uk/s?k=${e}`},{name:"🛍️ Tesco IE",url:e=>`https://www.tesco.ie/groceries/en-IE/search?query=${e}`},{name:"🛍️ Dunnes",url:e=>`https://www.dunnesstoresgrocery.com/sm/delivery/rsid/258/results?q=${e}`},{name:"🔍 Google Shop",url:e=>`https://www.google.ie/search?q=${e}&tbm=shop`},{name:"💰 CamelCamelCamel",url:e=>`https://uk.camelcamelcamel.com/search?sq=${e}`}],ES:[{name:"🛒 Amazon ES",url:e=>`https://www.amazon.es/s?k=${e}`},{name:"🛍️ El Corte Inglés",url:e=>`https://www.elcorteingles.es/buscar/?s=${e}`},{name:"🔍 Google Shop",url:e=>`https://www.google.es/search?q=${e}&tbm=shop`}],IT:[{name:"🛒 Amazon IT",url:e=>`https://www.amazon.it/s?k=${e}`},{name:"🔍 Google Shop",url:e=>`https://www.google.it/search?q=${e}&tbm=shop`}],SE:[{name:"🛒 Amazon DE",url:e=>`https://www.amazon.de/s?k=${e}`},{name:"🛍️ ICA",url:e=>`https://www.ica.se/sok/?query=${e}`},{name:"🔍 Google Shop",url:e=>`https://www.google.se/search?q=${e}&tbm=shop`}],JP:[{name:"🛒 Amazon JP",url:e=>`https://www.amazon.co.jp/s?k=${e}`},{name:"🛍️ Rakuten",url:e=>`https://search.rakuten.co.jp/search/mall/${e}/`},{name:"🔍 Google Shop",url:e=>`https://www.google.co.jp/search?q=${e}&tbm=shop`}],OTHER:[{name:"🛒 Amazon",url:e=>`https://www.amazon.com/s?k=${e}`},{name:"🔍 Google Shop",url:e=>`https://www.google.com/search?q=${e}&tbm=shop`},{name:"💰 CamelCamelCamel",url:e=>`https://camelcamelcamel.com/search?sq=${e}`}]};function getStores(e){return STORES_BY_COUNTRY[e]||STORES_BY_COUNTRY.OTHER}const DB_NAME="stockroom",DB_VERSION=1,DB_STORES=["items","settings","reminders","groceries","departments","deletedIds","profiles"];let _db=null;function openDB(){return _db?Promise.resolve(_db):new Promise((e,t)=>{const n=indexedDB.open(DB_NAME,1);n.onupgradeneeded=e=>{const t=e.target.result;DB_STORES.forEach(e=>{t.objectStoreNames.contains(e)||t.createObjectStore(e)})},n.onsuccess=t=>{_db=t.target.result,e(_db)},n.onerror=e=>t(e.target.error)})}async function dbGet(e,t){const n=await openDB();return new Promise((o,a)=>{const r=n.transaction(e,"readonly").objectStore(e).get(t);r.onsuccess=e=>o(e.target.result??null),r.onerror=e=>a(e.target.error)})}async function dbPut(e,t,n){const o=await openDB();return new Promise((a,r)=>{const s=o.transaction(e,"readwrite").objectStore(e).put(n,t);s.onsuccess=()=>a(),s.onerror=e=>r(e.target.error)})}async function dbDelete(e,t){const n=await openDB();return new Promise((o,a)=>{const r=n.transaction(e,"readwrite").objectStore(e).delete(t);r.onsuccess=()=>o(),r.onerror=e=>a(e.target.error)})}async function migrateFromLocalStorage(e,t,n,o){const a=localStorage.getItem(e);if(!a)return null;try{const r=JSON.parse(a),s=o?o(r):r;return await dbPut(t,n,s),localStorage.removeItem(e),s}catch(t){return console.warn("Migration failed for",e,t),null}}const CLIENT_ID="589308993147-rfj3kbaave6uhf3k1ojes3ph2l1pkd1m.apps.googleusercontent.com",SCOPES="https://www.googleapis.com/auth/drive.file",WORKER_URL="https://stockroom2.art-bot5000.deno.net",DROPBOX_FILE="/stockroom_data.json";let items=[],settings={threshold:20,country:"GB"},editingId=null,loggingId=null,activeFilter="all",activeCadence="all",activeStore="all",activeRating=0,currentRating=0,wizardCountry="GB",compactView=!1,activeProfile="default",driveConnected=!1,dropboxToken=null,dropboxConnected=!1;function openModal(e){if(_vtSupported()&&!window.matchMedia("(prefers-reduced-motion: reduce)").matches){const t=document.getElementById(e);t.style.viewTransitionName="modal-layer",document.startViewTransition(()=>{t.classList.add("open")})}else document.getElementById(e).classList.add("open")}function closeModal(e){if(_vtSupported()&&!window.matchMedia("(prefers-reduced-motion: reduce)").matches){const t=document.getElementById(e);t.style.viewTransitionName="modal-layer",document.startViewTransition(()=>{t.classList.remove("open")})}else document.getElementById(e).classList.remove("open")}const uid=()=>"id_"+Date.now()+"_"+Math.random().toString(36).slice(2,7),today=()=>(new Date).toISOString().split("T")[0],fmtDate=e=>e?new Date(e+"T12:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}):"—";function timeAgo(e){if(!e)return"—";const t=Math.floor((Date.now()-new Date(e+"T12:00:00"))/864e5);return 0===t?"today":1===t?"yesterday":t<7?`${t}d ago`:t<30?`${Math.floor(t/7)}w ago`:t<365?`${Math.floor(t/30)}mo ago`:`${Math.floor(t/365)}y ago`}function calcStock(e){if(!e.logs||!e.logs.length)return null;const t=e.logs.filter(e=>!e.pendingDelivery);if(!t.length)return null;const n=t[t.length-1];if(null!=e.stockCount&&e.stockCountDate){const t=n.qty||1,o=(Date.now()-new Date(n.date+"T12:00:00"))/864e5,a=t-e.stockCount,r=30.5*(e.months||1)*t;let s;if(a<=0||o<=0)s=Math.round(Math.max(0,r-o));else{const t=a/o;s=t>0?Math.round(Math.max(0,e.stockCount/t)):9999}return{pct:Math.round(Math.max(0,Math.min(100,s/r*100))),daysLeft:s,referenceDate:e.stockCountDate,fromStockCount:!0}}const o=e.startedUsing||n.date,a=(Date.now()-new Date(o+"T12:00:00"))/864e5,r=30.5*(e.months||1)*(n.qty||1),s=Math.round(Math.max(0,r-a));return{pct:Math.round(Math.max(0,Math.min(100,s/r*100))),daysLeft:s,referenceDate:o}}function getStatus(e,t){return null==e?"nodata":e<=t/2?"critical":e<=t?"warn":"ok"}const STATUS_COLOR={critical:"#e85050",warn:"#e8a838",ok:"#4cbb8a",nodata:"#7880a0"},STATUS_LABEL={critical:"🔴 Critical",warn:"🟡 Low",ok:"🟢 Good",nodata:"⚪ No data"};async function loadData(){let e=await dbGet("items","items"),t=await dbGet("settings","settings");e||(e=await migrateFromLocalStorage("stockroom_items","items","items",e=>e)),t||(t=await migrateFromLocalStorage("stockroom_settings","settings","settings",e=>e)),Array.isArray(e)&&(items=e),t&&"object"==typeof t&&(settings={...settings,...t})}async function saveData(){Array.isArray(items)?(await dbPut("items","items",items),activeProfile&&await saveCurrentProfile(),registerBackgroundSync(),bcPost({type:"DATA_CHANGED"})):console.error("stockroom: items is not an array, aborting save")}async function saveSettings(){settings.threshold=parseInt(document.getElementById("setting-threshold").value),settings.country=document.getElementById("setting-country").value,settings.email=document.getElementById("setting-email").value.trim(),settings.emailInterval=parseInt(document.getElementById("setting-email-interval").value),settings.emailStartDate=document.getElementById("setting-email-start").value||null,settings.emailStartTime=document.getElementById("setting-email-start-time").value||"09:00",await dbPut("settings","settings",settings),updateLastSentUI(),pushScheduleToWorker(),scheduleRender("settings-ui","sns")}async function _saveSettings(){await dbPut("settings","settings",settings),bcPost({type:"SETTINGS_CHANGED"})}function touchField(e,...t){const n=(new Date).toISOString();e.updatedAt=n,e._fieldTs||(e._fieldTs={}),0!==t.length&&t.forEach(t=>{e._fieldTs[t]=n})}function touchItem(e){touchField(e)}function mergeLogs(e=[],t=[]){const n=new Map;for(const e of t)n.set(e.id,e);for(const t of e)n.set(t.id,t);return Array.from(n.values()).sort((e,t)=>new Date(e.date)-new Date(t.date))}function mergeItemFields(e,t){const n={...e},o=["name","category","cadence","qty","months","url","store","notes","startedUsing","rating","imageUrl","storePrices","expiry","thresholdOverride","replacementInterval","replacementUnit","lastReplaced","ordered","orderedAt","quickAdded","tags","subscribeAndSave","stockCount","stockCountDate"],a=e._fieldTs||{},r=t._fieldTs||{},s=e.updatedAt?new Date(e.updatedAt).getTime():0,i=t.updatedAt?new Date(t.updatedAt).getTime():0;for(const e of o){if(!(e in t))continue;const o=a[e]?new Date(a[e]).getTime():s;(r[e]?new Date(r[e]).getTime():i)>o&&(n[e]=t[e])}n.logs=mergeLogs(e.logs,t.logs),n._fieldTs={...r,...a};for(const e of Object.keys(r))(!a[e]||new Date(r[e])>new Date(a[e]))&&(n._fieldTs[e]=r[e]);return n.updatedAt=s>=i?e.updatedAt:t.updatedAt,n}async function mergeItems(e,t,n=!1){const o=await loadDeletedIds(),a=new Map;for(const t of e)o.has(t.id)||a.set(t.id,t);for(const e of t){if(o.has(e.id))continue;const t=a.get(e.id);t?a.set(e.id,mergeItemFields(t,e)):a.set(e.id,e)}return Array.from(a.values())}async function loadDeletedIds(){const e=await dbGet("deletedIds","deletedIds");if(e)return new Set(e);try{const e=localStorage.getItem("stockroom_deleted_ids");if(e){const t=new Set(JSON.parse(e));return await saveDeletedIds(t),localStorage.removeItem("stockroom_deleted_ids"),t}}catch(e){}return new Set}async function saveDeletedIds(e){await dbPut("deletedIds","deletedIds",[...e])}async function addTombstone(e){const t=await loadDeletedIds();t.add(e),await saveDeletedIds(t)}async function removeTombstone(e){const t=await loadDeletedIds();t.delete(e),await saveDeletedIds(t)}async function mergeItems(e,t,n=!1){const o=await loadDeletedIds(),a=new Map;for(const t of e)o.has(t.id)||a.set(t.id,t);for(const e of t){if(o.has(e.id))continue;const t=a.get(e.id);if(t){const o=t.updatedAt?new Date(t.updatedAt).getTime():null,r=e.updatedAt?new Date(e.updatedAt).getTime():null;null!==o&&null!==r?r>o&&a.set(e.id,e):null!==r&&null===o?a.set(e.id,e):null!==o&&null===r||n&&a.set(e.id,e)}else a.set(e.id,e)}return Array.from(a.values())}function buildCountryGrid(){document.getElementById("country-grid").innerHTML=COUNTRIES.map(e=>`\n    <button class="country-btn${e.code===wizardCountry?" selected":""}" id="cbtn-${e.code}" onclick="selectCountry('${e.code}')">\n      <span style="font-size:22px">${e.flag}</span>\n      <span>${e.name}</span>\n      <span class="check">✓</span>\n    </button>`).join(""),updateCountryConfirm()}function selectCountry(e){wizardCountry=e,document.querySelectorAll(".country-btn").forEach(e=>e.classList.remove("selected")),document.getElementById("cbtn-"+e)?.classList.add("selected"),updateCountryConfirm()}function updateCountryConfirm(){const e=COUNTRIES.find(e=>e.code===wizardCountry),t=document.getElementById("country-confirm");t&&e&&(t.textContent=`✓ Using ${e.flag} ${e.name} stores`)}function enableItemEdit(){document.getElementById("item-modal-title").textContent="Edit Item",document.getElementById("item-modal-subtitle").textContent="Editing: "+(items.find(e=>e.id===editingId)?.name||""),document.getElementById("item-readonly-view").style.display="none",document.getElementById("item-edit-view").style.display="block"}let _driveConnectContext="settings";function openDrivePermissionModal(e){_driveConnectContext=e||"settings",openModal("drive-permission-modal")}function proceedConnectDrive(){closeModal("drive-permission-modal"),"wizard"===_driveConnectContext?wizardConnectDrive():connectDrive()}function wizardConnectDrive(){localStorage.setItem("stockroom_wizard_step","2"),connectDrive()}function wizardConnectDropbox(){localStorage.setItem("stockroom_wizard_step","2"),connectDropbox()}function wizardNext(){localStorage.setItem("stockroom_country_set","1"),document.getElementById("wizard-step-1").classList.remove("active"),document.getElementById("wizard-step-2").classList.add("active"),document.getElementById("dot-1").classList.remove("active"),document.getElementById("dot-1").classList.add("done"),document.getElementById("dot-2").classList.add("active"),document.getElementById("dot-2").style.width="24px"}function wizardBack(){document.getElementById("wizard-step-2").classList.remove("active"),document.getElementById("wizard-step-1").classList.add("active"),document.getElementById("dot-2").classList.remove("active"),document.getElementById("dot-2").style.width="8px",document.getElementById("dot-1").classList.remove("done"),document.getElementById("dot-1").classList.add("active")}async function wizardFinish(){try{settings.country=wizardCountry,await _saveSettings(),localStorage.setItem("stockroom_seen","1"),localStorage.setItem("stockroom_country_set","1"),document.body.classList.remove("wizard-active"),document.getElementById("wizard").style.display="none";const e=document.getElementById("setting-country");e&&(e.value=settings.country),scheduleRender(...RENDER_REGIONS);const t=[...document.querySelectorAll(".tab")].find(e=>e.textContent.includes("Stockroom"));t&&showView("stock",t),kvConnected&&setTimeout(()=>kvSyncNow(!0),500)}catch(e){console.error("wizardFinish error:",e),localStorage.setItem("stockroom_seen","1"),localStorage.setItem("stockroom_country_set","1"),document.body.classList.remove("wizard-active"),document.getElementById("wizard").style.display="none"}}function setFilter(e,t,n){"status"===e?(activeFilter=t,document.querySelectorAll("#filter-bar .filter-chip").forEach(e=>e.classList.remove("active"))):(activeCadence=activeCadence===t?"all":t,document.querySelectorAll("#filter-bar .filter-chip").forEach(e=>{(e.textContent.includes("Monthly")||e.textContent.includes("Bulk"))&&e.classList.remove("active")})),n&&n.classList.add("active"),"all"===activeCadence&&"cadence"===e&&n.classList.remove("active"),updateFilterBadge(),renderGrid()}function setStoreFilter(e,t){activeStore=e,document.querySelectorAll("#store-filter-bar .filter-chip").forEach(e=>e.classList.remove("active")),t.classList.add("active"),updateFilterBadge(),renderGrid()}function buildStoreFilterBar(){const e=document.getElementById("store-filter-bar"),t=new Set;items.forEach(e=>{e.store&&e.store.trim()&&t.add(e.store.trim()),(e.logs||[]).forEach(e=>{e.store&&e.store.trim()&&t.add(e.store.trim())})});const n=[...t].sort();e.innerHTML=`<span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase">Store:</span>\n    <button class="filter-chip${"all"===activeStore?" active":""}" onclick="setStoreFilter('all',this)">All Stores</button>\n    ${n.map(e=>`<button class="filter-chip${activeStore===e?" active":""}" onclick="setStoreFilter('${e.replace(/'/g,"\\'")}',this)">${esc(e)}</button>`).join("")}`}function setRatingFilter(e,t){activeRating=e,document.querySelectorAll("#rating-filter-bar .filter-chip").forEach(e=>e.classList.remove("active")),t.classList.add("active"),updateFilterBadge(),renderGrid()}const RATING_LABELS={0:"Not rated",1:"Poor — look for alternatives",2:"Below average",3:"Acceptable",4:"Good",5:"Excellent — keep buying this"};function previewModalStars(e){document.querySelectorAll("#f-star-rating .star").forEach(t=>{const n=parseInt(t.dataset.val);t.classList.toggle("preview",n<=e),t.classList.remove("on")});const t=document.getElementById("f-rating-label");t&&(t.textContent=RATING_LABELS[e]||"",t.style.color=e<=2?"var(--danger)":e>=4?"var(--ok)":"var(--muted)")}function resetModalStars(){document.querySelectorAll("#f-star-rating .star").forEach(e=>{e.classList.remove("preview"),e.classList.toggle("on",parseInt(e.dataset.val)<=currentRating)});const e=document.getElementById("f-rating-label");e&&(e.textContent=RATING_LABELS[currentRating]||"Not rated",e.style.color=currentRating?currentRating<=2?"var(--danger)":currentRating>=4?"var(--ok)":"var(--muted)":"var(--muted)")}function setRating(e){currentRating=e,renderStars()}function renderStars(){document.querySelectorAll("#f-star-rating .star").forEach(e=>{e.classList.remove("preview"),e.classList.toggle("on",parseInt(e.dataset.val)<=currentRating)});const e=document.getElementById("f-rating-label");e.textContent=RATING_LABELS[currentRating]||"Not rated",e.style.color=currentRating?currentRating<=2?"var(--danger)":currentRating>=4?"var(--ok)":"var(--muted)":"var(--muted)"}function starsHTML(e){if(!e)return'<span style="color:var(--muted);font-size:11px;font-family:var(--mono)">unrated</span>';return`<span class="card-stars" style="color:${e<=1?"#e85050":2===e?"#e8a838":e>=4?"#4cbb8a":"#7880a0"}" title="${RATING_LABELS[e]||""}">${"★".repeat(e)}<span style="color:var(--border)">${"★".repeat(5-e)}</span></span>`}function getItemsDueWithin(e){return items.map(e=>{const t=calcStock(e);return t?{item:e,daysLeft:t.daysLeft}:null}).filter(t=>t&&t.daysLeft<=e).sort((e,t)=>e.daysLeft-t.daysLeft).map(({item:e,daysLeft:t})=>{const n=getPriceHistory(e),o=n.length&&n[n.length-1].raw||null;return{name:e.name,daysLeft:t,store:e.store||"",url:e.url||"",rating:e.rating||null,lastPrice:o,storePrices:(e.storePrices||[]).filter(e=>e.store&&e.price)}})}async function checkKVStatus(){const e=document.getElementById("kv-check-btn"),t=document.getElementById("kv-status-text");e&&(e.textContent="⏳",e.disabled=!0);try{const e=await fetch(`${WORKER_URL}/debug-schedule`),n=await e.json(),o=n.email?.startsWith("✓")&&n.schedule&&"✗ missing"!==n.schedule&&n.driveRefresh?.startsWith("✓"),a=[`email: ${n.email}`,`schedule: ${"object"==typeof n.schedule&&n.schedule?"✓ set":n.schedule}`,`driveRefresh: ${n.driveRefresh}`,`lastSent: ${n.lastSent}`,n.nextSend?`nextSend: ${n.nextSend}`:""].filter(Boolean);t&&(t.style.color=o?"var(--ok)":"var(--warn)",t.innerHTML=a.map(e=>{const t=e.includes("✓"),n=e.includes("✗");return`<span style="color:${t?"var(--ok)":n?"var(--danger)":"var(--muted)"}">${e}</span>`}).join(" · ")),n.driveRefresh?.startsWith("✓")?o||toast("⚠️ Some server settings missing — tap Re-push"):toast("⚠️ Drive refresh token missing — reconnect Google Drive in Settings")}catch(e){t&&(t.style.color="var(--danger)",t.textContent="✗ Could not reach server")}finally{e&&(e.textContent="Check",e.disabled=!1)}}async function repushToServer(){const e=document.getElementById("kv-repush-btn"),t=document.getElementById("kv-status-text");if(settings.email){try{const e=await fetch(`${WORKER_URL}/debug-schedule`),n=await e.json();if(!n.driveRefresh?.startsWith("✓"))return toast("⚠️ Drive refresh token missing — reconnect Google Drive first, then Re-push"),void(t&&(t.style.color="var(--danger)",t.textContent="✗ Reconnect Google Drive first (Settings → Cloud Sync)"))}catch(e){}e&&(e.textContent="⏳",e.disabled=!0);try{await pushScheduleToWorker(),await pushItemsToWorker(),t&&(t.style.color="var(--ok)",t.textContent="✓ Re-pushed — tap Check to verify"),toast("Settings re-pushed to server ✓"),setTimeout(checkKVStatus,1e3)}catch(e){toast("Re-push failed: "+e.message)}finally{e&&(e.textContent="Re-push",e.disabled=!1)}}else toast("Set your email address first")}async function pushScheduleToWorker(){if(settings.email&&settings.emailStartDate)try{const e=getItemsDueWithin(7),t=getItemsDueWithin(30).filter(e=>e.daysLeft>7);await fetch(`${WORKER_URL}/set-schedule`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:settings.email,emailHash:_kvEmailHash||null,startDate:settings.emailStartDate,startTime:settings.emailStartTime||"09:00",intervalDays:settings.emailInterval??30,household:"default"===activeProfile?null:activeProfile,urgent:e,upcoming:t})}),fetch(`${WORKER_URL}/check-now`,{method:"POST"}).catch(()=>{})}catch(e){console.warn("Could not push schedule to Worker:",e.message)}}async function pushItemsToWorker(){if(settings.email)try{const e=getItemsDueWithin(7),t=getItemsDueWithin(30).filter(e=>e.daysLeft>7);if(!e.length&&!t.length)return;await fetch(`${WORKER_URL}/set-schedule`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:settings.email,emailHash:_kvEmailHash||null,startDate:settings.emailStartDate,startTime:settings.emailStartTime||"09:00",intervalDays:settings.emailInterval??30,household:"default"===activeProfile?null:activeProfile,urgent:e,upcoming:t})})}catch(e){}}function updateLastSentUI(){const e=document.getElementById("last-sent-row"),t=document.getElementById("last-sent-text"),n=settings.emailInterval??30;if(!e||!t)return;if(!settings.email||0===n)return void(e.style.display="none");e.style.display="flex";const o=settings.emailLastSent,a=settings.emailStartDate,r=settings.emailStartTime||"09:00",s=new Date;if(!o){if(a){const e=new Date(`${a}T${r}:00`),n=Math.ceil((e-s)/6e4);if(e>s){const e=n<120?`in ${n} minute${1!==n?"s":""}`:n<1440?`in ${Math.ceil(n/60)} hour${1!==Math.ceil(n/60)?"s":""}`:`on ${fmtDate(a)} at ${r}`;t.textContent=`☁️ First reminder scheduled ${e} — Deno will send automatically`}else t.textContent="⏳ First reminder is due — Deno cron will send on next hourly check"}else t.textContent="Set a start date above to schedule automatic reminders";return}const i=new Date(new Date(o).getTime()+864e5*n),l=Math.ceil((i-s)/864e5);t.textContent=`Last sent ${fmtDate(o)} · Next ${l>0?`in ${l} day${1!==l?"s":""}`:"is overdue — Deno will send on next hourly check"}`}async function resetLastSent(){settings.emailLastSent=null,await _saveSettings(),WORKER_URL&&settings.email&&fetch(`${WORKER_URL}/reset-schedule`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:settings.email})}).catch(()=>{}),updateLastSentUI(),toast("Schedule reset — next send will be at your start date/time")}async function handleUnsubscribe(){const e=[...document.querySelectorAll(".tab")].find(e=>e.textContent.includes("Settings"));e&&showView("settings",e),setTimeout(async()=>{confirm("Stop scheduled email reminders from STOCKROOM?\n\nYou can re-enable them any time in Settings → Email Reminders.")&&(settings.emailStartDate=null,settings.emailStartTime=null,settings.emailLastSent=null,settings.emailInterval=0,await _saveSettings(),WORKER_URL&&fetch(`${WORKER_URL}/unsubscribe`,{method:"POST",headers:{"Content-Type":"application/json"}}).catch(()=>{}),scheduleRender("grid","dashboard","settings-ui"),toast("Email reminders disabled ✓"),setTimeout(()=>{document.querySelector("#view-settings .settings-card h3");let e=null;document.querySelectorAll("#view-settings .settings-card h3").forEach(t=>{t.textContent.includes("Email")&&(e=t.closest(".settings-card"))}),e&&e.scrollIntoView({behavior:"smooth",block:"center"})},300))},400)}async function checkScheduledEmail(){updateLastSentUI()}async function sendReminderEmail(e=!0){const t=settings.email||document.getElementById("setting-email")?.value.trim();if(!t)return void(e&&toast("Enter your email address in Settings first"));const n=getItemsDueWithin(7),o=getItemsDueWithin(30).filter(e=>e.daysLeft>7),a=analyseSnS(),r=a.filter(e=>"eligible"===e.status),s=a.filter(e=>"active"===e.status),i=[...r,...s].reduce((e,t)=>e+(t.annualSaving||0),0),l=r.length+s.length>=SNS_MIN_ITEMS?{eligible:r.map(e=>({name:e.item.name,annualSaving:e.annualSaving,snsLink:getSnSLink(e.item)})),totalSaving:i}:null;if(n.length||o.length){if(e){const e=document.getElementById("send-reminder-btn"),t=document.getElementById("email-status");e&&(e.textContent="⏳ Sending…",e.disabled=!0),t&&(t.style.display="none")}try{const a=await fetch(`${WORKER_URL}/send-reminder`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({to:t,urgent:n,upcoming:o,sns:l,manual:e})}),r=await a.json();if(!a.ok)throw new Error(r.error||"Unknown error");if(e||(settings.emailLastSent=(new Date).toISOString(),await _saveSettings(),updateLastSentUI()),e){const e=n.length+o.length,a=document.getElementById("email-status");a&&(a.textContent=`✓ Reminder sent to ${t} (${e} item${1!==e?"s":""})`,a.style.color="var(--ok)",a.style.display="block"),toast("Reminder email sent ✓")}}catch(t){if(e){const e=document.getElementById("email-status");e&&(e.textContent=`✗ Failed: ${t.message}`,e.style.color="var(--danger)",e.style.display="block")}console.error("Email reminder error:",t)}finally{if(e){const e=document.getElementById("send-reminder-btn");e&&(e.textContent="📧 Send Now",e.disabled=!1)}}}else e&&toast("Nothing running out in the next 30 days — nothing to send!")}const ITEM_TEMPLATES=[{name:"Coffee Beans",category:"Kitchen",cadence:"monthly",qty:1,months:1,emoji:"☕"},{name:"Ground Coffee",category:"Kitchen",cadence:"monthly",qty:1,months:.5,emoji:"☕"},{name:"Coffee Pods (48-pack)",category:"Kitchen",cadence:"monthly",qty:48,months:1,emoji:"☕"},{name:"Tea Bags (240-pack)",category:"Kitchen",cadence:"bulk",qty:1,months:3,emoji:"🍵"},{name:"Kitchen Roll",category:"Kitchen",cadence:"monthly",qty:1,months:1,emoji:"🧻"},{name:"Olive Oil",category:"Kitchen",cadence:"monthly",qty:1,months:2,emoji:"🫒"},{name:"Washing Up Liquid",category:"Kitchen",cadence:"monthly",qty:1,months:1,emoji:"🍽️"},{name:"Foil / Cling Film",category:"Kitchen",cadence:"bulk",qty:1,months:3,emoji:"📦"},{name:"Dishwasher Salt",category:"Kitchen",cadence:"bulk",qty:1,months:2,emoji:"🧂"},{name:"Dishwasher Rinse Aid",category:"Kitchen",cadence:"bulk",qty:1,months:3,emoji:"✨"},{name:"Dishwasher Tablets",category:"Kitchen",cadence:"bulk",qty:60,months:2,emoji:"✨"},{name:"Bin Bags",category:"Kitchen",cadence:"bulk",qty:1,months:2,emoji:"🗑️"},{name:"Zip Lock Bags",category:"Kitchen",cadence:"bulk",qty:1,months:4,emoji:"📦"},{name:"Shampoo",category:"Bathroom",cadence:"monthly",qty:1,months:2,emoji:"🧴"},{name:"Conditioner",category:"Bathroom",cadence:"monthly",qty:1,months:2,emoji:"🧴"},{name:"Shower Gel",category:"Bathroom",cadence:"monthly",qty:1,months:1,emoji:"🚿"},{name:"Toothpaste",category:"Bathroom",cadence:"monthly",qty:1,months:2,emoji:"🦷"},{name:"Toothbrush",category:"Bathroom",cadence:"bulk",qty:1,months:3,emoji:"🪥",replacementInterval:3,replacementUnit:"months"},{name:"Toothbrush Heads",category:"Bathroom",cadence:"bulk",qty:4,months:3,emoji:"🪥",replacementInterval:3,replacementUnit:"months"},{name:"Floss",category:"Bathroom",cadence:"monthly",qty:1,months:2,emoji:"🦷"},{name:"Mouthwash",category:"Bathroom",cadence:"monthly",qty:1,months:2,emoji:"🫧"},{name:"Hand Soap",category:"Bathroom",cadence:"monthly",qty:1,months:1,emoji:"🧼"},{name:"Deodorant",category:"Bathroom",cadence:"monthly",qty:1,months:1,emoji:"💨"},{name:"Razor Blades (8-pack)",category:"Bathroom",cadence:"bulk",qty:8,months:2,emoji:"🪒"},{name:"Toilet Roll (9-pack)",category:"Bathroom",cadence:"bulk",qty:9,months:1,emoji:"🧻"},{name:"Cotton Buds",category:"Bathroom",cadence:"bulk",qty:1,months:3,emoji:"🌿"},{name:"Face Moisturiser",category:"Bathroom",cadence:"monthly",qty:1,months:2,emoji:"🧴"},{name:"Sun Cream SPF50",category:"Bathroom",cadence:"bulk",qty:1,months:3,emoji:"☀️"},{name:"Washing Powder",category:"Cleaning",cadence:"monthly",qty:1,months:2,emoji:"🧺"},{name:"Washing Liquid",category:"Cleaning",cadence:"monthly",qty:1,months:2,emoji:"🧺"},{name:"Fabric Softener",category:"Cleaning",cadence:"monthly",qty:1,months:2,emoji:"🌸"},{name:"Laundry Capsules (40pk)",category:"Cleaning",cadence:"bulk",qty:40,months:2,emoji:"🧺"},{name:"Washing Machine Cleaner",category:"Cleaning",cadence:"bulk",qty:1,months:3,emoji:"🌀",replacementInterval:3,replacementUnit:"months"},{name:"Surface Spray",category:"Cleaning",cadence:"monthly",qty:1,months:1,emoji:"🧹"},{name:"Bleach",category:"Cleaning",cadence:"monthly",qty:1,months:2,emoji:"🫧"},{name:"Toilet Cleaner",category:"Cleaning",cadence:"monthly",qty:1,months:2,emoji:"🚽"},{name:"Sponges (multi-pack)",category:"Cleaning",cadence:"monthly",qty:1,months:1,emoji:"🧽"},{name:"Microfibre Cloths",category:"Cleaning",cadence:"bulk",qty:1,months:3,emoji:"🧽"},{name:"Mop Heads",category:"Cleaning",cadence:"bulk",qty:1,months:6,emoji:"🧹",replacementInterval:6,replacementUnit:"months"},{name:"Vacuum Bags",category:"Cleaning",cadence:"bulk",qty:1,months:3,emoji:"🌀"},{name:"Air Freshener",category:"Cleaning",cadence:"monthly",qty:1,months:1,emoji:"🌸"},{name:"Milk (4-pint)",category:"Food & Drink",cadence:"monthly",qty:4,months:.5,emoji:"🥛"},{name:"Pasta (500g)",category:"Food & Drink",cadence:"bulk",qty:4,months:1,emoji:"🍝"},{name:"Rice (1kg)",category:"Food & Drink",cadence:"bulk",qty:2,months:2,emoji:"🍚"},{name:"Tinned Tomatoes",category:"Food & Drink",cadence:"bulk",qty:6,months:2,emoji:"🍅"},{name:"Tinned Tuna",category:"Food & Drink",cadence:"bulk",qty:6,months:2,emoji:"🐟"},{name:"Tinned Beans",category:"Food & Drink",cadence:"bulk",qty:6,months:2,emoji:"🫘"},{name:"Cereal",category:"Food & Drink",cadence:"monthly",qty:1,months:1,emoji:"🥣"},{name:"Bread",category:"Food & Drink",cadence:"monthly",qty:2,months:.5,emoji:"🍞"},{name:"Cooking Oil",category:"Food & Drink",cadence:"bulk",qty:1,months:2,emoji:"🫙"},{name:"Salt",category:"Food & Drink",cadence:"bulk",qty:1,months:6,emoji:"🧂"},{name:"Sugar",category:"Food & Drink",cadence:"bulk",qty:1,months:3,emoji:"🍬"},{name:"Dog Food",category:"Food & Drink",cadence:"bulk",qty:1,months:1,emoji:"🐕"},{name:"Cat Food",category:"Food & Drink",cadence:"bulk",qty:1,months:1,emoji:"🐈"},{name:"Paracetamol (32-pack)",category:"Health",cadence:"bulk",qty:1,months:6,emoji:"💊"},{name:"Ibuprofen (32-pack)",category:"Health",cadence:"bulk",qty:1,months:6,emoji:"💊"},{name:"Multivitamins",category:"Health",cadence:"monthly",qty:1,months:1,emoji:"💊"},{name:"Vitamin D (90 caps)",category:"Health",cadence:"bulk",qty:1,months:3,emoji:"☀️"},{name:"Vitamin C",category:"Health",cadence:"monthly",qty:1,months:1,emoji:"🍊"},{name:"Omega 3 Fish Oil",category:"Health",cadence:"monthly",qty:1,months:1,emoji:"🐟"},{name:"Plasters (assorted)",category:"Health",cadence:"bulk",qty:1,months:6,emoji:"🩹"},{name:"Antiseptic Cream",category:"Health",cadence:"bulk",qty:1,months:12,emoji:"🩺"},{name:"Indigestion Tablets",category:"Health",cadence:"bulk",qty:1,months:6,emoji:"💊"},{name:"Antihistamine",category:"Health",cadence:"bulk",qty:1,months:6,emoji:"💊"},{name:"Lawn Feed",category:"Garden",cadence:"bulk",qty:1,months:3,emoji:"🌱"},{name:"Compost (60L)",category:"Garden",cadence:"bulk",qty:1,months:3,emoji:"🌿"},{name:"Slug Pellets",category:"Garden",cadence:"bulk",qty:1,months:3,emoji:"🐌"},{name:"Bird Seed",category:"Garden",cadence:"monthly",qty:1,months:1,emoji:"🐦"},{name:"Plant Feed",category:"Garden",cadence:"monthly",qty:1,months:2,emoji:"🌻"},{name:"BBQ Charcoal",category:"Garden",cadence:"bulk",qty:1,months:2,emoji:"🔥"},{name:"BBQ Gas Cylinder",category:"Garden",cadence:"bulk",qty:1,months:3,emoji:"🔥"},{name:"Log Burner Fuel",category:"Garden",cadence:"bulk",qty:1,months:1,emoji:"🪵"},{name:"AA Batteries (16pk)",category:"Other",cadence:"bulk",qty:16,months:6,emoji:"🔋"},{name:"AAA Batteries (16pk)",category:"Other",cadence:"bulk",qty:16,months:6,emoji:"🔋"},{name:"Printer Ink",category:"Other",cadence:"bulk",qty:1,months:3,emoji:"🖨️"},{name:"Printer Paper (500pk)",category:"Other",cadence:"bulk",qty:1,months:3,emoji:"📄"},{name:"Postage Stamps (12pk)",category:"Other",cadence:"bulk",qty:12,months:6,emoji:"✉️"},{name:"Light Bulbs (4pk)",category:"Other",cadence:"bulk",qty:4,months:12,emoji:"💡"},{name:"Smoke Alarm Battery",category:"Other",cadence:"bulk",qty:1,months:12,emoji:"🔋",replacementInterval:12,replacementUnit:"months"},{name:"Water Filter Cartridge",category:"Other",cadence:"bulk",qty:1,months:2,emoji:"💧",replacementInterval:2,replacementUnit:"months"},{name:"Candles",category:"Other",cadence:"bulk",qty:1,months:3,emoji:"🕯️"},{name:"Tin Foil (30m)",category:"Other",cadence:"bulk",qty:1,months:3,emoji:"🫙"}];let activeTemplateCat="all";function filterTemplates(e,t){activeTemplateCat=e,document.querySelectorAll("#template-cat-filter button").forEach(e=>e.style.background=""),t&&(t.style.background="var(--surface2)"),renderTemplateGrid()}function renderTemplateGrid(){const e=document.getElementById("templates-grid");if(!e)return;const t="all"===activeTemplateCat?ITEM_TEMPLATES:ITEM_TEMPLATES.filter(e=>e.category===activeTemplateCat);e.innerHTML=t.map((e,t)=>`<button onclick="applyTemplate(${ITEM_TEMPLATES.indexOf(e)})"\n      style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;cursor:pointer;text-align:left;transition:border-color 0.15s;width:100%"\n      onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">\n      <span style="font-size:22px;flex-shrink:0">${e.emoji}</span>\n      <div style="min-width:0">\n        <div style="font-size:12px;font-weight:600;color:var(--text);line-height:1.3">${esc(e.name)}</div>\n        <div style="font-size:10px;color:var(--muted);margin-top:2px">${e.months}mo supply${e.replacementInterval?" · 🔔 reminder":""}</div>\n      </div>\n    </button>`).join("")}function openTemplatesModal(){activeTemplateCat="all",document.querySelectorAll("#template-cat-filter button").forEach((e,t)=>{e.style.background=0===t?"var(--surface2)":""}),renderTemplateGrid(),openModal("templates-modal")}function applyTemplate(e){const t=ITEM_TEMPLATES[e];closeModal("templates-modal"),document.getElementById("f-name").value=t.name,document.getElementById("f-category").value=t.category,document.getElementById("f-cadence").value=t.cadence,document.getElementById("f-qty").value=t.qty,document.getElementById("f-months").value=t.months;const n=document.getElementById("f-replace-interval"),o=document.getElementById("f-replace-unit");n&&(n.value=t.replacementInterval||""),o&&t.replacementUnit&&(o.value=t.replacementUnit),document.getElementById("f-name").focus(),toast(`Template: ${t.name}`)}function getQuickAddItems(){return items.filter(e=>e.quickAdded)}function renderPendingDeliveries(){const e=items.filter(e=>e.logs?.some(e=>e.pendingDelivery)),t=document.getElementById("pending-deliveries-section"),n=document.getElementById("pending-deliveries-grid"),o=document.getElementById("pending-deliveries-badge");t&&n&&(e.length?(t.style.display="block",o&&(o.textContent=e.length),n.innerHTML=e.map(e=>{const t=[...e.logs].reverse().find(e=>e.pendingDelivery),n=t?.date?fmtDate(t.date):"—",o=t?.qty||e.qty||1,a=t?.price||"";return`<div class="incomplete-card" style="border-color:rgba(91,141,238,0.4)">\n          <div style="flex:1;min-width:0">\n            <div class="inc-name">${esc(e.name)}</div>\n            <div class="inc-meta">Ordered ${n} · qty ${o}${a?" · "+esc(a):""}</div>\n          </div>\n          <button class="btn btn-sm" style="background:rgba(76,187,138,0.15);color:var(--ok);border:1px solid rgba(76,187,138,0.3);white-space:nowrap"\n            onclick="openDeliveredModal('${e.id}')">📦 Delivered</button>\n        </div>`}).join("")):t.style.display="none");const a=document.getElementById("report-pending-deliveries");a&&(e.length?(a.style.display="block",a.innerHTML=`\n        <div style="background:rgba(91,141,238,0.08);border:1px solid rgba(91,141,238,0.25);border-radius:12px;padding:18px 20px">\n          <div style="font-size:13px;font-weight:700;color:#5b8dee;margin-bottom:12px">📦 Pending Deliveries — ${e.length} item${1!==e.length?"s":""}</div>\n          ${e.map(e=>{const t=[...e.logs].reverse().find(e=>e.pendingDelivery),n=t?.date?fmtDate(t.date):"—",o=t?.qty||e.qty||1,a=t?.price||"";return`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(91,141,238,0.15)">\n              <div>\n                <div style="font-size:14px;font-weight:600">${esc(e.name)}</div>\n                <div style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:2px">Ordered ${n} · qty ${o}${a?" · "+esc(a):""}</div>\n              </div>\n              <button class="btn btn-sm" style="background:rgba(76,187,138,0.15);color:var(--ok);border:1px solid rgba(76,187,138,0.3);white-space:nowrap"\n                onclick="openDeliveredModal('${e.id}')">📦 Delivered</button>\n            </div>`}).join("")}\n        </div>`):a.style.display="none")}function renderIncompleteSection(){const e=getQuickAddItems(),t=document.getElementById("incomplete-section"),n=document.getElementById("incomplete-grid"),o=document.getElementById("incomplete-count-badge"),a=document.getElementById("incomplete-banner"),r=document.getElementById("incomplete-banner-text");if(!e.length)return t&&(t.style.display="none"),void(a&&(a.style.display="none"));a&&(a.style.display="flex",r&&(r.textContent=`${e.length} item${1!==e.length?"s":""} need setting up`)),t&&(t.style.display="block",o&&(o.textContent=e.length)),n&&(n.innerHTML=e.map(e=>`\n      <div class="incomplete-card">\n        <div>\n          <div class="inc-name">${esc(e.name)}</div>\n          <div class="inc-meta">⚡ Quick added · no details yet</div>\n        </div>\n        <div style="display:flex;gap:6px;flex-shrink:0">\n          <button class="btn-icon" title="Complete setup" onclick="openEditModal('${e.id}');enableItemEdit()">✏️</button>\n          <button class="btn-icon" title="Remove" onclick="deleteItem('${e.id}')">🗑️</button>\n        </div>\n      </div>`).join(""))}function scrollToIncomplete(){const e=[...document.querySelectorAll(".tab")].find(e=>e.textContent.includes("Stock"));e&&!e.classList.contains("active")&&showView("stock",e),setTimeout(()=>{const e=document.getElementById("incomplete-section");e&&e.scrollIntoView({behavior:"smooth",block:"start"})},100)}async function clearQuickAddedFlag(e){const t=items.find(t=>t.id===e);t&&(t.quickAdded=!1)}const REMINDER_SUGGESTIONS=[{name:"Toothbrush Head",interval:3,unit:"months"},{name:"Water Filter Cartridge",interval:2,unit:"months"},{name:"Shower Head",interval:6,unit:"months"},{name:"Air Filter",interval:3,unit:"months"},{name:"Smoke Alarm Battery",interval:12,unit:"months"},{name:"Fridge Filter",interval:6,unit:"months"},{name:"Razor Blade",interval:2,unit:"weeks"},{name:"Dishwasher Filter",interval:1,unit:"months"},{name:"Car Air Filter",interval:12,unit:"months"},{name:"Boiler Service",interval:12,unit:"months"},{name:"Vacuum Filter",interval:3,unit:"months"},{name:"Contact Lenses",interval:30,unit:"days"}];let reminders=[],editingReminderId=null,loggingReminderId=null;async function loadReminders(){const e=await dbGet("reminders","reminders");if(e)return void(reminders=e);const t=localStorage.getItem("stockroom_reminders");if(t)try{reminders=JSON.parse(t)||[],await dbPut("reminders","reminders",reminders),localStorage.removeItem("stockroom_reminders")}catch(e){reminders=[]}}async function saveReminders(){await dbPut("reminders","reminders",reminders),activeProfile&&await saveCurrentProfile()}function getReminderIntervalDays(e){const t=e.interval||1;return"days"===e.unit?t:"weeks"===e.unit?7*t:(e.unit,30.5*t)}function getReminderDueDate(e){if(!e.lastReplaced)return null;const t=new Date(e.lastReplaced+"T12:00:00").getTime(),n=864e5*getReminderIntervalDays(e);return new Date(t+n)}function getReminderDaysUntil(e){const t=getReminderDueDate(e);return t?Math.round((t.getTime()-Date.now())/864e5):null}function getReminderStatus(e){const t=getReminderDaysUntil(e);return null===t?"unknown":t<0?"overdue":t<=30?"soon":"upcoming"}async function renderReminders(){await loadReminders();const e=[...reminders,...items.filter(e=>e.replacementInterval&&e.replacementUnit).map(e=>{const t=e.startedUsing||e.logs?.[0]?.date||null;return{id:"item_"+e.id,name:e.name,interval:e.replacementInterval,unit:e.replacementUnit,lastReplaced:e.lastReplaced||t||null,lastReplacedIsFallback:!e.lastReplaced&&!!t,notes:e.notes||"",fromItem:e.id}})],t=e.filter(e=>"overdue"===getReminderStatus(e)),n=e.filter(e=>"soon"===getReminderStatus(e)),o=e.filter(e=>"upcoming"===getReminderStatus(e)),a=e.filter(e=>"unknown"===getReminderStatus(e)),r=document.getElementById("reminders-empty");if(0===e.length){r&&(r.style.display="block"),["overdue-section","soon-section","upcoming-section"].forEach(e=>{const t=document.getElementById("reminders-"+e);t&&(t.style.display="none")});const e=document.getElementById("reminders-nudge");return void(e&&(e.style.display="none"))}r&&(r.style.display="none");const s=document.getElementById("reminders-nudge"),i=document.getElementById("reminders-nudge-text");s&&t.length>0?(s.style.display="flex",i.textContent=`🔴 ${t.length} replacement${1!==t.length?"s":""} overdue`):s&&(s.style.display="none");const l=(e,t,n,o)=>{const a=document.getElementById(n),r=document.getElementById(t),s=document.getElementById(o);a&&r&&(e.length?(a.style.display="block",s&&(s.textContent=e.length),r.innerHTML=e.map(e=>reminderCardHTML(e)).join("")):a.style.display="none")};t.sort((e,t)=>(getReminderDaysUntil(e)||0)-(getReminderDaysUntil(t)||0)),n.sort((e,t)=>(getReminderDaysUntil(e)||0)-(getReminderDaysUntil(t)||0)),o.sort((e,t)=>(getReminderDaysUntil(e)||0)-(getReminderDaysUntil(t)||0)),l([...t],"reminders-overdue-list","reminders-overdue-section","overdue-count"),l([...n],"reminders-soon-list","reminders-soon-section","soon-count"),l([...o,...a],"reminders-upcoming-list","reminders-upcoming-section",null),updateRemindersBadge(t.length+n.length)}function reminderCardHTML(e){const t=getReminderDaysUntil(e),n=getReminderStatus(e),o=getReminderDueDate(e),a=e.fromItem,r="overdue"===n?"var(--danger)":"soon"===n?"var(--warn)":"var(--muted)",s="overdue"===n?"rgba(232,80,80,0.3)":"soon"===n?"rgba(232,168,56,0.3)":"var(--border)";let i="";i=null===t?"No replacement date recorded":t<0?`Overdue by ${Math.abs(t)} day${1!==Math.abs(t)?"s":""}`:0===t?"Due today":`Due in ${t} day${1!==t?"s":""}`;const l=`Every ${e.interval} ${e.unit}`,c=e.lastReplaced?e.lastReplacedIsFallback?`First used ${timeAgo(e.lastReplaced)}`:`Last replaced ${timeAgo(e.lastReplaced)}`:"Never replaced",d=o?`Next: ${fmtDate(o.toISOString().slice(0,10))}`:"Set a date to track";return`<div style="background:var(--surface);border:1px solid ${s};border-radius:12px;padding:14px 16px;margin-bottom:10px;display:flex;gap:12px;align-items:flex-start;cursor:pointer;transition:border-color 0.15s,box-shadow 0.15s" onclick="openReminderTimeline('${e.id}')" title="Tap to view timeline">\n    <div style="flex:1;min-width:0">\n      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">\n        <span style="font-size:15px;font-weight:700;color:var(--text)">${esc(e.name)}</span>\n        ${a?'<span style="font-size:10px;color:var(--muted);font-family:var(--mono);padding:1px 6px;border:1px solid var(--border);border-radius:99px">linked</span>':""}\n        <span style="font-size:10px;color:var(--muted);margin-left:auto;opacity:0.5">📊 Timeline</span>\n      </div>\n      <div style="font-size:12px;font-weight:700;color:${r};margin-bottom:4px">${i}</div>\n      <div style="font-size:11px;color:var(--muted);font-family:var(--mono);line-height:1.8">\n        ${l} · ${c}<br>${d}\n      </div>\n      ${e.notes?`<div style="font-size:12px;color:var(--muted);font-style:italic;margin-top:6px">💬 ${esc(e.notes)}</div>`:""}\n      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap" onclick="event.stopPropagation()">\n        <button class="btn btn-primary btn-sm" onclick="openLogReplacementModal('${e.id}')">✅ Mark replaced</button>\n        ${a?`<button class="btn btn-ghost btn-sm" onclick="openEditModal('${e.fromItem}');enableItemEdit()">✏️ Edit item</button>`:`<button class="btn btn-ghost btn-sm" onclick="openEditReminderModal('${e.id}')">✏️ Edit</button>`}\n        ${a?"":`<button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteReminder('${e.id}')">Delete</button>`}\n      </div>\n    </div>\n  </div>`}function openReminderTimeline(e){let t=reminders.find(t=>t.id===e);if(!t){e.replace("item_","");const n=items.find(t=>"item_"+t.id===e);if(n){const o=n.startedUsing||n.logs?.[0]?.date||null;t={id:e,name:n.name,interval:n.replacementInterval,unit:n.replacementUnit,lastReplaced:n.lastReplaced||o||null,lastReplacedIsFallback:!n.lastReplaced&&!!o,fromItem:n.id}}}if(!t)return;const n=getReminderIntervalDays(t),o=new Date,a=o.toISOString().slice(0,10),r=getReminderStatus(t),s=getReminderDueDate(t);document.getElementById("rtl-title").textContent=t.name,document.getElementById("rtl-subtitle").textContent=`Every ${t.interval} ${t.unit} · ${t.lastReplaced?(t.lastReplacedIsFallback?"Started ":"Last replaced ")+fmtDate(t.lastReplaced):"No start date recorded"}`;document.getElementById("rtl-mark-btn").onclick=()=>{closeModal("reminder-timeline-modal"),openLogReplacementModal(e)};const i=[];if(t.lastReplaced){const e=new Date(t.lastReplaced+"T12:00:00").getTime(),a=864e5*n;for(let t=2;t>=1;t--){const n=new Date(e-t*a);n<new Date(e-63072e6)||i.push({type:"past",date:n,label:"Replaced"})}i.push({type:"anchor",date:new Date(e),label:t.lastReplacedIsFallback?"First used":"Last replaced"});for(let t=1;t<=3;t++){const n=new Date(e+t*a),r=n<o;i.push({type:r?"overdue":1===t?"next":"future",date:n,label:"Replace",cycle:t})}const r=new Date(e+a),s=new Date(e+2*a),l=new Date(r.getTime()+.2*(s.getTime()-r.getTime()));l>o&&i.push({type:"reorder",date:l,label:"Reorder by"}),i.sort((e,t)=>e.date-t.date)}let l=null,c="";if(s&&t.lastReplaced){const e=new Date(t.lastReplaced+"T12:00:00").getTime(),n=s.getTime(),a=o.getTime();l=Math.min(100,Math.max(0,Math.round((a-e)/(n-e)*100)));const r=getReminderDaysUntil(t);c=null===r?"":r<0?`${Math.abs(r)}d overdue`:0===r?"Due today":`${r}d remaining`}const d="overdue"===r?"#e85050":"soon"===r?"#e8a838":"#4cbb8a";let m="";if(t.lastReplaced){if(null!==l){const e="overdue"===r?"#e85050":"soon"===r?"#e8a838":"#4cbb8a";m+=`<div style="margin-bottom:20px">\n        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);font-family:var(--mono);margin-bottom:6px">\n          <span>${t.lastReplacedIsFallback?"First used":"Last replaced"}</span>\n          <span style="color:${e};font-weight:700">${c}</span>\n          <span>Due ${s?fmtDate(s.toISOString().slice(0,10)):"—"}</span>\n        </div>\n        <div style="height:10px;background:var(--surface2);border-radius:99px;overflow:hidden;position:relative">\n          <div style="height:100%;width:${l}%;background:${e};border-radius:99px;transition:width 0.6s"></div>\n          ${l>=100?"":`<div style="position:absolute;top:0;left:${l}%;transform:translateX(-50%);width:2px;height:100%;background:${e};opacity:0.6"></div>`}\n        </div>\n        <div style="font-size:11px;color:var(--muted);text-align:center;margin-top:4px;font-family:var(--mono)">${l}% through current cycle</div>\n      </div>`}i.length&&(m+='<div style="position:relative;padding:8px 0 8px 20px">',m+='<div style="position:absolute;left:20px;top:20px;bottom:20px;width:2px;background:linear-gradient(to bottom,var(--surface2),var(--border),var(--surface2));border-radius:2px"></div>',i.forEach((e,t)=>{const n="past"===e.type,r="anchor"===e.type,s="overdue"===e.type,l="next"===e.type,c="reorder"===e.type,u="future"===e.type,y=s?"#e85050":l?d:c?"#e8a838":r?"#5b8dee":n?"var(--border)":"var(--surface2)",p=l||c||s?`3px solid ${y}`:`2px solid ${y}`,g=l||c?"16px":r?"14px":"10px",h=n||u?"var(--bg)":r?"#5b8dee":s?"#e85050":l?d:"#e8a838",v=s?"#e85050":l?d:c?"#e8a838":r?"#5b8dee":"var(--muted)",f=l||c||r?"700":"400",w=e.date.toISOString().slice(0,10)===a,k=w?"Today":fmtDate(e.date.toISOString().slice(0,10)),b=w?"":(()=>{const t=Math.round((e.date-o)/864e5);return t<0?`${Math.abs(t)}d ago`:0===t?"today":`in ${t}d`})(),S=c?"🛒":s?"⚠️":l?"🔔":r?"📌":n?"✅":"○",E=c?'<span style="font-size:10px;font-weight:700;background:rgba(232,168,56,0.15);color:#e8a838;border:1px solid rgba(232,168,56,0.3);border-radius:99px;padding:1px 7px;font-family:var(--mono)">REORDER</span>':l?`<span style="font-size:10px;font-weight:700;background:rgba(76,187,138,0.15);color:${d};border:1px solid rgba(76,187,138,0.3);border-radius:99px;padding:1px 7px;font-family:var(--mono)">NEXT</span>`:s?'<span style="font-size:10px;font-weight:700;background:rgba(232,80,80,0.15);color:#e85050;border:1px solid rgba(232,80,80,0.3);border-radius:99px;padding:1px 7px;font-family:var(--mono)">OVERDUE</span>':"";m+=`<div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:${t<i.length-1?"18":"4"}px;position:relative">\n          <div style="flex-shrink:0;width:${g};height:${g};border-radius:50%;background:${h};border:${p};margin-top:3px;position:relative;z-index:1;margin-left:calc(-${g}/2 + 1px)"></div>\n          <div style="flex:1;min-width:0;padding-bottom:4px">\n            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">\n              <span style="font-size:14px;font-weight:${f};color:${v}">${S} ${esc(e.label)}</span>\n              ${E}\n            </div>\n            <div style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:2px">\n              ${k}${b?` <span style="opacity:0.6">· ${b}</span>`:""}\n            </div>\n          </div>\n        </div>`}),m+="</div>");const e=s?fmtDate(s.toISOString().slice(0,10)):"—",u=i.find(e=>"reorder"===e.type),y=u?fmtDate(u.date.toISOString().slice(0,10)):null;m+=`<div style="margin-top:16px;padding:12px 14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);font-size:12px;font-family:var(--mono);line-height:2;color:var(--muted)">\n      <div>🔔 <span style="color:var(--text)">Next replacement:</span> ${e}</div>\n      ${y?`<div>🛒 <span style="color:var(--text)">Reorder by:</span> <span style="color:#e8a838">${y}</span></div>`:""}\n      <div>↻ <span style="color:var(--text)">Cycle:</span> every ${t.interval} ${t.unit} (${Math.round(n)} days)</div>\n    </div>`}else m='<div style="text-align:center;padding:32px 16px;color:var(--muted)">\n      <div style="font-size:36px;margin-bottom:12px">📅</div>\n      <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px">No start date recorded</div>\n      <div style="font-size:13px;line-height:1.6">Mark this as replaced to start tracking the timeline.</div>\n    </div>';document.getElementById("rtl-body").innerHTML=m,openModal("reminder-timeline-modal")}function updateRemindersBadge(e){const t=[...document.querySelectorAll(".tab")].find(e=>e.textContent.includes("Reminders"));if(!t)return;const n=t.querySelector(".reminder-badge");if(n&&n.remove(),e>0){const n=document.createElement("span");n.className="reminder-badge",n.textContent=e,n.style.cssText="background:var(--danger);color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:99px;margin-left:4px;font-family:var(--mono)",t.appendChild(n)}}function openAddReminderModal(e){editingReminderId=null,document.getElementById("reminder-modal-title").textContent="🔔 Add Reminder",document.getElementById("r-name").value=e?.name||"",document.getElementById("r-interval").value=e?.interval||3,document.getElementById("r-unit").value=e?.unit||"months",document.getElementById("r-last-replaced").value="",document.getElementById("r-notes").value="",document.getElementById("r-item-link").value="";document.getElementById("r-item-link").innerHTML='<option value="">— standalone reminder —</option>'+items.filter(e=>!e.quickAdded).map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join("");document.getElementById("reminder-suggestions").innerHTML=REMINDER_SUGGESTIONS.map(e=>`<button onclick="applySuggestion(${JSON.stringify(e).replace(/"/g,"&quot;")})"\n      style="font-size:11px;padding:4px 10px;border-radius:99px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;white-space:nowrap"\n      onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">${esc(e.name)}</button>`).join(""),openModal("reminder-modal"),setTimeout(()=>document.getElementById("r-name").focus(),100)}function applySuggestion(e){document.getElementById("r-name").value=e.name,document.getElementById("r-interval").value=e.interval,document.getElementById("r-unit").value=e.unit}function openEditReminderModal(e){const t=reminders.find(t=>t.id===e);if(!t)return;editingReminderId=e,document.getElementById("reminder-modal-title").textContent="🔔 Edit Reminder",document.getElementById("r-name").value=t.name||"",document.getElementById("r-interval").value=t.interval||3,document.getElementById("r-unit").value=t.unit||"months",document.getElementById("r-last-replaced").value=t.lastReplaced||"",document.getElementById("r-notes").value=t.notes||"";const n=document.getElementById("r-item-link");n.innerHTML='<option value="">— standalone reminder —</option>'+items.filter(e=>!e.quickAdded).map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join(""),n.value=t.linkedItemId||"",openModal("reminder-modal")}async function saveReminder(){if(!canWrite("reminders"))return void showLockBanner("reminders");const e=document.getElementById("r-name").value.trim();if(!e)return void toast("Enter a name for this reminder");const t=parseInt(document.getElementById("r-interval").value)||3,n=document.getElementById("r-unit").value,o=document.getElementById("r-last-replaced").value,a=document.getElementById("r-notes").value.trim(),r=document.getElementById("r-item-link").value||null;if(editingReminderId){const s=reminders.find(e=>e.id===editingReminderId);s&&(s.name=e,s.interval=t,s.unit=n,s.lastReplaced=o||s.lastReplaced,s.notes=a,s.linkedItemId=r)}else reminders.push({id:uid(),name:e,interval:t,unit:n,lastReplaced:o||null,notes:a,linkedItemId:r,createdAt:(new Date).toISOString()});if(r){const e=items.find(e=>e.id===r);e&&(e.replacementInterval=t,e.replacementUnit=n,e.lastReplaced=o||e.lastReplaced||null,touchItem(e),await saveData())}await saveReminders(),closeModal("reminder-modal"),renderReminders(),setTimeout(syncAll,400),toast("Reminder saved ✓")}async function deleteReminder(e){canWrite("reminders")?confirm("Delete this reminder?")&&(reminders=reminders.filter(t=>t.id!==e),await saveReminders(),renderReminders(),toast("Reminder deleted")):showLockBanner("reminders")}function openLogReplacementModal(e){loggingReminderId=e;const t=e.startsWith("item_"),n=t?e.replace("item_",""):null,o=n?items.find(e=>e.id===n):null,a=t?null:reminders.find(t=>t.id===e),r=o?.name||a?.name||"",s=o?`${o.replacementInterval} ${o.replacementUnit}`:a?`${a.interval} ${a.unit}`:"";document.getElementById("log-replacement-title").textContent=`Replaced: ${r}`,document.getElementById("log-replacement-subtitle").textContent=s?`Next replacement in ${s}`:"When did you replace it?",document.getElementById("log-replacement-date").value=today(),openModal("log-replacement-modal")}async function confirmLogReplacement(){if(!canWrite("reminders"))return void showLockBanner("reminders");const e=document.getElementById("log-replacement-date").value||today(),t=loggingReminderId,n=t.startsWith("item_")?t.replace("item_",""):null;if(n){const t=items.find(e=>e.id===n);t&&(t.lastReplaced=e,touchField(t,"lastReplaced"),saveData())}else{const n=reminders.find(e=>e.id===t);if(n&&(n.lastReplaced=e,saveReminders()),n?.linkedItemId){const t=items.find(e=>e.id===n.linkedItemId);t&&(t.lastReplaced=e,touchField(t,"lastReplaced"),saveData())}}closeModal("log-replacement-modal"),renderReminders(),setTimeout(syncAll,400),toast("Replacement logged ✓")}async function applyReminderReplaced(e,t,n){try{const o=await fetch(`${WORKER_URL}/reminder-pending?id=${encodeURIComponent(e)}&token=${encodeURIComponent(n)}`),a=await o.json();_applyReplacedLocally(e,a.date||t||today())}catch(n){_applyReplacedLocally(e,t||today())}}async function _applyReplacedLocally(e,t){let n=!1;if(e.startsWith("item_")){const o=e.replace("item_",""),a=items.find(e=>e.id===o);a&&(a.lastReplaced=t,touchField(a,"lastReplaced"),saveData(),n=!0)}else{const o=reminders.find(t=>t.id===e);if(o&&(o.lastReplaced=t,await saveReminders(),n=!0,o.linkedItemId)){const e=items.find(e=>e.id===o.linkedItemId);e&&(e.lastReplaced=t,touchField(e,"lastReplaced"),saveData())}}n&&(renderReminders(),setTimeout(syncAll,400),showToast("✅ Marked as replaced"),bcPost({type:"REMINDER_REPLACED",reminderId:e,date:t}))}async function pollReminderReplacements(){const e=[...reminders,...items.filter(e=>e.replacementInterval).map(e=>({id:"item_"+e.id,name:e.name,interval:e.replacementInterval,unit:e.replacementUnit,lastReplaced:e.lastReplaced||e.startedUsing||e.logs?.[0]?.date||null}))].filter(e=>["overdue","soon","today"].includes(getReminderStatus(e)));for(const t of e)try{const e=await fetch(`${WORKER_URL}/reminder-token`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reminderId:t.id})}),{token:n}=await e.json();if(!n)continue;const o=await fetch(`${WORKER_URL}/reminder-pending?id=${encodeURIComponent(t.id)}&token=${encodeURIComponent(n)}`),a=await o.json();a.replaced&&_applyReplacedLocally(t.id,a.date||today())}catch(e){}}async function checkReminderNotifications(){if(!notifEnabled||"granted"!==Notification.permission)return;const e=[...reminders,...items.filter(e=>e.replacementInterval).map(e=>({id:"item_"+e.id,name:e.name,interval:e.replacementInterval,unit:e.replacementUnit,lastReplaced:e.lastReplaced||e.startedUsing||e.logs?.[0]?.date||null}))],t=e.filter(e=>"overdue"===getReminderStatus(e)),n=e.filter(e=>0===getReminderDaysUntil(e));if(!t.length&&!n.length)return;const o=(new Date).toISOString().slice(0,10);if(localStorage.getItem("stockroom_last_reminder_notif")===o)return;[...t,...n].slice(0,3).forEach(e=>sendReminderActionNotification(e)),localStorage.setItem("stockroom_last_reminder_notif",o)}async function sendReminderActionNotification(e){if(!("serviceWorker"in navigator)||!navigator.serviceWorker.controller)return void sendLocalNotification(`🔔 ${e.name}`,"Tap to open STOCKROOM","stockroom-reminder-"+e.id);let t="";try{const n=await fetch(`${WORKER_URL}/reminder-token`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reminderId:e.id})});t=(await n.json()).token||""}catch(e){}const n="overdue"===getReminderStatus(e)?`Overdue by ${Math.abs(getReminderDaysUntil(e))} day${1!==Math.abs(getReminderDaysUntil(e))?"s":""}`:"Due today";(await navigator.serviceWorker.ready).showNotification(`🔔 ${e.name}`,{body:n,tag:"stockroom-reminder-"+e.id,renotify:!0,icon:"./icon-192.png",badge:"./icon-192.png",actions:[{action:"replaced",title:"✅ Replaced"},{action:"open",title:"📦 Open app"}],data:{url:window.location.href,reminderId:e.id,reminderName:e.name,token:t,workerUrl:WORKER_URL}})}async function markOrdered(e){if(!canWrite("stockroom"))return void showLockBanner("stockroom");const t=items.find(t=>t.id===e);t&&(t.ordered=!0,t.orderedAt=(new Date).toISOString(),touchField(t,"ordered","orderedAt"),await saveData(),scheduleRender("grid","dashboard","shopping"),setTimeout(syncAll,400),toast(`📦 ${t.name} marked as ordered`))}async function unmarkOrdered(e){if(!canWrite("stockroom"))return void showLockBanner("stockroom");const t=items.find(t=>t.id===e);t&&(t.ordered=!1,t.orderedAt=null,touchField(t,"ordered","orderedAt"),await saveData(),scheduleRender("grid","dashboard","shopping"),setTimeout(syncAll,400),toast("Removed ordered status"))}function toggleCompactView(){compactView=!compactView;const e=document.getElementById("items-grid"),t=document.getElementById("compact-toggle-btn");e&&e.classList.toggle("compact-view",compactView),t&&(t.textContent=compactView?"⊞":"⊟");try{localStorage.setItem("stockroom_compact",compactView?"1":"")}catch(e){}}function loadCompactView(){compactView=!!localStorage.getItem("stockroom_compact");const e=document.getElementById("items-grid"),t=document.getElementById("compact-toggle-btn");e&&compactView&&e.classList.add("compact-view"),t&&(t.textContent=compactView?"⊞":"⊟")}async function getProfiles(){const e=await dbGet("profiles","profiles");if(e)return e;try{const e=localStorage.getItem("stockroom_profiles");if(e){const t=JSON.parse(e)||{};return await dbPut("profiles","profiles",t),localStorage.removeItem("stockroom_profiles"),t}}catch(e){}return{}}async function saveProfiles(e){await dbPut("profiles","profiles",e)}async function loadProfile(e){activeProfile=e||"default";try{localStorage.setItem("stockroom_active_profile",activeProfile)}catch(e){}const t=(await getProfiles())[activeProfile];if(t){const e=await loadDeletedIds();items=(t.items||[]).filter(t=>!e.has(t.id)),settings={threshold:20,country:"GB",...t.settings},reminders=t.reminders||[],groceryItems=t.groceries||[],groceryDepts=t.departments?.length?t.departments:DEFAULT_DEPTS.map(e=>({...e}))}else await loadData(),await loadReminders(),await loadGrocery(),await saveCurrentProfile();updateProfileLabel(),scheduleRender(...RENDER_REGIONS),updateSyncUI(),applyTabPermissions()}async function saveCurrentProfile(){const e=await loadDeletedIds(),t=await getProfiles(),n=t[activeProfile]||{};t[activeProfile]={...n,items:JSON.parse(JSON.stringify(items.filter(t=>!e.has(t.id)))),settings:settings,reminders:JSON.parse(JSON.stringify(reminders)),groceries:JSON.parse(JSON.stringify(groceryItems)),departments:JSON.parse(JSON.stringify(groceryDepts))},await saveProfiles(t)}async function updateProfileLabel(){const e=(await getProfiles())[activeProfile],t=e?.name||("default"===activeProfile?"Home":activeProfile),n=e?.colour||"#e8a838",o=document.getElementById("profile-label");o&&(o.innerHTML=`/ <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${n};margin-right:4px;vertical-align:middle"></span>${t.toUpperCase()}`)}function openProfilePicker(){renderProfileList(),openModal("profile-modal")}const HOUSEHOLD_COLOURS=["#e8a838","#5b8dee","#4cbb8a","#e85050","#b45dee","#ee8c5b","#5bdee8","#dee85b","#ee5bab","#7880a0"],MAX_HOUSEHOLDS=5;async function renderProfileList(){const e=await getProfiles(),t=document.getElementById("profile-list"),n=document.getElementById("profile-add-section");if(!t)return;e.default||(e.default={name:"Home",colour:"#e8a838",items:[],settings:{}});const o=Object.entries(e);n&&(n.style.display=o.length>=MAX_HOUSEHOLDS?"none":"block"),t.innerHTML=o.map(([e,t])=>{const n=e===activeProfile,o=t.colour||"#e8a838",a=(t.items||[]).length,r=(t.reminders||[]).length,s=t.driveFileName?`<span style="font-size:10px;color:var(--muted);font-family:var(--mono)">${esc(t.driveFileName)}</span>`:"";return`<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:${n?"rgba(232,168,56,0.08)":"var(--surface2)"};border:2px solid ${n?o:"var(--border)"};border-radius:12px;transition:border-color 0.2s">\n      <div style="width:14px;height:14px;border-radius:50%;background:${o};flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>\n      <div style="flex:1;min-width:0">\n        <div style="font-size:14px;font-weight:700;color:${n?o:"var(--text)"}">${esc(t.name||e)}${n?" ✓":""}</div>\n        <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${a} item${1!==a?"s":""} · ${r} reminder${1!==r?"s":""}</div>\n        ${s}\n      </div>\n      <div style="display:flex;gap:6px;flex-shrink:0">\n        ${n?'<span style="font-size:11px;color:var(--accent);font-weight:700">Active</span>':`<button class="btn btn-primary btn-sm" onclick="switchProfile('${e}')">Switch</button>`}\n        <button class="btn btn-ghost btn-sm" onclick="openHouseholdEdit('${e}')" title="Edit">✏️</button>\n        ${"default"!==e?`<button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteProfile('${e}')" title="Delete">✕</button>`:""}\n      </div>\n    </div>`}).join("")}function openHouseholdEdit(e){getProfiles().then(t=>{const n=t[e]||{};document.getElementById("household-edit-key").value=e,document.getElementById("household-edit-name").value=n.name||"";const o=n.colour||"#e8a838",a=document.getElementById("household-edit-colours");a&&(a.innerHTML=HOUSEHOLD_COLOURS.map(e=>`\n        <div onclick="selectHouseholdColour('${e}')"\n          data-colour="${e}"\n          style="width:28px;height:28px;border-radius:50%;background:${e};cursor:pointer;\n                 border:3px solid ${e===o?"var(--text)":"transparent"};\n                 transition:border-color 0.15s;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>\n      `).join("")),openModal("household-edit-modal")})}function selectHouseholdColour(e){document.querySelectorAll("#household-edit-colours [data-colour]").forEach(t=>{t.style.borderColor=t.dataset.colour===e?"var(--text)":"transparent"})}async function saveHouseholdEdit(){const e=document.getElementById("household-edit-key").value,t=document.getElementById("household-edit-name").value.trim();if(!t)return void toast("Enter a name");const n=document.querySelector('#household-edit-colours [style*="var(--text)"]'),o=n?.dataset.colour||"#e8a838",a=await getProfiles();a[e]&&(a[e].name=t,a[e].colour=o,await saveProfiles(a)),closeModal("household-edit-modal"),renderProfileList(),renderSettingsHouseholdList(),e===activeProfile&&updateProfileLabel(),toast("Household updated ✓"),_syncQueue.enqueue()}async function switchProfile(e){await saveCurrentProfile(),closeModal("profile-modal"),await loadProfile(e);const t=await getProfiles();toast(`Switched to ${t[e]?.name||e}`)}async function addProfile(){const e=await getProfiles();if(Object.keys(e).length>=MAX_HOUSEHOLDS)return void toast(`Maximum ${MAX_HOUSEHOLDS} households reached`);const t=document.getElementById("new-profile-name"),n=Object.keys(e).length+1,o=t?.value.trim()||`Home ${n}`,a=HOUSEHOLD_COLOURS[n%HOUSEHOLD_COLOURS.length];e["profile_"+Date.now()]={name:o,colour:a,items:[],settings:{threshold:20,country:settings.country||"GB"},reminders:[],groceries:[],departments:DEFAULT_DEPTS.map(e=>({...e}))},await saveProfiles(e),t&&(t.value=""),renderProfileList(),renderSettingsHouseholdList(),toast(`"${o}" created — switch to it to set it up`),_syncQueue.enqueue()}async function deleteProfile(e){const t=await getProfiles(),n=t[e]?.name||e;confirm(`Delete "${n}" and all its items, groceries and reminders?\n\nThis cannot be undone.`)&&(delete t[e],await saveProfiles(t),activeProfile===e&&await loadProfile("default"),renderProfileList(),renderSettingsHouseholdList(),toast(`"${n}" deleted`),_syncQueue.enqueue())}function getExpiryStatus(e){if(!e.expiry)return null;const t=Math.floor((new Date(e.expiry+"T12:00:00")-Date.now())/864e5);return t<0?{label:"Expired",color:"var(--danger)",days:t}:t<=30?{label:`Expires in ${t}d`,color:"var(--warn)",days:t}:{label:`Expires ${fmtDate(e.expiry)}`,color:"var(--muted)",days:t}}function getItemThreshold(e){return e.thresholdOverride??settings.threshold??20}const _origGetStatus=getStatus;function getStatus(e,t,n){const o=n?getItemThreshold(n):t??20;return null==e?"nodata":e<=o/2?"critical":e<=o?"warn":"ok"}function getReorderSuggestion(e){if(!e.logs||e.logs.length<2)return null;const t=[...e.logs].sort((e,t)=>new Date(e.date)-new Date(t.date)),n=[];for(let e=1;e<t.length;e++){const o=(new Date(t[e].date)-new Date(t[e-1].date))/864e5;o>0&&n.push(o)}if(!n.length)return null;const o=n.reduce((e,t)=>e+t,0)/n.length,a=(t.reduce((e,t)=>e+(t.qty||1),0),t.length,30.5*(e.months||1)*(e.qty||1)),r=Math.min(o,30),s=Math.ceil(r/a*(e.qty||1));return{qty:Math.max(1,s),shopWindowDays:Math.round(r),avgGapDays:Math.round(o)}}function openAnalyticsModal(e){const t=items.find(t=>t.id===e);if(!t)return;const n=document.getElementById("analytics-title"),o=document.getElementById("analytics-content");if(!n||!o)return;if(n.textContent=`📊 ${t.name}`,!t.logs||t.logs.length<2)return o.innerHTML='<p style="color:var(--muted);font-size:13px">Not enough purchase history yet. Log at least 2 purchases to see analytics.</p>',void openModal("analytics-modal");const a=[...t.logs].sort((e,t)=>new Date(e.date)-new Date(t.date)),r=[];for(let e=1;e<a.length;e++){const t=(new Date(a[e].date)-new Date(a[e-1].date))/864e5;t>0&&r.push({gap:Math.round(t),date:a[e].date})}const s=Math.round(r.reduce((e,t)=>e+t.gap,0)/r.length),i=Math.min(...r.map(e=>e.gap)),l=Math.max(...r.map(e=>e.gap)),c=a.filter(e=>e.price).map(e=>({val:parsePriceValue(e.price),raw:e.price,date:e.date})).filter(e=>e.val),d=c.length?c.reduce((e,t)=>e+t.val,0)/c.length:null,m=c.reduce((e,t)=>e+t.val,0),u=getReorderSuggestion(t),y=(r.length,Math.max(...r.map(e=>e.gap),1)),p=r.map(e=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px" title="${e.date}: ${e.gap} days">\n      <div style="width:100%;max-width:32px;height:${Math.round(e.gap/y*60)+4}px;background:var(--accent2);border-radius:3px 3px 0 0;opacity:0.8"></div>\n      <div style="font-size:9px;color:var(--muted);font-family:var(--mono)">${e.gap}d</div>\n    </div>`).join("");o.innerHTML=`\n    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">\n      <div style="background:var(--surface2);border-radius:10px;padding:12px">\n        <div style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-bottom:4px">AVG RESTOCK</div>\n        <div style="font-size:22px;font-weight:700;color:var(--text)">${s}<span style="font-size:13px;color:var(--muted)">d</span></div>\n        <div style="font-size:11px;color:var(--muted)">range: ${i}–${l} days</div>\n      </div>\n      <div style="background:var(--surface2);border-radius:10px;padding:12px">\n        <div style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-bottom:4px">TOTAL SPEND</div>\n        <div style="font-size:22px;font-weight:700;color:var(--ok)">£${m.toFixed(2)}</div>\n        <div style="font-size:11px;color:var(--muted)">${c.length} purchase${1!==c.length?"s":""}${d?` · avg £${d.toFixed(2)}`:""}</div>\n      </div>\n    </div>\n    ${r.length>1?`\n    <div style="margin-bottom:16px">\n      <div style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Days between restocks</div>\n      <div style="display:flex;align-items:flex-end;gap:3px;height:72px">${p}</div>\n    </div>`:""}\n    ${u?`\n    <div style="background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.2);border-radius:10px;padding:12px;margin-bottom:12px">\n      <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:4px">💡 Smart Reorder Suggestion</div>\n      <div style="font-size:13px;color:var(--text)">Buy <strong>×${u.qty}</strong> — covers your typical ${u.shopWindowDays}-day shop window</div>\n      <div style="font-size:11px;color:var(--muted);margin-top:3px">Based on your avg restock interval of ${u.avgGapDays} days</div>\n    </div>`:""}\n    <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">\n      First purchased: ${fmtDate(a[0].date)} · Total purchases: ${a.length}\n    </div>`,openModal("analytics-modal")}let cameraStream=null;function openCameraModal(){openModal("camera-modal");const e=document.getElementById("camera-video");navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}}).then(t=>{cameraStream=t,e.srcObject=t}).catch(()=>{toast("Could not access camera — check permissions"),closeModal("camera-modal")})}function closeCameraModal(){cameraStream&&(cameraStream.getTracks().forEach(e=>e.stop()),cameraStream=null),closeModal("camera-modal")}function capturePhoto(){const e=document.getElementById("camera-video"),t=document.createElement("canvas");t.width=e.videoWidth||640,t.height=e.videoHeight||480,t.getContext("2d").drawImage(e,0,0);const n=t.toDataURL("image/jpeg",.85);pendingImageUrl=n,showImagePreview(n,"Photo captured"),closeCameraModal()}function generateJoinCode(){const e="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";let t="";for(let n=0;n<6;n++)t+=e[Math.floor(32*Math.random())];return t}function getOrCreateJoinCode(){let e=localStorage.getItem("stockroom_join_code");return e||(e=generateJoinCode(),localStorage.setItem("stockroom_join_code",e)),e}function renderHealthDashboard(){const e=document.getElementById("health-dashboard");if(!e||!items.length)return void(e&&(e.innerHTML=""));const t=settings.threshold;let n=0,o=0,a=0,r=0;items.forEach(e=>{const s=calcStock(e),i=getStatus(s?.pct??null,t);"critical"===i?n++:"warn"===i?o++:"ok"===i?a++:r++});const s=(e,t,n,o)=>0===e?"":`<button onclick="setFilter('status','${o}',this)" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:99px;border:1px solid ${n}33;background:${n}15;color:${n};font-size:12px;font-weight:700;cursor:pointer;font-family:var(--sans)">\n      ${t} <span style="font-size:14px;font-weight:800">${e}</span>\n    </button>`;e.innerHTML=s(n,"🔴 Critical","#e85050","critical")+s(o,"🟡 Low","#e8a838","warn")+s(a,"🟢 Good","#4cbb8a","ok")+(r?`<span style="font-size:12px;color:var(--muted);padding:5px 4px">${r} no data</span>`:"")}async function deleteLogEntry(e,t){if(!canWrite("stockroom"))return void showLockBanner("stockroom");const n=items.find(t=>t.id===e);n&&(n.logs=(n.logs||[]).filter(e=>e.id!==t),touchItem(n),await saveData(),renderLogHistory(n),scheduleRender("grid","dashboard"),setTimeout(syncAll,400))}function renderLogHistory(e){const t=document.getElementById("log-history"),n=document.getElementById("log-history-entries");if(!t||!n)return;if(!e.logs||!e.logs.length)return void(t.style.display="none");t.style.display="block";const o=e.logs.map(e=>parsePriceValue(e.price)).filter(e=>null!==e),a=o.length?Math.min(...o):null,r=o.length?Math.max(...o):null;if(n.innerHTML=[...e.logs].reverse().slice(0,8).map((t,n,s)=>{const i=parsePriceValue(t.price),l=s[n+1],c=l?parsePriceValue(l.price):null;let d="";if(null!==i&&null!==c){const e=i-c;Math.abs(e)>=.01&&(d=e>0?'<span style="color:var(--danger);font-size:10px">↑</span>':'<span style="color:var(--ok);font-size:10px">↓</span>')}const m=null!==i&&i===a&&o.length>1,u=null!==i&&i===r&&o.length>1&&a!==r;return`<div class="log-entry" style="display:flex;align-items:center;gap:8px">\n      <div style="flex:1;display:flex;align-items:center;gap:8px;flex-wrap:wrap">\n        <span style="color:var(--muted);font-size:12px">${esc(t.store)||"—"}</span>\n        <span style="color:var(--muted);font-family:var(--mono);font-size:11px">${fmtDate(t.date)}</span>\n        <span style="font-family:var(--mono);font-size:12px;display:flex;align-items:center;gap:4px">\n          ×${t.qty}\n          ${t.price?`<span style="color:${m?"var(--ok)":u?"var(--danger)":"var(--text)"};font-weight:700">${esc(t.price)}</span>${d}${m?'<span style="font-size:10px">🏷</span>':""}`:""}\n        </span>\n      </div>\n      <button onclick="deleteLogEntry('${e.id}','${t.id}')" title="Delete this entry" style="background:none;border:none;cursor:pointer;font-size:14px;color:var(--muted);padding:2px 4px;border-radius:4px;flex-shrink:0" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--muted)'">✕</button>\n    </div>`}).join(""),o.length>=2){const e=(o.reduce((e,t)=>e+t,0)/o.length).toFixed(2);n.innerHTML+=`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);font-family:var(--mono);display:flex;gap:16px">\n      <span>avg £${e}</span>\n      <span style="color:var(--ok)">low £${a.toFixed(2)}</span>\n      <span style="color:var(--danger)">high £${r.toFixed(2)}</span>\n    </div>`}}function quickLogFromShopping(e){openLogModal(e),sessionStorage.setItem("log_return_view","shopping")}let deferredInstallPrompt=null;const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent)||"MacIntel"===navigator.platform&&navigator.maxTouchPoints>1,isInStandaloneMode=window.matchMedia("(display-mode: standalone)").matches||!0===window.navigator.standalone,isAndroid=/android/i.test(navigator.userAgent);if("serviceWorker"in navigator){(location.hostname.includes("github.io")||location.hostname.includes("artbot5000"))&&(window.addEventListener("load",()=>{navigator.serviceWorker.register("./sw.js").then(e=>{e.update(),e.waiting&&showUpdateBanner(e.waiting),e.addEventListener("updatefound",()=>{const t=e.installing;t.addEventListener("statechange",()=>{"installed"===t.state&&navigator.serviceWorker.controller&&showUpdateBanner(t)})})}).catch(e=>console.warn("SW failed:",e));let e=!1;navigator.serviceWorker.addEventListener("controllerchange",()=>{e||(e=!0,location.reload())})}),!isIOS||isInStandaloneMode||localStorage.getItem("stockroom_ios_banner_dismissed")||setTimeout(()=>{const e=document.getElementById("ios-install-banner");e&&(e.style.display="block")},3e3))}function showUpdateBanner(e){const t=document.getElementById("update-banner");t&&(t.style.display="flex",t._worker=e)}function applyUpdate(){const e=document.getElementById("update-banner");e?._worker?e._worker.postMessage({type:"SKIP_WAITING"}):location.reload(!0)}async function installPWA(){if(isIOS){const e=document.getElementById("ios-install-banner");return void(e&&(e.style.display="block",e.scrollIntoView({behavior:"smooth"})))}if(!deferredInstallPrompt)return void toast('Use "Add to Home Screen" from your browser menu');deferredInstallPrompt.prompt();const{outcome:e}=await deferredInstallPrompt.userChoice;deferredInstallPrompt=null;const t=document.getElementById("install-banner");t&&t.classList.remove("show")}function dismissInstallBanner(){const e=document.getElementById("install-banner");e&&e.classList.remove("show");try{localStorage.setItem("stockroom_install_dismissed","1")}catch(e){}}function dismissIOSBanner(){const e=document.getElementById("ios-install-banner");e&&(e.style.display="none");try{localStorage.setItem("stockroom_ios_banner_dismissed","1")}catch(e){}}window.addEventListener("beforeinstallprompt",e=>{e.preventDefault(),deferredInstallPrompt=e,localStorage.getItem("stockroom_install_dismissed")||setTimeout(()=>{const e=document.getElementById("install-banner");e&&e.classList.add("show")},3e3);const t=document.getElementById("install-prompt-row");t&&(t.style.display="flex")}),window.addEventListener("appinstalled",()=>{deferredInstallPrompt=null;const e=document.getElementById("install-banner");e&&e.classList.remove("show");const t=document.getElementById("ios-install-banner");t&&(t.style.display="none"),toast("STOCKROOM installed ✓")});let notifEnabled=!1;function loadNotifSettings(){try{const e=JSON.parse(localStorage.getItem("stockroom_notif")||"{}");notifEnabled=e.enabled||!1;const t=document.getElementById("notif-days");t&&e.days&&(t.value=e.days)}catch(e){}const e=document.getElementById("notif-platform-note");e&&(isIOS&&!isInStandaloneMode?(e.innerHTML='Push notifications on iPhone require the app to be <strong style="color:var(--text)">installed to your home screen</strong> via Safari. Once installed, notifications work like a native app.',e.style.color="var(--warn)"):isIOS&&isInStandaloneMode?(e.textContent="Running as installed app — notifications are fully supported on your iPhone.",e.style.color="var(--ok)"):e.textContent="Get notified when items are running low — no email needed. Works best when installed to your home screen."),updateNotifUI()}function saveNotifSettings(){try{const e=document.getElementById("notif-days")?.value||"14";localStorage.setItem("stockroom_notif",JSON.stringify({enabled:notifEnabled,days:e}))}catch(e){}}function updateNotifUI(){const e=document.getElementById("notif-btn"),t=document.getElementById("notif-status-text"),n=document.getElementById("notif-threshold-row"),o=document.getElementById("install-prompt-row"),a=document.getElementById("install-prompt-info"),r=document.getElementById("install-prompt-btn");if(!e||!t)return;const s="Notification"in window?Notification.permission:"unsupported";return isIOS&&!isInStandaloneMode?(t.textContent="Requires home screen install on iPhone",t.style.color="var(--warn)",e.style.display="none",o&&(o.style.display="flex"),a&&(a.innerHTML="<h4>Add to Home Screen first</h4><p>iOS only supports notifications when installed via Safari → Share → Add to Home Screen</p>"),r&&(r.textContent="How to install",r.onclick=()=>{const e=document.getElementById("ios-install-banner");e&&(e.style.display="block",e.scrollIntoView({behavior:"smooth"}))}),void(n&&(n.style.display="none"))):"unsupported"===s?(t.textContent="Not supported on this browser",void(e.style.display="none")):"denied"===s?(t.textContent="Blocked — enable notifications in browser/phone settings",t.style.color="var(--danger)",void(e.style.display="none")):void(notifEnabled&&"granted"===s?(t.textContent="Active — you'll be alerted when items run low",t.style.color="var(--ok)",e.textContent="Disable",e.className="btn btn-danger btn-sm",e.style.display="inline-flex",n&&(n.style.display="flex"),o&&(o.style.display=!isIOS&&deferredInstallPrompt?"flex":"none")):(t.textContent="Not enabled",t.style.color="var(--muted)",e.textContent="Enable",e.className="btn btn-ghost btn-sm",e.style.display="inline-flex",n&&(n.style.display="none"),o&&(o.style.display=!isIOS&&deferredInstallPrompt?"flex":"none")))}async function toggleNotifications(){if(notifEnabled)return notifEnabled=!1,saveNotifSettings(),updateNotifUI(),void toast("Notifications disabled");if(!("Notification"in window))return void toast("Not supported on this browser");"granted"===await Notification.requestPermission()?(notifEnabled=!0,saveNotifSettings(),updateNotifUI(),toast("Notifications enabled ✓"),setTimeout(()=>sendLocalNotification("📦 STOCKROOM notifications active","You'll be notified when items are running low.","stockroom-test"),600)):(toast("Notifications blocked — enable in browser settings"),updateNotifUI())}function sendLocalNotification(e,t,n){notifEnabled&&"granted"===Notification.permission&&("serviceWorker"in navigator&&navigator.serviceWorker.controller?navigator.serviceWorker.ready.then(o=>{o.showNotification(e,{body:t,tag:n||"stockroom",renotify:!0,icon:"./icon-192.png",badge:"./icon-192.png",data:{url:window.location.href}})}):new Notification(e,{body:t,icon:"./icon-192.png",tag:n||"stockroom"}))}async function checkLowStockNotifications(){if(!notifEnabled||"granted"!==Notification.permission)return;const e=parseInt(document.getElementById("notif-days")?.value||"14"),t=items.map(t=>{const n=calcStock(t);return n&&n.daysLeft<=e?{item:t,daysLeft:n.daysLeft}:null}).filter(Boolean).sort((e,t)=>e.daysLeft-t.daysLeft);if(!t.length)return;const n=(new Date).toISOString().slice(0,10);if(localStorage.getItem("stockroom_last_notif")===n)return;const o=await getProfiles(),a=o[activeProfile]?.name||"Home",r=Object.keys(o).length>1?` · ${a}`:"",s=t.filter(e=>e.daysLeft<=7);sendLocalNotification((s.length?`🔴 ${s.length} item${1!==s.length?"s":""} critically low!`:`📦 ${t.length} item${1!==t.length?"s":""} running low`)+r,t.slice(0,3).map(e=>`• ${e.item.name} (${e.daysLeft}d left)`).join("\n")+(t.length>3?`\n+ ${t.length-3} more`:""),"stockroom-lowstock");try{localStorage.setItem("stockroom_last_notif",n)}catch(e){}}let activeSort="status";function setSort(e){activeSort=e,renderGrid()}const swipeState={},SWIPE_THRESHOLD=110,SWIPE_LOCK_ANGLE=30;function swipeStart(e,t){const n=e.touches[0];swipeState[t]={startX:n.clientX,startY:n.clientY,triggered:!1,locked:null}}function swipeMove(e,t){const n=swipeState[t];if(!n)return;const o=e.touches[0].clientX-n.startX,a=e.touches[0].clientY-n.startY;if(o<0)return;if(null===n.locked&&(Math.abs(o)>6||Math.abs(a)>6)){const e=Math.abs(180*Math.atan2(Math.abs(a),o)/Math.PI);n.locked=e<30?"h":"v"}if("h"!==n.locked)return;const r=document.getElementById("swipe-hint-"+t);r&&(r.style.opacity=Math.min(1,o/110)),o>110&&!n.triggered&&(n.triggered=!0,r&&(r.style.opacity=1),navigator.vibrate&&navigator.vibrate(30))}async function swipeEnd(e,t){const n=swipeState[t];if(!n)return;const o=document.getElementById("swipe-hint-"+t);o&&(o.style.opacity=0);const a=e.changedTouches[0].clientX-n.startX;n.triggered&&a>=110&&openLogModal(t),delete swipeState[t]}let deletedItem=null,deletedIndex=null,undoTimer=null;async function deleteItem(e){const t=items.findIndex(t=>t.id===e),n=items[t];if(!n)return;deletedItem=n,deletedIndex=t,items.splice(t,1),await addTombstone(e),await saveData(),scheduleRender("grid","dashboard","shopping"),setTimeout(syncAll,400),clearTimeout(undoTimer);const o=document.getElementById("undo-toast"),a=document.getElementById("undo-msg");a&&(a.textContent=`"${n.name}" removed`),o&&o.classList.add("show"),undoTimer=setTimeout(()=>{o&&o.classList.remove("show"),deletedItem=null,deletedIndex=null},5e3)}async function undoDelete(){clearTimeout(undoTimer);const e=document.getElementById("undo-toast");e&&e.classList.remove("show"),deletedItem&&(await removeTombstone(deletedItem.id),items.splice(deletedIndex,0,deletedItem),deletedItem=null,deletedIndex=null,await saveData(),scheduleRender("grid","dashboard","shopping"),setTimeout(syncAll,400),toast("Restored ✓"))}let lastAutoSync=0;const AUTO_SYNC_COOLDOWN=3e4;document.addEventListener("visibilitychange",()=>{if("visible"===document.visibilityState){const e=Date.now();e-lastAutoSync>3e4&&(lastAutoSync=e,checkCloudAhead()),setTimeout(pollReminderReplacements,800)}}),"serviceWorker"in navigator&&navigator.serviceWorker.addEventListener("message",e=>{if("REMINDER_REPLACED"===e.data?.type){const{reminderId:t,date:n}=e.data;_applyReplacedLocally(t,n)}"BG_SYNC"===e.data?.type&&(console.log("BG_SYNC received from SW"),syncAll().catch(e=>console.warn("BG_SYNC syncAll failed:",e)))});const _bc="BroadcastChannel"in window?new BroadcastChannel("stockroom"):null;function bcPost(e){try{_bc?.postMessage(e)}catch(e){}}async function registerBackgroundSync(){if("serviceWorker"in navigator&&"SyncManager"in window)try{const e=await navigator.serviceWorker.ready;await e.sync.register("stockroom-sync")}catch(e){}}async function checkPendingSWSync(){if("caches"in window)try{const e=await caches.open("stockroom-flags");await e.match("pending-sync")&&(await e.delete("pending-sync"),console.log("Pending SW sync flag found — syncing now"),setTimeout(syncAll,800))}catch(e){}}async function checkCloudAhead(){if(kvConnected||_shareState)try{let e=null;if(_shareState)e=await proxyGetModifiedTime();else if(kvConnected){const t=await fetchKV(`${WORKER_URL}/data/modified`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,verifier:_kvVerifier,household:activeProfile})});t.ok&&(e=(await t.json()).modifiedTime)}else 0;if(!e)return;const t=new Date(e).getTime();t>(settings.lastSynced?new Date(settings.lastSynced).getTime():0)+5e3&&(await syncAll(),hideSyncBanner())}catch(e){console.warn("Auto-sync check failed:",e.message)}}function showSyncBanner(){const e=document.getElementById("sync-banner");e&&(e.style.display="flex")}function hideSyncBanner(){const e=document.getElementById("sync-banner");e&&(e.style.display="none")}async function syncNowAndDismissBanner(){hideSyncBanner(),await syncAll()}_bc&&(_bc.onmessage=async e=>{const{type:t}=e.data;if("DATA_CHANGED"===t){const e=await dbGet("items","items");e&&Array.isArray(e)&&(items=e,scheduleRender("grid","dashboard","shopping","sns","filters"))}if("REMINDER_REPLACED"===t){const{reminderId:t,date:n}=e.data;await _applyReplacedLocally(t,n)}if("GROCERY_CHANGED"===t){const e=await dbGet("groceries","items");e&&(groceryItems=e,renderGrocery())}if("SETTINGS_CHANGED"===t){const e=await dbGet("settings","settings");e&&(settings={...settings,...e},scheduleRender("settings-ui"))}}),setInterval(()=>{"visible"===document.visibilityState&&(lastAutoSync=Date.now(),checkCloudAhead())},3e5);let filtersOpen=!1;function toggleFilters(){filtersOpen=!filtersOpen;const e=document.getElementById("filter-panel"),t=document.getElementById("filter-toggle-icon");e.style.display=filtersOpen?"flex":"none",t.textContent=filtersOpen?"▾":"▸";try{sessionStorage.setItem("stockroom_filters_open",filtersOpen?"1":"")}catch(e){}}function loadFilterPanelState(){filtersOpen=!!sessionStorage.getItem("stockroom_filters_open");const e=document.getElementById("filter-panel"),t=document.getElementById("filter-toggle-icon");e&&(e.style.display=filtersOpen?"flex":"none"),t&&(t.textContent=filtersOpen?"▾":"▸")}function updateFilterBadge(){const e=document.getElementById("filter-active-badge");if(!e)return;const t=["all"!==activeFilter,"all"!==activeCadence,"all"!==activeStore,0!==activeRating].filter(Boolean).length;t>0?(e.textContent=t,e.style.display="inline"):e.style.display="none"}function resetAllFilters(){activeFilter="all",activeCadence="all",activeStore="all",activeRating=0,document.querySelectorAll("#filter-bar .filter-chip").forEach((e,t)=>e.classList.toggle("active",0===t)),document.querySelectorAll("#store-filter-bar .filter-chip").forEach((e,t)=>e.classList.toggle("active",0===t)),document.querySelectorAll("#rating-filter-bar .filter-chip").forEach((e,t)=>e.classList.toggle("active",0===t)),updateFilterBadge(),renderGrid()}function reconcileFilters(){const e=settings.threshold,t=items.filter(e=>!e.quickAdded),n=n=>t.some(t=>{const o=calcStock(t),a=getStatus(o?.pct??null,e);return n(t,a)});let o=!1;if("all"!==activeFilter){n((e,t)=>t===activeFilter)||(activeFilter="all",document.querySelectorAll("#filter-bar .filter-chip").forEach(e=>{const t=e.textContent.trim();"All"===t||t.includes("All")?e.classList.add("active"):e.classList.remove("active")}),o=!0)}if("all"!==activeCadence){n(e=>e.cadence===activeCadence)||(activeCadence="all",document.querySelectorAll("#filter-bar .filter-chip").forEach(e=>{(e.textContent.includes("Monthly")||e.textContent.includes("Bulk"))&&e.classList.remove("active")}),o=!0)}if("all"!==activeStore){const e=new Set;t.forEach(t=>{t.store?.trim()&&e.add(t.store.trim()),(t.logs||[]).forEach(t=>{t.store?.trim()&&e.add(t.store.trim())})}),e.has(activeStore)||(activeStore="all",o=!0)}if(0!==activeRating){if(!n(-1===activeRating?e=>!e.rating:e=>e.rating===activeRating)){activeRating=0,document.querySelectorAll("#rating-filter-bar .filter-chip").forEach(e=>e.classList.remove("active"));const e=document.querySelector("#rating-filter-bar .filter-chip");e&&e.classList.add("active"),o=!0}}if(null!==activeTagFilter){n(e=>(e.tags||[]).includes(activeTagFilter))||(activeTagFilter=null,o=!0)}o&&updateFilterBadge()}const RENDER_REGIONS=["grid","dashboard","filters","shopping","sns","settings-ui"],_dirty=new Set;let _raf=null,_rendering=!1;function scheduleRender(...e){0===e.length&&(e=RENDER_REGIONS),e.forEach(e=>_dirty.add(e)),_raf||(_raf=requestAnimationFrame(_flushRender))}function _flushRender(){if(_raf=null,_rendering)return void(_raf=requestAnimationFrame(_flushRender));_rendering=!0;const e=new Set(_dirty);_dirty.clear();try{const t=document.getElementById("item-count");if(t&&(t.textContent=items.length+" item"+(1!==items.length?"s":"")),e.has("filters")&&(buildStoreFilterBar(),buildTagFilterBar(),buildShoppingTagFilterBarInline(),reconcileFilters()),e.has("dashboard")&&(renderHealthDashboard(),renderPendingDeliveries(),renderIncompleteSection()),e.has("sns")&&updateSnSBanner(),e.has("grid")&&renderGrid(),e.has("shopping")&&"none"!==document.getElementById("shopping-panel")?.style.display&&renderShoppingList(),e.has("settings-ui")){const e=document.getElementById("setting-threshold"),t=document.getElementById("setting-country"),n=document.getElementById("setting-email"),o=document.getElementById("setting-email-interval"),a=document.getElementById("setting-email-start"),r=document.getElementById("setting-email-start-time");e&&(e.value=settings.threshold),t&&(t.value=settings.country),n&&(n.value=settings.email||""),o&&(o.value=settings.emailInterval??30),a&&(a.value=settings.emailStartDate||""),r&&(r.value=settings.emailStartTime||"09:00"),updateLastSentUI()}}finally{_rendering=!1,_dirty.size>0&&(_raf=requestAnimationFrame(_flushRender))}}function renderAll(){scheduleRender(...RENDER_REGIONS)}function renderGrid(){const e=settings.threshold,t=document.getElementById("items-grid");Array.isArray(items)||(console.error("stockroom: items is not an array in renderGrid",items),items=[]);let n=items.filter(t=>{if(t.quickAdded)return!1;const n=calcStock(t),o=getStatus(n?.pct??null,e);if("all"!==activeFilter&&o!==activeFilter)return!1;if("all"!==activeCadence&&t.cadence!==activeCadence)return!1;if("all"!==activeStore){const e=t.store&&t.store.trim()===activeStore,n=(t.logs||[]).some(e=>e.store&&e.store.trim()===activeStore);if(!e&&!n)return!1}return(-1!==activeRating||!t.rating)&&(-1===activeRating&&!t.rating||!(activeRating>0&&t.rating!==activeRating)&&!(null!==activeTagFilter&&!(t.tags||[]).includes(activeTagFilter)))});0!==items.length?0!==n.length?(n.sort((e,t)=>{switch(activeSort){case"name":return(e.name||"").localeCompare(t.name||"");case"days":return(calcStock(e)?.daysLeft??9999)-(calcStock(t)?.daysLeft??9999);case"lastbought":{const n=e.logs?.at(-1)?.date||"0000";return(t.logs?.at(-1)?.date||"0000").localeCompare(n)}case"rating":return(t.rating||0)-(e.rating||0);case"added":return 0;default:return(calcStock(e)?.pct??101)-(calcStock(t)?.pct??101)}}),t.innerHTML=n.map(t=>cardHTML(t,e)).join("")):t.innerHTML='<div class="empty-state"><div class="icon">🔍</div><h3>No items match this filter</h3><p>Try a different filter above.</p></div>':t.innerHTML='<div class="empty-state">\n      <div class="icon">📦</div>\n      <h3>Your stockroom is empty</h3>\n      <p>Add the household consumables you buy regularly — coffee, toilet paper, cleaning supplies, anything you don\'t want to run out of.</p>\n      <button class="btn btn-primary" onclick="openAddModal()">+ Add Your First Item</button>\n    </div>'}function cardHTML(e,t){const n=calcStock(e),o=n?.pct??null,a=n?.daysLeft??null,r=getStatus(o,t),s=STATUS_COLOR[r],i=e.logs?.at(-1),l="critical"===r?"#e85050":"warn"===r?"#e8a838":"#4cbb8a",c="bulk"===e.cadence?'<span class="cadence-badge badge-bulk">📦 Bulk</span>':'<span class="cadence-badge badge-monthly">🗓️ Monthly</span>',d=`<span class="status-badge" style="background:${s}22;color:${s}">${STATUS_LABEL[r]}</span>`;return`\n  <div class="item-card" style="border-left:3px solid ${s}" data-id="${e.id}"\n    ontouchstart="swipeStart(event,'${e.id}')" ontouchmove="swipeMove(event,'${e.id}')" ontouchend="swipeEnd(event,'${e.id}')">\n    <div class="swipe-hint" id="swipe-hint-${e.id}">📋</div>\n    ${e.imageUrl?`<img class="card-image" src="${esc(e.imageUrl)}" alt="${esc(e.name)}" onerror="this.style.display='none'">`:""}\n    <div class="card-top">\n      <div class="card-category">${e.category||"Other"}</div>\n      <div class="card-btns">\n        <button class="btn-icon" title="Update stock count" onclick="openStockCountModal('${e.id}')">🔢</button>\n        <button class="btn-icon" title="Usage analytics" onclick="openAnalyticsModal('${e.id}')">📊</button>\n        <button class="btn-icon" title="Price history" onclick="openPriceHistoryModal('${e.id}')" ${getPriceHistory(e).length<2?'style="opacity:0.35;cursor:default"':""}>💰</button>\n        <button class="btn-icon" title="Share item" onclick="shareItem('${e.id}')">↗️</button>\n        <button class="btn-icon" title="Edit" onclick="openEditModal('${e.id}')">✏️</button>\n        <button class="btn-icon" title="Delete" onclick="deleteItem('${e.id}')">🗑️</button>\n      </div>\n    </div>\n    <div class="card-name" style="margin-bottom:12px">${esc(e.name)}</div>\n    <div class="stock-bar-wrap">\n      <div class="stock-bar-label">\n        <span>STOCK</span>\n        <span style="color:${s}">${null!==o?o+"%":"?"}</span>\n      </div>\n      <div class="stock-bar">\n        <div class="stock-bar-fill" style="width:${o??0}%;background:${l}"></div>\n      </div>\n    </div>\n    <div class="card-meta">\n      <div class="meta-item"><strong>${null!==a?a+"d left":"No data"}</strong>Est. remaining</div>\n      <div class="meta-item" title="${fmtDate(i?.date)}"><strong>${timeAgo(i?.date)}</strong>Last bought</div>\n      <div class="meta-item"><strong>${e.startedUsing?fmtDate(e.startedUsing):"—"}</strong>Started using</div>\n      <div class="meta-item"><strong>${e.months||1}mo</strong>Per purchase</div>\n    </div>\n    ${null!=e.stockCount?`<div style="font-size:11px;color:var(--accent2);font-family:var(--mono);margin-bottom:8px">🔢 Stock count: ${e.stockCount} units remaining · counted ${fmtDate(e.stockCountDate)}</div>`:""}\n    ${priceTrendHTML(e)}\n    ${frequencyInsightHTML(e)}\n    <div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">\n      ${c}${d}\n      ${e.ordered?'<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(91,141,238,0.15);border:1px solid rgba(91,141,238,0.3);color:#5b8dee;font-family:var(--mono)">📦 Ordered</span>':""}\n      ${(()=>{const t=getExpiryStatus(e);return t?`<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(232,168,56,0.1);border:1px solid rgba(232,168,56,0.3);color:${t.color};font-family:var(--mono)" title="${fmtDate(e.expiry)}">⏰ ${t.label}</span>`:""})()}\n    </div>\n    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">\n      <div class="card-star-rating" title="Click to rate">\n        ${[1,2,3,4,5].map(t=>`<span class="card-star${(e.rating||0)>=t?" on":""}" onclick="rateItem('${e.id}',${t})" data-id="${e.id}" data-val="${t}"\n          onmouseover="previewCardStars('${e.id}',${t})" onmouseout="resetCardStars('${e.id}')">★</span>`).join("")}\n      </div>\n      <span class="card-rating-label" id="rl-${e.id}" style="font-size:11px;color:${e.rating?e.rating<=2?"var(--danger)":e.rating>=4?"var(--ok)":"var(--muted)":"var(--muted)"}">\n        ${e.rating?RATING_LABELS[e.rating]:"Not rated"}\n      </span>\n    </div>\n    ${cardTagsHTML(e)}\n    ${e.notes?`<div class="card-notes">💬 ${esc(e.notes)}</div>`:""}\n    ${storePricesCardHTML(e)}\n    ${e.url?`<a class="card-link" href="${esc(e.url)}" target="_blank" rel="noopener">🛒 Buy now ↗</a>`:""}\n    ${e.logs?.some(e=>e.pendingDelivery)&&!e.startedUsing?`<div style="font-size:12px;color:var(--warn);background:rgba(232,168,56,0.1);border:1px solid rgba(232,168,56,0.25);border-radius:8px;padding:8px 12px;margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px">\n           <span>⏳ When did you start using this?</span>\n           <button class="btn btn-sm" style="background:rgba(232,168,56,0.2);color:var(--warn);border:none;font-size:12px" onclick="openStartedUsingModal('${e.id}')">Set date</button>\n         </div>`:""}\n    <div style="display:flex;gap:6px;margin-top:10px">\n      <button class="btn btn-ghost btn-sm log-btn" style="flex:1" onclick="openLogPurchaseModal('${e.id}')">📋 Log Purchase</button>\n      ${e.ordered?`<button class="btn btn-sm log-btn" style="flex:1;background:rgba(76,187,138,0.15);color:var(--ok);border:1px solid rgba(76,187,138,0.3)" onclick="openDeliveredModal('${e.id}')">📦 Delivered</button>`:`<button class="btn btn-ghost btn-sm log-btn" style="flex:1;color:var(--muted)" onclick="openDeliveredModal('${e.id}')">📦 Delivered</button>`}\n    </div>\n  </div>`}function storePricesCardHTML(e){const t=(e.storePrices||[]).filter(e=>e.store&&e.price);if(!t.length)return"";const n=t.map(e=>({...e,val:parsePriceValue(e.price)})),o=n.filter(e=>null!==e.val),a=o.length?Math.min(...o.map(e=>e.val)):null;return`<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">${n.map(e=>{const t=null!==e.val&&e.val===a&&o.length>1;return`<span style="font-size:11px;font-family:var(--mono);padding:2px 8px;border-radius:99px;background:${t?"rgba(76,187,138,0.15)":"var(--surface2)"};border:1px solid ${t?"rgba(76,187,138,0.4)":"var(--border)"};color:${t?"var(--ok)":"var(--muted)"};white-space:nowrap">\n      ${esc(e.store)}: ${esc(e.price)}${t?" 🏷":""}\n    </span>`}).join("")}</div>`}function esc(e){return String(e||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}let pendingImageUrl=null;const CATEGORY_EMOJI={Kitchen:"🍳",Bathroom:"🛁",Cleaning:"🧹","Food & Drink":"☕",Health:"💊",Garden:"🌱",Office:"📎",Other:"📦"},TAG_COLORS=[{bg:"rgba(91,141,238,0.15)",border:"rgba(91,141,238,0.5)",text:"#5b8dee"},{bg:"rgba(76,187,138,0.15)",border:"rgba(76,187,138,0.5)",text:"#4cbb8a"},{bg:"rgba(232,168,56,0.15)",border:"rgba(232,168,56,0.5)",text:"#e8a838"},{bg:"rgba(193,100,232,0.15)",border:"rgba(193,100,232,0.5)",text:"#c164e8"},{bg:"rgba(232,80,80,0.15)",border:"rgba(232,80,80,0.5)",text:"#e85050"}];let activeTagFilter=null;function getCustomTags(){return settings.customTags||["","","","",""]}function cardTagsHTML(e){const t=getCustomTags(),n=e.tags||[];if(!t.filter(e=>e&&e.trim()).length)return"";return`<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">${t.map((t,o)=>{if(!t||!t.trim())return"";const a=TAG_COLORS[o],r=n.includes(o);return`<span class="item-tag ${r?"active":"inactive"}"\n      style="background:${r?a.bg:"transparent"};border-color:${a.border};color:${a.text}"\n      onclick="toggleItemTag('${e.id}',${o})"\n      title="${r?"Remove tag":"Add tag"}">${esc(t)}</span>`}).join("")}</div>`}async function toggleItemTag(e,t){if(!canWrite("stockroom"))return void showLockBanner("stockroom");const n=items.find(t=>t.id===e);if(!n)return;n.tags||(n.tags=[]);const o=n.tags.indexOf(t);-1===o?n.tags.push(t):n.tags.splice(o,1),touchItem(n),await saveData(),scheduleRender("grid"),_syncQueue.enqueue()}function buildTagFilterBar(){const e=document.getElementById("tag-filter-bar");if(!e)return;const t=getCustomTags().map((e,t)=>({t:e,i:t})).filter(({t:e})=>e&&e.trim()),n=t.length<5,o=t.length?`<button class="tag-filter-chip${null===activeTagFilter?" active":""}" onclick="setTagFilter(null,this)">All</button>`:"",a=t.map(({t:e,i:t})=>{const n=TAG_COLORS[t],o=activeTagFilter===t;return`<span class="tag-filter-chip${o?" active":""}"\n      style="${o?`background:${n.bg};border-color:${n.border};color:${n.text}`:""}"\n      onclick="setTagFilter(${t},this)">\n      ${esc(e)}\n      <span class="tag-x" onclick="event.stopPropagation();deleteTag(${t})" title="Remove tag">×</span>\n    </span>`}).join(""),r=n?'<button class="btn-add-tag" onclick="showAddTagInput(\'tag-filter-bar\')">+ Tag</button>':"";e.innerHTML='<span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Tags:</span>'+o+a+r}function buildShoppingTagFilterBarInline(){const e=document.getElementById("shopping-tag-filter-bar");if(!e)return;const t=getCustomTags().map((e,t)=>({t:e,i:t})).filter(({t:e})=>e&&e.trim()),n=t.length<5,o=t.length?`<button class="tag-filter-chip${null===shoppingTagFilter?" active":""}" onclick="setShoppingTagFilter(null,this)">All</button>`:"",a=t.map(({t:e,i:t})=>{const n=TAG_COLORS[t],o=shoppingTagFilter===t;return`<span class="tag-filter-chip${o?" active":""}"\n      style="${o?`background:${n.bg};border-color:${n.border};color:${n.text}`:""}"\n      onclick="setShoppingTagFilter(${t},this)">\n      ${esc(e)}\n    </span>`}).join(""),r=n?'<button class="btn-add-tag" onclick="showAddTagInput(\'shopping-tag-filter-bar\')">+ Tag</button>':"";e.innerHTML='<span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Tags:</span>'+o+a+r}function showAddTagInput(e){const t=document.getElementById(e);if(!t)return;const n=t.querySelector(".btn-add-tag");if(!n)return;const o=document.createElement("input");o.className="tag-inline-input",o.placeholder="Tag name…",o.maxLength=20,n.replaceWith(o),o.focus();let a=!1;const r=()=>{if(a)return;a=!0;const e=o.value.trim();e?addTag(e):(buildTagFilterBar(),buildShoppingTagFilterBarInline())};o.addEventListener("keydown",e=>{"Enter"===e.key&&(e.preventDefault(),r()),"Escape"===e.key&&(a=!0,buildTagFilterBar(),buildShoppingTagFilterBarInline())}),o.addEventListener("blur",r)}async function addTag(e){if(!isOwner())return void toast("Settings are read-only");const t=getCustomTags(),n=t.findIndex(e=>!e||!e.trim());-1!==n&&(t[n]=e,settings.customTags=t,await _saveSettings(),buildTagFilterBar(),buildShoppingTagFilterBarInline(),renderGrid(),_syncQueue.enqueue())}async function deleteTag(e){if(!isOwner())return void toast("Settings are read-only");if(!confirm(`Remove tag "${getCustomTags()[e]}"? Items will lose this tag.`))return;const t=getCustomTags();t[e]="",settings.customTags=t,items.forEach(t=>{t.tags&&(t.tags=t.tags.filter(t=>t!==e))}),activeTagFilter===e&&(activeTagFilter=null),shoppingTagFilter===e&&(shoppingTagFilter=null),await _saveSettings(),await saveData(),buildTagFilterBar(),buildShoppingTagFilterBarInline(),renderGrid(),_syncQueue.enqueue()}function setTagFilter(e,t){activeTagFilter=e,buildTagFilterBar(),renderGrid()}function buildTagSettingsRows(){}async function fetchProductImage(){const e=document.getElementById("f-url").value.trim();if(!e)return void alert("Enter a product URL first.");const t=document.getElementById("fetch-img-btn"),n=document.getElementById("img-preview-wrap"),o=document.getElementById("img-preview-status"),a=document.getElementById("img-preview");t.textContent="⏳ Fetching…",t.disabled=!0,o.textContent="",n.style.display="none";const r=await extractOgImage(e);t.textContent="🖼 Fetch Image",t.disabled=!1,r?(pendingImageUrl=r,a.src=r,a.onerror=()=>{o.textContent="⚠️ Image loaded but may not display",o.style.color="var(--warn)"},o.textContent="✓ Image found",o.style.color="var(--ok)",n.style.display="flex"):(o.textContent="",pendingImageUrl=null,n.style.display="none",toast("No image found for this URL — the retailer may block scraping"))}async function fetchProductImage(){const e=document.getElementById("f-name").value.trim(),t=document.getElementById("f-url").value.trim();if(!e&&!t)return void alert("Enter a product name first.");const n=document.getElementById("fetch-img-btn"),o=document.getElementById("img-preview-wrap"),a=document.getElementById("img-preview-status"),r=document.getElementById("img-preview");n.textContent="⏳ Searching…",n.disabled=!0,a.textContent="",o.style.display="none";const s=await findProductImage(e||t);n.textContent="🖼 Find Image",n.disabled=!1,s?(pendingImageUrl=s,r.src=s,r.onerror=()=>{a.textContent="⚠️ Image may not display cross-origin",a.style.color="var(--warn)"},a.textContent="✓ Image found",a.style.color="var(--ok)",o.style.display="flex"):(pendingImageUrl=null,o.style.display="none",toast("No image found — try a more specific product name"))}async function findProductImage(e){try{const t=`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(e)}&search_simple=1&action=process&json=1&page_size=5&fields=image_url,image_front_url,product_name`,n=await fetch(t,{signal:AbortSignal.timeout(6e3)});if(n.ok){const e=(await n.json()).products||[];for(const t of e){const e=t.image_front_url||t.image_url;if(e&&e.startsWith("http"))return e}}}catch(e){}try{const t=`https://world.openbeautyfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(e)}&search_simple=1&action=process&json=1&page_size=5&fields=image_url,image_front_url`,n=await fetch(t,{signal:AbortSignal.timeout(6e3)});if(n.ok){const e=(await n.json()).products||[];for(const t of e){const e=t.image_front_url||t.image_url;if(e&&e.startsWith("http"))return e}}}catch(e){}try{const t=`https://api.allorigins.win/get?url=${encodeURIComponent(`https://duckduckgo.com/?q=${encodeURIComponent(e+" product")}&iax=images&ia=images&format=json`)}`,n=await fetch(t,{signal:AbortSignal.timeout(8e3)});if(n.ok){const e=await n.json(),t=(e.contents||"").match(/"height":\d+,"image":"(https?:[^"]+)","source"/);if(t&&t[1])return t[1].replace(/\\\//g,"/")}}catch(e){}return null}function clearProductImage(){pendingImageUrl=null,document.getElementById("img-preview-wrap").style.display="none",document.getElementById("img-preview").src=""}function showImagePreview(e,t){if(showModalImagePreview(e),t){const e=document.getElementById("img-preview-status");e&&(e.textContent="✓ "+t,e.style.color="var(--ok)")}}function showModalImagePreview(e){if(!e)return void clearProductImage();pendingImageUrl=e;const t=document.getElementById("img-preview"),n=document.getElementById("img-preview-wrap"),o=document.getElementById("img-preview-status");t.src=e,o.textContent="✓ Saved image",o.style.color="var(--ok)",n.style.display="flex"}function parsePriceValue(e){if(!e)return null;const t=parseFloat(String(e).replace(/[^0-9.]/g,""));return isNaN(t)?null:t}function getPriceHistory(e){return e.logs&&e.logs.length?e.logs.map(e=>({date:e.date,price:parsePriceValue(e.price),raw:e.price,store:e.store})).filter(e=>null!==e.price).slice(-6):[]}function getPriceTrend(e){const t=getPriceHistory(e);if(t.length<2)return null;const n=t[t.length-1].price,o=t[t.length-2].price,a=n-o,r=Math.round(Math.abs(a)/o*100);return Math.abs(a)<.01?{dir:"flat",diff:0,pct:0,last:n,prev:o}:{dir:a>0?"up":"down",diff:a,pct:r,last:n,prev:o}}function priceTrendHTML(e){const t=getPriceHistory(e);if(!t.length)return"";const n=t[t.length-1],o=getPriceTrend(e),a=n.raw||`£${n.price.toFixed(2)}`;let r="";o&&("up"===o.dir&&(r=`<span style="color:var(--danger);font-size:10px;font-family:var(--mono)">↑${o.pct}%</span>`),"down"===o.dir&&(r=`<span style="color:var(--ok);font-size:10px;font-family:var(--mono)">↓${o.pct}%</span>`),"flat"===o.dir&&(r='<span style="color:var(--muted);font-size:10px;font-family:var(--mono)">→</span>'));const s=t.slice(-4).length>1?(()=>{const e=t.slice(-4).map(e=>e.price),n=Math.min(...e),o=Math.max(...e)-n||1;return`<span style="display:inline-flex;align-items:flex-end;gap:2px;height:14px;margin-left:4px">\n      ${e.map(t=>`<span style="width:3px;height:${Math.round(4+(t-n)/o*9)}px;background:${t===e[e.length-1]?"var(--accent)":"var(--border)"};border-radius:1px;display:inline-block"></span>`).join("")}\n    </span>`})():"";return`<div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);margin-bottom:6px">\n    <span style="font-family:var(--mono)">💰 ${esc(a)}</span>\n    ${r}${s}\n    ${t.length>1?`<span style="opacity:0.5">(${t.length} prices)</span>`:""}\n  </div>`}function getFrequencyAnalysis(e){if(!e.logs||e.logs.length<2)return null;const t=[...e.logs].sort((e,t)=>new Date(e.date)-new Date(t.date)),n=[];for(let e=1;e<t.length;e++){const o=(new Date(t[e].date)-new Date(t[e-1].date))/864e5;o>0&&n.push(o)}if(!n.length)return null;const o=n.reduce((e,t)=>e+t,0)/n.length,a=o/30.5,r=e.months||1,s=a/r,i=s<.75||s>1.25;return{avgDays:Math.round(o),avgMonths:parseFloat(a.toFixed(1)),configuredMonths:r,significant:i,purchases:t.length}}function frequencyInsightHTML(e){const t=getFrequencyAnalysis(e);if(!t||!t.significant)return"";const n=t.avgMonths<1?`~${Math.round(t.avgDays)} days`:`~${t.avgMonths} months`,o=1===t.configuredMonths?"1 month":`${t.configuredMonths} months`,a=t.avgMonths<t.configuredMonths;return`<div style="background:rgba(91,141,238,0.08);border:1px solid rgba(91,141,238,0.25);border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:11px;line-height:1.5;display:flex;align-items:flex-start;gap:8px">\n    <span>💡</span>\n    <span style="color:var(--muted)">\n      Based on ${t.purchases} purchases, you actually restock every ${n}\n      — ${a?"faster":"slower"} than your configured ${o}.\n      <button onclick="applyFrequencySuggestion('${e.id}',${t.avgMonths})" style="background:none;border:none;color:var(--accent2);cursor:pointer;font-size:11px;font-family:var(--sans);text-decoration:underline;padding:0;margin-left:4px">Update setting</button>\n    </span>\n  </div>`}async function applyFrequencySuggestion(e,t){if(!canWrite("stockroom"))return void showLockBanner("stockroom");const n=items.find(t=>t.id===e);if(!n)return;const o=Math.max(.5,Math.round(2*t)/2);n.months=o,await saveData(),scheduleRender("grid"),toast(`Updated to ${o} month${1!==o?"s":""} per purchase ✓`),_syncQueue.enqueue()}const DOMAIN_STORE_MAP={"amazon.co.uk":"Amazon UK","amazon.com":"Amazon US","amazon.ca":"Amazon CA","amazon.com.au":"Amazon AU","amazon.de":"Amazon DE","amazon.fr":"Amazon FR","amazon.es":"Amazon ES","amazon.it":"Amazon IT","amazon.nl":"Amazon NL","amazon.co.jp":"Amazon JP","costco.co.uk":"Costco UK","costco.com":"Costco US","costco.ca":"Costco CA","costco.com.au":"Costco AU","tesco.com":"Tesco","tesco.ie":"Tesco IE","sainsburys.co.uk":"Sainsbury's","ocado.com":"Ocado","waitrose.com":"Waitrose","asda.com":"ASDA","morrisons.com":"Morrisons","walmart.com":"Walmart US","walmart.ca":"Walmart CA","target.com":"Target","woolworths.com.au":"Woolworths","coles.com.au":"Coles","rewe.de":"REWE","dm.de":"dm","carrefour.fr":"Carrefour","bol.com":"Bol.com","ah.nl":"Albert Heijn","dunnesstoresgrocery.com":"Dunnes","elcorteingles.es":"El Corte Inglés","ica.se":"ICA","rakuten.co.jp":"Rakuten","iherb.com":"iHerb","hollandandbarrett.com":"Holland & Barrett","boots.com":"Boots","superdrug.com":"Superdrug","whsmith.co.uk":"WHSmith","johnlewis.com":"John Lewis","marks-and-spencer.com":"M&S","marksandspencer.com":"M&S"};function urlToStoreName(e){if(!e||!e.trim())return"";try{const t=new URL(e).hostname.replace(/^www\./,"");if(DOMAIN_STORE_MAP[t])return DOMAIN_STORE_MAP[t];const n=Object.keys(DOMAIN_STORE_MAP).find(e=>t.endsWith(e));if(n)return DOMAIN_STORE_MAP[n];const o=t.split("."),a=o.length>=2?o[o.length-2]:o[0];return a.charAt(0).toUpperCase()+a.slice(1)}catch(e){return""}}function autoFillStore(){const e=document.getElementById("f-url").value.trim(),t=document.getElementById("f-store");if(!t.dataset.manual){const n=urlToStoreName(e);t.value=n,t.dataset.autoFilled=n?"1":""}}async function setReportHousehold(e){if(window._reportHousehold=e,"__all__"!==e&&e!==activeProfile){const t=(await getProfiles())[e];if(t){const e=items;return items=t.items||[],renderReport(),void(items=e)}}renderReport()}function renderReport(){const e=settings.threshold;document.getElementById("report-date").textContent="Generated: "+(new Date).toLocaleDateString("en-GB",{weekday:"long",year:"numeric",month:"long",day:"numeric"}),renderPendingDeliveries(),getProfiles().then(e=>{const t=Object.keys(e),n=document.getElementById("report-household-tabs");n&&(t.length<=1?n.style.display="none":(n.style.display="flex",n.style.cssText="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px",n.innerHTML=[{key:"__all__",name:"All Households",colour:"#7880a0"},...t.map(t=>({key:t,name:e[t]?.name||t,colour:e[t]?.colour||"#e8a838"}))].map(({key:e,name:t,colour:n})=>{const o=(window._reportHousehold||"__all__")===e;return`<button onclick="setReportHousehold('${e}')"\n        style="padding:6px 14px;border-radius:99px;border:2px solid ${o?n:"var(--border)"};\n               background:${o?n+"22":"transparent"};color:${o?n:"var(--muted)"};\n               font-size:12px;font-weight:${o?"700":"400"};cursor:pointer;transition:all 0.2s">\n        ${esc(t)}\n      </button>`}).join("")))});const t={critical:[],warn:[],ok:[],nodata:[]};items.forEach(n=>{const o=calcStock(n),a=getStatus(o?.pct??null,e);t[a].push({item:n,pct:o?.pct??null,daysLeft:o?.daysLeft??null})});const n=[...t.critical,...t.warn];let o="";n.length&&(o+=`<div id="need-to-buy"><h3>⚠️ BUY BEFORE YOU RUN OUT</h3><div class="buy-chips">\n      ${n.map(({item:e,daysLeft:t})=>`<span class="buy-chip">${esc(e.name)} <span style="color:${t<7?"#e85050":"#e8a838"};font-family:var(--mono)">(${t??"?"}d)</span></span>`).join("")}\n    </div></div>`);const a=(t,n,o)=>`\n    <div class="report-section">\n      <h3 style="color:${n};border-color:${n}44">${t} (${o.length})</h3>\n      ${(t=>t.length?`<table class="report-table">\n      <thead><tr><th>Item</th><th>Category</th><th>Rating</th><th>Last Price</th><th>Est. %</th><th>Days Left</th><th>Buy</th></tr></thead>\n      <tbody>${t.map(({item:t,pct:n,daysLeft:o})=>{const a=getPriceHistory(t),r=getPriceTrend(t),s=a.length?a[a.length-1].raw||`£${a[a.length-1].price.toFixed(2)}`:"—",i=r?"up"===r.dir?` <span style="color:#e85050">↑${r.pct}%</span>`:"down"===r.dir?` <span style="color:#4cbb8a">↓${r.pct}%</span>`:"":"";return`\n        <tr>\n          <td><strong>${esc(t.name)}</strong></td>\n          <td style="color:var(--muted)">${esc(t.category||"Other")}</td>\n          <td>${starsHTML(t.rating)}</td>\n          <td style="font-family:var(--mono);font-size:12px">${esc(s)}${i}</td>\n          <td style="font-family:var(--mono);font-weight:700;color:${STATUS_COLOR[getStatus(n,e)]}">${null!==n?n+"%":"—"}</td>\n          <td style="font-family:var(--mono)">${null!==o?o+"d":"—"}</td>\n          <td>${t.url?`<a href="${esc(t.url)}" target="_blank" rel="noopener" style="color:var(--accent2);font-size:12px;text-decoration:none">Buy ↗</a>`:"—"}</td>\n        </tr>`}).join("")}\n      </tbody></table>`:'<p style="color:var(--muted);font-size:13px;padding:10px 0">None</p>')(o)}\n    </div>`;o+=a("🔴 Critical — Order Now","#e85050",t.critical),o+=a("🟡 Getting Low — Order Soon","#e8a838",t.warn),o+=a("🟢 Well Stocked","#4cbb8a",t.ok),t.nodata.length&&(o+=a("⚪ No Purchase Data","#7880a0",t.nodata)),document.getElementById("report-content").innerHTML=o||'<p style="color:var(--muted);text-align:center;padding:60px">No items yet.</p>'}window._reportHousehold="__all__";let spendVisible=!1;function toggleSpendView(){spendVisible=!spendVisible;const e=document.getElementById("spend-section"),t=document.getElementById("spend-toggle-btn");e&&(e.style.display=spendVisible?"block":"none"),t&&(t.style.background=spendVisible?"var(--surface2)":""),spendVisible&&renderSpendChart()}function getMonthlySpend(){const e={};return items.forEach(t=>{(t.logs||[]).forEach(n=>{if(!n.date||!n.price)return;const o=parsePriceValue(n.price);if(null===o)return;const a=n.date.slice(0,7);e[a]||(e[a]={total:0,entries:[]}),e[a].total+=o,e[a].entries.push({item:t.name,price:o,raw:n.price,store:n.store})})}),Object.entries(e).sort(([e],[t])=>e.localeCompare(t)).slice(-12)}function renderSpendChart(){const e=document.getElementById("spend-chart"),t=document.getElementById("spend-breakdown");if(!e||!t)return;const n=getMonthlySpend();if(!n.length)return e.innerHTML='<p style="color:var(--muted);font-size:13px">No price data logged yet. Add prices when logging purchases to track spend over time.</p>',void(t.innerHTML="");const o=n.map(([,e])=>e.total),a=Math.max(...o),r=16,s=16,i=40,l=52,c=440-l-s,d=180-r-i,m=Math.min(36,c/n.length-4),u="£",y=n.map(([e,t],o)=>{const s=a>0?t.total/a*d:0,y=l+o/n.length*c+(c/n.length-m)/2,p=r+d-s,g=o===n.length-1,h=new Date(e+"-01").toLocaleDateString("en-GB",{month:"short"});return`\n      <rect x="${y}" y="${p}" width="${m}" height="${s}" rx="3" fill="${g?"#e8a838":"#2e3350"}"/>\n      <text x="${y+m/2}" y="${p-5}" text-anchor="middle" font-size="9" fill="${g?"#e8a838":"#7880a0"}" font-family="monospace">${u}${t.total.toFixed(0)}</text>\n      <text x="${y+m/2}" y="${180-i+14}" text-anchor="middle" font-size="9" fill="#7880a0" font-family="monospace">${h}</text>`}).join(""),p=o.reduce((e,t)=>e+t,0)/o.length,g=r+d-p/a*d,h=`\n    <line x1="${l}" y1="${g}" x2="${440-s}" y2="${g}" stroke="#7880a0" stroke-dasharray="4,3" stroke-width="1"/>\n    <text x="${l-4}" y="${g+4}" text-anchor="end" font-size="9" fill="#7880a0" font-family="monospace">avg</text>`,v=[0,a/2,a].map(e=>`<text x="${l-6}" y="${r+d-e/a*d+4}" text-anchor="end" font-size="9" fill="#7880a0" font-family="monospace">${u}${e.toFixed(0)}</text>`).join("");e.innerHTML=`\n    <svg viewBox="0 0 440 180" style="width:100%;border-radius:8px;background:#1a1d27">\n      ${v}${h}${y}\n    </svg>\n    <div style="display:flex;gap:16px;margin-top:8px;font-size:11px;font-family:monospace;color:var(--muted)">\n      <span>Total logged: ${u}${o.reduce((e,t)=>e+t,0).toFixed(2)}</span>\n      <span>Monthly avg: ${u}${p.toFixed(2)}</span>\n      <span style="color:#e8a838">This month: ${u}${o[o.length-1].toFixed(2)}</span>\n    </div>`;const[f,w]=n[n.length-1],k={};w.entries.forEach(e=>{const t=items.find(t=>t.name===e.item),n=t?.category||"Other";k[n]||(k[n]=0),k[n]+=e.price});const b=Object.entries(k).sort(([,e],[,t])=>t-e).map(([e,t])=>`\n      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">\n        <span style="color:var(--muted)">${CATEGORY_EMOJI[e]||"📦"} ${e}</span>\n        <span style="font-family:monospace;font-weight:700">${u}${t.toFixed(2)}</span>\n      </div>`).join(""),S=new Date(f+"-01").toLocaleDateString("en-GB",{month:"long",year:"numeric"});t.innerHTML=`\n    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">\n      <div style="font-size:13px;font-weight:700;margin-bottom:10px">Breakdown — ${S}</div>\n      ${b||'<p style="font-size:13px;color:var(--muted)">No data for this month.</p>'}\n    </div>`}function exportReport(){renderReport();const e=window.open("","_blank");e.document.write(`<html><head><title>Stockroom Report</title><style>body{font-family:sans-serif;padding:20px;color:#111}table{width:100%;border-collapse:collapse}td,th{padding:10px;border-bottom:1px solid #eee;text-align:left}h3{margin:24px 0 10px}</style></head><body><h1>Stockroom Report</h1><p>${(new Date).toLocaleDateString()}</p>${document.getElementById("report-content").innerHTML}</body></html>`),e.document.close(),e.print()}function buildEmailBody(){settings.threshold;const e=Date.now(),t=(new Date).toLocaleDateString("en-GB",{weekday:"long",year:"numeric",month:"long",day:"numeric"}),n=[],o=[],a=[];items.forEach(e=>{const t=calcStock(e);t&&(t.daysLeft<=7?n.push({item:e,...t}):t.daysLeft<=30?o.push({item:e,...t}):a.push({item:e,...t}))}),n.sort((e,t)=>e.daysLeft-t.daysLeft),o.sort((e,t)=>e.daysLeft-t.daysLeft);const r=t=>new Date(e+864e5*t).toLocaleDateString("en-GB",{day:"numeric",month:"short"}),s=(e,t)=>e.length?`${t}\n${"─".repeat(40)}\n`+e.map(({item:e,daysLeft:t,pct:n})=>{const o=[`• ${e.name}`,`  Runs out: ${r(t)} (${t} days, ${n}% remaining)`];var a;return e.store&&o.push(`  Store: ${e.store}`),e.rating&&o.push(`  Rating: ${a=e.rating,a?"★".repeat(a)+"☆".repeat(5-a):"unrated"}`),e.url&&o.push(`  Buy: ${e.url}`),o.join("\n")}).join("\n\n")+"\n":`${t}\n(none)\n`;return[`STOCKROOM REPORT — ${t}`,`${"═".repeat(50)}`,"",`🔴 RUNNING OUT THIS WEEK (within 7 days) — ${n.length} item${1!==n.length?"s":""}`,s(n,""),`🟡 RUNNING OUT THIS MONTH (8–30 days) — ${o.length} item${1!==o.length?"s":""}`,s(o,""),`🟢 WELL STOCKED — ${a.length} item${1!==a.length?"s":""}`,a.length?a.map(({item:e})=>`• ${e.name}`).join("\n"):"(none)","","─────────────────────────────────────────",`Total items tracked: ${items.length}`,"Generated by STOCKROOM"].join("\n")}function emailReport(){const e=buildEmailBody(),t=items.filter(e=>{const t=calcStock(e);return t&&t.daysLeft<=7}).length,n=items.filter(e=>{const t=calcStock(e);return t&&t.daysLeft>7&&t.daysLeft<=30}).length,o=`mailto:?subject=${encodeURIComponent(`Stockroom Report — ${t} urgent, ${n} due soon`)}&body=${encodeURIComponent(e)}`;window.location.href=o}async function rateItem(e,t){if(!canWrite("stockroom"))return void showLockBanner("stockroom");const n=items.find(t=>t.id===e);if(!n)return;n.rating=n.rating===t?null:t,touchItem(n),await saveData(),_syncQueue.enqueue();const o=n.rating||0;document.querySelectorAll(`.card-star[data-id="${e}"]`).forEach(e=>{e.classList.remove("preview"),e.classList.toggle("on",parseInt(e.dataset.val)<=o)});const a=document.getElementById("rl-"+e);a&&(a.textContent=n.rating?RATING_LABELS[n.rating]:"Not rated",a.style.color=n.rating?n.rating<=2?"var(--danger)":n.rating>=4?"var(--ok)":"var(--muted)":"var(--muted)"),currentRating=n.rating||0}function previewCardStars(e,t){document.querySelectorAll(`.card-star[data-id="${e}"]`).forEach(e=>{const n=parseInt(e.dataset.val);e.classList.toggle("preview",n<=t),e.classList.remove("on")});items.find(t=>t.id===e);const n=document.getElementById("rl-"+e);n&&(n.textContent=RATING_LABELS[t]||"",n.style.color=t<=2?"var(--danger)":t>=4?"var(--ok)":"var(--muted)")}function resetCardStars(e){const t=items.find(t=>t.id===e),n=t?.rating||0;document.querySelectorAll(`.card-star[data-id="${e}"]`).forEach(e=>{const t=parseInt(e.dataset.val);e.classList.remove("preview"),e.classList.toggle("on",t<=n)});const o=document.getElementById("rl-"+e);o&&(o.textContent=n?RATING_LABELS[n]:"Not rated",o.style.color=n?n<=2?"var(--danger)":n>=4?"var(--ok)":"var(--muted)":"var(--muted)")}function openPriceHistoryModal(e){const t=items.find(t=>t.id===e);if(!t)return;const n=getPriceHistory(t);if(!n.length)return;document.getElementById("ph-title").textContent="💰 "+t.name;const o=n.map(e=>e.price),a=Math.min(...o),r=Math.max(...o),s=o.reduce((e,t)=>e+t,0)/o.length,i=getPriceTrend(t),l=o[o.length-1],c=(n.at(-1)?.raw||"").replace(/[\d.,\s]/g,"").trim()||"£";let d="Stable price";i&&("up"===i.dir&&(d=`↑ Up ${i.pct}% vs last purchase`),"down"===i.dir&&(d=`↓ Down ${i.pct}% vs last purchase`)),document.getElementById("ph-subtitle").textContent=`${n.length} purchase${1!==n.length?"s":""} · ${d}`;const m=16,u=16,y=36,p=48,g=440-p-u,h=160-m-y,v=r-a||1,f=Math.min(40,g/n.length-6),w=n.map((e,t)=>{const s=p+t/n.length*g+(g/n.length-f)/2,i=(e.price-a)/v*(.75*h)+.15*h,l=m+h-i,d=e.price===a&&o.length>1,u=e.price===r&&o.length>1&&a!==r,w=t===n.length-1,k=d?"#4cbb8a":u?"#e85050":w?"#e8a838":"#2e3350",b=`${c}${e.price.toFixed(2)}`,S=new Date(e.date+"T12:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"});return`\n      <rect x="${s}" y="${l}" width="${f}" height="${i}" rx="3" fill="${k}"/>\n      <text x="${s+f/2}" y="${l-5}" text-anchor="middle" font-size="10" fill="${k}" font-family="monospace">${b}</text>\n      <text x="${s+f/2}" y="${160-y+14}" text-anchor="middle" font-size="9" fill="#7880a0" font-family="monospace">${S}</text>`}).join(""),k=m+h-((s-a)/v*(.75*h)+.15*h),b=`\n    <line x1="${p}" y1="${k}" x2="${440-u}" y2="${k}" stroke="#7880a0" stroke-dasharray="4,3" stroke-width="1"/>\n    <text x="${p-4}" y="${k+4}" text-anchor="end" font-size="9" fill="#7880a0" font-family="monospace">avg</text>`,S=[a,s,r].map(e=>`<text x="${p-6}" y="${m+h-((e-a)/v*(.75*h)+.15*h)+4}" text-anchor="end" font-size="9" fill="#7880a0" font-family="monospace">${c}${e.toFixed(2)}</text>`).join("");document.getElementById("ph-chart").innerHTML=`\n    <svg viewBox="0 0 440 160" style="width:100%;border-radius:8px;background:#1a1d27">\n      ${S}${b}${w}\n    </svg>\n    <div style="display:flex;gap:14px;margin-top:8px;font-size:11px;font-family:monospace">\n      <span style="color:#4cbb8a">● Lowest: ${c}${a.toFixed(2)}</span>\n      <span style="color:#7880a0">● Avg: ${c}${s.toFixed(2)}</span>\n      <span style="color:#e85050">● Highest: ${c}${r.toFixed(2)}</span>\n      <span style="color:#e8a838">● Latest: ${c}${l.toFixed(2)}</span>\n    </div>`,document.getElementById("ph-table").innerHTML=`\n    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">\n      <table class="report-table">\n        <thead><tr><th>Date</th><th>Store</th><th>Qty</th><th>Price</th><th>vs Prev</th></tr></thead>\n        <tbody>${[...n].reverse().map((e,t,s)=>{const i=s[t+1],l=i?i.price:null;let d="—";if(null!==l){const t=e.price-l,n=Math.round(Math.abs(t)/l*100);d=Math.abs(t)<.01?"→":t>0?`<span style="color:var(--danger)">↑${n}%</span>`:`<span style="color:var(--ok)">↓${n}%</span>`}const m=e.price===a&&o.length>1,u=e.price===r&&o.length>1&&a!==r;return`<tr>\n            <td style="font-family:monospace;font-size:12px">${fmtDate(e.date)}</td>\n            <td style="color:var(--muted);font-size:12px">${esc(e.store||"—")}</td>\n            <td style="font-family:monospace;font-size:12px">${n[n.length-1-t]?.qty||"—"}</td>\n            <td style="font-family:monospace;font-weight:700;color:${m?"var(--ok)":u?"var(--danger)":"var(--text)"}">${e.raw||c+e.price.toFixed(2)}${m?" 🏷":""}</td>\n            <td style="font-size:12px">${d}</td>\n          </tr>`}).join("")}</tbody>\n      </table>\n    </div>`,openModal("price-history-modal")}let stockCountId=null;function openStockCountModal(e){stockCountId=e;const t=items.find(t=>t.id===e);if(!t)return;const n=t.logs?.at(-1),o=n?.qty||1;document.getElementById("sc-subtitle").textContent=`How many units of "${t.name}" do you have left?`,document.getElementById("sc-explanation").textContent=`You last bought ${o} unit${1!==o?"s":""} on ${fmtDate(n?.date)}. Enter how many you have now — the app will calculate your actual consumption rate and project when you'll run out.`,document.getElementById("sc-remaining").value=null!=t.stockCount?t.stockCount:"",document.getElementById("sc-date").value=today(),document.getElementById("sc-preview").style.display="none";const a=document.getElementById("sc-remaining"),r=document.getElementById("sc-date"),s=()=>updateStockCountPreview(t);a.oninput=s,r.onchange=s,null!=t.stockCount&&updateStockCountPreview(t),openModal("stock-count-modal")}function updateStockCountPreview(e){const t=parseFloat(document.getElementById("sc-remaining").value),n=document.getElementById("sc-date").value,o=document.getElementById("sc-preview"),a=document.getElementById("sc-preview-text");if(isNaN(t)||!n)return void(o.style.display="none");const r=e.logs?.at(-1),s=r?.qty||1,i=(Date.now()-new Date((r?.date||n)+"T12:00:00"))/864e5,l=s-t;let c;if(l<=0||i<=0){const t=30.5*(e.months||1)*s;c=Math.round(Math.max(0,t-i))}else{const e=l/i;c=e>0?Math.round(t/e):null}const d=Math.round(Math.max(0,Math.min(100,t/s*100))),m=null!=c?new Date(Date.now()+864e5*c).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}):"unknown";let u;if(l>0&&i>0){const e=l/i;u=`Used ${l.toFixed(1)} of ${s} in ${Math.round(i)} days (${e.toFixed(2)}/day). ${t} left → runs out ~${m} (${c??"?"} days, ${d}% remaining).`}else u=`${t} of ${s} units remaining (${d}%) → runs out ~${m}.`;a.textContent=u,a.style.color=d<=15?"var(--danger)":d<=30?"var(--warn)":"var(--ok)",o.style.display="block"}async function saveStockCount(){if(!canWrite("stockroom"))return void showLockBanner("stockroom");const e=items.find(e=>e.id===stockCountId);if(!e)return;const t=document.getElementById("sc-remaining").value.trim(),n=document.getElementById("sc-date").value;""===t?(e.stockCount=null,e.stockCountDate=null):(e.stockCount=parseFloat(t),e.stockCountDate=n||today()),await saveData(),closeModal("stock-count-modal"),scheduleRender("grid","dashboard"),toast(""===t?"Stock count cleared":"Stock count updated ✓"),_syncQueue.enqueue()}const SNS_DISCOUNT=.05,SNS_MIN_PURCHASES=3,SNS_MIN_SPAN_DAYS=60,SNS_MIN_ITEMS=4;function isAmazonStore(e){return e&&/amazon/i.test(e)}function isAmazonUrl(e){return e&&/amazon\./i.test(e)}function getSnSLink(e){if(!e.url)return null;try{const t=new URL(e.url),n=e.url.match(/\/([A-Z0-9]{10})(?:[/?]|$)/);if(!n)return e.url;const o=n[1];return`https://${t.hostname}/dp/${o}?th=1&psc=1&subscribeSave=1`}catch(t){return e.url}}function analyseSnS(){const e=[];return items.forEach(t=>{if(!(isAmazonStore(t.store)||isAmazonUrl(t.url)))return;const n=(t.logs||[]).filter(e=>e.date).sort((e,t)=>new Date(e.date)-new Date(t.date));if(n.length<SNS_MIN_PURCHASES)return void(n.length>=1&&e.push({item:t,status:"tracking",logs:n,purchaseCount:n.length,spanDays:0,avgMonthlySpend:null,annualSaving:null}));const o=new Date(n[0].date+"T12:00:00"),a=(new Date(n[n.length-1].date+"T12:00:00")-o)/864e5;if(a<SNS_MIN_SPAN_DAYS)return void e.push({item:t,status:"tracking",logs:n,purchaseCount:n.length,spanDays:a,avgMonthlySpend:null,annualSaving:null});const r=n.filter(e=>null!==parsePriceValue(e.price));let s=null,i=null;if(r.length>=1){const e=a/30.5;s=r.reduce((e,t)=>e+parsePriceValue(t.price),0)/r.length*(n.length/e),i=12*s*SNS_DISCOUNT}const l=t.subscribeAndSave?"active":"eligible";e.push({item:t,status:l,logs:n,purchaseCount:n.length,spanDays:Math.round(a),avgMonthlySpend:s,annualSaving:i})}),e}function renderSavingsView(){const e=analyseSnS(),t=e.filter(e=>"active"===e.status),n=e.filter(e=>"eligible"===e.status),o=e.filter(e=>"tracking"===e.status),a=t.length+n.length>=SNS_MIN_ITEMS,r=[...t,...n].reduce((e,t)=>e+(t.annualSaving||0),0),s=t.reduce((e,t)=>e+(t.annualSaving||0),0);let i="";if(!e.length)return i='<div class="sns-empty">\n      <div style="font-size:48px;margin-bottom:16px">🛒</div>\n      <h3 style="font-size:18px;color:var(--text);margin-bottom:8px">No Amazon purchases found</h3>\n      <p style="font-size:14px;line-height:1.7">Add items purchased from Amazon and log at least 3 purchases to see Subscribe &amp; Save opportunities.</p>\n    </div>',void(document.getElementById("savings-content").innerHTML=i);const l=a?`<span style="color:var(--ok);font-weight:700">✓ You qualify for 5% off</span> — you have ${t.length+n.length} eligible Amazon items.`:`You need <strong>${SNS_MIN_ITEMS-(t.length+n.length)}</strong> more eligible item${SNS_MIN_ITEMS-t.length-n.length!==1?"s":""} to reach the 5% discount tier.`;i+=`<div class="sns-summary-card">\n    ${r>0?`<div class="sns-summary-stat"><div class="val">£${r.toFixed(2)}</div><div class="lbl">Est. annual saving</div></div>`:""}\n    ${s>0?`<div class="sns-summary-stat"><div class="val" style="color:var(--accent2)">£${s.toFixed(2)}</div><div class="lbl">Already saving/yr</div></div>`:""}\n    <div class="sns-summary-stat"><div class="val" style="color:var(--warn)">${t.length+n.length}</div><div class="lbl">Eligible items</div></div>\n    <div class="sns-summary-stat"><div class="val" style="color:var(--muted)">${o.length}</div><div class="lbl">Being tracked</div></div>\n    <div style="flex:1;min-width:200px">\n      <p style="font-size:13px;line-height:1.6;color:var(--muted)">${l}</p>\n      <p style="font-size:12px;color:var(--muted);margin-top:6px">Amazon Subscribe &amp; Save gives 5% off when you subscribe to 4+ products in a single delivery.</p>\n    </div>\n  </div>`;const c=e=>{const{item:t,status:n,purchaseCount:o,spanDays:a,avgMonthlySpend:r,annualSaving:s}=e,i=getSnSLink(t),l=(()=>{const e=(t.logs||[]).filter(e=>null!==parsePriceValue(e.price));return e.length?e[e.length-1].price:null})(),c="active"===n?'<span class="sns-badge sns-badge-active">✓ S&amp;S Active</span>':"eligible"===n?'<span class="sns-badge sns-badge-eligible">💡 Eligible</span>':`<span class="sns-badge sns-badge-tracking">⏳ Tracking (${o}/${SNS_MIN_PURCHASES} purchases)</span>`,d=s?`<div class="sns-saving">£${s.toFixed(2)}/yr saving</div>`:l?'<div style="font-size:12px;color:var(--muted)">Add prices to see £ saving</div>':'<div style="font-size:12px;color:var(--muted)">Log prices to calculate saving</div>',m="tracking"!==n?`<button class="btn btn-sm ${"active"===n?"btn-ghost":"btn-primary"}" onclick="toggleSnS('${t.id}')">${"active"===n?"Mark as not subscribed":"✓ Mark as subscribed"}</button>`:"",u=i&&"active"!==n?`<a href="${esc(i)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">🔗 Subscribe on Amazon</a>`:"";return`<div class="sns-item">\n      <div class="sns-item-header">\n        <div class="sns-item-name">${esc(t.name)}</div>\n        ${c}\n      </div>\n      <div class="sns-stats">\n        <div class="sns-stat"><strong>${o}</strong><span>purchases</span></div>\n        ${a?`<div class="sns-stat"><strong>${Math.round(a/30.5*10)/10}mo</strong><span>tracked</span></div>`:""}\n        ${l?`<div class="sns-stat"><strong>${esc(l)}</strong><span>last price</span></div>`:""}\n        ${r?`<div class="sns-stat"><strong>£${r.toFixed(2)}</strong><span>/month avg</span></div>`:""}\n      </div>\n      ${d}\n      <div class="sns-actions">${m}${u}</div>\n    </div>`};n.length&&(i+=`<div class="sns-section-title">💡 Eligible — not yet subscribed (${n.length})</div>`,i+=n.map(c).join("")),t.length&&(i+=`<div class="sns-section-title">✓ Already subscribed (${t.length})</div>`,i+=t.map(c).join("")),o.length&&(i+=`<div class="sns-section-title">⏳ Building history (${o.length})</div>`,i+=o.map(c).join("")),document.getElementById("savings-content").innerHTML=i}async function toggleSnS(e){if(!canWrite("savings"))return void showLockBanner("savings");const t=items.find(t=>t.id===e);t&&(t.subscribeAndSave=!t.subscribeAndSave,await saveData(),renderSavingsView(),scheduleRender("sns"),toast(t.subscribeAndSave?"Marked as subscribed ✓":"Marked as not subscribed"),_syncQueue.enqueue())}function updateSnSBanner(){const e=document.getElementById("sns-banner");if(!e)return;const t=analyseSnS(),n=t.filter(e=>"eligible"===e.status),o=t.filter(e=>"active"===e.status),a=n.length+o.length;if(a<1)return void(e.style.display="none");const r=a>=SNS_MIN_ITEMS,s=[...n,...o].reduce((e,t)=>e+(t.annualSaving||0),0),i=s>0?` — save <strong>£${s.toFixed(2)}/yr</strong>`:"";if(r)e.innerHTML=`<div class="sns-banner" onclick="switchToSavings()">\n      <div class="sns-banner-text">💰 You qualify for <strong>Amazon Subscribe &amp; Save 5%</strong> on ${a} items${i}</div>\n      <button class="btn btn-ghost btn-sm" style="flex-shrink:0">View savings →</button>\n    </div>`;else{if(!(n.length>0))return void(e.style.display="none");{const t=SNS_MIN_ITEMS-a;e.innerHTML=`<div class="sns-banner" onclick="switchToSavings()">\n      <div class="sns-banner-text">💡 <strong>${a} Amazon item${1!==a?"s":""}</strong> could be on Subscribe &amp; Save — ${t} more needed for 5% discount${i}</div>\n      <button class="btn btn-ghost btn-sm" style="flex-shrink:0">View savings →</button>\n    </div>`}}e.style.display="block"}function switchToSavings(){const e=[...document.querySelectorAll(".tab")].find(e=>e.textContent.includes("Savings"));e&&showView("savings",e)}let shoppingStores=new Set(["__all__"]),shoppingDays=30,shoppingTagFilter=null;function updateStockShoppingHeader(e){const t=document.getElementById("hdr-stock-btn"),n=document.getElementById("hdr-shopping-btn"),o=document.getElementById("days-toggle"),a=document.getElementById("item-count");"stock"===e?(t&&(t.style.fontWeight="700",t.style.color="var(--text)"),n&&(n.style.fontWeight="400",n.style.color="var(--muted)"),o&&(o.style.display="none"),a&&(a.style.display="")):(t&&(t.style.fontWeight="400",t.style.color="var(--muted)"),n&&(n.style.fontWeight="700",n.style.color="var(--text)"),o&&(o.style.display=""),a&&(a.style.display="none"))}const TAB_ORDER=["stock","grocery","reminders","savings","report","settings"];let _currentView="stock";function _vtSupported(){return!!document.startViewTransition}function _doTransition(e,t){if(!_vtSupported()||window.matchMedia("(prefers-reduced-motion: reduce)").matches)return void t();const n=document.getElementById("view-content");n&&(n.style.viewTransitionName="back"===e?"main-view-back":"main-view"),document.startViewTransition(()=>{t()})}function setStockOnlyUI(e){["health-dashboard","filter-toggle-btn","sort-select","compact-toggle-btn","filter-panel","tag-filter-bar","sns-banner","pending-deliveries-section","incomplete-section"].forEach(t=>{const n=document.getElementById(t);n&&(n.style.display=e?"":"none")});const t=document.querySelector("#view-stock > div:nth-child(5)");t&&(t.style.display=e?"":"none")}function switchToStock(){_currentViewName="stock",_doTransition("back",()=>{document.querySelectorAll(".view").forEach(e=>e.classList.remove("active")),document.querySelectorAll(".tab").forEach(e=>e.classList.remove("active")),document.getElementById("view-stock").classList.add("active");const e=[...document.querySelectorAll(".tab")].find(e=>e.textContent.includes("Stockroom"));e&&e.classList.add("active"),document.getElementById("items-grid").style.display="",document.getElementById("shopping-panel").style.display="none",setStockOnlyUI(!0),updateStockShoppingHeader("stock"),_currentView="stock"}),_householdEnabled&&pushPresence()}function switchToShopping(){_currentViewName="shopping",_doTransition("forward",()=>{document.querySelectorAll(".view").forEach(e=>e.classList.remove("active")),document.querySelectorAll(".tab").forEach(e=>e.classList.remove("active")),document.getElementById("view-stock").classList.add("active");const e=[...document.querySelectorAll(".tab")].find(e=>e.textContent.includes("Stockroom"));e&&e.classList.add("active"),document.getElementById("items-grid").style.display="none",document.getElementById("shopping-panel").style.display="",setStockOnlyUI(!1),renderShoppingList(),updateStockShoppingHeader("shopping")}),_householdEnabled&&pushPresence()}function showShoppingListInline(){switchToShopping()}function showView(e,t){_currentViewName=e;const n={grocery:"groceries",reminders:"reminders",savings:"savings",report:"report",stock:"stockroom",shopping:"stockroom"}[e];!n||canView(n)?(document.querySelectorAll(".view").forEach(e=>e.classList.remove("active")),document.querySelectorAll(".tab").forEach(e=>e.classList.remove("active")),document.getElementById("view-"+e).classList.add("active"),t.classList.add("active"),"report"===e&&(renderReport(),spendVisible&&renderSpendChart()),"reminders"===e&&renderReminders(),"shopping"===e&&renderShoppingList(),"savings"===e&&renderSavingsView(),"grocery"===e&&renderGrocery(),"stock"===e&&(updateStockShoppingHeader("stock"),setStockOnlyUI(!0),document.getElementById("items-grid").style.display="",document.getElementById("shopping-panel").style.display="none"),"settings"===e&&(renderSettingsForUser(),kvConnected&&(loadTrustedDevices(),loadPasskeys())),_currentView=e,_householdEnabled&&pushPresence()):showLockBanner(n)}function getShoppingItems(){return items.filter(e=>{const t=calcStock(e);if(!t)return!1;if(t.daysLeft>shoppingDays)return!1;if(!shoppingStores.has("__all__")){const t=e.store&&e.store.trim();if(!t||!shoppingStores.has(t))return!1}return!(null!==shoppingTagFilter&&!(e.tags||[]).includes(shoppingTagFilter))}).map(e=>{const t=calcStock(e);return{item:e,daysLeft:t.daysLeft,pct:t.pct}}).sort((e,t)=>e.daysLeft-t.daysLeft)}function getAllStoresFromItems(){const e=new Set;return items.forEach(t=>{t.store&&t.store.trim()&&e.add(t.store.trim()),(t.logs||[]).forEach(t=>{t.store&&t.store.trim()&&e.add(t.store.trim())})}),[...e].sort()}function openStorePickerModal(){const e=getAllStoresFromItems(),t=document.getElementById("store-picker-options"),n={};e.forEach(e=>{n[e]=items.filter(t=>{const n=calcStock(t);return n&&n.daysLeft<=shoppingDays&&(t.store&&t.store.trim()===e||(t.logs||[]).some(t=>t.store&&t.store.trim()===e))}).length});let o=`<div class="store-picker-row" onclick="toggleStorePick('__all__',this)">\n    <input type="checkbox" id="sp-all" ${shoppingStores.has("__all__")?"checked":""} onclick="event.stopPropagation();toggleStorePick('__all__',this.closest('.store-picker-row'))">\n    <label for="sp-all" onclick="event.preventDefault()">🌐 All Stores</label>\n  </div>`;0===e.length?o+='<p style="font-size:13px;color:var(--muted);padding:10px 0">No stores found. Add stores when logging purchases.</p>':o+=e.map(e=>{const t=shoppingStores.has("__all__")||shoppingStores.has(e),o="sp-"+e.replace(/\s+/g,"_"),a=n[e]||0;return`<div class="store-picker-row" onclick="toggleStorePick('${esc(e)}',this)">\n        <input type="checkbox" id="${o}" ${t?"checked":""} onclick="event.stopPropagation();toggleStorePick('${esc(e)}',this.closest('.store-picker-row'))">\n        <label for="${o}" onclick="event.preventDefault()">${esc(e)}</label>\n        <span class="store-item-count">${a} item${1!==a?"s":""} due</span>\n      </div>`}).join(""),t.innerHTML=o,openModal("store-picker-modal")}function toggleStorePick(e,t){const n=t.querySelector("input[type=checkbox]");if("__all__"===e)shoppingStores=new Set(["__all__"]),document.querySelectorAll("#store-picker-options input[type=checkbox]").forEach(e=>{e.checked="sp-all"===e.id}),n&&(n.checked=!0);else{shoppingStores.delete("__all__");const t=document.getElementById("sp-all");t&&(t.checked=!1),n&&(n.checked=!n.checked),n&&n.checked?shoppingStores.add(e):shoppingStores.delete(e),0===shoppingStores.size&&(shoppingStores.add("__all__"),t&&(t.checked=!0))}}function setShoppingTagFilter(e,t){shoppingTagFilter=e,buildShoppingTagFilterBarInline(),renderShoppingList()}function toggleShoppingDays(){shoppingDays=30===shoppingDays?7:30,document.getElementById("days-opt-30").classList.toggle("active",30===shoppingDays),document.getElementById("days-opt-30").classList.toggle("faded",30!==shoppingDays),document.getElementById("days-opt-7").classList.toggle("active",7===shoppingDays),document.getElementById("days-opt-7").classList.toggle("faded",7!==shoppingDays),renderShoppingList()}function applyShoppingList(){closeModal("store-picker-modal"),showShoppingListInline()}function renderShoppingList(){buildShoppingTagFilterBarInline();const e=getShoppingItems(),t=shoppingStores.has("__all__")?"All Stores":[...shoppingStores].join(", ");document.getElementById("shopping-subtitle").textContent=`Items running out within ${shoppingDays} days · ${t}`;const n=document.getElementById("shopping-store-pills"),o=shoppingStores.has("__all__")?["All Stores"]:[...shoppingStores];n.innerHTML=o.map(e=>`<span style="font-size:12px;font-weight:600;padding:4px 12px;border-radius:99px;background:var(--surface2);border:1px solid var(--border);color:var(--text)">${esc(e)}</span>`).join("");const a=document.getElementById("shopping-content");if(0===e.length)return void(a.innerHTML=getShoppingPresenceBar()+`<div class="shopping-empty">\n      <div style="font-size:48px;margin-bottom:16px">🎉</div>\n      <h3 style="font-size:18px;color:var(--text);margin-bottom:8px">You're all stocked up!</h3>\n      <p style="font-size:14px;line-height:1.7">No items are running out within ${shoppingDays} days for the selected stores.</p>\n      <button class="btn btn-ghost" style="margin-top:16px" onclick="openStorePickerModal()">Change filters</button>\n    </div>`);const r={};e.forEach(({item:e,daysLeft:t,pct:n})=>{const o=e.store||"No store set";r[o]||(r[o]=[]),r[o].push({item:e,daysLeft:t,pct:n})});const s=encodeURIComponent;a.innerHTML=getShoppingPresenceBar()+Object.entries(r).map(([e,t])=>{const n=t.map(({item:e,daysLeft:t,pct:n})=>{const o=new Date(Date.now()+864e5*t).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}),a=t<=7?"urgent":t<=14?"soon":"",r=t<=7?"var(--danger)":t<=14?"var(--warn)":"var(--muted)",i=e.rating?starsHTML(e.rating):"",l=e.url?`<a class="shopping-link primary" href="${esc(e.url)}" target="_blank" rel="noopener">🛒 Buy now</a>`:"",c=getStores(settings.country).slice(0,3).map(t=>`<a class="shopping-link alt" href="${t.url(s(e.name))}" target="_blank" rel="noopener">🔍 ${t.name.replace(/^[^\s]+\s/,"")}</a>`).join(""),d=e.rating&&e.rating<=2?`<a class="shopping-link warn" href="${getStores(settings.country)[0].url(s(e.name+" alternative"))}" target="_blank" rel="noopener">⚠️ Find alternative</a>`:"",m=e.ordered?'<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(91,141,238,0.15);border:1px solid rgba(91,141,238,0.3);color:#5b8dee;font-family:var(--mono)">📦 Ordered</span>':"";return`<div class="shopping-item ${a}" id="si-${e.id}">\n        <div style="flex:1;min-width:0">\n          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">\n            <span class="shopping-item-name">${esc(e.name)}</span>\n            ${i}\n            ${m}\n          </div>\n          <div class="shopping-item-meta">\n            <span class="shopping-meta-pill" style="color:${r}">⏱ Runs out: <strong style="color:${r}">${o}</strong></span>\n            <span class="shopping-meta-pill">📅 ${t}d left</span>\n            <span class="shopping-meta-pill">📊 ${n}% remaining</span>\n            ${"bulk"===e.cadence?'<span class="shopping-meta-pill">📦 Bulk buy</span>':""}\n          </div>\n          <div class="shopping-links">\n            ${l}${c}${d}\n            ${e.ordered?`<button class="btn btn-ghost btn-sm" style="font-size:12px;color:var(--muted)" onclick="unmarkOrdered('${e.id}')">↩ Unmark</button>`:`<button class="btn btn-ghost btn-sm" style="font-size:12px;color:#5b8dee;border-color:#5b8dee" onclick="markOrdered('${e.id}')">📦 Mark ordered</button>`}\n            <button class="btn btn-ghost btn-sm" style="font-size:12px;color:var(--ok);border-color:var(--ok)" onclick="openDeliveredModal('${e.id}')">📦 Delivered</button>\n          </div>\n        </div>\n        <input type="checkbox" class="shopping-checkbox" title="Mark as bought" onchange="toggleShoppingCheck('${e.id}',this)">\n      </div>`}).join("");return`<div class="shopping-store-section">\n      <div class="shopping-store-header">\n        <h3>🏪 ${esc(e)}</h3>\n        <span class="shopping-store-count">${t.length} item${1!==t.length?"s":""}</span>\n      </div>\n      ${n}\n    </div>`}).join("")}function toggleShoppingCheck(e,t){const n=document.getElementById("si-"+e);n&&n.classList.toggle("checked",t.checked)}function exportShoppingList(){const e=getShoppingItems();if(!e.length)return void toast("Nothing to export");const t=["STOCKROOM — Shopping List",`Generated: ${(new Date).toLocaleDateString("en-GB")}`,`Stores: ${shoppingStores.has("__all__")?"All":[...shoppingStores].join(", ")}`,`Window: Next ${shoppingDays} days`,"","---",""],n={};e.forEach(({item:e,daysLeft:t})=>{const o=e.store||"No store set";n[o]||(n[o]=[]),n[o].push({item:e,daysLeft:t})}),Object.entries(n).forEach(([e,n])=>{t.push(`## ${e}`),n.forEach(({item:e,daysLeft:n})=>{const o=new Date(Date.now()+864e5*n).toLocaleDateString("en-GB");t.push(`[ ] ${e.name}`),t.push(`    Runs out: ${o} (${n}d)`),e.url&&t.push(`    Buy: ${e.url}`),e.rating&&t.push(`    Rating: ${"★".repeat(e.rating)}${"☆".repeat(5-e.rating)}`),t.push("")}),t.push("")});const o=new Blob([t.join("\n")],{type:"text/plain"}),a=document.createElement("a");a.href=URL.createObjectURL(o),a.download=`shopping_list_${(new Date).toISOString().split("T")[0]}.txt`,a.click()}function openAddModal(){editingId=null,document.getElementById("item-modal-title").textContent="Add Item",document.getElementById("item-modal-subtitle").textContent="Track a new consumable in your stockroom.",document.getElementById("item-readonly-view").style.display="none",document.getElementById("item-edit-view").style.display="block",tempStorePrices=[],renderTempStorePrices(),document.getElementById("store-prices-section").style.display="none",document.getElementById("f-name").value="",document.getElementById("f-category").value="Kitchen",document.getElementById("f-cadence").value="monthly",document.getElementById("f-qty").value=1,document.getElementById("f-months").value=1,document.getElementById("f-url").value="",pendingImageUrl=null,clearProductImage();const e=document.getElementById("f-store");e.value="",e.dataset.manual="",e.dataset.autoFilled="",document.getElementById("f-notes").value="",currentRating=0,renderStars(),document.getElementById("f-last-date").value=today(),document.getElementById("f-last-qty").value=1,document.getElementById("f-last-price").value="",document.getElementById("f-started-using").value="",document.getElementById("price-search-input").value="",document.getElementById("price-links").innerHTML="",openModal("item-modal")}function openEditModal(e){const t=items.find(t=>t.id===e);if(!t)return;editingId=e,document.getElementById("item-modal-title").textContent="Item Details",document.getElementById("item-modal-subtitle").textContent=t.name,document.getElementById("ro-category").textContent=t.category||"Other",document.getElementById("ro-name").textContent=t.name;const n=t.logs?.at(-1),o=[];"bulk"===t.cadence?o.push("📦 Bulk"):o.push("🗓️ Monthly"),t.qty&&o.push(`${t.qty} unit${1!==t.qty?"s":""} per purchase`),t.months&&o.push(`${t.months} month${1!==t.months?"s":""} supply`),n?.price&&o.push(`Last price: ${n.price}`),document.getElementById("ro-meta").textContent=o.join(" · "),document.getElementById("ro-store").textContent=t.store?`🏪 ${t.store}`:"",document.getElementById("item-readonly-view").style.display="block",document.getElementById("item-edit-view").style.display="none",tempStorePrices=JSON.parse(JSON.stringify(t.storePrices||[])),renderTempStorePrices(),tempStorePrices.length&&(document.getElementById("store-prices-section").style.display="block"),document.getElementById("f-name").value=t.name,document.getElementById("f-category").value=t.category||"Kitchen",document.getElementById("f-cadence").value=t.cadence||"monthly",document.getElementById("f-qty").value=t.qty||1,document.getElementById("f-months").value=t.months||1,document.getElementById("f-url").value=t.url||"",pendingImageUrl=t.imageUrl||null,showModalImagePreview(t.imageUrl||null);const a=document.getElementById("f-store");a.value=t.store||urlToStoreName(t.url||""),a.dataset.manual=t.store?"1":"",a.dataset.autoFilled="",document.getElementById("f-notes").value=t.notes||"";const r=document.getElementById("f-expiry"),s=document.getElementById("f-threshold");r&&(r.value=t.expiry||""),s&&(s.value=null!=t.thresholdOverride?t.thresholdOverride:"");const i=document.getElementById("f-replace-interval"),l=document.getElementById("f-replace-unit");i&&(i.value=t.replacementInterval||""),l&&(l.value=t.replacementUnit||"months"),currentRating=t.rating||0,renderStars();const c=t.logs?.at(-1);document.getElementById("f-last-date").value=c?.date||today(),document.getElementById("f-last-qty").value=c?.qty||1,document.getElementById("f-last-price").value=c?.price||"",document.getElementById("f-started-using").value=t.startedUsing||"",document.getElementById("price-search-input").value=t.name,updatePriceLinks(),openModal("item-modal")}function openLogModal(e){openLogPurchaseModal(e)}function openLogPurchaseModal(e){loggingId=e;const t=items.find(t=>t.id===e);t&&(document.getElementById("log-modal-title").textContent="Log Purchase — "+t.name,document.getElementById("log-date").value=today(),document.getElementById("log-qty").value=t.qty||1,document.getElementById("log-price").value="",document.getElementById("log-store").value=t.store||urlToStoreName(t.url||"")||"",renderLogHistory(t),openModal("log-modal"))}async function saveItem(){if(!canWrite("stockroom"))return void showLockBanner("stockroom");const e=document.getElementById("f-name").value.trim();if(!e)return void alert("Please enter a name for this item.");const t=document.getElementById("f-started-using").value||null,n=document.getElementById("f-store").value.trim()||urlToStoreName(document.getElementById("f-url").value.trim());if(editingId){const o=items.find(e=>e.id===editingId);if(o){o.name=e,o.category=document.getElementById("f-category").value,o.cadence=document.getElementById("f-cadence").value,o.qty=parseFloat(document.getElementById("f-qty").value)||1,o.months=parseFloat(document.getElementById("f-months").value)||1,o.url=document.getElementById("f-url").value.trim(),o.store=n,n&&o.logs&&o.logs.forEach(e=>{e.store&&e.store!==n&&(e.store=n)}),o.notes=document.getElementById("f-notes").value.trim(),o.startedUsing=t,o.rating=currentRating||null,o.imageUrl=pendingImageUrl||o.imageUrl||null,o.storePrices=tempStorePrices.filter(e=>e.store||e.price),o.expiry=document.getElementById("f-expiry")?.value||null;const a=parseInt(document.getElementById("f-threshold")?.value);o.thresholdOverride=isNaN(a)?null:a;const r=parseInt(document.getElementById("f-replace-interval")?.value);o.replacementInterval=isNaN(r)?null:r,o.replacementUnit=document.getElementById("f-replace-unit")?.value||"months";const s=document.getElementById("f-last-date").value,i=parseFloat(document.getElementById("f-last-qty").value)||1,l=document.getElementById("f-last-price").value.trim();s&&(o.logs&&o.logs.length?(o.logs[o.logs.length-1].date=s,o.logs[o.logs.length-1].qty=i,o.logs[o.logs.length-1].price=l,o.logs.sort((e,t)=>new Date(e.date)-new Date(t.date))):o.logs=[{id:uid(),date:s,qty:i,price:l,store:n}]),touchField(o,"name","category","cadence","qty","months","url","store","notes","startedUsing","rating","imageUrl","storePrices","expiry","thresholdOverride","replacementInterval","replacementUnit")}}else{const o=document.getElementById("f-last-date").value,a=parseFloat(document.getElementById("f-last-qty").value)||1,r=document.getElementById("f-last-price").value.trim();items.push({id:uid(),name:e,category:document.getElementById("f-category").value,cadence:document.getElementById("f-cadence").value,qty:parseFloat(document.getElementById("f-qty").value)||1,months:parseFloat(document.getElementById("f-months").value)||1,url:document.getElementById("f-url").value.trim(),store:n,notes:document.getElementById("f-notes").value.trim(),startedUsing:t,rating:currentRating||null,imageUrl:pendingImageUrl||null,storePrices:tempStorePrices.filter(e=>e.store||e.price),expiry:document.getElementById("f-expiry")?.value||null,thresholdOverride:(()=>{const e=parseInt(document.getElementById("f-threshold")?.value);return isNaN(e)?null:e})(),logs:o?[{id:uid(),date:o,qty:a,price:r,store:n}]:[],updatedAt:(new Date).toISOString()})}await saveData(),closeModal("item-modal"),editingId&&clearQuickAddedFlag(editingId),scheduleRender("grid","dashboard","filters","shopping","sns"),toast("Item saved ✓"),_syncQueue.enqueue("Saving item…")}async function saveLog(){if(!canWrite("stockroom"))return void showLockBanner("stockroom");const e=items.find(e=>e.id===loggingId);if(!e)return;e.logs||(e.logs=[]),e.logs.push({id:uid(),date:document.getElementById("log-date").value,qty:parseFloat(document.getElementById("log-qty").value)||1,price:document.getElementById("log-price").value.trim(),store:document.getElementById("log-store").value.trim(),pendingDelivery:!0}),e.logs.sort((e,t)=>new Date(e.date)-new Date(t.date)),e.ordered=!0,e.orderedAt=(new Date).toISOString(),touchField(e,"logs","ordered","orderedAt"),await saveData(),closeModal("log-modal"),scheduleRender("grid","dashboard","shopping"),setTimeout(syncAll,400);const t=sessionStorage.getItem("log_then_deliver");t&&t===loggingId?(sessionStorage.removeItem("log_then_deliver"),setTimeout(()=>openDeliveredModal(loggingId),200)):toast("Purchase logged — tap Delivered when it arrives ✓")}let deliveringId=null;function openDeliveredModal(e){const t=items.find(t=>t.id===e);if(!t)return;const n=t.logs?.some(e=>e.pendingDelivery);if(!n)return sessionStorage.setItem("log_then_deliver",e),openLogPurchaseModal(e),void setTimeout(()=>{const e=document.getElementById("log-modal-title");e&&(e.textContent="📦 Purchase Details — "+t.name);const n=document.querySelector("#log-modal .subtitle");n&&(n.textContent="Enter the purchase details then we'll confirm delivery.");const o=document.querySelector("#log-modal .btn-primary");o&&(o.textContent="Next — Confirm Delivery →",o.style.background="var(--ok)")},30);deliveringId=e,document.getElementById("delivered-modal-title").textContent=`📦 Delivered — ${t.name}`,document.getElementById("delivered-date").value=today();const o=[...t.logs||[]].reverse().find(e=>e.pendingDelivery);document.getElementById("delivered-qty").value=o?.qty||t.qty||1,document.getElementById("delivered-started-now").checked=!1,document.getElementById("delivered-started-row").style.display="none",document.getElementById("delivered-started-hint").style.display="block",document.getElementById("delivered-started-date").value=today(),openModal("delivered-modal")}function toggleDeliveredStarted(){const e=document.getElementById("delivered-started-now").checked;document.getElementById("delivered-started-row").style.display=e?"block":"none",document.getElementById("delivered-started-hint").style.display=e?"none":"block"}async function saveDelivered(){if(!canWrite("stockroom"))return void showLockBanner("stockroom");const e=items.find(e=>e.id===deliveringId);if(!e)return;const t=document.getElementById("delivered-date").value||today(),n=parseFloat(document.getElementById("delivered-qty").value)||1,o=document.getElementById("delivered-started-now").checked?document.getElementById("delivered-started-date").value||t:null;e.logs||(e.logs=[]);const a=[...e.logs].map((e,t)=>({l:e,i:t})).reverse().find(({l:e})=>e.pendingDelivery)?.i;void 0!==a?(e.logs[a].pendingDelivery=!1,e.logs[a].deliveredDate=t,e.logs[a].qty=n):(e.logs.push({id:uid(),date:t,qty:n,pendingDelivery:!1,deliveredDate:deliveredDate}),e.logs.sort((e,t)=>new Date(e.date)-new Date(t.date))),e.ordered=!1,e.orderedAt=null,o&&(e.startedUsing=o),touchItem(e),await saveData(),closeModal("delivered-modal"),scheduleRender("grid","dashboard","shopping"),setTimeout(syncAll,400),openDeliveryReminderModal(deliveringId,!o)}let deliveryReminderItemId=null,deliveryNeedsStartDate=!1;function openDeliveryReminderModal(e,t){const n=items.find(t=>t.id===e);if(!n)return;deliveryReminderItemId=e,deliveryNeedsStartDate=t,document.getElementById("delivery-reminder-subtitle").textContent=t?'Come back and set a "started using" date to keep calculations accurate.':"Do you want a reminder when it's time to replace this?";const o=n.replacementInterval;document.getElementById("delivery-reminder-body").innerHTML=`\n    ${t?'\n      <div style="background:rgba(232,168,56,0.1);border:1px solid rgba(232,168,56,0.25);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:13px;color:var(--warn);line-height:1.5">\n        ⏳ When you open the first pack, tap <strong>"Set date"</strong> on the card — it anchors the stock clock and any reminders to the right start point.\n      </div>':""}\n    <div style="margin-bottom:14px">\n      <label class="form-label">Replace every</label>\n      <div style="display:flex;gap:8px;align-items:center">\n        <input class="form-input" id="dr-interval" type="number" min="1" max="365" value="${n.replacementInterval||3}" style="width:80px">\n        <select class="form-input" id="dr-unit" style="flex:1">\n          <option value="days"   ${"days"===(n.replacementUnit||"months")?"selected":""}>days</option>\n          <option value="weeks"  ${"weeks"===(n.replacementUnit||"months")?"selected":""}>weeks</option>\n          <option value="months" ${"months"===(n.replacementUnit||"months")?"selected":""}>months</option>\n        </select>\n      </div>\n    </div>\n    ${o?"":'<p style="font-size:12px;color:var(--muted)">You can also set this later via ✏️ Edit on the item.</p>'}\n  `,openModal("delivery-reminder-modal")}async function saveDeliveryReminder(){const e=items.find(e=>e.id===deliveryReminderItemId);if(!e)return;const t=parseInt(document.getElementById("dr-interval").value)||3,n=document.getElementById("dr-unit").value||"months";e.replacementInterval=t,e.replacementUnit=n,touchItem(e),await saveData(),closeModal("delivery-reminder-modal"),scheduleRender("grid"),setTimeout(syncAll,400),toast(`🔔 Reminder set: every ${t} ${n}`)}let startedUsingItemId=null;function openStartedUsingModal(e){startedUsingItemId=e;const t=items.find(t=>t.id===e);t&&(document.getElementById("started-using-title").textContent=`📅 ${t.name} — when did you start using it?`,document.getElementById("started-using-date").value=today(),openModal("started-using-modal"))}async function saveStartedUsing(){if(!canWrite("stockroom"))return void showLockBanner("stockroom");const e=items.find(e=>e.id===startedUsingItemId);if(!e)return;const t=document.getElementById("started-using-date").value||today();e.startedUsing=t,touchField(e,"startedUsing"),await saveData(),closeModal("started-using-modal"),scheduleRender("grid","dashboard"),setTimeout(syncAll,400),toast("Start date saved — stock clock updated ✓")}async function deleteItem(e){const t=items.find(t=>t.id===e);t&&confirm('Remove "'+t.name+'" from your stockroom?')&&(items=items.filter(t=>t.id!==e),await addTombstone(e),await saveData(),closeModal("item-modal"),scheduleRender("grid","dashboard","shopping"),toast("Item removed"),_syncQueue.enqueue("Deleting item…"))}function updatePriceLinks(){const e=document.getElementById("price-search-input").value.trim()||document.getElementById("f-name").value.trim(),t=document.getElementById("price-links");if(!e)return void(t.innerHTML="");const n=encodeURIComponent(e);t.innerHTML=getStores(settings.country).map(e=>`<a class="price-link" href="${e.url(n)}" target="_blank" rel="noopener">${e.name}</a>`).join("")}function exportData(){requireReauth("Re-enter your passphrase to export your data.",_doExportData,{passkeyAllowed:!0})}function _doExportData(){const e=new Blob([JSON.stringify({items:items,settings:settings},null,2)],{type:"application/json"}),t=document.createElement("a");t.href=URL.createObjectURL(e),t.download="stockroom_backup_"+today()+".json",t.click();try{localStorage.setItem("stockroom_last_export",String(Date.now()))}catch(e){}document.getElementById("export-reminder-banner")?.remove()}async function importData(e){if(!isOwner())return void toast("Settings are read-only");const t=e.target.files[0];if(!t)return;const n=new FileReader;n.onload=async e=>{try{const t=JSON.parse(e.target.result);t.items&&(items=t.items),t.settings&&(settings={...settings,...t.settings}),await saveData(),await _saveSettings(),scheduleRender(...RENDER_REGIONS),toast("Data imported ✓")}catch(e){alert("Could not parse file. Make sure it is a valid Stockroom JSON export.")}},n.readAsText(t)}async function clearAll(){isOwner()?confirm("This will delete all items and purchase history. Are you sure?")&&(items=[],await saveData(),scheduleRender(...RENDER_REGIONS),toast("All data cleared")):toast("Settings are read-only")}function toast(e){const t=document.getElementById("toast");t.textContent=e,t.classList.add("show"),setTimeout(()=>t.classList.remove("show"),2500)}function buildSettingsCountrySelect(){document.getElementById("setting-country").innerHTML=COUNTRIES.map(e=>`<option value="${e.code}">${e.flag} ${e.name}</option>`).join("")}function connectDrive(){try{sessionStorage.setItem("stockroom_pre_auth_view","settings")}catch(e){}try{sessionStorage.setItem("stockroom_auth_provider","drive")}catch(e){}const e=`https://accounts.google.com/o/oauth2/v2/auth?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(`${WORKER_URL}/auth/google`)}&response_type=code&scope=${encodeURIComponent(SCOPES)}&access_type=offline&prompt=consent`;location.href=e}function updateEmailDayVisibility(){const e=document.getElementById("email-frequency")?.value,t=document.getElementById("email-day-field");t&&(t.style.display="weekly"===e?"block":"none")}function renderEmailSettingsUI(){const e=document.getElementById("email-setup-needed"),t=document.getElementById("email-not-registered"),n=document.getElementById("email-registered");if(e&&(e.style.display="none"),emailRegistered){t&&(t.style.display="none"),n&&(n.style.display="block");const e=document.getElementById("email-registered-label"),o=document.getElementById("email-registered-detail");e&&(e.textContent=`Sending to ${emailAddress}`),o&&(o.textContent=`${capitalize(emailFrequency)}${"weekly"===emailFrequency?" on "+capitalize(emailDayOfWeek):""}`);const a=document.getElementById("email-frequency-update"),r=document.getElementById("email-day-update");a&&(a.value=emailFrequency),r&&(r.value=emailDayOfWeek)}else t&&(t.style.display="block"),n&&(n.style.display="none")}function capitalize(e){return e?e.charAt(0).toUpperCase()+e.slice(1):""}async function connectEmailReports(){const e=document.getElementById("email-input")?.value.trim();if(!e||!e.includes("@"))return void alert("Please enter a valid email address.");const t=document.getElementById("email-frequency")?.value||"weekly",n=document.getElementById("email-day")?.value||"monday",o=btoa(JSON.stringify({email:e,frequency:t,dayOfWeek:n})),a=`https://accounts.google.com/o/oauth2/v2/auth?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(WORKER_URL+"/auth")}&response_type=code&scope=${encodeURIComponent("https://www.googleapis.com/auth/drive.file")}&access_type=offline&prompt=consent&state=${encodeURIComponent(o)}`;try{localStorage.setItem("stockroom_pending_email",e)}catch(e){}window.location.href=a}async function checkEmailRegistrationOnLoad(){const e=new URLSearchParams(window.location.search),t=e.get("email_auth"),n=e.get("email");if(t){if(history.replaceState(null,"",location.pathname),"success"===t&&n){emailRegistered=!0,emailAddress=n;try{localStorage.setItem("stockroom_email",JSON.stringify({emailRegistered:emailRegistered,emailAddress:emailAddress,emailFrequency:emailFrequency,emailDayOfWeek:emailDayOfWeek}))}catch(e){}toast("Email reports enabled ✓")}else{const t=e.get("reason")||"unknown";alert(`Email setup failed: ${t}. Please try again.`)}renderEmailSettingsUI()}else{try{const e=JSON.parse(localStorage.getItem("stockroom_email")||"{}");if(e.emailRegistered&&e.emailAddress){emailRegistered=e.emailRegistered,emailAddress=e.emailAddress,emailFrequency=e.emailFrequency||"weekly",emailDayOfWeek=e.emailDayOfWeek||"monday";const t=await fetch(`${WORKER_URL}/status?email=${encodeURIComponent(emailAddress)}`);if(t.ok){const e=await t.json();e.registered?(emailFrequency=e.frequency||emailFrequency,emailDayOfWeek=e.dayOfWeek||emailDayOfWeek):(emailRegistered=!1,localStorage.removeItem("stockroom_email"))}}}catch(e){}renderEmailSettingsUI()}}async function updateEmailSettings(){if(!emailRegistered)return;const e=document.getElementById("email-frequency-update")?.value||emailFrequency,t=document.getElementById("email-day-update")?.value||emailDayOfWeek;emailFrequency=e,emailDayOfWeek=t;try{localStorage.setItem("stockroom_email",JSON.stringify({emailRegistered:emailRegistered,emailAddress:emailAddress,emailFrequency:emailFrequency,emailDayOfWeek:emailDayOfWeek}))}catch(e){}try{await fetch(`${WORKER_URL}/register`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:emailAddress,frequency:e,dayOfWeek:t})}),renderEmailSettingsUI(),toast("Email schedule updated ✓")}catch(e){toast("Could not update — check your connection")}}async function disableEmailReports(){if(confirm(`Stop email reports to ${emailAddress}?`)){try{WORKER_URL&&await fetch(`${WORKER_URL}/unregister`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:emailAddress})})}catch(e){}emailRegistered=!1,emailAddress="";try{localStorage.removeItem("stockroom_email")}catch(e){}renderEmailSettingsUI(),toast("Email reports disabled")}}async function sendEmailNow(){if(emailRegistered){toast("Sending…");try{const e=await fetch(`${WORKER_URL}/send-now`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:emailAddress})}),t=await e.json();t.ok?toast("Report sent ✓ — check your inbox"):toast("Send failed: "+(t.error||"unknown error"))}catch(e){toast("Could not reach email service")}}}async function handleOAuthRedirect(){const e=new URLSearchParams(location.search),t=e.get("drive_auth");if(t){if(history.replaceState(null,"",location.pathname),"success"===t){driveConnected=!0;try{localStorage.setItem("stockroom_drive",JSON.stringify({driveConnected:driveConnected}))}catch(e){}updateSyncUI();"2"===localStorage.getItem("stockroom_wizard_step")&&(localStorage.removeItem("stockroom_wizard_step"),wizardNext()),syncNow().then(()=>{try{const e=sessionStorage.getItem("stockroom_pre_auth_view");if(sessionStorage.removeItem("stockroom_pre_auth_view"),"settings"===e){const e=[...document.querySelectorAll(".tab")].find(e=>e.textContent.includes("Settings"));e&&showView("settings",e)}else{localStorage.setItem("stockroom_seen","1"),document.body.classList.remove("wizard-active"),document.getElementById("wizard").style.display="none";const e=[...document.querySelectorAll(".tab")].find(e=>e.textContent.includes("Stockroom"));e&&showView("stock",e)}}catch(e){}})}else{const t=e.get("reason")||"unknown";toast(t.includes("Bad Request")||t.includes("invalid_grant")?"Sign-in expired — please try connecting Google Drive again":"no_code"===t?"Sign-in was cancelled":`Drive connection failed: ${t}`)}return}const n=e.get("dropbox_auth");if(n)return history.replaceState(null,"",location.pathname),void("success"===n?fetch(`${WORKER_URL}/auth/dropbox-token`).then(e=>e.json()).then(e=>{if(e.access_token){dropboxToken=e.access_token,dropboxConnected=!0;try{sessionStorage.setItem("stockroom_dropbox_token",e.access_token)}catch(e){}try{localStorage.setItem("stockroom_dropbox",JSON.stringify({dropboxConnected:dropboxConnected}))}catch(e){}updateSyncUI();"2"===localStorage.getItem("stockroom_wizard_step")&&(localStorage.removeItem("stockroom_wizard_step"),wizardNext()),syncDropbox().then(()=>{try{const e=sessionStorage.getItem("stockroom_pre_auth_view");if(sessionStorage.removeItem("stockroom_pre_auth_view"),"settings"===e){const e=[...document.querySelectorAll(".tab")].find(e=>e.textContent.includes("Settings"));e&&showView("settings",e)}else{localStorage.setItem("stockroom_seen","1"),document.body.classList.remove("wizard-active"),document.getElementById("wizard").style.display="none";const e=[...document.querySelectorAll(".tab")].find(e=>e.textContent.includes("Stockroom"));e&&showView("stock",e)}}catch(e){}})}}).catch(e=>{console.error("Dropbox token fetch failed:",e),toast("Dropbox connection failed — try again")}):toast("Dropbox sign-in expired or was cancelled — please try again"))}async function drivePull(){const e=activeProfile&&"default"!==activeProfile?`&household=${encodeURIComponent(activeProfile)}`:"",t=_shareState?.code?`&share=${encodeURIComponent(_shareState.code)}`:"",n=await fetch(`${WORKER_URL}/sync/pull?1=1${e}${t}`);if(503===n.status)throw new Error("NOT_CONNECTED");if(!n.ok){const e=await n.json().catch(()=>({}));throw new Error(e.error||`Pull failed: ${n.status}`)}return n.json()}async function drivePush(e){const t=activeProfile&&"default"!==activeProfile?`&household=${encodeURIComponent(activeProfile)}`:"",n=_shareState?.code?`&share=${encodeURIComponent(_shareState.code)}`:"",o=await fetch(`${WORKER_URL}/sync/push?1=1${t}${n}`,{method:"POST",headers:{"Content-Type":"application/json"},body:e});if(503===o.status)throw new Error("NOT_CONNECTED");if(403===o.status)throw new Error("READ_ONLY");if(!o.ok){const e=await o.json().catch(()=>({}));throw new Error(e.error||`Push failed: ${o.status}`)}}async function syncNow(){if(kvConnected||_shareState){updateSyncPill("syncing");try{const e=_shareState?await proxyReadDrive():await drivePull();if(e&&Array.isArray(e.items)){const t=settings.lastSynced?new Date(settings.lastSynced).getTime():0,n=(e.lastSynced?new Date(e.lastSynced).getTime():0)>t;if(items=await mergeItems(items,e.items,n),await saveData(),e.settings){const t=settings.customTags;settings={...e.settings,...settings};const n=e.settings.customTags||[],o=(t||[]).filter(e=>e&&e.trim()).length,a=n.filter(e=>e&&e.trim()).length;settings.customTags=o>=a?t||[]:n,await _saveSettings()}if(e.groceries){const t=e.groceries;(n||t.length>groceryItems.length)&&(groceryItems=t,await saveGrocery())}if(e.departments?.length&&(n||e.departments.length>groceryDepts.length)&&(groceryDepts=e.departments,await saveGroceryDepts()),e.reminders&&Array.isArray(e.reminders)&&(n||e.reminders.length>reminders.length)&&(reminders=e.reminders,await saveReminders()),e.deletedIds&&Array.isArray(e.deletedIds)){const t=await loadDeletedIds();e.deletedIds.forEach(e=>t.add(e)),await saveDeletedIds(t)}if(e.householdDir&&"object"==typeof e.householdDir){const t=await getProfiles();let n=!1;Object.entries(e.householdDir).forEach(([e,o])=>{t[e]?(o.name&&t[e].name!==o.name&&(t[e].name=o.name,n=!0),o.colour&&t[e].colour!==o.colour&&(t[e].colour=o.colour,n=!0)):(t[e]={name:o.name,colour:o.colour,items:[],settings:{},reminders:[],groceries:[],departments:[]},n=!0)}),n&&(await saveProfiles(t),renderSettingsHouseholdList())}e.shareTargets&&Array.isArray(e.shareTargets)&&e.shareTargets.length&&(_shareTargets=e.shareTargets,renderShareTargetsList(),WORKER_URL&&isOwner()&&e.shareTargets.forEach(e=>{e.code&&fetch(`${WORKER_URL}/share/restore`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(e)}).catch(()=>{})})),scheduleRender(...RENDER_REGIONS)}settings.lastSynced=(new Date).toISOString(),await _saveSettings();const t=new Set(items.map(e=>e.id)),n=await loadDeletedIds();n.forEach(e=>{t.has(e)&&n.delete(e)}),await saveDeletedIds(n);const o=await getProfiles(),a=Object.fromEntries(Object.entries(o).map(([e,t])=>[e,{name:t.name,colour:t.colour}])),r=JSON.stringify({items:items,settings:settings,lastSynced:settings.lastSynced,groceries:groceryItems,departments:groceryDepts,reminders:reminders,deletedIds:[...n],householdDir:a,activeProfile:activeProfile,shareTargets:_shareTargets});_shareState?await proxyWriteDrive(r):await drivePush(r),updateSyncPill("synced")}catch(e){if(console.error("Drive sync error:",e),"NOT_CONNECTED"===e.message){updateSyncPill("error");const e=document.getElementById("sync-label");e&&(e.textContent="Connect Drive"),sessionStorage.getItem("connect_drive_prompted")||(sessionStorage.setItem("connect_drive_prompted","1"),toast("Connect Google Drive in Settings to enable sync"))}else"OWNER_NOT_CONNECTED"===e.message?(updateSyncPill("error"),toast("The household owner needs to reconnect Google Drive")):e.message?.startsWith("ACCESS_DENIED")?(updateSyncPill("error"),toast("Access denied — your invite link may have been revoked")):(updateSyncPill("error"),e.message.includes("fetch")||e.message.includes("NetworkError")||toast("Sync failed — "+e.message))}}}async function fetchKV(e,t={}){const n=new AbortController,o=setTimeout(()=>n.abort(),1e4);try{return await fetch(e,{...t,signal:n.signal})}catch(e){if("AbortError"===e.name)throw new Error("Request timed out — check your connection");throw e}finally{clearTimeout(o)}}document.querySelectorAll(".modal-backdrop").forEach(e=>{e.addEventListener("click",t=>{t.target===e&&e.classList.remove("open")})});let kvConnected=!1,_kvEmail="",_kvEmailHash="",_kvVerifier="",_kvKey=null,_kvSessionToken=null;class KvDecryptError extends Error{constructor(e){super(e),this.name="KvDecryptError"}}let _kvAuthMethod="",_recoveryEmail="",_recoveryEmailHash="",_recoveryToken="",_recoveryDataKey=null;const CRYPTO_V2_SWITCHOVER="2026-05-01";async function kvDeriveKey(e,t){const n=(new TextEncoder).encode(e.toLowerCase().trim()+":"+t),o=await crypto.subtle.importKey("raw",n,"PBKDF2",!1,["deriveKey"]),a=(new TextEncoder).encode("stockroom-kv-v1-"+e.toLowerCase().trim());return crypto.subtle.deriveKey({name:"PBKDF2",salt:a,iterations:1e5,hash:"SHA-256"},o,{name:"AES-GCM",length:256},!0,["encrypt","decrypt"])}function generateKdfSalt(){return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))))}async function derivePassphraseWrapKeyV2(e,t,n){if(!n)throw new Error("v2 KDF salt missing");const o=Uint8Array.from(atob(n),e=>e.charCodeAt(0)),a=(new TextEncoder).encode(e+":"+t),r=await crypto.subtle.importKey("raw",a,"PBKDF2",!1,["deriveKey"]);return crypto.subtle.deriveKey({name:"PBKDF2",salt:o,iterations:6e5,hash:"SHA-256"},r,{name:"AES-KW",length:256},!1,["wrapKey","unwrapKey"])}async function generateDataKeyV2Extractable(){return crypto.subtle.generateKey({name:"AES-GCM",length:256},!0,["encrypt","decrypt"])}async function wrapDataKeyV2(e,t){const n=await crypto.subtle.wrapKey("raw",e,t,"AES-KW");return btoa(String.fromCharCode(...new Uint8Array(n)))}async function unwrapDataKeyV2(e,t,n=!1){const o=Uint8Array.from(atob(e),e=>e.charCodeAt(0));return crypto.subtle.unwrapKey("raw",o,t,"AES-KW",{name:"AES-GCM",length:256},n,["encrypt","decrypt"])}async function deriveRecoveryWrapKeyV2(e,t){const n=(new TextEncoder).encode(e.replace(/-/g,"").toUpperCase()+":"+t),o=await crypto.subtle.importKey("raw",n,"PBKDF2",!1,["deriveKey"]),a=(new TextEncoder).encode("stockroom-recovery-v2-"+t);return crypto.subtle.deriveKey({name:"PBKDF2",salt:a,iterations:6e5,hash:"SHA-256"},o,{name:"AES-KW",length:256},!1,["wrapKey","unwrapKey"])}async function buildRecoveryEnvelopesV2(e,t,n){const o=[];for(const a of e){const e=await deriveRecoveryWrapKeyV2(a,n),r=await wrapDataKeyV2(t,e),s=await hashRecoveryCode(a,n);o.push(JSON.stringify({envelope:r,codeHash:s,version:"v2"}))}return o}async function kvEncrypt(e,t){const n=crypto.getRandomValues(new Uint8Array(12)),o=(new TextEncoder).encode(t),a=await crypto.subtle.encrypt({name:"AES-GCM",iv:n},e,o),r=new Uint8Array(n.length+a.byteLength);return r.set(n,0),r.set(new Uint8Array(a),n.length),btoa(String.fromCharCode(...r))}async function kvDecrypt(e,t){const n=Uint8Array.from(atob(t),e=>e.charCodeAt(0)),o=n.slice(0,12),a=n.slice(12),r=await crypto.subtle.decrypt({name:"AES-GCM",iv:o},e,a);return(new TextDecoder).decode(r)}async function kvHashEmail(e){const t=(new TextEncoder).encode(e.toLowerCase().trim()),n=await crypto.subtle.digest("SHA-256",t);return Array.from(new Uint8Array(n)).map(e=>e.toString(16).padStart(2,"0")).join("").slice(0,32)}async function kvMakeVerifier(e,t){const n=(new TextEncoder).encode(e+":"+t),o=await crypto.subtle.digest("SHA-256",n);return Array.from(new Uint8Array(o)).map(e=>e.toString(16).padStart(2,"0")).join("")}const ECDH_DB_NAME="stockroom-kv-ecdh",ECDH_STORE_NAME="keys";async function openEcdhDb(){return new Promise((e,t)=>{const n=indexedDB.open(ECDH_DB_NAME,1);n.onupgradeneeded=e=>e.target.result.createObjectStore("keys"),n.onsuccess=t=>e(t.target.result),n.onerror=e=>t(e.target.error)})}async function generateEcdhKeypair(){return crypto.subtle.generateKey({name:"ECDH",namedCurve:"P-256"},!0,["deriveKey","deriveBits"])}async function storeEcdhPrivateKey(e,t){const n=await crypto.subtle.exportKey("jwk",t),o=await openEcdhDb();return new Promise((t,a)=>{const r=o.transaction("keys","readwrite");r.objectStore("keys").put(JSON.stringify(n),e),r.oncomplete=()=>t(),r.onerror=()=>a(r.error)})}async function loadEcdhPrivateKey(e){try{const t=await openEcdhDb(),n=await new Promise((n,o)=>{const a=t.transaction("keys","readonly").objectStore("keys").get(e);a.onsuccess=()=>n(a.result??null),a.onerror=()=>o(a.error)});return n?crypto.subtle.importKey("jwk",JSON.parse(n),{name:"ECDH",namedCurve:"P-256"},!1,["deriveKey","deriveBits"]):null}catch(e){return console.warn("loadEcdhPrivateKey failed:",e.message),null}}async function ecdhDeriveWrapKey(e,t){const n=await crypto.subtle.importKey("jwk",t,{name:"ECDH",namedCurve:"P-256"},!1,[]),o=await crypto.subtle.deriveBits({name:"ECDH",public:n},e,256),a=await crypto.subtle.importKey("raw",o,"HKDF",!1,["deriveKey"]);return crypto.subtle.deriveKey({name:"HKDF",hash:"SHA-256",salt:(new TextEncoder).encode("stockroom-ecdh-share-v1"),info:new Uint8Array(0)},a,{name:"AES-KW",length:256},!1,["wrapKey","unwrapKey"])}async function ecdhWrapShareKey(e,t,n){const o=await ecdhDeriveWrapKey(e,t),a=await crypto.subtle.wrapKey("raw",n,o,"AES-KW");return btoa(String.fromCharCode(...new Uint8Array(a)))}async function ecdhUnwrapShareKey(e,t,n){const o=await ecdhDeriveWrapKey(e,t),a=Uint8Array.from(atob(n),e=>e.charCodeAt(0));return crypto.subtle.unwrapKey("raw",a,o,"AES-KW",{name:"AES-GCM",length:256},!0,["encrypt","decrypt"])}async function ensureEcdhKeypair(e){if(e)try{let t=await loadEcdhPrivateKey(e),n=!1;if(!t){const n=await generateEcdhKeypair();await storeEcdhPrivateKey(e,n.privateKey),t=n.privateKey;const o=await crypto.subtle.exportKey("jwk",n.publicKey);return await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/store`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:e,publicKeyJwk:o})}),void console.log("ECDH keypair generated and public key uploaded")}if((await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/get`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:e})})).ok||(n=!0),n){const t=await generateEcdhKeypair();await storeEcdhPrivateKey(e,t.privateKey);const n=await crypto.subtle.exportKey("jwk",t.publicKey);await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/store`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:e,publicKeyJwk:n})}),console.log("ECDH public key re-uploaded")}}catch(e){console.warn("ensureEcdhKeypair failed (non-fatal):",e.message)}}window.stockroomDiag=async function(){const e=[];e.push("=== STOCKROOM DIAGNOSTIC ==="),e.push(`kvConnected:  ${kvConnected}`),e.push(`_kvEmail:     ${_kvEmail||"(empty)"}`),e.push(`_kvEmailHash: ${_kvEmailHash||"(empty)"}`),e.push("_kvVerifier:  "+(_kvVerifier?_kvVerifier.slice(0,8)+"…":"(empty)")),e.push("_kvKey:       "+(_kvKey?"SET":"NULL")),e.push("_kvSessionToken: "+(_kvSessionToken?"SET":"null")),e.push("device_secret:   "+(localStorage.getItem("stockroom_device_secret")?"SET":"absent"));try{const t=JSON.parse(localStorage.getItem("stockroom_kv_session_key")||"null");e.push("session_key cache: "+(t?`SET (expires ${new Date(t.expiry).toISOString()}, emailHash match: ${t.emailHash===_kvEmailHash})`:"absent"))}catch(t){e.push("session_key cache: parse error")}e.push(`local items: ${items?.length??"undefined"}`),e.push(`_shareState: ${_shareState?JSON.stringify({code:_shareState.code,type:_shareState.type,ownerName:_shareState.ownerName}):"null"}`),e.push("_shareKey:   "+(_shareKey?"SET":"null"));try{const t=JSON.parse(localStorage.getItem("stockroom_share_keys")||"{}");e.push(`share_keys local: ${Object.keys(t).length?Object.keys(t).join(", "):"none"}`)}catch(t){e.push("share_keys local: parse error")}if(_kvEmailHash&&_kvVerifier){try{const t=await fetch(`${WORKER_URL}/key/get`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,verifier:_kvVerifier})}),n=await t.json();e.push(`server key/get status: ${t.status}`),e.push(`server key/get body:   ${JSON.stringify(n)}`)}catch(t){e.push(`server key/get error: ${t.message}`)}try{const t=await fetch(`${WORKER_URL}/data/pull`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,verifier:_kvVerifier})}),n=await t.json();e.push(`server data/pull status: ${t.status}`),e.push(`ciphertext present: ${!!n.ciphertext} (${n.ciphertext?n.ciphertext.length+" chars":"none"})`)}catch(t){e.push(`server data/pull error: ${t.message}`)}}else e.push("Cannot check server — no emailHash/verifier in session");return e.push("=== END ==="),console.log(e.join("\n")),e.join("\n")};let _emailVerifyEmail="",_emailVerifyEmailHash="",_emailVerifyCallback=null;async function showEmailVerification(e,t,n){_emailVerifyEmail=e,_emailVerifyEmailHash=t,_emailVerifyCallback=n;const o=document.getElementById("verify-email-display");o&&(o.textContent=e);const a=document.getElementById("email-verify-otp"),r=document.getElementById("email-verify-error"),s=document.getElementById("email-verify-ok");a&&(a.value=""),r&&(r.style.display="none"),s&&(s.style.display="none"),document.querySelectorAll(".wizard-step").forEach(e=>e.classList.remove("active")),document.getElementById("wizard-step-1f")?.classList.add("active"),setTimeout(()=>a?.focus(),100),await sendEmailVerificationOtp(e,t)}async function sendEmailVerificationOtp(e,t){const n=document.getElementById("email-verify-ok"),o=document.getElementById("email-verify-error"),a=document.getElementById("email-verify-resend-btn");a&&(a.disabled=!0,a.textContent="⏳ Sending…");try{const o=await fetchKV(`${WORKER_URL}/email/verify/send`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:t,email:e})}),a=await o.json();if(429===o.status)return void(n&&(n.textContent="Code already sent — check your email.",n.style.display="block"));if(!o.ok)throw new Error(a.error||"Could not send code");if(a.alreadyVerified)return void(_emailVerifyCallback&&await _emailVerifyCallback());n&&(n.textContent="Code sent — check your inbox.",n.style.display="block")}catch(e){o&&(o.textContent=e.message,o.style.display="block")}finally{if(a){let e=60;const t=setInterval(()=>{e--,a.textContent=e>0?`Resend (${e}s)`:"Resend code",e<=0&&(clearInterval(t),a.disabled=!1)},1e3)}}}async function submitEmailVerification(){const e=document.getElementById("email-verify-otp")?.value.trim(),t=document.getElementById("email-verify-error"),n=document.getElementById("email-verify-ok");if(!e||6!==e.length)return void(t&&(t.textContent="Enter the 6-digit code from your email",t.style.display="block"));t&&(t.style.display="none"),n&&(n.style.display="none");const o=document.querySelector("#wizard-step-1f .btn-primary");o&&(o.textContent="⏳ Verifying…",o.disabled=!0);try{const t=await fetchKV(`${WORKER_URL}/email/verify/check`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_emailVerifyEmailHash,otp:e})}),n=await t.json();if(!t.ok)throw new Error(n.error||"Verification failed");_emailVerifyCallback&&await _emailVerifyCallback()}catch(e){t&&(t.textContent=e.message,t.style.display="block")}finally{o&&(o.textContent="Verify email →",o.disabled=!1)}}async function resendEmailVerification(){const e=document.getElementById("email-verify-error"),t=document.getElementById("email-verify-ok");e&&(e.style.display="none"),t&&(t.style.display="none"),await sendEmailVerificationOtp(_emailVerifyEmail,_emailVerifyEmailHash)}function showKvRegister(){document.querySelectorAll(".wizard-step").forEach(e=>e.classList.remove("active")),document.getElementById("wizard-step-1")?.classList.add("active")}function showKvLogin(){document.querySelectorAll(".wizard-step").forEach(e=>e.classList.remove("active")),document.getElementById("wizard-step-1b")?.classList.add("active")}async function kvRegister(){const e=document.getElementById("kv-email")?.value.trim(),t=document.getElementById("kv-pass")?.value,n=document.getElementById("kv-wizard-error"),o=document.querySelector('[onclick="kvRegister()"]');if(e&&t)if(t.length<8)n&&(n.textContent="Passphrase must be at least 8 characters",n.style.display="block");else{o&&(o.textContent="⏳ Creating…",o.disabled=!0);try{const o=await kvHashEmail(e),a=await kvMakeVerifier(t,o),r=!0,s=await fetchKV(`${WORKER_URL}/user/register`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:o,verifier:a,email:e})}),i=await s.json();if(409===s.status)return void showDuplicateAccountScreen(e);if(!s.ok)throw new Error(i.error||"Registration failed");let l,c,d,m,u,y;if(r){m=generateKdfSalt();const e=await derivePassphraseWrapKeyV2(t,o,m);l=await generateDataKeyV2Extractable(),c=await wrapDataKeyV2(l,e),d=btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))),u=generateRecoveryCodes(10),y=await buildRecoveryEnvelopesV2(u,l,o)}else{l=await generateDataKey();const e=await derivePassphraseWrapKey(t,o,null);c=await wrapDataKey(l,e.wrapKey),d=e.saltB64,u=generateRecoveryCodes(10),y=await buildRecoveryEnvelopes(u,l,o)}if(!(await fetchKV(`${WORKER_URL}/key/store`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:o,verifier:a,salt:d,passphraseEnvelope:c,recoveryEnvelopes:y,...r?{kdfSalt:m}:{}})})).ok)throw new Error("Could not store key envelopes — try again");_kvKey=l,await kvStoreSession(e,o,a,l),n&&(n.style.display="none"),await showEmailVerification(e,o,()=>showProtectDataScreen(u))}catch(e){n&&(n.textContent=e.message,n.style.display="block")}finally{o&&(o.textContent="Create account with passphrase →",o.disabled=!1)}}else n&&(n.textContent="Enter email and passphrase",n.style.display="block")}async function kvLogin(){const e=document.getElementById("kv-login-email")?.value.trim(),t=document.getElementById("kv-login-pass")?.value,n=document.getElementById("kv-login-error"),o=document.querySelector('[onclick="kvLogin()"]');if(e&&t){o&&(o.textContent="⏳ Signing in…",o.disabled=!0);try{const o=await kvHashEmail(e),a=await kvMakeVerifier(t,o),r=await fetchKV(`${WORKER_URL}/user/verify`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:o,verifier:a})}),s=await r.json();if(404===r.status)throw new Error("Account not found — check your email or create a new account");if(401===r.status)throw new Error("Incorrect passphrase");if(!r.ok)throw new Error(s.error||"Sign-in failed");let i;const l=await fetchKV(`${WORKER_URL}/key/get`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:o,verifier:a})}),c=await l.json();if(l.ok&&!c.legacy&&c.envelope)if("v2"===c.cryptoVersion&&c.kdfSalt){const e=await derivePassphraseWrapKeyV2(t,o,c.kdfSalt);i=await unwrapDataKeyV2(c.envelope,e,!0)}else{const{wrapKey:e}=await derivePassphraseWrapKey(t,o,c.salt);i=await unwrapDataKey(c.envelope,e)}else i=await kvDeriveKey(e,t);if(await kvStoreSession(e,o,a,i),n&&(n.style.display="none"),await offerTrustDevice(e,o,a,i),c.migrationDue)return void await runCryptoMigration(e,o,a,t,i);await postLoginWizardRoute()}catch(e){n&&(n.textContent=e.message,n.style.display="block")}finally{o&&(o.textContent="Sign in →",o.disabled=!1)}}else n&&(n.textContent="Enter email and passphrase",n.style.display="block")}function passkeySupported(){return!(!window.PublicKeyCredential||!navigator.credentials)}async function passkeyPlatformSupported(){if(!window.PublicKeyCredential)return!1;try{return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()}catch(e){return!!navigator.credentials?.create}}function b64urlToUint8(e){const t=e.replace(/-/g,"+").replace(/_/g,"/"),n=t.length%4?"=".repeat(4-t.length%4):"";return Uint8Array.from(atob(t+n),e=>e.charCodeAt(0))}function uint8ToB64url(e){return btoa(String.fromCharCode(...e)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")}async function exportPublicKey(e){return uint8ToB64url(new Uint8Array(e.rawId))}async function kvRegisterWithPasskey(){const e=document.getElementById("kv-email")?.value.trim(),t=document.getElementById("kv-wizard-error"),n=document.querySelector('[onclick="kvRegisterWithPasskey()"]');if(e)if(passkeySupported()){n&&(n.textContent="⏳ Setting up…",n.disabled=!0);try{const n=await kvHashEmail(e),o=await fetchKV(`${WORKER_URL}/passkey/register/begin`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:n,email:e})}),a=await o.json();if(!o.ok)throw new Error(a.error||"Could not start registration");const r=await navigator.credentials.create({publicKey:{challenge:b64urlToUint8(a.challenge),rp:a.rp,user:{id:(new TextEncoder).encode(a.user.id),name:a.user.name,displayName:a.user.displayName},pubKeyCredParams:a.pubKeyCredParams,timeout:a.timeout,attestation:a.attestation,authenticatorSelection:a.authenticatorSelection}});if(!r)throw new Error("Passkey creation cancelled");const s=uint8ToB64url(new Uint8Array(r.rawId)),i=uint8ToB64url(new Uint8Array(r.response.clientDataJSON)),l=uint8ToB64url(new Uint8Array(r.response.attestationObject));let c=s;try{const e=r.response.getPublicKey?.(),t=e instanceof Promise?await e:e;t?(c=uint8ToB64url(new Uint8Array(t)),console.log("Public key extracted, length:",t.byteLength,"bytes")):console.warn("getPublicKey() returned null — signature verification will be skipped")}catch(e){console.warn("getPublicKey failed:",e.message)}const d=await fetchKV(`${WORKER_URL}/passkey/register/finish`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:n,email:e,credentialId:s,publicKey:c,clientDataJSON:i,attestationObject:l,deviceName:getDeviceName()})}),m=await d.json();if(!d.ok)throw new Error(m.error||"Registration failed");const u=JSON.parse(localStorage.getItem("stockroom_passkey_creds")||"{}");u[n]=s,localStorage.setItem("stockroom_passkey_creds",JSON.stringify(u)),await kvStorePasskeySession(e,n,m.sessionToken),t&&(t.style.display="none"),await postLoginWizardRoute()}catch(e){"NotAllowedError"===e.name?t&&(t.textContent="Passkey setup was cancelled — try again or use passphrase below",t.style.display="block"):t&&(t.textContent=e.message,t.style.display="block")}finally{n&&(n.textContent="🔑 Create account with Face ID / Fingerprint",n.disabled=!1)}}else t&&(t.textContent="Passkeys not supported on this device — use passphrase below",t.style.display="block");else t&&(t.textContent="Enter your email address first",t.style.display="block")}async function kvLoginWithPasskey(){const e=document.getElementById("kv-login-email")?.value.trim(),t=document.getElementById("kv-login-error"),n=document.querySelector('[onclick="kvLoginWithPasskey()"]');if(e)if(passkeySupported()){n&&(n.textContent="⏳ Checking…",n.disabled=!0);try{const n=await kvHashEmail(e),o=await fetchKV(`${WORKER_URL}/passkey/auth/begin`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:n})}),a=await o.json();if(404===o.status)throw new Error("No passkeys found for this account — use passphrase below or register a passkey first");if(!o.ok)throw new Error(a.error||"Could not start sign-in");const r=await navigator.credentials.get({publicKey:{challenge:b64urlToUint8(a.challenge),rpId:a.rpId,allowCredentials:a.allowCredentials.map(e=>({type:"public-key",id:b64urlToUint8(e.id)})),userVerification:a.userVerification,timeout:a.timeout}});if(!r)throw new Error("Sign-in cancelled");const s=uint8ToB64url(new Uint8Array(r.rawId)),i=uint8ToB64url(new Uint8Array(r.response.clientDataJSON)),l=uint8ToB64url(new Uint8Array(r.response.authenticatorData)),c=uint8ToB64url(new Uint8Array(r.response.signature)),d=await fetchKV(`${WORKER_URL}/passkey/auth/finish`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:n,credentialId:s,clientDataJSON:i,authenticatorData:l,signature:c})}),m=await d.json();if(!d.ok)throw new Error(m.error||"Sign-in failed");await kvStorePasskeySession(e,n,m.sessionToken),t&&(t.style.display="none"),await postLoginWizardRoute()}catch(e){"NotAllowedError"===e.name?t&&(t.textContent="Sign-in was cancelled — try again",t.style.display="block"):t&&(t.textContent=e.message,t.style.display="block")}finally{n&&(n.textContent="🔑 Sign in with Face ID / Fingerprint",n.disabled=!1)}}else t&&(t.textContent="Passkeys not supported — use passphrase below",t.style.display="block");else t&&(t.textContent="Enter your email address first",t.style.display="block")}let _reauthCallback=null,_reauthPasskeyAllowed=!0;function requireReauth(e,t,n={}){if(!kvConnected)return void toast("Sign in first");_reauthCallback=t,_reauthPasskeyAllowed=!1!==n.passkeyAllowed,document.getElementById("reauth-reason").textContent=e,document.getElementById("reauth-pass").value="",document.getElementById("reauth-error").style.display="none";const o=document.getElementById("reauth-passkey-option");o&&(o.style.display=_reauthPasskeyAllowed&&passkeySupported()?"block":"none"),document.getElementById("reauth-modal").style.display="flex",setTimeout(()=>document.getElementById("reauth-pass")?.focus(),100)}function closeReauth(){document.getElementById("reauth-modal").style.display="none",_reauthCallback=null}async function reauthWithPassphrase(){const e=document.getElementById("reauth-pass")?.value,t=document.getElementById("reauth-error");if(!e)return t.textContent="Enter your passphrase",void(t.style.display="block");try{const n=await kvMakeVerifier(e,_kvEmailHash),o=await fetchKV(`${WORKER_URL}/user/verify`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,verifier:n})});if(401===o.status)return t.textContent="Incorrect passphrase",void(t.style.display="block");if(!o.ok)throw new Error("Verification failed");t.style.display="none",document.getElementById("reauth-modal").style.display="none",_reauthCallback&&(_reauthCallback(),_reauthCallback=null)}catch(e){t.textContent=e.message,t.style.display="block"}}async function reauthWithPasskey(){const e=document.getElementById("reauth-error");if(!passkeySupported())return e.textContent="Passkeys not supported",void(e.style.display="block");try{const t=await fetchKV(`${WORKER_URL}/passkey/auth/begin`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash})}),n=await t.json();if(!t.ok)throw new Error(n.error||"Could not start verification");const o=await navigator.credentials.get({publicKey:{challenge:b64urlToUint8(n.challenge),rpId:n.rpId,allowCredentials:n.allowCredentials.map(e=>({type:"public-key",id:b64urlToUint8(e.id)})),userVerification:n.userVerification,timeout:n.timeout}});if(!o)throw new Error("Verification cancelled");const a=uint8ToB64url(new Uint8Array(o.rawId)),r=uint8ToB64url(new Uint8Array(o.response.clientDataJSON)),s=uint8ToB64url(new Uint8Array(o.response.authenticatorData)),i=uint8ToB64url(new Uint8Array(o.response.signature)),l=await fetchKV(`${WORKER_URL}/passkey/auth/finish`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,credentialId:a,clientDataJSON:r,authenticatorData:s,signature:i})});if(!l.ok){const e=await l.json().catch(()=>({}));throw new Error(e.error||"Verification failed")}e.style.display="none",document.getElementById("reauth-modal").style.display="none",_reauthCallback&&(_reauthCallback(),_reauthCallback=null)}catch(t){"NotAllowedError"===t.name?e.textContent="Verification cancelled":e.textContent=t.message,e.style.display="block"}}async function postLoginWizardRoute(){const e=localStorage.getItem("stockroom_protect_seen"),t=localStorage.getItem("stockroom_country_set");if(e)if(t){document.body.classList.remove("wizard-active"),document.getElementById("wizard").style.display="none",localStorage.setItem("stockroom_seen","1"),await kvSyncNow(!0),scheduleRender(...RENDER_REGIONS);const e=[...document.querySelectorAll(".tab")].find(e=>e.textContent.includes("Stockroom"));e&&showView("stock",e)}else document.querySelectorAll(".wizard-step").forEach(e=>e.classList.remove("active")),document.getElementById("wizard-step-2").classList.add("active"),document.getElementById("country-grid").children.length||buildCountryGrid();else showProtectDataScreen([])}let _protectRecoveryCodes=[];function showProtectDataScreen(e,t=!1){_protectRecoveryCodes=e||[];const n=_protectRecoveryCodes.length>0,o=document.getElementById("wizard-step-1d");if(document.querySelectorAll(".wizard-step").forEach(e=>e.classList.remove("active")),o){o.classList.add("active");const e=o.querySelector("h1"),n=o.querySelector("p");t?(e&&(e.textContent="🔐 Encryption upgraded"),n&&(n.textContent="Your account now uses stronger encryption. Save your new recovery codes — your old ones no longer work.")):(e&&(e.textContent="Protecting your data"),n&&(n.textContent="Complete these steps to keep your account safe."))}document.body.classList.add("wizard-active"),document.getElementById("wizard").style.display="flex",document.getElementById("protect-passkey-done").style.display="none",document.getElementById("protect-passkey-buttons").style.display="flex",document.getElementById("protect-codes-grid").style.display="none",document.getElementById("protect-codes-confirm").style.display="none",document.getElementById("protect-codes-checkbox").checked=!1,n?(document.getElementById("protect-codes-hidden").style.display="",document.getElementById("protect-continue-btn").disabled=!0,document.getElementById("protect-continue-btn").style.opacity="0.5"):(document.getElementById("protect-codes-hidden").innerHTML='<p style="font-size:12px;color:var(--ok);line-height:1.5">✓ Recovery codes already set up. Generate new ones in Settings → Account if needed.</p>',document.getElementById("protect-continue-btn").disabled=!1,document.getElementById("protect-continue-btn").style.opacity="1"),passkeyPlatformSupported().then(e=>{e||(document.getElementById("protect-passkey-section").style.display="none")})}function revealRecoveryCodes(){const e=document.getElementById("protect-codes-list");e&&_protectRecoveryCodes.length&&(e.innerHTML=_protectRecoveryCodes.map((e,t)=>`<div style="padding:3px 0"><span style="color:var(--muted)">${String(t+1).padStart(2,"0")}.</span> <strong>${e}</strong></div>`).join(""),document.getElementById("protect-codes-grid").style.display="",document.getElementById("protect-codes-hidden").style.display="none",document.getElementById("protect-codes-confirm").style.display="flex")}function copyRecoveryCodes(){const e=_protectRecoveryCodes.map((e,t)=>`${t+1}. ${e}`).join("\n");navigator.clipboard?.writeText(e).then(()=>toast("Recovery codes copied ✓")).catch(()=>{})}async function protectAddPasskey(){await addPasskeyToAccount(),("passkey"===_kvAuthMethod||localStorage.getItem("stockroom_passkey_creds"))&&(document.getElementById("protect-passkey-done").style.display="",document.getElementById("protect-passkey-buttons").style.display="none")}function protectSkipPasskey(){const e=document.getElementById("protect-passkey-section");if(e){e.style.opacity="0.4",e.style.pointerEvents="none",document.getElementById("protect-passkey-buttons").style.display="none";const t=document.createElement("div");t.style.cssText="font-size:12px;color:var(--muted)",t.textContent="Skipped — you can add a passkey later in Settings",e.appendChild(t)}}function updateProtectContinueBtn(){const e=document.getElementById("protect-codes-checkbox")?.checked,t=document.getElementById("protect-continue-btn");t&&(t.disabled=!e,t.style.opacity=e?"1":"0.5")}function protectContinue(){_protectRecoveryCodes=[],localStorage.setItem("stockroom_protect_seen","1"),document.querySelectorAll(".wizard-step").forEach(e=>e.classList.remove("active")),localStorage.getItem("stockroom_country_set")?(document.body.classList.remove("wizard-active"),document.getElementById("wizard").style.display="none",localStorage.setItem("stockroom_seen","1"),kvSyncNow(),scheduleRender(...RENDER_REGIONS)):document.getElementById("wizard-step-2")?.classList.add("active")}async function openSecurityChecklist(){kvConnected?showProtectDataScreen([]):toast("Sign in first")}async function recoveryStepEmail(){const e=document.getElementById("recovery-email")?.value.trim(),t=document.getElementById("recovery-email-error");e?(_recoveryEmail=e,t&&(t.style.display="none"),document.getElementById("recovery-step-email").style.display="none",document.getElementById("recovery-step-code").style.display="",setTimeout(()=>document.getElementById("recovery-code-input")?.focus(),100)):t&&(t.textContent="Enter your email address",t.style.display="block")}async function recoveryStepCode(){const e=document.getElementById("recovery-code-input")?.value.trim(),t=document.getElementById("recovery-code-error"),n=document.querySelector('[onclick="recoveryStepCode()"]');if(!e||e.replace(/-/g,"").length<16)t&&(t.textContent="Enter a valid recovery code (XXXX-XXXX-XXXX-XXXX)",t.style.display="block");else{n&&(n.textContent="⏳ Verifying…",n.disabled=!0);try{const n=await kvHashEmail(_recoveryEmail),o=await hashRecoveryCode(e,n),a=await fetchKV(`${WORKER_URL}/key/recover`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:n,codeHash:o})}),r=await a.json();if(!a.ok)throw new Error(r.error||"Invalid recovery code");const s=await deriveRecoveryWrapKey(e,n),i=await unwrapDataKey(r.envelope,s);_recoveryEmailHash=n,_recoveryToken=r.recoveryToken,_recoveryDataKey=i;const l=await fetchKV(`${WORKER_URL}/recovery/request`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:_recoveryEmail})});if(!l.ok){const e=await l.json().catch(()=>({}));throw new Error(e.error||"Could not send email verification")}t&&(t.style.display="none"),document.getElementById("recovery-step-code").style.display="none",document.getElementById("recovery-step-otp").style.display="",setTimeout(()=>document.getElementById("recovery-otp-input")?.focus(),100)}catch(e){t&&(t.textContent=e.message,t.style.display="block")}finally{n&&(n.textContent="Verify code →",n.disabled=!1)}}}async function recoveryStepOtp(){const e=document.getElementById("recovery-otp-input")?.value.trim(),t=document.getElementById("recovery-otp-error"),n=document.querySelector('[onclick="recoveryStepOtp()"]');if(e&&6===e.length){n&&(n.textContent="⏳ Verifying…",n.disabled=!0);try{const n=await fetchKV(`${WORKER_URL}/recovery/verify`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:_recoveryEmail,otp:e})}),o=await n.json();if(!n.ok)throw new Error(o.error||"Invalid code");t&&(t.style.display="none"),document.getElementById("recovery-step-otp").style.display="none",document.getElementById("recovery-step-reset").style.display="",setTimeout(()=>document.getElementById("recovery-new-pass")?.focus(),100)}catch(e){t&&(t.textContent=e.message,t.style.display="block")}finally{n&&(n.textContent="Verify email code →",n.disabled=!1)}}else t&&(t.textContent="Enter the 6-digit code from your email",t.style.display="block")}async function recoveryResendOtp(){try{await fetchKV(`${WORKER_URL}/recovery/request`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:_recoveryEmail})}),toast("Verification code resent")}catch(e){toast("Could not resend — try again")}}function recoveryBack(e){document.getElementById("recovery-step-code").style.display="none",document.getElementById("recovery-step-otp").style.display="none",document.getElementById("recovery-step-reset").style.display="none","email"===e?document.getElementById("recovery-step-email").style.display="":"code"===e&&(document.getElementById("recovery-step-code").style.display="")}async function completeRecovery(){const e=document.getElementById("recovery-new-pass")?.value,t=document.getElementById("recovery-confirm-pass")?.value,n=document.getElementById("recovery-reset-error"),o=document.querySelector('[onclick="completeRecovery()"]');if(!e||e.length<8)n&&(n.textContent="Passphrase must be at least 8 characters",n.style.display="block");else if(e===t)if(_recoveryToken&&_recoveryEmailHash&&_recoveryDataKey){o&&(o.textContent="⏳ Resetting…",o.disabled=!0);try{const{wrapKey:t,saltB64:o}=await derivePassphraseWrapKey(e,_recoveryEmailHash,null),a=await kvMakeVerifier(e,_recoveryEmailHash),r=await wrapDataKey(_recoveryDataKey,t),s=await fetchKV(`${WORKER_URL}/recovery/reset`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_recoveryEmailHash,recoveryToken:_recoveryToken,newVerifier:a,newSalt:o,newEnvelope:r})}),i=await s.json();if(!s.ok)throw new Error(i.error||"Reset failed");await kvStoreSession(_recoveryEmail,_recoveryEmailHash,a,_recoveryDataKey);const l=generateRecoveryCodes(10),c=await buildRecoveryEnvelopes(l,_recoveryDataKey,_recoveryEmailHash);await fetchKV(`${WORKER_URL}/key/update-recovery`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_recoveryEmailHash,verifier:a,recoveryEnvelopes:c})}),_recoveryEmail=_recoveryEmailHash=_recoveryToken="",_recoveryDataKey=null,n&&(n.style.display="none"),localStorage.setItem("stockroom_seen","1"),toast("Access restored ✓ — please save your new recovery codes"),showProtectDataScreen(l)}catch(e){n&&(n.textContent=e.message,n.style.display="block")}finally{o&&(o.textContent="Reset passphrase & Sign in →",o.disabled=!1)}}else n&&(n.textContent="Recovery session expired — start again",n.style.display="block");else n&&(n.textContent="Passphrases do not match",n.style.display="block")}function showDuplicateAccountScreen(e){document.querySelectorAll(".wizard-step").forEach(e=>e.classList.remove("active")),document.getElementById("wizard-step-1e")?.classList.add("active");const t=document.getElementById("duplicate-email-display");t&&(t.textContent=e||"");const n=document.getElementById("kv-login-email"),o=document.getElementById("recovery-email");n&&(n.value=e||""),o&&(o.value=e||"")}function duplicateGoToLogin(){document.querySelectorAll(".wizard-step").forEach(e=>e.classList.remove("active")),document.getElementById("wizard-step-1b")?.classList.add("active");const e=document.getElementById("kv-login-error");e&&(e.style.display="none")}function duplicateGoToRecovery(){document.querySelectorAll(".wizard-step").forEach(e=>e.classList.remove("active")),document.getElementById("wizard-step-1c")?.classList.add("active"),document.getElementById("recovery-step-email").style.display="",document.getElementById("recovery-step-code").style.display="none",document.getElementById("recovery-step-otp").style.display="none",document.getElementById("recovery-step-reset").style.display="none";const e=document.getElementById("recovery-email-error");e&&(e.style.display="none"),setTimeout(()=>document.getElementById("recovery-code-input")?.focus(),100)}function duplicateGoToImport(){localStorage.setItem("stockroom_seen","1"),document.body.classList.remove("wizard-active"),document.getElementById("wizard").style.display="none";const e=[...document.querySelectorAll(".tab")].find(e=>e.textContent.includes("Settings"));e&&showView("settings",e),setTimeout(()=>document.getElementById("import-file")?.click(),300)}function duplicateGoToNewAccount(){document.querySelectorAll(".wizard-step").forEach(e=>e.classList.remove("active")),document.getElementById("wizard-step-1")?.classList.add("active");const e=document.getElementById("kv-email");e&&(e.value="",e.focus());const t=document.getElementById("kv-wizard-error");t&&(t.textContent="That email is already registered — enter a different one to create a new account.",t.style.display="block")}function showDecryptErrorBanner(){document.getElementById("kv-decrypt-error-banner")?.remove();const e=document.createElement("div");e.id="kv-decrypt-error-banner",e.style.cssText=["position:fixed;top:0;left:0;right:0;z-index:9000","background:var(--danger,#e05c5c);color:#fff","padding:14px 16px;font-size:13px;line-height:1.5","display:flex;align-items:center;justify-content:space-between;gap:12px","box-shadow:0 2px 12px rgba(0,0,0,0.4)"].join(";"),e.innerHTML='\n    <div>\n      <strong>⚠️ Your data could not be decrypted.</strong><br>\n      <span style="opacity:.9;font-size:12px">Your items are safe on the server — re-entering your passphrase will restore them.</span>\n    </div>\n    <button onclick="dismissDecryptErrorAndReauth()" style="\n      background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);\n      color:#fff;border-radius:8px;padding:7px 14px;font-size:13px;\n      cursor:pointer;white-space:nowrap;flex-shrink:0\n    ">Re-enter passphrase</button>\n  ',document.body.prepend(e)}async function dismissDecryptErrorAndReauth(){document.getElementById("kv-decrypt-error-banner")?.remove(),_kvKey=null;try{localStorage.removeItem("stockroom_kv_session_key")}catch(e){}try{localStorage.removeItem("stockroom_kv_key_fallback")}catch(e){}try{localStorage.removeItem("stockroom_device_secret")}catch(e){}try{sessionStorage.removeItem("stockroom_kv_session_key")}catch(e){}try{await removeWrappedKey(getOrCreateDeviceId())}catch(e){}const e=await showPassphrasePrompt();if(!e)return;const{passphrase:t,trust:n}=e;try{const e=await kvMakeVerifier(t,_kvEmailHash);let o;try{const n=await fetchKV(`${WORKER_URL}/key/get`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,verifier:e})}),a=await n.json();if(401===n.status)return toast("Incorrect passphrase — try again"),void showDecryptErrorBanner();if(n.ok&&!a.legacy&&a.envelope){const{wrapKey:e}=await derivePassphraseWrapKey(t,_kvEmailHash,a.salt);o=await unwrapDataKey(a.envelope,e)}}catch(e){}o||(o=await kvDeriveKey(_kvEmail,t)),_kvKey=o;try{const e=await crypto.subtle.exportKey("raw",_kvKey),t=btoa(String.fromCharCode(...new Uint8Array(e)));localStorage.setItem("stockroom_kv_session_key",JSON.stringify({keyData:t,emailHash:_kvEmailHash,expiry:Date.now()+144e5}))}catch(e){}n&&await trustThisDeviceWith(_kvEmail,_kvEmailHash,_kvVerifier,_kvKey),updateSyncPill("syncing"),await kvSyncNow()}catch(e){toast("Could not unlock — "+e.message),showDecryptErrorBanner()}}async function runCryptoMigration(e,t,n,o,a){try{const r=document.createElement("div");r.id="crypto-migration-overlay",r.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:10000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:#fff;font-family:var(--sans)",r.innerHTML='\n      <div style="font-size:40px">🔐</div>\n      <div style="font-size:18px;font-weight:700">Upgrading your encryption</div>\n      <div id="crypto-migration-status" style="font-size:13px;color:rgba(255,255,255,0.7);text-align:center;max-width:300px;line-height:1.6">\n        Fetching your data…\n      </div>\n      <div style="width:200px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;overflow:hidden">\n        <div id="crypto-migration-bar" style="height:100%;width:0%;background:var(--accent,#e8a838);border-radius:2px;transition:width 0.4s"></div>\n      </div>',document.body.appendChild(r);const s=(e,t)=>{const n=document.getElementById("crypto-migration-status"),o=document.getElementById("crypto-migration-bar");n&&(n.textContent=e),o&&(o.style.width=t+"%")};s("Fetching your data…",10);const i=await fetchKV(`${WORKER_URL}/data/pull`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:t,verifier:n})});if(!i.ok)throw new Error("Could not fetch data for migration");const{ciphertext:l}=await i.json();let c;s("Decrypting with current key…",25),l&&(c=await kvDecrypt(a,l)),s("Generating new encryption key…",40);const d=generateKdfSalt(),m=n,u=await derivePassphraseWrapKeyV2(o,t,d),y=await generateDataKeyV2Extractable(),p=await wrapDataKeyV2(y,u),g=btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));s("Re-encrypting your data…",55);const h=c?await kvEncrypt(y,c):null;s("Updating recovery codes…",70);const v=generateRecoveryCodes(10),f=await buildRecoveryEnvelopesV2(v,y,t);s("Saving to server…",85);const w=await fetchKV(`${WORKER_URL}/crypto/migrate`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:t,verifier:n,newVerifier:m,newSalt:g,newEnvelope:p,newKdfSalt:d,newRecoveryEnvelopes:f,ciphertext:h})});if(!w.ok){const e=await w.json().catch(()=>({}));throw new Error(e.error||"Migration failed — your data is unchanged")}if(s("Done! Finishing up…",95),_kvKey=y,await kvStoreSession(e,t,n,y),_shareTargets?.length){s("Re-encrypting share keys…",97);for(const e of _shareTargets)try{const t=await recoverShareKeyWithOldKey(e.code,a);t?(await backupShareKey(e.code,t),await pushSharedData(e.code,t)):console.warn("Migration: could not recover share key for",e.code,"— share backup skipped")}catch(t){console.warn("Migration: share key re-backup failed for",e.code,t.message)}}r.remove(),showProtectDataScreen(v,!0)}catch(e){document.getElementById("crypto-migration-overlay")?.remove(),console.error("Migration failed:",e),toast("Encryption upgrade failed — "+e.message+". Will retry next sign-in."),await postLoginWizardRoute()}}let _syncPillTaps=0,_syncPillTimer=null;function handleSyncPillTap(){_syncPillTaps++,_syncPillTimer&&clearTimeout(_syncPillTimer),_syncPillTimer=setTimeout(()=>{_syncPillTaps=0},1500),_syncPillTaps>=5&&(_syncPillTaps=0,showMobileDiag())}async function showMobileDiag(){const e=[];e.push(`kvConnected: ${kvConnected}`),e.push(`_kvEmail: ${_kvEmail||"(empty)"}`),e.push(`_kvEmailHash: ${_kvEmailHash||"(empty)"}`),e.push("_kvVerifier: "+(_kvVerifier?_kvVerifier.slice(0,8)+"…":"(empty)")),e.push("_kvKey: "+(_kvKey?"SET":"NULL")),e.push(`_shareState: ${_shareState?_shareState.code:"null"}`),e.push("_shareKey: "+(_shareKey?"SET":"null")),e.push(`local items: ${items?.length??"?"}`);try{const t=JSON.parse(localStorage.getItem("stockroom_kv_session_key")||"null");e.push("session_key: "+(t?`SET (exp ${new Date(t.expiry).toLocaleTimeString()}, match: ${t.emailHash===_kvEmailHash})`:"absent"))}catch(t){e.push("session_key: parse error")}e.push("device_secret: "+(localStorage.getItem("stockroom_device_secret")?"SET":"absent"));const t=JSON.parse(localStorage.getItem("stockroom_share_keys")||"{}");if(e.push(`share_keys: ${Object.keys(t).join(", ")||"none"}`),_kvEmailHash&&_kvVerifier){try{const t=await fetchKV(`${WORKER_URL}/key/get`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,verifier:_kvVerifier})}),n=await t.json();e.push(`key/get: ${t.status} cv=${n.cryptoVersion||"?"} env=${!!n.envelope} kdf=${!!n.kdfSalt} mig=${n.migrationDue}`)}catch(t){e.push(`key/get error: ${t.message}`)}try{const t=await fetchKV(`${WORKER_URL}/data/pull`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,verifier:_kvVerifier})}),n=await t.json();e.push(`data/pull: ${t.status} ct=${n.ciphertext?n.ciphertext.length+"ch":"none"}`)}catch(t){e.push(`data/pull error: ${t.message}`)}}else e.push("(no credentials — server checks skipped)");const n=document.createElement("div");n.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;flex-direction:column;padding:20px;overflow-y:auto",n.innerHTML=`\n    <div style="background:#1a1d27;border:1px solid #2a2d3a;border-radius:12px;padding:16px;max-width:500px;width:100%;margin:auto">\n      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">\n        <span style="font-size:13px;font-weight:700;color:#e8a838">🔧 Diagnostic</span>\n        <button onclick="this.closest('[style*=fixed]').remove()" style="background:transparent;border:none;color:#6b7280;font-size:18px;cursor:pointer;padding:0 4px">✕</button>\n      </div>\n      <pre style="font-family:monospace;font-size:11px;color:#e8e8f0;line-height:1.8;white-space:pre-wrap;word-break:break-all;margin:0 0 12px">${e.join("\n")}</pre>\n      <div style="display:flex;gap:8px;flex-wrap:wrap">\n        <button onclick="navigator.clipboard?.writeText(${JSON.stringify(e.join("\n"))}).then(()=>toast('Copied ✓'))" style="background:#2a2d3a;border:none;color:#e8e8f0;border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer">Copy</button>\n        <button onclick="clearLocalKeyMaterial();this.closest('[style*=fixed]').remove()" style="background:#e05c5c;border:none;color:#fff;border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer">Clear cached keys & retry</button>\n        <button onclick="this.closest('[style*=fixed]').remove()" style="background:transparent;border:1px solid #2a2d3a;color:#6b7280;border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer">Close</button>\n      </div>\n    </div>`,document.body.appendChild(n)}async function clearLocalKeyMaterial(){_kvKey=null;try{localStorage.removeItem("stockroom_kv_session_key")}catch(e){}try{localStorage.removeItem("stockroom_kv_key_fallback")}catch(e){}try{localStorage.removeItem("stockroom_device_secret")}catch(e){}try{sessionStorage.removeItem("stockroom_kv_session_key")}catch(e){}try{await removeWrappedKey(getOrCreateDeviceId())}catch(e){}document.getElementById("kv-decrypt-error-banner")?.remove(),toast("Cached keys cleared — signing in again…"),await kvSyncNow()}function showForgotPassphrase(){document.querySelectorAll(".wizard-step").forEach(e=>e.classList.remove("active")),document.getElementById("wizard-step-1c")?.classList.add("active");const e=document.getElementById("kv-login-email")?.value.trim();if(e){const t=document.getElementById("recovery-email");t&&(t.value=e)}document.getElementById("recovery-step-email").style.display="",document.getElementById("recovery-step-code").style.display="none",document.getElementById("recovery-step-otp").style.display="none",document.getElementById("recovery-step-reset").style.display="none"}async function kvStorePasskeySession(e,t,n,o){_kvEmail=e,_kvEmailHash=t,_kvSessionToken=n,_kvVerifier="",_kvAuthMethod="passkey",kvConnected=!0,_kvKey=o||await crypto.subtle.generateKey({name:"AES-GCM",length:256},!0,["encrypt","decrypt"]);try{localStorage.setItem("stockroom_kv_session",JSON.stringify({email:e,emailHash:t,sessionToken:n,authMethod:"passkey"}));const o=await crypto.subtle.exportKey("raw",_kvKey),a=btoa(String.fromCharCode(...new Uint8Array(o)));localStorage.setItem("stockroom_kv_session_key",JSON.stringify({keyData:a,emailHash:t,expiry:Date.now()+864e5}))}catch(e){}const a=document.getElementById("kv-account-email");a&&(a.textContent=e),updateSyncUI(),ensureEcdhKeypair(t).catch(e=>console.warn("ensureEcdhKeypair:",e.message))}async function kvRestorePasskeySession(e){const{email:t,emailHash:n,sessionToken:o}=e;try{if(!(await fetchKV(`${WORKER_URL}/passkey/verify-session`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:n,sessionToken:o})})).ok)return!1}catch(e){}_kvEmail=t,_kvEmailHash=n,_kvSessionToken=o,_kvVerifier="",_kvAuthMethod="passkey",kvConnected=!0;const a=document.getElementById("kv-account-email");return a&&(a.textContent=t),updateSyncUI(),!0}async function addPasskeyToAccount(){passkeySupported()?kvConnected?requireReauth("Re-enter your passphrase to add a passkey.",_doAddPasskeyToAccount,{passkeyAllowed:!1}):toast("Sign in first"):toast("Passkeys not supported on this device")}async function _doAddPasskeyToAccount(){try{const e=await fetchKV(`${WORKER_URL}/passkey/register/begin`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,email:_kvEmail})}),t=await e.json();if(!e.ok)throw new Error(t.error||"Could not start setup");const n=await navigator.credentials.create({publicKey:{challenge:b64urlToUint8(t.challenge),rp:t.rp,user:{id:(new TextEncoder).encode(t.user.id),name:t.user.name,displayName:t.user.displayName},pubKeyCredParams:t.pubKeyCredParams,timeout:t.timeout,attestation:t.attestation,authenticatorSelection:t.authenticatorSelection}});if(!n)throw new Error("Setup cancelled");const o=uint8ToB64url(new Uint8Array(n.rawId)),a=uint8ToB64url(new Uint8Array(n.response.clientDataJSON)),r=uint8ToB64url(new Uint8Array(n.response.attestationObject));let s=o;try{const e=n.response.getPublicKey?.(),t=e instanceof Promise?await e:e;t&&(s=uint8ToB64url(new Uint8Array(t)))}catch(e){console.warn("getPublicKey failed:",e.message)}const i=_kvSessionToken?void 0:_kvVerifier,l=await fetchKV(`${WORKER_URL}/passkey/register/finish`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,email:_kvEmail,credentialId:o,publicKey:s,clientDataJSON:a,attestationObject:r,deviceName:getDeviceName(),...i?{verifier:i}:{}})}),c=await l.json();if(!l.ok)throw new Error(c.error||"Setup failed");_kvSessionToken=c.sessionToken,_kvAuthMethod="passkey";try{const e=JSON.parse(localStorage.getItem("stockroom_kv_session")||"{}");e.sessionToken=c.sessionToken,e.authMethod="passkey",localStorage.setItem("stockroom_kv_session",JSON.stringify(e));const t=JSON.parse(localStorage.getItem("stockroom_passkey_creds")||"{}");t[_kvEmailHash]=o,localStorage.setItem("stockroom_passkey_creds",JSON.stringify(t))}catch(e){}toast("Passkey added ✓ — you can now sign in with Face ID / Fingerprint"),loadPasskeys()}catch(e){"NotAllowedError"===e.name?toast("Setup cancelled"):toast("Could not add passkey: "+e.message)}}async function generateNewRecoveryCodes(){kvConnected&&_kvKey?requireReauth("Re-enter your passphrase to generate new recovery codes.",_doGenerateNewRecoveryCodes,{passkeyAllowed:!0}):toast("Sign in first")}async function _doGenerateNewRecoveryCodes(){if(confirm("Generate 10 new recovery codes?\n\nThis will invalidate all your existing recovery codes."))try{const e=generateRecoveryCodes(10),t=await buildRecoveryEnvelopes(e,_kvKey,_kvEmailHash),n=_kvSessionToken?{emailHash:_kvEmailHash,sessionToken:_kvSessionToken,recoveryEnvelopes:t}:{emailHash:_kvEmailHash,verifier:_kvVerifier,recoveryEnvelopes:t};if(!(await fetchKV(`${WORKER_URL}/key/update-recovery`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(n)})).ok)throw new Error("Could not update recovery codes");showProtectDataScreen(e),toast("New recovery codes generated — save them now")}catch(e){toast("Could not generate codes: "+e.message)}}function checkExportReminder(){if(kvConnected)try{const e=localStorage.getItem("stockroom_last_export"),t=Date.now(),n=2592e6,o=5184e6;if(!e){JSON.parse(localStorage.getItem("stockroom_kv_session")||"{}");return}const a=t-parseInt(e);a>o?showExportReminder("urgent"):a>n&&showExportReminder("normal")}catch(e){}}function showExportReminder(e){if(document.getElementById("export-reminder-banner"))return;const t=document.createElement("div");t.id="export-reminder-banner";const n="urgent"===e;t.style.cssText=`background:${n?"rgba(232,80,80,0.1)":"rgba(232,168,56,0.1)"};border-bottom:1px solid ${n?"rgba(232,80,80,0.3)":"rgba(232,168,56,0.3)"};padding:10px 16px;display:flex;align-items:center;gap:10px;font-size:13px`,t.innerHTML=`\n    <span style="flex:1">${n?"⚠️":"📦"} <strong>${n?"Over 60 days":"Over 30 days"} since your last data export.</strong> Export your data regularly as a backup.</span>\n    <button class="btn btn-sm" style="background:${n?"rgba(232,80,80,0.2)":"rgba(232,168,56,0.2)"};border:1px solid ${n?"rgba(232,80,80,0.4)":"rgba(232,168,56,0.4)"};color:${n?"var(--danger)":"var(--warn)"};white-space:nowrap" onclick="exportDataAndDismiss()">Export now</button>\n    <button class="btn btn-ghost btn-sm" onclick="this.closest('#export-reminder-banner').remove()">✕</button>\n  `;const o=document.getElementById("update-banner");o?.parentNode?.insertBefore(t,o.nextSibling)||document.querySelector(".app-header")?.after(t)}async function exportDataAndDismiss(){document.getElementById("export-reminder-banner")?.remove(),localStorage.setItem("stockroom_last_export",String(Date.now())),"function"==typeof exportData&&exportData()}const _origExportData=void 0!==exportData?exportData:null;async function loadPasskeys(){const e=document.getElementById("passkey-list");if(e)if(kvConnected)try{const t=_kvSessionToken?{emailHash:_kvEmailHash,sessionToken:_kvSessionToken}:{emailHash:_kvEmailHash,verifier:_kvVerifier},n=await fetch(`${WORKER_URL}/passkey/list`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(t)});if(!n.ok)return void(e.innerHTML='<p style="font-size:12px;color:var(--muted)">Could not load passkeys.</p>');const{credentials:o}=await n.json();o.length?e.innerHTML=o.map(e=>`\n        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px">\n          <div style="font-size:20px">🔑</div>\n          <div style="flex:1;min-width:0">\n            <div style="font-size:13px;font-weight:700">${esc(e.deviceName)}</div>\n            <div style="font-size:11px;color:var(--muted)">Added ${new Date(e.createdAt).toLocaleDateString("en-GB")} · Last used ${new Date(e.lastUsed).toLocaleDateString("en-GB")}</div>\n          </div>\n          <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="removePasskey('${e.credentialId}')">Remove</button>\n        </div>`).join(""):e.innerHTML='<p style="font-size:12px;color:var(--muted)">No passkeys yet.</p>'}catch(t){e.innerHTML='<p style="font-size:12px;color:var(--muted)">Could not load passkeys.</p>'}else e.innerHTML='<p style="font-size:12px;color:var(--muted)">Sign in to manage passkeys.</p>'}async function removePasskey(e){if(confirm("Remove this passkey? You'll need to use your passphrase or another passkey to sign in."))try{const t=_kvSessionToken?{emailHash:_kvEmailHash,sessionToken:_kvSessionToken,credentialId:e}:{emailHash:_kvEmailHash,verifier:_kvVerifier,credentialId:e};if(!(await fetch(`${WORKER_URL}/passkey/remove`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(t)})).ok)throw new Error("Could not remove");toast("Passkey removed ✓"),loadPasskeys()}catch(e){toast("Could not remove passkey: "+e.message)}}async function initPasskeyUI(){const e=await passkeyPlatformSupported().catch(()=>!1),t=document.getElementById("passkey-register-option"),n=document.getElementById("passkey-login-option"),o=document.getElementById("add-passkey-btn");e?(t&&(t.style.display=""),n&&(n.style.display=""),o&&(o.style.display="")):(t&&(t.style.display="none"),n&&(n.style.display="none"),o&&(o.style.display="none"))}async function generateDataKey(){return crypto.subtle.generateKey({name:"AES-GCM",length:256},!0,["encrypt","decrypt"])}async function derivePassphraseWrapKey(e,t,n){const o=n?Uint8Array.from(atob(n),e=>e.charCodeAt(0)):crypto.getRandomValues(new Uint8Array(32)),a=(new TextEncoder).encode(e+":"+t),r=await crypto.subtle.importKey("raw",a,"PBKDF2",!1,["deriveKey"]);return{wrapKey:await crypto.subtle.deriveKey({name:"PBKDF2",salt:o,iterations:2e5,hash:"SHA-256"},r,{name:"AES-GCM",length:256},!1,["encrypt","decrypt"]),saltB64:n||btoa(String.fromCharCode(...o))}}async function deriveRecoveryWrapKey(e,t){const n=(new TextEncoder).encode(e.replace(/-/g,"").toUpperCase()+":"+t),o=await crypto.subtle.importKey("raw",n,"PBKDF2",!1,["deriveKey"]),a=(new TextEncoder).encode("stockroom-recovery-v1-"+t);return crypto.subtle.deriveKey({name:"PBKDF2",salt:a,iterations:1e5,hash:"SHA-256"},o,{name:"AES-GCM",length:256},!1,["encrypt","decrypt"])}async function wrapDataKey(e,t){const n=await crypto.subtle.exportKey("raw",e),o=crypto.getRandomValues(new Uint8Array(12)),a=await crypto.subtle.encrypt({name:"AES-GCM",iv:o},t,n),r=new Uint8Array(o.length+a.byteLength);return r.set(o,0),r.set(new Uint8Array(a),o.length),btoa(String.fromCharCode(...r))}async function unwrapDataKey(e,t){const n=Uint8Array.from(atob(e),e=>e.charCodeAt(0)),o=n.slice(0,12),a=n.slice(12),r=await crypto.subtle.decrypt({name:"AES-GCM",iv:o},t,a);return crypto.subtle.importKey("raw",r,{name:"AES-GCM",length:256},!0,["encrypt","decrypt"])}function generateRecoveryCodes(e=10){const t="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";return Array.from({length:e},()=>{const e=crypto.getRandomValues(new Uint8Array(16));return[0,4,8,12].map(n=>Array.from(e.slice(n,n+4)).map(e=>t[e%32]).join("")).join("-")})}async function hashRecoveryCode(e,t){const n=(new TextEncoder).encode(e.replace(/-/g,"").toUpperCase()+":"+t),o=await crypto.subtle.digest("SHA-256",n);return btoa(String.fromCharCode(...new Uint8Array(o)))}async function buildRecoveryEnvelopes(e,t,n){const o=[];for(const a of e){const e=await deriveRecoveryWrapKey(a,n),r=await wrapDataKey(t,e),s=await hashRecoveryCode(a,n);o.push(JSON.stringify({envelope:r,codeHash:s}))}return o}const DEVICE_DB_NAME="stockroom-kv-device",DEVICE_STORE_NAME="keys";async function openDeviceDb(){return new Promise((e,t)=>{const n=indexedDB.open(DEVICE_DB_NAME,1);n.onupgradeneeded=e=>e.target.result.createObjectStore(DEVICE_STORE_NAME),n.onsuccess=t=>e(t.target.result),n.onerror=e=>t(e.target.error)})}function getOrCreateDeviceId(){let e=localStorage.getItem("stockroom_device_id");return e||(e=Array.from(crypto.getRandomValues(new Uint8Array(16))).map(e=>e.toString(16).padStart(2,"0")).join(""),localStorage.setItem("stockroom_device_id",e)),e}function getDeviceName(){const e=navigator.userAgent;return/iPhone/i.test(e)?"iPhone":/iPad/i.test(e)?"iPad":/Android/i.test(e)?/Mobile/i.test(e)?"Android Phone":"Android Tablet":/Mac/i.test(e)?"Mac":/Windows/i.test(e)?"Windows PC":"Browser"}async function deriveDeviceWrapKey(e){const t=(new TextEncoder).encode(e),n=await crypto.subtle.importKey("raw",t,"PBKDF2",!1,["deriveKey"]),o=(new TextEncoder).encode("stockroom-device-wrap-v1");return crypto.subtle.deriveKey({name:"PBKDF2",salt:o,iterations:5e4,hash:"SHA-256"},n,{name:"AES-GCM",length:256},!1,["encrypt","decrypt"])}async function saveWrappedKey(e,t,n){const o=await crypto.subtle.exportKey("raw",t),a=await deriveDeviceWrapKey(n),r=crypto.getRandomValues(new Uint8Array(12)),s=await crypto.subtle.encrypt({name:"AES-GCM",iv:r},a,o),i=new Uint8Array(r.length+s.byteLength);i.set(r,0),i.set(new Uint8Array(s),r.length);const l=await openDeviceDb();return new Promise((t,n)=>{const o=l.transaction(DEVICE_STORE_NAME,"readwrite").objectStore(DEVICE_STORE_NAME).put(btoa(String.fromCharCode(...i)),e);o.onsuccess=()=>t(!0),o.onerror=()=>n(o.error)})}async function loadWrappedKey(e,t){try{const n=await openDeviceDb(),o=await new Promise((t,o)=>{const a=n.transaction(DEVICE_STORE_NAME,"readonly").objectStore(DEVICE_STORE_NAME).get(e);a.onsuccess=()=>t(a.result),a.onerror=()=>o(a.error)});if(!o)return null;const a=Uint8Array.from(atob(o),e=>e.charCodeAt(0)),r=a.slice(0,12),s=a.slice(12),i=await deriveDeviceWrapKey(t),l=await crypto.subtle.decrypt({name:"AES-GCM",iv:r},i,s);return crypto.subtle.importKey("raw",l,{name:"AES-GCM",length:256},!0,["encrypt","decrypt"])}catch(e){return console.warn("loadWrappedKey failed:",e.message),null}}async function removeWrappedKey(e){try{const t=await openDeviceDb();await new Promise((n,o)=>{const a=t.transaction(DEVICE_STORE_NAME,"readwrite").objectStore(DEVICE_STORE_NAME).delete(e);a.onsuccess=()=>n(),a.onerror=()=>o(a.error)})}catch(e){}}async function offerTrustDevice(e,t,n,o){const a=getOrCreateDeviceId(),r=localStorage.getItem("stockroom_device_secret");if(r){if(await loadWrappedKey(a,r))return}confirm("Trust this device?\n\nYou'll stay signed in automatically on this device. You can remove it from Settings at any time.")&&await trustThisDeviceWith(e,t,n,o)}async function trustThisDeviceWith(e,t,n,o){try{const e=getOrCreateDeviceId();let a=localStorage.getItem("stockroom_device_secret");a||(a=Array.from(crypto.getRandomValues(new Uint8Array(32))).map(e=>e.toString(16).padStart(2,"0")).join(""),localStorage.setItem("stockroom_device_secret",a)),await saveWrappedKey(e,o,a);try{const e=await crypto.subtle.exportKey("raw",o),n=btoa(String.fromCharCode(...new Uint8Array(e)));localStorage.setItem("stockroom_kv_key_fallback",JSON.stringify({keyB64:n,emailHash:t,expiresAt:Date.now()+2592e6}))}catch(e){}const r=getDeviceName();fetchKV(`${WORKER_URL}/device/register`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:t,verifier:n,deviceId:e,name:r,addedAt:(new Date).toISOString()})}).catch(()=>{}),toast("This device is now trusted ✓"),loadTrustedDevices()}catch(e){toast("Could not trust device: "+e.message)}}async function trustThisDevice(){_kvKey?await trustThisDeviceWith(_kvEmail,_kvEmailHash,_kvVerifier,_kvKey):toast("Sign in first")}function toggleTrustedDevicesPanel(){const e=document.getElementById("trusted-devices-panel"),t=event.target.closest("button");if(!e)return;const n="none"===e.style.display;e.style.display=n?"block":"none",t&&(t.textContent=n?"Hide devices":"Show devices"),n&&loadTrustedDevices()}async function loadTrustedDevices(){if(!kvConnected||!_kvEmailHash||!_kvVerifier)return;const e=document.getElementById("trusted-devices-list"),t=document.getElementById("trust-this-device-row");if(e)try{const n=await fetchKV(`${WORKER_URL}/device/list`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,verifier:_kvVerifier})}),o=(await n.json()).devices||[],a=getOrCreateDeviceId();o.length?e.innerHTML=o.map(e=>{const t=e.deviceId===a,n=e.addedAt?new Date(e.addedAt).toLocaleDateString("en-GB"):"—",o=e.lastSeen?new Date(e.lastSeen).toLocaleDateString("en-GB"):"—";return`<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border:1px solid ${t?"var(--accent)":"var(--border)"};border-radius:10px">\n          <div style="flex:1;min-width:0">\n            <div style="font-size:13px;font-weight:700">${esc(e.name)}${t?' <span style="font-size:11px;color:var(--accent);font-weight:400">(this device)</span>':""}</div>\n            <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">Added ${n} · Last seen ${o}</div>\n          </div>\n          <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="removeTrustedDevice('${e.deviceId}')">Remove</button>\n        </div>`}).join(""):e.innerHTML='<p style="font-size:12px;color:var(--muted)">No trusted devices yet.</p>';const r=o.some(e=>e.deviceId===a);t&&(t.style.display=r?"none":"block")}catch(t){e.innerHTML='<p style="font-size:12px;color:var(--muted)">Could not load devices.</p>'}}async function removeTrustedDevice(e){if(confirm("Remove this device? It will need to sign in with a passphrase next time."))try{await fetchKV(`${WORKER_URL}/device/remove`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,verifier:_kvVerifier,deviceId:e})}),e===getOrCreateDeviceId()&&(await removeWrappedKey(e),localStorage.removeItem("stockroom_device_secret")),toast("Device removed ✓"),loadTrustedDevices()}catch(e){toast("Could not remove device")}}async function kvStoreSession(e,t,n,o){_kvEmail=e,_kvEmailHash=t,_kvVerifier=n,_kvKey=o,kvConnected=!0;try{localStorage.setItem("stockroom_kv_session",JSON.stringify({email:e,emailHash:t,verifier:n}))}catch(e){}if(o)try{const e=await crypto.subtle.exportKey("raw",o),n=btoa(String.fromCharCode(...new Uint8Array(e)));localStorage.setItem("stockroom_kv_session_key",JSON.stringify({keyData:n,emailHash:t,expiry:Date.now()+144e5}))}catch(e){}const a=document.getElementById("kv-account-email");a&&(a.textContent=e),updateSyncUI(),ensureEcdhKeypair(t).catch(e=>console.warn("ensureEcdhKeypair:",e.message))}async function kvRestoreSession(){try{const e=localStorage.getItem("stockroom_kv_session");if(!e)return!1;const{email:t,emailHash:n,verifier:o,sessionToken:a,authMethod:r}=JSON.parse(e);if(!t||!n)return!1;if("passkey"===r&&a)return await kvRestorePasskeySession({email:t,emailHash:n,sessionToken:a});if(!o)return!1;const s=async(e,a)=>{_kvEmail=t,_kvEmailHash=n,_kvVerifier=o,_kvKey=e,kvConnected=!0;const r=document.getElementById("kv-account-email");return r&&(r.textContent=t),updateSyncUI(),console.log("Session restored from:",a),!0},i=getOrCreateDeviceId(),l=localStorage.getItem("stockroom_device_secret");if(l){try{const e=await loadWrappedKey(i,l);if(e){try{const t=await crypto.subtle.exportKey("raw",e),o=btoa(String.fromCharCode(...new Uint8Array(t)));localStorage.setItem("stockroom_kv_key_fallback",JSON.stringify({keyB64:o,emailHash:n,expiresAt:Date.now()+2592e6}))}catch(e){}return fetch(`${WORKER_URL}/device/seen`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:n,verifier:o,deviceId:i})}).catch(()=>{}),await s(e,"trusted-device-idb")}}catch(e){console.warn("IDB restore failed:",e.message)}try{const e=JSON.parse(localStorage.getItem("stockroom_kv_key_fallback")||"null");if(e&&e.emailHash===n&&Date.now()<e.expiresAt){const t=Uint8Array.from(atob(e.keyB64),e=>e.charCodeAt(0)),n=await crypto.subtle.importKey("raw",t,{name:"AES-GCM",length:256},!0,["encrypt","decrypt"]);return await s(n,"trusted-device-localstorage-fallback")}}catch(e){console.warn("LS key fallback failed:",e.message)}}try{const e=JSON.parse(localStorage.getItem("stockroom_kv_session_key")||"null");if(e&&e.emailHash===n&&Date.now()<e.expiry){const t=Uint8Array.from(atob(e.keyData),e=>e.charCodeAt(0)),n=await crypto.subtle.importKey("raw",t,{name:"AES-GCM",length:256},!0,["encrypt","decrypt"]);return await s(n,"4hr-session")}e&&localStorage.removeItem("stockroom_kv_session_key")}catch(e){}_kvEmail=t,_kvEmailHash=n,_kvVerifier=o,kvConnected=!0;const c=document.getElementById("kv-account-email");return c&&(c.textContent=t),updateSyncUI(),!0}catch(e){return console.warn("kvRestoreSession error:",e),!1}}async function kvEnsureKey(){if(_kvKey)return!0;const e=localStorage.getItem("stockroom_device_secret");if(e){const t=getOrCreateDeviceId();try{const n=await loadWrappedKey(t,e);if(n)return _kvKey=n,!0}catch(e){}try{const e=JSON.parse(localStorage.getItem("stockroom_kv_key_fallback")||"null");if(e&&e.emailHash===_kvEmailHash&&Date.now()<e.expiresAt){const t=Uint8Array.from(atob(e.keyB64),e=>e.charCodeAt(0));if(_kvKey=await crypto.subtle.importKey("raw",t,{name:"AES-GCM",length:256},!0,["encrypt","decrypt"]),_kvKey)return!0}}catch(e){}localStorage.removeItem("stockroom_device_secret")}try{const e=JSON.parse(localStorage.getItem("stockroom_kv_session_key")||"null");if(e&&e.emailHash===_kvEmailHash&&Date.now()<e.expiry){const t=Uint8Array.from(atob(e.keyData),e=>e.charCodeAt(0));if(_kvKey=await crypto.subtle.importKey("raw",t,{name:"AES-GCM",length:256},!0,["encrypt","decrypt"]),_kvKey)return!0}else e&&localStorage.removeItem("stockroom_kv_session_key")}catch(e){}const t=await showPassphrasePrompt();if(!t)return!1;const{passphrase:n,trust:o}=t;try{const e=await kvMakeVerifier(n,_kvEmailHash);let t;const a=await fetchKV(`${WORKER_URL}/key/get`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,verifier:e})}),r=await a.json();if(401===a.status)return toast("Incorrect passphrase"),!1;if(a.ok&&!r.legacy&&r.envelope)try{if("v2"===r.cryptoVersion&&r.kdfSalt){const e=await derivePassphraseWrapKeyV2(n,_kvEmailHash,r.kdfSalt);t=await unwrapDataKeyV2(r.envelope,e,!0)}else{const{wrapKey:e}=await derivePassphraseWrapKey(n,_kvEmailHash,r.salt);t=await unwrapDataKey(r.envelope,e)}}catch(e){return toast("Incorrect passphrase"),console.warn("kvEnsureKey: envelope unwrap failed —",e.message),!1}else t=await kvDeriveKey(_kvEmail,n);_kvKey=t;try{const e=await crypto.subtle.exportKey("raw",_kvKey),t=btoa(String.fromCharCode(...new Uint8Array(e)));localStorage.setItem("stockroom_kv_session_key",JSON.stringify({keyData:t,emailHash:_kvEmailHash,expiry:Date.now()+144e5}))}catch(e){}return o&&await trustThisDeviceWith(_kvEmail,_kvEmailHash,_kvVerifier,_kvKey),!0}catch(e){return console.error("kvEnsureKey unexpected error:",e.message),toast("Could not unlock — "+e.message),!1}}function showPassphrasePrompt(){return new Promise(e=>{document.getElementById("kv-passphrase-modal")?.remove();const t=document.createElement("div");t.id="kv-passphrase-modal",t.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px",t.innerHTML=`\n      <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px 24px;width:100%;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,0.4)">\n        <div style="font-size:32px;margin-bottom:12px;text-align:center">🔑</div>\n        <h3 style="font-size:17px;font-weight:700;margin-bottom:6px;text-align:center">Enter passphrase</h3>\n        <p style="font-size:13px;color:var(--muted);margin-bottom:18px;text-align:center;line-height:1.5">\n          Decrypt your data for <strong style="color:var(--text)">${esc(_kvEmail)}</strong>\n        </p>\n        <input type="password" id="kv-pp-input" placeholder="Your passphrase"\n          style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--sans);font-size:15px;outline:none;margin-bottom:8px">\n        <p id="kv-pp-error" style="font-size:12px;color:var(--danger);margin-bottom:12px;display:none">Incorrect passphrase</p>\n        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin-bottom:18px;cursor:pointer">\n          <input type="checkbox" id="kv-pp-trust" style="width:16px;height:16px;accent-color:var(--accent)">\n          Trust this device (stay signed in permanently)\n        </label>\n        <div style="display:flex;gap:10px">\n          <button id="kv-pp-cancel" style="flex:1;padding:10px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:14px;cursor:pointer">Cancel</button>\n          <button id="kv-pp-ok" style="flex:2;padding:10px;border-radius:8px;border:none;background:var(--accent);color:#111;font-size:14px;font-weight:700;cursor:pointer">Unlock →</button>\n        </div>\n      </div>`,document.body.appendChild(t);const n=t.querySelector("#kv-pp-input"),o=t.querySelector("#kv-pp-ok"),a=t.querySelector("#kv-pp-cancel"),r=t.querySelector("#kv-pp-trust");setTimeout(()=>n.focus(),100);const s=()=>{const o=n.value,a=r.checked;o&&(t.remove(),e({passphrase:o,trust:a}))};o.onclick=s,a.onclick=()=>{t.remove(),e(null)},n.onkeydown=e=>{"Enter"===e.key&&s()}})}async function kvPush(){if(!kvConnected||!_kvEmailHash||!_kvVerifier)return void console.warn("kvPush: missing credentials, skipping");if(!await kvEnsureKey())return;const e=await getProfiles(),t=Object.fromEntries(Object.entries(e).map(([e,t])=>[e,{name:t.name,colour:t.colour}])),n=await loadDeletedIds(),o=JSON.stringify({items:items,settings:settings,lastSynced:(new Date).toISOString(),groceries:groceryItems,departments:groceryDepts,reminders:reminders,deletedIds:[...n],householdDir:t,activeProfile:activeProfile,shareTargets:_shareTargets}),a=await kvEncrypt(_kvKey,o),r=await fetchKV(`${WORKER_URL}/data/push`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier},household:"default"===activeProfile?null:activeProfile,ciphertext:a})});if(!r.ok){const e=(await r.json().catch(()=>({}))).error||"Push failed";throw(e.includes("not found")||401===r.status)&&console.warn("kvPush: auth failed —",e),new Error(e)}await pushAllSharedData().catch(e=>console.warn("pushAllSharedData failed:",e.message))}async function kvPull(){if(!kvConnected&&!_shareState)return null;if(kvConnected&&(!_kvEmailHash||!_kvVerifier))return console.warn("kvPull: missing credentials, skipping"),null;if(kvConnected&&!_shareState&&!await kvEnsureKey())return null;if(_shareState){if(!_shareKey)return console.warn("kvPull (share): no share key in memory"),null;const e=await fetchKV(`${WORKER_URL}/share/data/pull`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({guestEmailHash:_kvEmailHash,guestVerifier:_kvVerifier,code:_shareState.code,household:activeProfile})});if(!e.ok)return null;const{ciphertext:t}=await e.json();if(!t)return null;try{const e=await decryptWithShareKey(_shareKey,t);return JSON.parse(e)}catch(e){return console.warn("kvPull (share): decrypt failed",e.message),null}}const e=await fetchKV(`${WORKER_URL}/data/pull`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier},household:activeProfile})});if(!e.ok)return null;const{ciphertext:t}=await e.json();if(!t)return null;try{const e=await kvDecrypt(_kvKey,t);return JSON.parse(e)}catch(e){throw console.error("kvPull: decrypt failed — key mismatch or corrupted data.",e.message),new KvDecryptError("Could not decrypt your data — the encryption key may be wrong.")}}async function kvSyncNow(e=!1){if(kvConnected||_shareState)if(!kvConnected||_kvEmailHash&&_kvVerifier){e||updateSyncPill("syncing");try{const t=await kvPull();if(t&&Array.isArray(t.items)){const e=settings.lastSynced?new Date(settings.lastSynced).getTime():0,n=(t.lastSynced?new Date(t.lastSynced).getTime():0)>e;if(items=await mergeItems(items,t.items,n),await saveData(),t.settings){const e=settings.customTags;settings={...t.settings,...settings};const n=t.settings.customTags||[];settings.customTags=(e||[]).filter(e=>e&&e.trim()).length>=n.filter(e=>e&&e.trim()).length?e||[]:n,await _saveSettings()}if(t.groceries&&(n||t.groceries.length>groceryItems.length)&&(groceryItems=t.groceries,await saveGrocery()),t.departments?.length&&(n||t.departments.length>groceryDepts.length)&&(groceryDepts=t.departments,await saveGroceryDepts()),t.reminders&&Array.isArray(t.reminders)&&(n||t.reminders.length>reminders.length)&&(reminders=t.reminders,await saveReminders()),t.deletedIds&&Array.isArray(t.deletedIds)){const e=await loadDeletedIds();t.deletedIds.forEach(t=>e.add(t)),await saveDeletedIds(e)}if(t.householdDir){const e=await getProfiles();let n=!1;Object.entries(t.householdDir).forEach(([t,o])=>{e[t]?(o.name&&e[t].name!==o.name&&(e[t].name=o.name,n=!0),o.colour&&e[t].colour!==o.colour&&(e[t].colour=o.colour,n=!0)):(e[t]={name:o.name,colour:o.colour,items:[],settings:{},reminders:[],groceries:[],departments:[]},n=!0)}),n&&(await saveProfiles(e),renderSettingsHouseholdList())}t.shareTargets?.length&&(_shareTargets=t.shareTargets,renderShareTargetsList()),scheduleRender(...RENDER_REGIONS)}settings.lastSynced=(new Date).toISOString(),await _saveSettings();const n=await loadDeletedIds();await saveDeletedIds(n),kvConnected&&!_shareState&&items.length>0&&await kvPush(),e||updateSyncPill("synced")}catch(t){if(console.error("KV sync error:",t),t instanceof KvDecryptError){_kvKey=null;try{localStorage.removeItem("stockroom_kv_session_key")}catch(e){}try{localStorage.removeItem("stockroom_kv_key_fallback")}catch(e){}try{localStorage.removeItem("stockroom_device_secret")}catch(e){}try{sessionStorage.removeItem("stockroom_kv_session_key")}catch(e){}try{await removeWrappedKey(getOrCreateDeviceId())}catch(e){}return updateSyncPill("error"),void showDecryptErrorBanner()}e||updateSyncPill("error"),e||toast("Sync failed — "+t.message)}}else console.warn("kvSyncNow: missing credentials, skipping")}async function kvDeleteAccount(){requireReauth("Re-enter your passphrase to delete your account.",_doDeleteAccount,{passkeyAllowed:!0})}async function _doDeleteAccount(){if(confirm("Delete your account?\n\nThis permanently removes all your data, households, reminders and share targets from the server. This cannot be undone.\n\nYour local data on this device will also be cleared.")&&confirm("Are you absolutely sure? This cannot be undone."))try{const e=await fetchKV(`${WORKER_URL}/user/delete`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,verifier:_kvVerifier})});if(!e.ok){const t=await e.json().catch(()=>({}));throw new Error(t.error||"Delete failed")}const t=getOrCreateDeviceId();await removeWrappedKey(t),localStorage.removeItem("stockroom_device_secret"),localStorage.removeItem("stockroom_kv_session"),localStorage.removeItem("stockroom_seen"),localStorage.removeItem("stockroom_country_set"),localStorage.removeItem("stockroom_protect_seen");try{sessionStorage.removeItem("stockroom_kv_session_key")}catch(e){}kvConnected=!1,_kvEmail="",_kvEmailHash="",_kvVerifier="",_kvKey=null,items=[],await saveData(),toast("Account deleted"),setTimeout(()=>location.reload(),1500)}catch(e){toast("Could not delete account: "+e.message)}}async function kvSignOut(){if(!confirm("Sign out?\n\nYour encrypted data stays safely on the server. Sign back in with your email and passphrase to access it."))return;const e=getOrCreateDeviceId();await removeWrappedKey(e),localStorage.removeItem("stockroom_device_secret"),localStorage.removeItem("stockroom_kv_key_fallback"),localStorage.removeItem("stockroom_kv_session_key");try{sessionStorage.removeItem("stockroom_kv_session_key")}catch(e){}localStorage.removeItem("stockroom_kv_session"),localStorage.removeItem("stockroom_seen"),localStorage.removeItem("stockroom_country_set"),localStorage.removeItem("stockroom_protect_seen"),items=[],settings={},groceryItems=[],groceryDepts=[],reminders=[],await saveData(),await _saveSettings(),kvConnected=!1,_kvEmail="",_kvEmailHash="",_kvVerifier="",_kvKey=null,_shareState=null,document.body.classList.add("wizard-active"),document.getElementById("wizard").style.display="flex",document.querySelectorAll(".wizard-step").forEach(e=>e.classList.remove("active")),document.getElementById("wizard-step-1b").classList.add("active"),updateSyncUI(),toast("Signed out")}function openChangePassphrase(){const e=prompt("Enter your current passphrase:");if(!e)return;const t=prompt("Enter your new passphrase (min 8 characters):");if(!t||t.length<8)return void toast("New passphrase too short");t===prompt("Confirm new passphrase:")?kvChangePassphrase(e,t):toast("Passphrases do not match")}async function kvChangePassphrase(e,t){try{if(await kvMakeVerifier(e,_kvEmailHash)!==_kvVerifier)return void toast("Current passphrase incorrect");const n=await kvDeriveKey(_kvEmail,e),o=await kvDeriveKey(_kvEmail,t),a=await kvMakeVerifier(t,_kvEmailHash),r=await fetchKV(`${WORKER_URL}/data/pull`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,verifier:_kvVerifier,household:activeProfile})});if(!r.ok)throw new Error("Could not fetch current data");const{ciphertext:s}=await r.json();if(s){const e=await kvDecrypt(n,s),t=await kvEncrypt(o,e);await fetchKV(`${WORKER_URL}/data/push`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash,verifier:a,household:activeProfile,ciphertext:t})})}_kvKey=o,_kvVerifier=a;try{localStorage.setItem("stockroom_kv_session",JSON.stringify({email:_kvEmail,emailHash:_kvEmailHash,verifier:a}))}catch(e){}toast("Passphrase changed ✓")}catch(e){toast("Could not change passphrase: "+e.message)}}function connectDropbox(){try{sessionStorage.setItem("stockroom_pre_auth_view","settings")}catch(e){}try{sessionStorage.setItem("stockroom_auth_provider","dropbox")}catch(e){}const e=generateCodeVerifier();sessionStorage.setItem("dropbox_pkce_verifier",e),generateCodeChallenge(e).then(t=>{const n=`https://www.dropbox.com/oauth2/authorize?client_id=${DROPBOX_APP_KEY}&redirect_uri=${encodeURIComponent(`${WORKER_URL}/auth/dropbox`)}&response_type=code&token_access_type=offline&code_challenge=${encodeURIComponent(t)}&code_challenge_method=S256&state=${encodeURIComponent(e)}`;location.href=n})}function generateCodeVerifier(){const e=new Uint8Array(64);return crypto.getRandomValues(e),btoa(String.fromCharCode(...e)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=/g,"").slice(0,128)}async function generateCodeChallenge(e){const t=(new TextEncoder).encode(e),n=await crypto.subtle.digest("SHA-256",t);return btoa(String.fromCharCode(...new Uint8Array(n))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=/g,"")}async function syncDropbox(){if(dropboxConnected&&dropboxToken){updateSyncPill("syncing");try{const e=await fetch("https://content.dropboxapi.com/2/files/download",{method:"POST",headers:{Authorization:`Bearer ${dropboxToken}`,"Dropbox-API-Arg":JSON.stringify({path:DROPBOX_FILE})}});if(e.ok){let t=null;try{t=await e.json()}catch(e){}if(t&&Array.isArray(t.items)){const e=settings.lastSynced?new Date(settings.lastSynced).getTime():0,n=(t.lastSynced?new Date(t.lastSynced).getTime():0)>e;if(items=await mergeItems(items,t.items,n),await saveData(),t.settings){const e=settings.customTags;settings={...t.settings,...settings};const n=t.settings.customTags||[],o=(e||[]).filter(e=>e&&e.trim()).length,a=n.filter(e=>e&&e.trim()).length;settings.customTags=o>=a?e||[]:n,await _saveSettings()}if(t.groceries){const e=groceryItems,o=t.groceries;(n||o.length>e.length)&&(groceryItems=o,await saveGrocery())}if(t.departments&&t.departments.length&&(n||t.departments.length>groceryDepts.length)&&(groceryDepts=t.departments,await saveGroceryDepts()),t.reminders&&Array.isArray(t.reminders)&&(n||t.reminders.length>reminders.length)&&(reminders=t.reminders,await saveReminders()),t.deletedIds&&Array.isArray(t.deletedIds)){const e=await loadDeletedIds();t.deletedIds.forEach(t=>e.add(t)),await saveDeletedIds(e)}scheduleRender(...RENDER_REGIONS)}}settings.lastSynced=(new Date).toISOString(),await _saveSettings();const t=new Set(items.map(e=>e.id)),n=await loadDeletedIds();n.forEach(e=>{t.has(e)&&n.delete(e)}),await saveDeletedIds(n),await uploadToDropbox(JSON.stringify({items:items,settings:settings,lastSynced:settings.lastSynced,groceries:groceryItems,departments:groceryDepts,reminders:reminders,deletedIds:[...n]})),updateSyncPill("synced","dropbox")}catch(e){console.error("Dropbox sync error:",e),updateSyncPill("error")}}}async function uploadToDropbox(e){const t=await fetch("https://content.dropboxapi.com/2/files/upload",{method:"POST",headers:{Authorization:`Bearer ${dropboxToken}`,"Dropbox-API-Arg":JSON.stringify({path:DROPBOX_FILE,mode:"overwrite",autorename:!1}),"Content-Type":"application/octet-stream"},body:e});if(!t.ok)throw new Error("Dropbox upload failed: "+t.status)}async function signOutDropbox(){if(confirm("Sign out of Dropbox?\n\nYour data on Dropbox stays complete. Your local data on this device will remain unless you choose to clear it.")){dropboxToken=null,dropboxConnected=!1;try{localStorage.removeItem("stockroom_dropbox")}catch(e){}updateSyncUI(),toast("Signed out of Dropbox"),confirm("Clear local data on this device too?\n\nCloud data is unaffected — you can restore it by signing back in.")&&(items=[],await saveData(),scheduleRender("grid","dashboard"),toast("Local data cleared"))}}const _syncQueue={pending:0,syncing:!1,timer:null,errorMsg:null,enqueue(e="Saving changes…"){this.pending++,this.errorMsg=null,this._show("syncing",e),clearTimeout(this.timer),this.timer=setTimeout(()=>this._flush(),1500)},async _flush(){if(this.syncing)return;this.syncing=!0;const e=this.pending;this.pending=0,this._show("syncing",`Syncing ${e} change${1!==e?"s":""}…`);try{(kvConnected||_shareState)&&await kvSyncNow(),this._show("done","All changes saved"),setTimeout(()=>this._hide(),2500)}catch(e){this._show("error","Sync failed — will retry"),setTimeout(()=>this._hide(),4e3)}this.syncing=!1},_show(e,t){const n=document.getElementById("sync-queue-bar"),o=document.getElementById("sqb-spinner"),a=document.getElementById("sqb-done"),r=document.getElementById("sqb-error"),s=document.getElementById("sqb-label"),i=document.getElementById("sqb-count");n&&(n.classList.add("visible"),o.style.display="syncing"===e?"block":"none",a.style.display="done"===e?"block":"none",r.style.display="error"===e?"block":"none",s&&(s.textContent=t),i&&(i.textContent=this.pending>0?`${this.pending} pending`:""))},_hide(){document.getElementById("sync-queue-bar")?.classList.remove("visible")}};let _syncDebounceTimer=null;async function syncAll(){return _syncDebounceTimer&&clearTimeout(_syncDebounceTimer),new Promise(e=>{_syncDebounceTimer=setTimeout(async()=>{_syncDebounceTimer=null,(kvConnected||_shareState)&&await kvSyncNow(!0),e()},1200)})}function updateSyncUI(){const e=document.getElementById("sync-pill"),t=document.getElementById("sync-label");if(!e||!t)return;kvConnected&&settings.lastSynced?(e.className="sync-pill synced",t.textContent="Synced"):kvConnected?(e.className="sync-pill pending",t.textContent="Syncing…"):_shareState?(e.className="sync-pill synced",t.textContent="Shared"):(e.className="sync-pill pending",t.textContent="Not signed in");const n=document.getElementById("kv-account-email");n&&_kvEmail&&(n.textContent=_kvEmail)}function updateDropboxUI(){const e=document.getElementById("dropbox-connect-btn"),t=document.getElementById("dropbox-status"),n=document.getElementById("dropbox-sync-btn"),o=document.getElementById("dropbox-signout-btn");dropboxConnected?(e&&(e.style.display="none"),t&&(t.style.display="flex"),n&&(n.style.display="inline-flex"),o&&(o.style.display="inline-flex")):(e&&(e.style.display="inline-flex"),t&&(t.style.display="none"),n&&(n.style.display="none"),o&&(o.style.display="none"))}async function signOutDrive(){if(confirm("Sign out of Google Drive?\n\nYour data on Drive stays complete. Your local data on this device will remain unless you choose to clear it.")){driveConnected=!1;try{localStorage.removeItem("stockroom_drive")}catch(e){}updateSyncUI(),toast("Signed out of Google Drive"),confirm("Clear local data on this device too?\n\nCloud data is unaffected — you can restore it by signing back in.")&&(items=[],await saveData(),scheduleRender("grid","dashboard"),toast("Local data cleared"))}}function renderSettingsForUser(){const e=document.getElementById("view-settings");if(!e)return;if(!isOwner()){if(!document.getElementById("shared-user-settings-banner")){const t=document.createElement("div");t.id="shared-user-settings-banner",t.style.cssText="background:rgba(91,141,238,0.08);border:1px solid rgba(91,141,238,0.2);border-radius:12px;padding:14px 16px;margin-bottom:16px;font-size:13px;line-height:1.6";const n=esc(_shareState?.name||""),o=esc(_shareState?.ownerName||"the owner"),a=_shareState?.type||"guest",r="family"===a?" as a <strong>family member</strong>":"cleaner"===a?" as a <strong>cleaner</strong>":" as a <strong>guest</strong>",s=n?`Hi <strong>${n}</strong>, you`:"You";t.innerHTML=`\n        <div style="font-size:14px;margin-bottom:6px">${s} have joined <strong>${o}</strong>'s household${r}.</div>\n        <span style="color:var(--muted);font-size:12px">Some settings are managed by the owner.</span>\n        ${kvConnected?"":'<br><button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="showKvRegister();document.getElementById(\'wizard\').style.display=\'flex\'">☁️ Create your own account</button>'}\n        <button class="btn btn-ghost btn-sm" style="margin-top:8px;color:var(--danger);border-color:var(--danger)" onclick="leaveShare()">Leave shared household</button>\n      `,e.insertBefore(t,e.firstChild)}const t=["Alerts","Reminder Schedules","Preferences","Data"];return void document.querySelectorAll("#view-settings .settings-card h3").forEach(e=>{t.some(t=>e.textContent.includes(t))&&(e.closest(".settings-card").style.display="none")})}const t=kvConnected;document.querySelectorAll("#view-settings .settings-card h3").forEach(e=>{const n=e.textContent,o=e.closest(".settings-card");["Alerts","Reminder Schedules","Preferences","Data","Households"].some(e=>n.includes(e))&&(o.style.display=t?"":"none")})}function updateDriveUI(){const e=document.getElementById("drive-connect-btn"),t=document.getElementById("drive-status"),n=document.getElementById("drive-sync-btn"),o=document.getElementById("drive-signout-btn");driveConnected?(e&&(e.style.display="none"),t&&(t.style.display="flex"),n&&(n.style.display="inline-flex"),o&&(o.style.display="inline-flex")):(e&&(e.style.display="inline-flex"),t&&(t.style.display="none"),n&&(n.style.display="none"),o&&(o.style.display="none"))}function updateSyncPill(e,t){const n=document.getElementById("sync-pill"),o=document.getElementById("sync-label");n&&o&&("syncing"===e&&(n.className="sync-pill pending",o.textContent="Syncing…"),"synced"===e&&(n.className="sync-pill synced",o.textContent="Synced"),"error"===e&&(n.className="sync-pill error",o.textContent="Sync error"))}function applyAdaptiveColourTemp(){const e=(new Date).getHours();let t="rgba(0,0,0,0)",n="0.82";e>=22||e<6?(t="rgba(60,25,0,0.08)",n="0.92",document.documentElement.style.setProperty("--ok","#3db87a"),document.documentElement.style.setProperty("--accent2","#4f82e0")):e>=6&&e<10?(t="rgba(10,20,60,0.04)",n="0.78",document.documentElement.style.setProperty("--ok","#4cbb8a"),document.documentElement.style.setProperty("--accent2","#5b8dee")):e>=18&&e<22?(t="rgba(40,15,0,0.05)",n="0.86",document.documentElement.style.setProperty("--ok","#45b882"),document.documentElement.style.setProperty("--accent2","#547ee8")):(t="rgba(0,0,0,0)",n="0.82",document.documentElement.style.setProperty("--ok","#4cbb8a"),document.documentElement.style.setProperty("--accent2","#5b8dee")),document.documentElement.style.setProperty("--temp-tint",t),document.documentElement.style.setProperty("--surface-opacity",n)}applyAdaptiveColourTemp(),setInterval(applyAdaptiveColourTemp,6e5);let _groceryPrewarmed=!1,_reportPrewarmed=!1;async function prewarmView(e){"grocery"!==e||_groceryPrewarmed||(_groceryPrewarmed=!0,await loadGrocery()),"report"!==e||_reportPrewarmed||(_reportPrewarmed=!0,requestIdleCallback?requestIdleCallback(()=>renderReport()):setTimeout(()=>renderReport(),0))}document.addEventListener("DOMContentLoaded",()=>{document.querySelectorAll(".tab").forEach(e=>{const t=(e.getAttribute("onclick")||"").match(/showView\('(\w+)'/);if(!t)return;const n=t[1],o=()=>prewarmView(n);e.addEventListener("pointerenter",o,{passive:!0}),e.addEventListener("pointerdown",o,{passive:!0})})}),document.addEventListener("pointerdown",e=>{const t=e.target.closest(".btn, .tab, .filter-chip, .grocery-cb");if(!t||t.classList.contains("no-ripple"))return;const n=document.createElement("span"),o=t.getBoundingClientRect(),a=2*Math.max(o.width,o.height),r=e.clientX-o.left-a/2,s=e.clientY-o.top-a/2;n.style.cssText=`\n    position:absolute;width:${a}px;height:${a}px;\n    left:${r}px;top:${s}px;border-radius:50%;\n    background:rgba(255,255,255,0.12);pointer-events:none;\n    transform:scale(0);animation:ripple-expand 0.45s ease-out forwards;\n    z-index:0;\n  `;"static"===getComputedStyle(t).position&&(t.style.position="relative"),t.style.overflow="hidden",t.appendChild(n),setTimeout(()=>n.remove(),500)},{passive:!0});const DEFAULT_DEPTS=[{id:"bakery",name:"Bakery",emoji:"🍞"},{id:"fruit-veg",name:"Fruit & Veg",emoji:"🥦"},{id:"meat-fish",name:"Meat & Fish",emoji:"🥩"},{id:"dairy",name:"Dairy",emoji:"🧀"},{id:"frozen",name:"Frozen",emoji:"🧊"},{id:"drinks",name:"Drinks",emoji:"🥤"},{id:"snacks",name:"Snacks",emoji:"🍿"},{id:"household",name:"Household",emoji:"🧹"},{id:"baby-care",name:"Baby Care",emoji:"🍼"},{id:"other",name:"Other",emoji:"📦"}];let groceryItems=[],groceryDepts=[],grocerySort="dept",groceryContextTarget=null,groceryConvertItem=null;async function loadGrocery(){const e=await dbGet("groceries","items"),t=await dbGet("departments","departments");if(e)groceryItems=e;else try{const e=localStorage.getItem("stockroom_groceries");e&&(groceryItems=JSON.parse(e)||[],await dbPut("groceries","items",groceryItems),localStorage.removeItem("stockroom_groceries"))}catch(e){groceryItems=[]}if(t)groceryDepts=t;else try{const e=localStorage.getItem("stockroom_departments");e&&(groceryDepts=JSON.parse(e),await dbPut("departments","departments",groceryDepts),localStorage.removeItem("stockroom_departments"))}catch(e){groceryDepts=null}groceryDepts&&0!==groceryDepts.length||(groceryDepts=DEFAULT_DEPTS.map(e=>({...e})))}async function saveGrocery(){await dbPut("groceries","items",groceryItems),activeProfile&&await saveCurrentProfile(),_syncQueue.enqueue(),bcPost({type:"GROCERY_CHANGED"})}async function saveGroceryDepts(){await dbPut("departments","departments",groceryDepts),activeProfile&&await saveCurrentProfile()}function getGroceryShopInterval(){try{return JSON.parse(localStorage.getItem("stockroom_grocery_interval")||'{"value":7,"unit":1}')}catch(e){return{value:7,unit:1}}}function saveGroceryShopInterval(){const e=parseInt(document.getElementById("grocery-shop-interval").value)||7,t=parseInt(document.getElementById("grocery-shop-interval-unit").value)||1;try{localStorage.setItem("stockroom_grocery_interval",JSON.stringify({value:e,unit:t}))}catch(e){}showToast("Shop interval saved")}function setGrocerySort(e,t){grocerySort=e,document.querySelectorAll(".grocery-sort-btn").forEach(e=>e.classList.remove("active")),t.classList.add("active"),renderGrocery()}function renderGrocery(){const e=(document.getElementById("grocery-search")?.value||"").toLowerCase().trim(),t=document.getElementById("grocery-list-body"),n=document.getElementById("grocery-interval-info"),o=document.getElementById("grocery-checked-bar");if(!t)return;const a=getGroceryShopInterval(),r=7===a.unit?1===a.value?"week":"weeks":30===a.unit?1===a.value?"month":"months":1===a.value?"day":"days";n&&(n.textContent=`Shopping every ${a.value} ${r} · ${groceryItems.filter(e=>!e.checked).length} item${1===groceryItems.filter(e=>!e.checked).length?"":"s"} remaining`);const s=document.getElementById("grocery-subtitle");s&&(s.textContent=`${groceryItems.length} item${1===groceryItems.length?"":"s"} · tap to check off`);let i=groceryItems.filter(t=>!e||t.name.toLowerCase().includes(e)||(t.notes||"").toLowerCase().includes(e));const l=i.filter(e=>!e.checked),c=i.filter(e=>e.checked),d=groceryItems.filter(e=>e.checked).length;if(o){o.style.display=d>0?"flex":"none";const e=document.getElementById("grocery-checked-count");e&&(e.textContent=`${d} item${1===d?"":"s"} checked`)}if(0===groceryItems.length)return void(t.innerHTML='<div class="grocery-empty"><div class="grocery-empty-icon">🛒</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">No grocery items yet</div><div style="font-size:13px;color:var(--muted)">Add items manually or convert existing stock items.</div></div>');if(0===i.length)return void(t.innerHTML='<div class="grocery-empty"><div class="grocery-empty-icon">🔍</div><div style="font-size:15px;font-weight:600">No matches</div></div>');let m="";if("dept"===grocerySort){const e={};l.forEach(t=>{const n=t.department||"other";e[n]||(e[n]=[]),e[n].push(t)});const t=groceryDepts.map(e=>e.id),n=[...new Set(l.map(e=>e.department||"other"))].filter(e=>!t.includes(e));[...t,...n].forEach(t=>{const n=e[t];if(!n||0===n.length)return;const o=groceryDepts.find(e=>e.id===t)||{name:t,emoji:"📦"};m+=`<div class="grocery-dept-group">\n        <div class="grocery-dept-header">\n          <span class="grocery-dept-label">${o.emoji} ${esc(o.name)}</span>\n          <span class="grocery-dept-count">${n.length}</span>\n        </div>\n        ${n.map(e=>groceryItemHTML(e)).join("")}\n      </div>`})}else{const e=[...l].sort((e,t)=>e.name.localeCompare(t.name));m+=e.map(e=>groceryItemHTML(e)).join("")}c.length>0&&(m+=`<div style="margin-top:16px">\n      <div class="grocery-dept-header">\n        <span class="grocery-dept-label" style="color:var(--muted)">✓ Checked</span>\n        <span class="grocery-dept-count">${c.length}</span>\n      </div>\n      ${c.map(e=>groceryItemHTML(e)).join("")}\n    </div>`),t.innerHTML=m}function groceryItemHTML(e){const t=groceryDepts.find(t=>t.id===(e.department||"other"))||{name:"Other",emoji:"📦"},n=["alpha"===grocerySort?`${t.emoji} ${t.name}`:null,e.notes||null,e.recurring?`↻ every ${e.intervalDays||7}d`:null].filter(Boolean).join(" · ");return`<div class="grocery-item${e.checked?" checked":""}" id="gitem-${e.id}">\n    <input type="checkbox" class="grocery-cb" ${e.checked?"checked":""} onchange="toggleGroceryCheck('${e.id}',this)">\n    <div class="grocery-item-info">\n      <div class="grocery-item-name">${esc(e.name)}</div>\n      ${n?`<div class="grocery-item-meta">${esc(n)}</div>`:""}\n    </div>\n    <div class="grocery-item-actions">\n      <button class="grocery-icon-btn" onclick="openGroceryContext(event,'${e.id}')" title="Options">•••</button>\n    </div>\n  </div>`}async function toggleGroceryCheck(e,t){const n=groceryItems.find(t=>t.id===e);n&&(n.checked=t.checked,n.checkedAt=t.checked?(new Date).toISOString():null,await saveGrocery(),renderGrocery())}async function clearCheckedGrocery(){canWrite("groceries")?(groceryItems=groceryItems.filter(e=>!e.checked||!!e.recurring&&(e.checked=!1,e.checkedAt=null,e.addedAt=(new Date).toISOString(),!0)),await saveGrocery(),renderGrocery()):showLockBanner("groceries")}function openAddGroceryItem(e){document.getElementById("grocery-modal-title").textContent="Add Grocery Item",document.getElementById("grocery-edit-id").value="",document.getElementById("grocery-f-name").value=e||"",document.getElementById("grocery-f-notes").value="",document.getElementById("grocery-f-recurring").checked=!1,document.getElementById("grocery-f-interval").value="7",document.getElementById("grocery-f-interval-unit").value="1",document.getElementById("grocery-recurring-opts").style.display="none",populateGroceryDeptSelect(""),openModal("grocery-item-modal"),setTimeout(()=>document.getElementById("grocery-f-name").focus(),100)}function openEditGroceryItem(e){const t=groceryItems.find(t=>t.id===e);if(!t)return;document.getElementById("grocery-modal-title").textContent="Edit Item",document.getElementById("grocery-edit-id").value=e,document.getElementById("grocery-f-name").value=t.name,document.getElementById("grocery-f-notes").value=t.notes||"",document.getElementById("grocery-f-recurring").checked=!!t.recurring;const n=t.intervalDays||7;n%30==0&&n>=30?(document.getElementById("grocery-f-interval").value=n/30,document.getElementById("grocery-f-interval-unit").value="30"):n%7==0?(document.getElementById("grocery-f-interval").value=n/7,document.getElementById("grocery-f-interval-unit").value="7"):(document.getElementById("grocery-f-interval").value=n,document.getElementById("grocery-f-interval-unit").value="1"),document.getElementById("grocery-recurring-opts").style.display=t.recurring?"block":"none",populateGroceryDeptSelect(t.department||"other"),openModal("grocery-item-modal")}function populateGroceryDeptSelect(e){document.getElementById("grocery-f-dept").innerHTML=groceryDepts.map(t=>`<option value="${t.id}" ${t.id===e?"selected":""}>${t.emoji} ${t.name}</option>`).join("")}function toggleGroceryRecurring(){const e=document.getElementById("grocery-f-recurring").checked;document.getElementById("grocery-recurring-opts").style.display=e?"block":"none"}async function saveGroceryItem(){if(!canWrite("groceries"))return void showLockBanner("groceries");const e=document.getElementById("grocery-f-name").value.trim();if(!e)return void showToast("Please enter an item name");const t=document.getElementById("grocery-edit-id").value,n=document.getElementById("grocery-f-dept").value,o=document.getElementById("grocery-f-notes").value.trim(),a=document.getElementById("grocery-f-recurring").checked,r=(parseInt(document.getElementById("grocery-f-interval").value)||7)*(parseInt(document.getElementById("grocery-f-interval-unit").value)||1);if(t){const s=groceryItems.find(e=>e.id===t);s&&Object.assign(s,{name:e,department:n,notes:o,recurring:a,intervalDays:r,updatedAt:(new Date).toISOString()})}else groceryItems.push({id:"g_"+Date.now()+"_"+Math.random().toString(36).slice(2,6),name:e,department:n,notes:o,recurring:a,intervalDays:r,checked:!1,addedAt:(new Date).toISOString(),updatedAt:(new Date).toISOString()});await saveGrocery(),closeModal("grocery-item-modal"),renderGrocery()}function openGroceryContext(e,t){e.stopPropagation(),groceryContextTarget=t;if(!groceryItems.find(e=>e.id===t))return;const n=document.getElementById("grocery-context-menu");n.innerHTML='\n    <button class="grocery-context-item" onclick="editFromContext()">✏️ Edit item</button>\n    <button class="grocery-context-item" onclick="convertFromContext()">📦 Convert to stock item</button>\n    <button class="grocery-context-item danger" onclick="deleteFromContext()">🗑 Delete</button>\n  ';const o=e.currentTarget.getBoundingClientRect();n.style.display="block";let a=o.left-190+o.width,r=o.bottom+6;a<8&&(a=8),r+140>window.innerHeight&&(r=o.top-140-6),n.style.left=a+"px",n.style.top=r+"px",setTimeout(()=>document.addEventListener("click",dismissGroceryContext,{once:!0}),10)}function dismissGroceryContext(){document.getElementById("grocery-context-menu").style.display="none",groceryContextTarget=null}function editFromContext(){const e=groceryContextTarget;dismissGroceryContext(),e&&openEditGroceryItem(e)}async function deleteFromContext(){const e=groceryContextTarget;dismissGroceryContext(),e&&(groceryItems=groceryItems.filter(t=>t.id!==e),await saveGrocery(),renderGrocery())}function convertFromContext(){const e=groceryContextTarget;if(dismissGroceryContext(),!e)return;const t=groceryItems.find(t=>t.id===e);if(!t)return;groceryConvertItem=t;const n=document.getElementById("grocery-convert-body"),o=groceryDepts.find(e=>e.id===(t.department||"other"))||{name:"Other",emoji:"📦"};n.innerHTML=`\n    <div style="background:var(--surface2);border-radius:8px;padding:14px;margin-bottom:16px;border:1px solid var(--border)">\n      <div style="font-size:15px;font-weight:700;margin-bottom:4px">${esc(t.name)}</div>\n      <div style="font-size:12px;color:var(--muted)">${o.emoji} ${esc(o.name)}${t.notes?" · "+esc(t.notes):""}</div>\n    </div>\n    <div class="form-group">\n      <label class="form-label">Category in Stockroom</label>\n      <select class="form-input" id="convert-category">\n        <option>Food &amp; Drink</option><option>Kitchen</option><option>Bathroom</option>\n        <option>Cleaning</option><option>Health</option><option>Garden</option><option>Other</option>\n      </select>\n    </div>\n    <div class="form-group">\n      <label class="form-label">Months of supply per purchase</label>\n      <input class="form-input" id="convert-months" type="number" min="0.25" max="24" step="0.25" value="1">\n    </div>\n    <p style="font-size:12px;color:var(--muted);margin-top:4px">You can finish setting it up in the stock item form.</p>\n  `,openModal("grocery-convert-modal")}function doConvertToStock(){if(!groceryConvertItem)return;const e=document.getElementById("convert-category").value,t=parseFloat(document.getElementById("convert-months").value)||1;closeModal("grocery-convert-modal"),openItemModal(),setTimeout(()=>{const n=document.getElementById("f-name"),o=document.getElementById("f-category"),a=document.getElementById("f-months");n&&(n.value=groceryConvertItem.name),o&&(o.value=e),a&&(a.value=t);const r=[...document.querySelectorAll(".tab")].find(e=>e.textContent.includes("Stock"));r&&showView("stock",r)},150),groceryConvertItem=null}function openGroceryDepts(){renderGroceryDeptsModal();const e=getGroceryShopInterval();document.getElementById("grocery-shop-interval").value=e.value,document.getElementById("grocery-shop-interval-unit").value=e.unit,openModal("grocery-depts-modal")}function renderGroceryDeptsModal(){document.getElementById("grocery-depts-list").innerHTML=groceryDepts.map((e,t)=>`\n    <div class="dept-manage-row">\n      <span class="dept-manage-emoji">${e.emoji}</span>\n      <span class="dept-manage-name">${esc(e.name)}</span>\n      <div class="dept-manage-actions">\n        ${t>0?`<button class="grocery-icon-btn" onclick="moveGroceryDept(${t},-1)" title="Move up">↑</button>`:""}\n        ${t<groceryDepts.length-1?`<button class="grocery-icon-btn" onclick="moveGroceryDept(${t},1)" title="Move down">↓</button>`:""}\n        <button class="grocery-icon-btn" style="color:var(--danger)" onclick="deleteGroceryDept('${e.id}')" title="Delete">✕</button>\n      </div>\n    </div>\n  `).join("")}async function moveGroceryDept(e,t){const n=e+t;n<0||n>=groceryDepts.length||([groceryDepts[e],groceryDepts[n]]=[groceryDepts[n],groceryDepts[e]],await saveGroceryDepts(),renderGroceryDeptsModal())}async function deleteGroceryDept(e){const t=groceryItems.some(t=>t.department===e);t&&!confirm("Items use this department. They'll move to Other. Continue?")||(t&&groceryItems.forEach(t=>{t.department===e&&(t.department="other")}),groceryDepts=groceryDepts.filter(t=>t.id!==e),await saveGroceryDepts(),await saveGrocery(),renderGroceryDeptsModal())}async function addGroceryDept(){const e=document.getElementById("grocery-new-dept-name"),t=document.getElementById("grocery-new-dept-emoji"),n=e.value.trim(),o=t.value.trim()||"📦";if(!n)return void showToast("Please enter a department name");const a="dept_"+Date.now();groceryDepts.push({id:a,name:n,emoji:o}),await saveGroceryDepts(),e.value="",t.value="",renderGroceryDeptsModal(),showToast("Department added")}async function checkGroceryRecurring(){const e=Date.now();let t=!1;groceryItems.forEach(n=>{if(!n.recurring||!n.checked||!n.checkedAt)return;const o=864e5*(n.intervalDays||7);e-new Date(n.checkedAt).getTime()>=o&&(n.checked=!1,n.checkedAt=null,t=!0)}),t&&(saveGrocery(),renderGrocery())}const PRESENCE_COLOURS=["#e8a838","#5b8dee","#4cbb8a","#e85050","#b45dee","#ee8c5b","#5bdee8","#dee85b","#ee5bab","#5beeaa"];let _householdEnabled=!1,_householdName="",_householdColour=PRESENCE_COLOURS[0],_presenceSSE=null,_presencePingTimer=null,_currentViewName="stock",_otherPresence={};function loadHouseholdSettings(){try{const e=localStorage.getItem("stockroom_household");if(!e)return;const t=JSON.parse(e);_householdEnabled=!!t.enabled,_householdColour=t.colour||PRESENCE_COLOURS[0]}catch(e){}}function saveHouseholdSettings(){if(_householdEnabled){try{localStorage.setItem("stockroom_household",JSON.stringify({enabled:_householdEnabled,colour:_householdColour}))}catch(e){}_householdEnabled&&connectPresence()}}function pickHouseholdColour(e){_householdColour=e,renderHouseholdColourPicker(),saveHouseholdSettings(),pushPresence()}function renderHouseholdColourPicker(){const e=document.getElementById("household-colour-picker");e&&(e.innerHTML=PRESENCE_COLOURS.map(e=>`\n    <div onclick="pickHouseholdColour('${e}')"\n      style="width:28px;height:28px;border-radius:50%;background:${e};cursor:pointer;\n             border:3px solid ${e===_householdColour?"var(--text)":"transparent"};\n             transition:border-color 0.15s;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>\n  `).join(""))}let _shareState=null,_sharedFileId=null,_shareKey=null,_pendingJoinCode=null,_pendingShareMeta=null,_inviteCode=null;const SHARE_TYPE_DEFAULTS={family:{stockroom:"rw",groceries:"rw",reminders:"rw",savings:"rw",report:"r"},cleaner:{stockroom:"r",groceries:"rw",reminders:"none",savings:"none",report:"none"},guest:{stockroom:"r",groceries:"r",reminders:"none",savings:"none",report:"r"}},SECTION_LABELS={stockroom:"📦 Stockroom",groceries:"🛒 Groceries",reminders:"🔔 Reminders",savings:"💰 Savings",report:"📋 Report"};function getSectionPerm(e){if(!_shareState)return"rw";const t=activeProfile||"default",n=_shareState.households?.[t];return n&&n[e]||"none"}function canView(e){const t=getSectionPerm(e);return"rw"===t||"r"===t}function canWrite(e){return"rw"===getSectionPerm(e)}function isOwner(){return!_shareState}function applyTabPermissions(){if(!_shareState)return;document.querySelectorAll(".tab").forEach(e=>{const t=e.textContent.trim().toLowerCase();let n=null;t.includes("stockroom")?n="stockroom":t.includes("groceries")||t.includes("grocery")?n="groceries":t.includes("reminders")?n="reminders":t.includes("savings")?n="savings":t.includes("report")&&(n="report"),n&&(canView(n)?(e.disabled=!1,e.style.opacity="",e.title=""):(e.disabled=!0,e.style.opacity="0.4",e.title=`🔒 Ask ${_shareState.ownerName||"the owner"} for access`))})}function showLockBanner(e){toast(`🔒 ${SECTION_LABELS[e]||e} — ask ${_shareState?.ownerName||"the owner"} for access`)}async function loadShareState(){try{const e=localStorage.getItem("stockroom_share_state");if(!e)return;const t=JSON.parse(e);if(t.ownerEmailHash&&_kvEmailHash&&t.ownerEmailHash===_kvEmailHash)return void localStorage.removeItem("stockroom_share_state");_shareState=t,_sharedFileId=t._sharedFileId||null;try{const e=JSON.parse(localStorage.getItem("stockroom_share_keys")||"{}")[t.code];if(e){const t=Uint8Array.from(atob(e),e=>e.charCodeAt(0));_shareKey=await crypto.subtle.importKey("raw",t,{name:"AES-GCM",length:256},!0,["encrypt","decrypt"])}}catch(e){console.warn("Could not restore share key from cache:",e.message)}}catch(e){}}function saveShareState(){try{_shareState?localStorage.setItem("stockroom_share_state",JSON.stringify({..._shareState,_sharedFileId:_sharedFileId})):localStorage.removeItem("stockroom_share_state")}catch(e){}}async function generateShareKey(){return crypto.subtle.generateKey({name:"AES-GCM",length:256},!0,["encrypt","decrypt"])}async function exportShareKey(e){const t=await crypto.subtle.exportKey("raw",e);return btoa(String.fromCharCode(...new Uint8Array(t)))}async function encryptWithShareKey(e,t){const n=crypto.getRandomValues(new Uint8Array(12)),o=(new TextEncoder).encode(t),a=await crypto.subtle.encrypt({name:"AES-GCM",iv:n},e,o),r=new Uint8Array(n.length+a.byteLength);return r.set(n,0),r.set(new Uint8Array(a),n.length),btoa(String.fromCharCode(...r))}async function decryptWithShareKey(e,t){const n=Uint8Array.from(atob(t),e=>e.charCodeAt(0)),o=n.slice(0,12),a=n.slice(12),r=await crypto.subtle.decrypt({name:"AES-GCM",iv:o},e,a);return(new TextDecoder).decode(r)}async function joinViaShareCode(e){await handleShareJoinLink(e)}function leaveShare(){confirm("Leave this shared household?\n\nYou can rejoin with the same link. Your own households are unaffected.")&&(_shareState=null,_sharedFileId=null,saveShareState(),applyTabPermissions(),toast("Left shared household"),loadProfile("default"))}function loadHouseholdShareState(){if(loadShareState(),!_shareState)try{const e=localStorage.getItem("stockroom_household_share");if(e){const t=JSON.parse(e);t.fileId&&(_sharedFileId=t.fileId)}}catch(e){}updateHouseholdShareUI()}function saveHouseholdShareState(){saveShareState()}function updateHouseholdShareUI(){const e=document.getElementById("household-joined-section"),t=document.getElementById("household-join-section"),n=document.getElementById("household-owner-section"),o=document.getElementById("household-share-status");e&&(_sharedFileId?(e.style.display="block",t.style.display="none",n.style.display="none",o&&(o.textContent="Your data syncs to the shared household file. The owner's Drive is used — you don't need to connect your own.")):(e.style.display="none",t.style.display="block",n.style.display="block",o&&(o.textContent=driveConnected?"You are the file owner. Generate an invite code for others to join.":"Connect Google Drive above, then generate an invite code for others to join.")))}async function createInviteCode(){if(!driveConnected)return void toast("Connect Google Drive first");const e=document.querySelector('[onclick="createInviteCode()"]');e&&(e.textContent="⏳ Generating…",e.disabled=!0);try{const e=await fetch(`${WORKER_URL}/invite/create`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({})}),t=await e.json();if(!e.ok)throw new Error(t.error||"Failed");_inviteCode=t.code,document.getElementById("invite-code-value").textContent=t.code,document.getElementById("invite-code-display").style.display="block",toast("Invite code created — valid for 24 hours")}catch(e){toast("Could not create invite: "+e.message)}finally{e&&(e.textContent="🔗 Generate invite code",e.disabled=!1)}}function copyInviteCode(){const e=document.getElementById("invite-code-value")?.textContent?.trim();e&&navigator.clipboard?.writeText(e).then(()=>toast("Code copied ✓")).catch(()=>{prompt("Copy this invite code:",e)})}async function joinHousehold(){const e=document.getElementById("invite-code-input"),t=(e?.value||"").trim().toUpperCase();if(t.length<4)return void toast("Enter the full invite code");const n=document.querySelector('[onclick="joinHousehold()"]');n&&(n.textContent="⏳",n.disabled=!0);try{const e=await fetch(`${WORKER_URL}/invite/join`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code:t})}),n=await e.json();if(!e.ok)throw new Error(n.error||"Invalid code");_sharedFileId=n.fileId,saveHouseholdShareState(),updateHouseholdShareUI(),toast("Joined household ✓ — syncing now"),await syncAll()}catch(e){toast("Could not join: "+e.message)}finally{n&&(n.textContent="Join",n.disabled=!1)}}function leaveHousehold(){leaveShare()}async function proxyReadDrive(){const e=_shareState?.code||"",t=activeProfile&&"default"!==activeProfile?`&household=${encodeURIComponent(activeProfile)}`:"",n=await fetch(`${WORKER_URL}/sync/pull?share=${encodeURIComponent(e)}${t}`);if(404===n.status)return null;if(403===n.status){const e=await n.json().catch(()=>({}));throw new Error("ACCESS_DENIED: "+(e.error||"No access"))}if(503===n.status)throw new Error("OWNER_NOT_CONNECTED");if(!n.ok)throw new Error("Proxy read failed: "+n.status);return n.json()}async function proxyWriteDrive(e){const t=_shareState?.code||"",n=activeProfile&&"default"!==activeProfile?`&household=${encodeURIComponent(activeProfile)}`:"",o=await fetch(`${WORKER_URL}/sync/push?share=${encodeURIComponent(t)}${n}`,{method:"POST",headers:{"Content-Type":"application/json"},body:e});if(403===o.status)throw new Error("READ_ONLY");if(!o.ok)throw new Error("Proxy write failed: "+o.status)}async function proxyGetModifiedTime(){if(!_shareState?.code||!_kvEmailHash||!_kvVerifier)return null;try{const e=await fetchKV(`${WORKER_URL}/share/data/modified`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({guestEmailHash:_kvEmailHash,guestVerifier:_kvVerifier,code:_shareState.code,household:activeProfile})});return e.ok&&(await e.json()).modifiedTime||null}catch(e){return null}}let _shareTargets=[],_shareTargetType="family",_shareTargetPerms={},_shareTargetColour=HOUSEHOLD_COLOURS[0],_shareTargetDone=!1;function handleShareTargetBtn(){_shareTargetDone?closeModal("share-target-modal"):saveShareTarget()}async function loadShareTargets(){if(isOwner()&&_kvEmailHash&&_kvVerifier)try{const e=await fetchKV(`${WORKER_URL}/share/list`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ownerEmailHash:_kvEmailHash,verifier:_kvVerifier})}),t=await e.json();_shareTargets=t.targets||[],renderShareTargetsList()}catch(e){console.warn("Could not load share targets:",e)}}function renderShareTargetsList(){const e=document.getElementById("share-targets-list"),t=document.getElementById("add-share-target-btn");if(!e)return;if(!isOwner())return void(e.closest("#share-targets-section")?.style&&(e.closest("#share-targets-section").style.display="none"));const n={family:"👨‍👩‍👧",cleaner:"🧹",guest:"👤"};_shareTargets.length?e.innerHTML=_shareTargets.map(e=>{const t=e.colour||"#e8a838",o=e.members?.length||0,a=e.expiresAt&&Date.now()>new Date(e.expiresAt).getTime(),r=e.expiresAt?a?"⚠️ Link expired":`Link valid until ${new Date(e.expiresAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}`:"";return`\n      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border:1px solid ${a?"var(--danger)":"var(--border)"};border-radius:10px">\n        <div style="width:12px;height:12px;border-radius:50%;background:${t};flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>\n        <div style="flex:1;min-width:0">\n          <div style="font-size:13px;font-weight:700">${n[e.type]||"👤"} ${esc(e.name)}</div>\n          <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${e.type}${o?" · "+o+" member"+(1!==o?"s":""):""}</div>\n          ${r?`<div style="font-size:10px;color:${a?"var(--danger)":"var(--muted)"};margin-top:2px">${r}</div>`:""}\n        </div>\n        <button class="btn btn-ghost btn-sm" onclick="openEditShareTarget('${e.code}')" title="Edit">✏️</button>\n        ${a?`<button class="btn btn-ghost btn-sm" onclick="refreshShareLink('${e.code}')" title="Refresh link (new 24h window)">🔄</button>`:`<button class="btn btn-ghost btn-sm" onclick="copyShareTargetLink('${e.code}')" title="Copy invite link">🔗</button>`}\n        <button class="btn btn-ghost btn-sm" onclick="resyncSharedData('${e.code}')" title="Re-sync data to guest">📤</button>\n        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteShareTarget('${e.code}')">✕</button>\n      </div>`}).join(""):e.innerHTML='<p style="font-size:12px;color:var(--muted)">No one has access yet.</p>',t&&(t.style.display=_shareTargets.length>=5?"none":"inline-flex")}function renderShareTargetColourPicker(e){const t=document.getElementById("share-target-colours");t&&(t.innerHTML=HOUSEHOLD_COLOURS.map(t=>`\n    <div onclick="selectShareTargetColour('${t}')"\n      data-colour="${t}"\n      style="width:26px;height:26px;border-radius:50%;background:${t};cursor:pointer;\n             border:3px solid ${t===e?"var(--text)":"transparent"};\n             transition:border-color 0.15s;box-shadow:0 2px 5px rgba(0,0,0,0.3)"></div>\n  `).join(""))}function selectShareTargetColour(e){_shareTargetColour=e,document.querySelectorAll("#share-target-colours [data-colour]").forEach(t=>{t.style.borderColor=t.dataset.colour===e?"var(--text)":"transparent"})}function selectShareType(e,t){_shareTargetType=e,document.querySelectorAll(".share-type-btn").forEach(t=>{const n=t.dataset.type===e;t.style.borderColor=n?"var(--accent)":"var(--border)",t.style.background=n?"rgba(232,168,56,0.1)":"transparent",t.style.color=n?"var(--accent)":"var(--muted)"}),Object.keys(_shareTargetPerms).forEach(t=>{const n=SHARE_TYPE_DEFAULTS[e]||SHARE_TYPE_DEFAULTS.guest;_shareTargetPerms[t]={...n}}),renderShareHouseholdPerms()}async function renderShareHouseholdPerms(){const e=document.getElementById("share-household-perms");if(!e)return;const t=await getProfiles(),n=["stockroom","groceries","reminders","savings","report"],o=SHARE_TYPE_DEFAULTS[_shareTargetType]||SHARE_TYPE_DEFAULTS.guest;e.innerHTML=Object.entries(t).map(([e,t])=>{const a=t.name||("default"===e?"Home":e),r=t.colour||"#e8a838",s=_shareTargetPerms[e]||{...o};return _shareTargetPerms[e]=s,`<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px">\n      <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">\n        <div style="width:10px;height:10px;border-radius:50%;background:${r}"></div>\n        <strong style="font-size:13px">${esc(a)}</strong>\n      </div>\n      <div style="display:flex;flex-direction:column;gap:6px">\n        ${n.map(t=>{const n=s[t]||"none";return`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">\n            <span style="font-size:12px;color:var(--muted)">${SECTION_LABELS[t]||t}</span>\n            <div style="display:flex;gap:4px">\n              ${["none","r","rw"].map(o=>`\n                <button onclick="setSharePerm('${e}','${t}','${o}')"\n                  id="spm-${e}-${t}-${o}"\n                  style="padding:3px 8px;border-radius:6px;font-size:11px;cursor:pointer;\n                         border:1px solid ${n===o?"var(--accent)":"var(--border)"};\n                         background:${n===o?"rgba(232,168,56,0.15)":"transparent"};\n                         color:${n===o?"var(--accent)":"var(--muted)"};transition:all 0.15s">\n                  ${"none"===o?"🔒 None":"r"===o?"👁 View":"✏️ Edit"}\n                </button>`).join("")}\n            </div>\n          </div>`}).join("")}\n      </div>\n    </div>`}).join("")}function setSharePerm(e,t,n){_shareTargetPerms[e]||(_shareTargetPerms[e]={}),_shareTargetPerms[e][t]=n,["none","r","rw"].forEach(o=>{const a=document.getElementById(`spm-${e}-${t}-${o}`);if(!a)return;const r=o===n;a.style.borderColor=r?"var(--accent)":"var(--border)",a.style.background=r?"rgba(232,168,56,0.15)":"transparent",a.style.color=r?"var(--accent)":"var(--muted)"})}async function openAddShareTarget(){if(!isOwner())return void toast("Only the household owner can manage share access");if(_shareTargets.length>=5)return void toast("Maximum 5 share targets reached");_shareTargetType="family",_shareTargetPerms={},_shareTargetColour=HOUSEHOLD_COLOURS[_shareTargets.length%HOUSEHOLD_COLOURS.length];const e=await getProfiles(),t=SHARE_TYPE_DEFAULTS.family;(Object.keys(e).length?Object.keys(e):["default"]).forEach(e=>{_shareTargetPerms[e]={...t}}),_shareTargetDone=!1,document.getElementById("share-target-modal-title").textContent="👤 Add Person",document.getElementById("share-target-code").value="",document.getElementById("share-target-name").value="",document.getElementById("share-link-section").style.display="none",document.getElementById("share-target-save-btn").textContent="Create & get link",selectShareType("family",document.querySelector('.share-type-btn[data-type="family"]')),renderShareTargetColourPicker(_shareTargetColour),await renderShareHouseholdPerms(),openModal("share-target-modal")}async function openEditShareTarget(e){const t=_shareTargets.find(t=>t.code===e);t&&(_shareTargetType=t.type||"family",_shareTargetPerms=JSON.parse(JSON.stringify(t.households||{})),_shareTargetColour=t.colour||HOUSEHOLD_COLOURS[0],_shareTargetDone=!1,document.getElementById("share-target-modal-title").textContent="✏️ Edit Person",document.getElementById("share-target-code").value=e,document.getElementById("share-target-name").value=t.name||"",document.getElementById("share-link-section").style.display="none",document.getElementById("share-target-save-btn").textContent="Save changes",selectShareType(_shareTargetType,document.querySelector(`.share-type-btn[data-type="${_shareTargetType}"]`)),renderShareTargetColourPicker(_shareTargetColour),await renderShareHouseholdPerms(),openModal("share-target-modal"))}async function saveShareTarget(){const e=document.getElementById("share-target-name").value.trim();if(!e)return void toast("Enter a name for this person");const t=document.getElementById("share-target-code").value,n=_shareTargetColour,o=await getProfiles(),a=settings.email?.split("@")[0]||o.default?.name||"Home",r=document.getElementById("share-target-save-btn");r&&(r.textContent="⏳",r.disabled=!0);try{if(t){const o=await fetchKV(`${WORKER_URL}/share/update`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ownerEmailHash:_kvEmailHash,verifier:_kvVerifier,code:t,name:e,type:_shareTargetType,colour:n,households:_shareTargetPerms})});if(!o.ok){const e=await o.json().catch(()=>({}));throw new Error(e.error||"Update failed")}await pushSharedData(t),toast(`Updated ${e} ✓`),r&&(r.textContent="Save changes",r.disabled=!1)}else{const t=document.getElementById("share-target-email")?.value.trim();if(!t)throw new Error("Enter their email address so their share key can be encrypted for them");const s=await kvHashEmail(t),i=await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/get`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:s})});if(404===i.status)throw new Error(`${t} doesn't have a STOCKROOM account yet — they need to sign up first`);if(!i.ok)throw new Error("Could not fetch their encryption key — try again");const{publicKeyJwk:l}=await i.json(),c=await loadEcdhPrivateKey(_kvEmailHash);if(!c)throw new Error("Your encryption key is missing — try signing out and back in");const d=await generateShareKey(),m=await exportShareKey(d),u=await ecdhWrapShareKey(c,l,d),y=await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/get`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({emailHash:_kvEmailHash})});if(!y.ok)throw new Error("Could not fetch your encryption key — try again");const{publicKeyJwk:p}=await y.json(),g=await fetchKV(`${WORKER_URL}/share/create`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ownerEmailHash:_kvEmailHash,..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier},name:e,type:_shareTargetType,colour:n,ownerName:a,households:_shareTargetPerms,householdNames:Object.fromEntries(Object.entries(o).map(([e,t])=>[e,t.name||("default"===e?"Home":e)]))})}),h=await g.json();if(!g.ok)throw new Error(h.error||"Failed");if(!(await fetchKV(`${WORKER_URL}/share/ecdh-key/store`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ownerEmailHash:_kvEmailHash,..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier},code:h.code,guestEmailHash:s,wrappedKey:u,ownerPublicKeyJwk:p})})).ok)throw new Error("Could not store encrypted share key — try again");try{const e=JSON.parse(localStorage.getItem("stockroom_share_keys")||"{}");e[h.code]=m,localStorage.setItem("stockroom_share_keys",JSON.stringify(e))}catch(e){}await backupShareKey(h.code,d).catch(e=>console.warn("Share key backup failed:",e.message)),await pushSharedData(h.code,d);const v=h.link||`${location.origin}${location.pathname}?join=${h.code}`;if(document.getElementById("share-link-value").textContent=v,document.getElementById("share-link-section").style.display="block",r&&(r.textContent="Done",r.disabled=!1),_shareTargetDone=!0,!_householdEnabled){_householdEnabled=!0;try{localStorage.setItem("stockroom_household",JSON.stringify({enabled:!0,colour:_householdColour}))}catch(e){}connectPresence()}}await loadShareTargets(),kvConnected&&setTimeout(syncAll,600)}catch(e){console.error("saveShareTarget:",e),toast("Could not save: "+e.message),r&&(r.textContent=t?"Save changes":"Create & get link",r.disabled=!1)}}async function recoverShareKeyWithOldKey(e,t){try{const t=JSON.parse(localStorage.getItem("stockroom_share_keys")||"{}")[e];if(t){const e=Uint8Array.from(atob(t),e=>e.charCodeAt(0));return await crypto.subtle.importKey("raw",e,{name:"AES-GCM",length:256},!0,["encrypt","decrypt"])}}catch(e){}try{const n=await fetchKV(`${WORKER_URL}/share/key/get`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ownerEmailHash:_kvEmailHash,verifier:_kvVerifier,code:e})});if(!n.ok)return null;const{encryptedShareKey:o}=await n.json();if(!o)return null;const a=await kvDecrypt(t,o),r=Uint8Array.from(atob(a),e=>e.charCodeAt(0));return await crypto.subtle.importKey("raw",r,{name:"AES-GCM",length:256},!0,["encrypt","decrypt"])}catch(e){return console.warn("recoverShareKeyWithOldKey failed:",e.message),null}}async function backupShareKey(e,t){if(!_kvKey||!_kvEmailHash||!_kvVerifier)return;const n=await crypto.subtle.exportKey("raw",t),o=await kvEncrypt(_kvKey,btoa(String.fromCharCode(...new Uint8Array(n))));await fetchKV(`${WORKER_URL}/share/key/store`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ownerEmailHash:_kvEmailHash,verifier:_kvVerifier,code:e,encryptedShareKey:o})})}async function recoverShareKey(e){if(!_kvKey||!_kvEmailHash||!_kvVerifier)return null;try{const t=await fetchKV(`${WORKER_URL}/share/key/get`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ownerEmailHash:_kvEmailHash,verifier:_kvVerifier,code:e})});if(!t.ok)return null;const{encryptedShareKey:n}=await t.json();if(!n)return null;const o=await kvDecrypt(_kvKey,n),a=Uint8Array.from(atob(o),e=>e.charCodeAt(0)),r=await crypto.subtle.importKey("raw",a,{name:"AES-GCM",length:256},!0,["encrypt","decrypt"]);try{const t=JSON.parse(localStorage.getItem("stockroom_share_keys")||"{}");t[e]=o,localStorage.setItem("stockroom_share_keys",JSON.stringify(t))}catch(e){}return r}catch(e){return console.warn("recoverShareKey failed:",e.message),null}}async function pushSharedData(e,t){if(!_kvKey)return;let n=t;if(!n)try{const t=JSON.parse(localStorage.getItem("stockroom_share_keys")||"{}")[e];if(t){const e=Uint8Array.from(atob(t),e=>e.charCodeAt(0));n=await crypto.subtle.importKey("raw",e,{name:"AES-GCM",length:256},!0,["encrypt","decrypt"])}}catch(e){}if(n||(n=await recoverShareKey(e)),!n)return void console.warn("pushSharedData: no share key for",e,"— skipping");const o=_shareTargets.find(t=>t.code===e),a=o?.households?Object.keys(o.households):["default"];for(const t of a)try{const o=await getProfiles(),a=o[t]||o.default,r=t===activeProfile?items:a?.items||[],s=t===activeProfile?settings:a?.settings||{},i=JSON.stringify({items:r,settings:s,lastSynced:(new Date).toISOString()}),l=await encryptWithShareKey(n,i);await fetchKV(`${WORKER_URL}/share/data/push`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ownerEmailHash:_kvEmailHash,verifier:_kvVerifier,code:e,household:t,ciphertext:l})})}catch(e){console.warn("pushSharedData failed for",t,e.message)}}async function pushAllSharedData(){if(_shareTargets?.length)for(const e of _shareTargets)await pushSharedData(e.code).catch(t=>console.warn("pushAllSharedData failed for",e.code,t.message))}async function resyncSharedData(e){toast("Syncing to guest…");try{await pushSharedData(e),toast("Synced ✓")}catch(e){toast("Sync failed: "+e.message)}}async function refreshShareLink(e){if(_shareTargets.find(t=>t.code===e))try{if(!(await fetchKV(`${WORKER_URL}/share/refresh`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ownerEmailHash:_kvEmailHash,verifier:_kvVerifier,code:e})})).ok)throw new Error("Could not refresh");const t=`${location.origin}${location.pathname}?join=${e}`;await navigator.clipboard.writeText(t).catch(()=>{}),toast("New link copied ✓ (valid 24h)"),await loadShareTargets()}catch(e){toast("Could not refresh link: "+e.message)}}async function deleteShareTarget(e){if(confirm("Remove this person's access? They will no longer be able to sync your data."))try{if(!(await fetchKV(`${WORKER_URL}/share/delete`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ownerEmailHash:_kvEmailHash,verifier:_kvVerifier,code:e})})).ok)throw new Error("Could not delete");try{const t=JSON.parse(localStorage.getItem("stockroom_share_keys")||"{}");delete t[e],localStorage.setItem("stockroom_share_keys",JSON.stringify(t))}catch(e){}toast("Access removed ✓"),await loadShareTargets()}catch(e){toast("Could not remove: "+e.message)}}function copyShareLink(){const e=document.getElementById("share-link-value")?.textContent?.trim();e&&navigator.clipboard?.writeText(e).then(()=>toast("Link copied ✓")).catch(()=>prompt("Copy this link:",e))}function copyShareTargetLink(e){const t=`${location.origin}${location.pathname}?join=${e}`;navigator.clipboard.writeText(t).then(()=>toast("Invite link copied ✓")).catch(()=>prompt("Copy this link:",t))}function updateHouseholdShareUI(){const e=document.getElementById("household-joined-section");if(e)if(_shareState){e.style.display="block";const t=document.getElementById("joined-status-text");t&&(t.textContent=`✓ Joined ${_shareState.ownerName||"a household"}'s STOCKROOM as ${_shareState.type||"guest"}`)}else e.style.display="none"}async function renderSettingsHouseholdList(){const e=document.getElementById("settings-household-list");if(!e)return;const t=await getProfiles();e.innerHTML=Object.entries(t).map(([e,t])=>{const n=e===activeProfile,o=t.colour||"#e8a838",a=(t.items||[]).length;return`<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:${n?"rgba(232,168,56,0.08)":"var(--surface2)"};border:2px solid ${n?o:"var(--border)"};border-radius:10px">\n      <div style="width:10px;height:10px;border-radius:50%;background:${o};flex-shrink:0"></div>\n      <div style="flex:1;font-size:13px;font-weight:${n?"700":"400"};color:${n?o:"var(--text)"}">\n        ${esc(t.name||e)}${n?" ✓":""}\n        <span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:6px">${a} item${1!==a?"s":""}</span>\n      </div>\n      ${n?"":`<button class="btn btn-ghost btn-sm" onclick="switchProfileFromSettings('${e}')">Switch</button>`}\n      <button class="btn btn-ghost btn-sm" onclick="openHouseholdEdit('${e}')" title="Edit">✏️</button>\n      ${"default"!==e?`<button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteProfile('${e}');renderSettingsHouseholdList()">✕</button>`:""}\n    </div>`}).join("")}async function switchProfileFromSettings(e){await switchProfile(e),renderSettingsHouseholdList()}async function addProfileFromSettings(){const e=document.getElementById("settings-new-household-name"),t=e?.value.trim()||"",n=document.getElementById("new-profile-name");n&&(n.value=t),await addProfile(),e&&(e.value=""),renderSettingsHouseholdList()}function initHouseholdSettingsUI(){loadHouseholdSettings(),loadShareState(),updateHouseholdShareUI(),renderHouseholdColourPicker(),_householdEnabled&&connectPresence(),applyTabPermissions(),renderSettingsHouseholdList(),isOwner()&&WORKER_URL&&loadShareTargets()}async function getHouseholdUserId(){if(_kvEmailHash)return"u_"+_kvEmailHash.slice(0,12);const e=settings.email||"";if(e){const t=(new TextEncoder).encode(e.toLowerCase().trim()),n=await crypto.subtle.digest("SHA-256",t);return"u_"+Array.from(new Uint8Array(n)).slice(0,6).map(e=>e.toString(16).padStart(2,"0")).join("")}let t=localStorage.getItem("stockroom_user_id");return t||(t="u_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),localStorage.setItem("stockroom_user_id",t)),t}async function connectPresence(){if(!_householdEnabled)return;disconnectPresence();const e=await getHouseholdUserId(),t=`${WORKER_URL}/presence-stream?userId=${encodeURIComponent(e)}`;try{_presenceSSE=new EventSource(t),_presenceSSE.onmessage=async e=>{try{const t=JSON.parse(e.data);if("presence"===t.type){_otherPresence={};const e=await getHouseholdUserId();(t.users||[]).forEach(t=>{t.userId!==e&&(_otherPresence[t.userId]=t)}),renderPresenceAvatars(),"shopping"!==_currentViewName&&"none"===document.getElementById("shopping-panel")?.style.display||scheduleRender("shopping")}}catch(e){console.warn("Presence parse error",e)}},_presenceSSE.onerror=()=>{disconnectPresence(),setTimeout(()=>{_householdEnabled&&connectPresence()},1e4)},pushPresence(),_presencePingTimer=setInterval(pushPresence,25e3);const e=document.getElementById("household-status");e&&(e.textContent="🟢 Connected — presence active")}catch(e){console.warn("Presence SSE failed:",e)}}function disconnectPresence(){_presenceSSE&&(_presenceSSE.close(),_presenceSSE=null),clearInterval(_presencePingTimer),_otherPresence={},renderPresenceAvatars();const e=document.getElementById("household-status");e&&(e.textContent="")}async function pushPresence(){if(!_householdEnabled)return;const e=_householdName||settings.email?.split("@")[0]||"You",t=e.slice(0,2).toUpperCase();try{await fetch(`${WORKER_URL}/presence-update`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId:await getHouseholdUserId(),name:e,initials:t,colour:_householdColour,view:_currentViewName,ts:(new Date).toISOString()})})}catch(e){}}function renderPresenceAvatars(){const e=document.getElementById("presence-bar");if(!e)return;const t=Object.values(_otherPresence);t.length?(e.style.display="flex",e.innerHTML=t.map(e=>{const t={stock:"Stockroom",grocery:"Groceries",shopping:"Shopping",reminders:"Reminders",savings:"Savings",report:"Report",settings:"Settings"}[e.view]||e.view;return`<div class="presence-avatar ${"shopping"===e.view?"shopping":""}"\n      style="background:${e.colour};color:#111"\n      title="${e.name} — viewing ${t}">\n      ${e.initials}\n      <div class="presence-dot"></div>\n      <div class="presence-tooltip">${esc(e.name)} · ${t}</div>\n    </div>`}).join("")):e.style.display="none"}function getShoppingPresenceBar(){const e=Object.values(_otherPresence).filter(e=>"shopping"===e.view);return e.length?`<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.2);border-radius:10px;margin-bottom:14px;font-size:13px">\n    <div style="display:flex;gap:4px">${e.map(e=>`<div class="presence-avatar shopping" style="background:${e.colour};color:#111;width:24px;height:24px;font-size:10px">${e.initials}<div class="presence-dot"></div></div>`).join("")}</div>\n    <span style="color:var(--warn)">${e.map(e=>esc(e.name)).join(", ")} ${1===e.length?"is":"are"} also on the shopping list</span>\n  </div>`:""}async function init(){await loadData();const e=(new Date).toISOString();let t=!1;items.forEach(n=>{n.updatedAt||(n.updatedAt=e,t=!0)}),t&&(await saveData(),console.log(`Stamped updatedAt on ${items.filter(t=>t.updatedAt===e).length} legacy items`));await kvRestoreSession()&&setTimeout(()=>kvSyncNow(!0),800),await loadShareState();const n=new URLSearchParams(location.search).get("join");if(n){const e=document.getElementById("wizard-step-1");e&&(e.innerHTML='<div style="font-size:52px;margin-bottom:16px">🏠</div><h1 style="font-size:24px;font-weight:700;margin-bottom:8px">Joining household…</h1><p style="color:var(--muted);font-size:14px">Checking your invite link</p>',e.classList.add("active"))}handleURLAction(),buildCountryGrid(),buildSettingsCountrySelect(),buildTagSettingsRows(),buildTagFilterBar(),wizardCountry=settings.country||"GB",selectCountry(wizardCountry);const o=localStorage.getItem("stockroom_seen"),a=localStorage.getItem("stockroom_wizard_step"),r=localStorage.getItem("stockroom_country_set"),s=localStorage.getItem("stockroom_protect_seen");n||(kvConnected&&!s?showProtectDataScreen([]):o||kvConnected?(document.body.classList.remove("wizard-active"),document.getElementById("wizard").style.display="none"):"2"===a?(localStorage.removeItem("stockroom_wizard_step"),wizardNext()):r&&wizardNext()),updateSyncUI(),renderSettingsForUser(),initPasskeyUI(),loadCompactView(),loadFilterPanelState();const i=await getProfiles();if(!Object.keys(i).length){const e={default:{name:"Home",items:JSON.parse(JSON.stringify(items)),settings:JSON.parse(JSON.stringify(settings))}};await saveProfiles(e)}activeProfile=localStorage.getItem("stockroom_active_profile")||"default",await loadProfile(activeProfile),scheduleRender(...RENDER_REGIONS),loadNotifSettings(),initHouseholdSettingsUI(),await loadReminders(),await loadGrocery(),await checkGroceryRecurring(),renderReminders(),setTimeout(()=>{lastAutoSync=Date.now(),checkCloudAhead()},1500),checkPendingSWSync(),t&&setTimeout(syncAll,1500),_shareState&&!t&&setTimeout(()=>kvSyncNow(!0),800),setTimeout(checkExportReminder,5e3),setTimeout(checkScheduledEmail,2e3),setTimeout(checkLowStockNotifications,3e3),setTimeout(checkReminderNotifications,3500)}window.shareDiag=async function(e){const t=[];t.push("=== SHARE DIAGNOSTIC ==="),t.push("_kvKey:       "+(_kvKey?"SET":"NULL — owner not signed in with key")),t.push(`_kvEmailHash: ${_kvEmailHash||"(empty)"}`),t.push("_kvVerifier:  "+(_kvVerifier?_kvVerifier.slice(0,8)+"…":"(empty)")),t.push(`_shareTargets: ${JSON.stringify((_shareTargets||[]).map(e=>({code:e.code,households:Object.keys(e.households||{})})))}`);const n=JSON.parse(localStorage.getItem("stockroom_share_keys")||"{}");t.push(`local share keys: ${Object.keys(n).join(", ")||"none"}`);const o=e?[e]:(_shareTargets||[]).map(e=>e.code);if(!o.length)return t.push("No share targets found"),console.log(t.join("\n")),t.join("\n");for(const e of o){t.push(`\n--- Code: ${e} ---`),t.push(`local key present: ${!!n[e]}`);try{const n=await fetch(`${WORKER_URL}/share/key/get`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ownerEmailHash:_kvEmailHash,verifier:_kvVerifier,code:e})});t.push(`share/key/get status: ${n.status}`);const o=await n.json();t.push(`share/key/get body: ${JSON.stringify(o)}`)}catch(e){t.push(`share/key/get error: ${e.message}`)}let o=null;if(n[e])try{const a=Uint8Array.from(atob(n[e]),e=>e.charCodeAt(0));o=await crypto.subtle.importKey("raw",a,{name:"AES-GCM",length:256},!0,["encrypt","decrypt"]),t.push("local key import: OK")}catch(e){t.push(`local key import FAILED: ${e.message}`)}if(o||(t.push("attempting server key recovery…"),o=await recoverShareKey(e).catch(e=>(t.push(`recoverShareKey error: ${e.message}`),null)),t.push("server key recovery: "+(o?"OK":"FAILED — no backup stored"))),_kvEmailHash&&_kvVerifier)try{const n=_shareTargets.find(t=>t.code===e);t.push("share record in _shareTargets: "+(n?"YES":"NO")),t.push(`share members: ${JSON.stringify(n?.members||[])}`),t.push(`share households: ${JSON.stringify(Object.keys(n?.households||{}))}`)}catch(e){t.push(`share record check error: ${e.message}`)}}return t.push('\nTo recover a share with no key: run window.rebuildShare("CODE") to delete and recreate it.'),t.push("=== END ==="),console.log(t.join("\n")),t.join("\n")},window.clearBrokenShare=async function(e){if(e){if(confirm(`Delete share target ${e}? The guest will lose access. You'll need to send them a new link.`))try{const t=await fetchKV(`${WORKER_URL}/share/delete`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ownerEmailHash:_kvEmailHash,verifier:_kvVerifier,code:e})});if(!t.ok){const e=await t.json();throw new Error(e.error||"Delete failed")}try{const t=JSON.parse(localStorage.getItem("stockroom_share_keys")||"{}");delete t[e],localStorage.setItem("stockroom_share_keys",JSON.stringify(t))}catch(e){}await loadShareTargets(),console.log(`Share ${e} deleted. Go to Settings → Households → Add person to create a new share.`),toast("Share removed — create a new one from Settings → Households")}catch(e){console.error("clearBrokenShare failed:",e.message)}}else console.error('Usage: clearBrokenShare("CODE")')},init();
+// ═══════════════════════════════════════════
+//  DATA
+// ═══════════════════════════════════════════
+const CATEGORIES = ['Kitchen','Bathroom','Cleaning','Food & Drink','Health','Garden','Office','Other'];
+
+const COUNTRIES = [
+  { code:'GB', flag:'🇬🇧', name:'United Kingdom' },
+  { code:'US', flag:'🇺🇸', name:'United States' },
+  { code:'CA', flag:'🇨🇦', name:'Canada' },
+  { code:'AU', flag:'🇦🇺', name:'Australia' },
+  { code:'DE', flag:'🇩🇪', name:'Germany' },
+  { code:'FR', flag:'🇫🇷', name:'France' },
+  { code:'NL', flag:'🇳🇱', name:'Netherlands' },
+  { code:'IE', flag:'🇮🇪', name:'Ireland' },
+  { code:'ES', flag:'🇪🇸', name:'Spain' },
+  { code:'IT', flag:'🇮🇹', name:'Italy' },
+  { code:'SE', flag:'🇸🇪', name:'Sweden' },
+  { code:'JP', flag:'🇯🇵', name:'Japan' },
+  { code:'OTHER', flag:'🌍', name:'Other' },
+];
+
+const STORES_BY_COUNTRY = {
+  GB: [
+    { name:'🛒 Amazon UK',      url: q => `https://www.amazon.co.uk/s?k=${q}` },
+    { name:'🏪 Costco UK',      url: q => `https://www.costco.co.uk/search?q=${q}` },
+    { name:"🛍️ Ocado",          url: q => `https://www.ocado.com/search?entry=${q}` },
+    { name:'🛍️ Tesco',          url: q => `https://www.tesco.com/groceries/en-GB/search?query=${q}` },
+    { name:"🛍️ Sainsbury's",    url: q => `https://www.sainsburys.co.uk/gol-ui/SearchDisplayView?searchTerm=${q}` },
+    { name:'🔍 Google Shop',    url: q => `https://www.google.co.uk/search?q=${q}&tbm=shop` },
+    { name:'💰 CamelCamelCamel',url: q => `https://uk.camelcamelcamel.com/search?sq=${q}` },
+  ],
+  US: [
+    { name:'🛒 Amazon US',      url: q => `https://www.amazon.com/s?k=${q}` },
+    { name:'🏪 Costco US',      url: q => `https://www.costco.com/catalogsearch/results?q=${q}` },
+    { name:'🛍️ Walmart',        url: q => `https://www.walmart.com/search?q=${q}` },
+    { name:'🛍️ Target',         url: q => `https://www.target.com/s?searchTerm=${q}` },
+    { name:'🔍 Google Shop',    url: q => `https://www.google.com/search?q=${q}&tbm=shop` },
+    { name:'💰 CamelCamelCamel',url: q => `https://camelcamelcamel.com/search?sq=${q}` },
+  ],
+  CA: [
+    { name:'🛒 Amazon CA',      url: q => `https://www.amazon.ca/s?k=${q}` },
+    { name:'🏪 Costco CA',      url: q => `https://www.costco.ca/catalogsearch/results?q=${q}` },
+    { name:'🛍️ Walmart CA',     url: q => `https://www.walmart.ca/search?q=${q}` },
+    { name:'🔍 Google Shop',    url: q => `https://www.google.ca/search?q=${q}&tbm=shop` },
+    { name:'💰 CamelCamelCamel',url: q => `https://camelcamelcamel.com/search?sq=${q}` },
+  ],
+  AU: [
+    { name:'🛒 Amazon AU',      url: q => `https://www.amazon.com.au/s?k=${q}` },
+    { name:'🏪 Costco AU',      url: q => `https://www.costco.com.au/search?q=${q}` },
+    { name:'🛍️ Woolworths',     url: q => `https://www.woolworths.com.au/shop/search/products?searchTerm=${q}` },
+    { name:'🛍️ Coles',          url: q => `https://www.coles.com.au/search?q=${q}` },
+    { name:'🔍 Google Shop',    url: q => `https://www.google.com.au/search?q=${q}&tbm=shop` },
+    { name:'💰 CamelCamelCamel',url: q => `https://camelcamelcamel.com/search?sq=${q}` },
+  ],
+  DE: [
+    { name:'🛒 Amazon DE',      url: q => `https://www.amazon.de/s?k=${q}` },
+    { name:'🛍️ REWE',           url: q => `https://shop.rewe.de/productList?search=${q}` },
+    { name:'🛍️ dm',             url: q => `https://www.dm.de/search?query=${q}` },
+    { name:'🔍 Google Shop',    url: q => `https://www.google.de/search?q=${q}&tbm=shop` },
+    { name:'💰 CamelCamelCamel',url: q => `https://camelcamelcamel.com/search?sq=${q}` },
+  ],
+  FR: [
+    { name:'🛒 Amazon FR',      url: q => `https://www.amazon.fr/s?k=${q}` },
+    { name:'🛍️ Carrefour',      url: q => `https://www.carrefour.fr/recherche?query=${q}` },
+    { name:'🔍 Google Shop',    url: q => `https://www.google.fr/search?q=${q}&tbm=shop` },
+    { name:'💰 CamelCamelCamel',url: q => `https://camelcamelcamel.com/search?sq=${q}` },
+  ],
+  NL: [
+    { name:'🛒 Amazon NL',      url: q => `https://www.amazon.nl/s?k=${q}` },
+    { name:'🛍️ Bol.com',        url: q => `https://www.bol.com/nl/nl/s/?searchtext=${q}` },
+    { name:'🛍️ Albert Heijn',   url: q => `https://www.ah.nl/zoeken?query=${q}` },
+    { name:'🔍 Google Shop',    url: q => `https://www.google.nl/search?q=${q}&tbm=shop` },
+  ],
+  IE: [
+    { name:'🛒 Amazon UK',      url: q => `https://www.amazon.co.uk/s?k=${q}` },
+    { name:'🛍️ Tesco IE',       url: q => `https://www.tesco.ie/groceries/en-IE/search?query=${q}` },
+    { name:'🛍️ Dunnes',         url: q => `https://www.dunnesstoresgrocery.com/sm/delivery/rsid/258/results?q=${q}` },
+    { name:'🔍 Google Shop',    url: q => `https://www.google.ie/search?q=${q}&tbm=shop` },
+    { name:'💰 CamelCamelCamel',url: q => `https://uk.camelcamelcamel.com/search?sq=${q}` },
+  ],
+  ES: [
+    { name:'🛒 Amazon ES',      url: q => `https://www.amazon.es/s?k=${q}` },
+    { name:'🛍️ El Corte Inglés',url: q => `https://www.elcorteingles.es/buscar/?s=${q}` },
+    { name:'🔍 Google Shop',    url: q => `https://www.google.es/search?q=${q}&tbm=shop` },
+  ],
+  IT: [
+    { name:'🛒 Amazon IT',      url: q => `https://www.amazon.it/s?k=${q}` },
+    { name:'🔍 Google Shop',    url: q => `https://www.google.it/search?q=${q}&tbm=shop` },
+  ],
+  SE: [
+    { name:'🛒 Amazon DE',      url: q => `https://www.amazon.de/s?k=${q}` },
+    { name:'🛍️ ICA',            url: q => `https://www.ica.se/sok/?query=${q}` },
+    { name:'🔍 Google Shop',    url: q => `https://www.google.se/search?q=${q}&tbm=shop` },
+  ],
+  JP: [
+    { name:'🛒 Amazon JP',      url: q => `https://www.amazon.co.jp/s?k=${q}` },
+    { name:'🛍️ Rakuten',        url: q => `https://search.rakuten.co.jp/search/mall/${q}/` },
+    { name:'🔍 Google Shop',    url: q => `https://www.google.co.jp/search?q=${q}&tbm=shop` },
+  ],
+  OTHER: [
+    { name:'🛒 Amazon',         url: q => `https://www.amazon.com/s?k=${q}` },
+    { name:'🔍 Google Shop',    url: q => `https://www.google.com/search?q=${q}&tbm=shop` },
+    { name:'💰 CamelCamelCamel',url: q => `https://camelcamelcamel.com/search?sq=${q}` },
+  ],
+};
+
+function getStores(code) { return STORES_BY_COUNTRY[code] || STORES_BY_COUNTRY.OTHER; }
+
+// ═══════════════════════════════════════════
+//  INDEXEDDB — async storage layer
+//  Replaces localStorage for all data stores.
+//  UI state (wizard, compact, notif flags) stays in localStorage.
+// ═══════════════════════════════════════════
+
+const DB_NAME    = 'stockroom';
+const DB_VERSION = 1;
+const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles'];
+
+let _db = null;
+
+function openDB() {
+  if (_db) return Promise.resolve(_db);
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      DB_STORES.forEach(s => { if (!db.objectStoreNames.contains(s)) db.createObjectStore(s); });
+    };
+    req.onsuccess = e => { _db = e.target.result; resolve(_db); };
+    req.onerror   = e => reject(e.target.error);
+  });
+}
+
+async function dbGet(store, key) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction(store, 'readonly');
+    const req = tx.objectStore(store).get(key);
+    req.onsuccess = e => resolve(e.target.result ?? null);
+    req.onerror   = e => reject(e.target.error);
+  });
+}
+
+async function dbPut(store, key, value) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction(store, 'readwrite');
+    const req = tx.objectStore(store).put(value, key);
+    req.onsuccess = () => resolve();
+    req.onerror   = e => reject(e.target.error);
+  });
+}
+
+async function dbDelete(store, key) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction(store, 'readwrite');
+    const req = tx.objectStore(store).delete(key);
+    req.onsuccess = () => resolve();
+    req.onerror   = e => reject(e.target.error);
+  });
+}
+
+// Migrate a single key from localStorage into IndexedDB then remove it
+async function migrateFromLocalStorage(lsKey, dbStore, dbKey, transform) {
+  const raw = localStorage.getItem(lsKey);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    const value  = transform ? transform(parsed) : parsed;
+    await dbPut(dbStore, dbKey, value);
+    localStorage.removeItem(lsKey);
+    return value;
+  } catch(e) {
+    console.warn('Migration failed for', lsKey, e);
+    return null;
+  }
+}
+
+// ═══════════════════════════════════════════
+//  CONFIG
+// ═══════════════════════════════════════════
+const CLIENT_ID       = '589308993147-rfj3kbaave6uhf3k1ojes3ph2l1pkd1m.apps.googleusercontent.com';
+const SCOPES          = 'https://www.googleapis.com/auth/drive.file';
+// KV-native: no Drive file
+const WORKER_URL      = 'https://stockroom2.art-bot5000.deno.net';
+// KV-native: no Dropbox
+const DROPBOX_FILE    = '/stockroom_data.json';  // stored in app folder
+
+// ═══════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════
+let items = [];
+let settings = { threshold: 20, country: 'GB' };
+let editingId = null;
+let loggingId = null;
+let activeFilter = 'all';
+let activeCadence = 'all';
+let activeStore = 'all';
+let activeRating = 0;
+let currentRating = 0;
+let wizardCountry = 'GB';
+let compactView = false;
+let activeProfile = 'default'; // household profile key
+
+// Drive state
+let driveConnected = false; // true after one-time OAuth setup
+
+// Dropbox state
+let dropboxToken     = null;
+let dropboxConnected = false;
+
+// ═══════════════════════════════════════════
+//  MODAL HELPERS (defined early — used everywhere)
+// ═══════════════════════════════════════════
+function openModal(id) {
+  if (_vtSupported() && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const el = document.getElementById(id);
+    el.style.viewTransitionName = 'modal-layer';
+    document.startViewTransition(() => { el.classList.add('open'); });
+  } else {
+    document.getElementById(id).classList.add('open');
+  }
+}
+function closeModal(id) {
+  if (_vtSupported() && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const el = document.getElementById(id);
+    el.style.viewTransitionName = 'modal-layer';
+    document.startViewTransition(() => { el.classList.remove('open'); });
+  } else {
+    document.getElementById(id).classList.remove('open');
+  }
+}
+
+// ═══════════════════════════════════════════
+//  UTILS
+// ═══════════════════════════════════════════
+const uid = () => 'id_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+const today = () => new Date().toISOString().split('T')[0];
+const fmtDate = d => d ? new Date(d+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—';
+
+function timeAgo(dateStr) {
+  if (!dateStr) return '—';
+  const days = Math.floor((Date.now() - new Date(dateStr+'T12:00:00')) / 86400000);
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 7)  return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days/7)}w ago`;
+  if (days < 365) return `${Math.floor(days/30)}mo ago`;
+  return `${Math.floor(days/365)}y ago`;
+}
+
+function calcStock(item) {
+  if (!item.logs || !item.logs.length) return null;
+  // Only count delivered (non-pending) logs for stock calculation
+  const deliveredLogs = item.logs.filter(l => !l.pendingDelivery);
+  if (!deliveredLogs.length) return null;
+  const last = deliveredLogs[deliveredLogs.length - 1];
+
+  // If a manual stock count has been recorded, use actual consumption rate
+  if (item.stockCount != null && item.stockCountDate) {
+    const totalPurchased     = last.qty || 1;
+    const daysSincePurchase  = (Date.now() - new Date(last.date+'T12:00:00')) / 86400000;
+    const used               = totalPurchased - item.stockCount;
+    const totalDays          = (item.months||1) * 30.5 * totalPurchased;
+
+    let daysLeft;
+    if (used <= 0 || daysSincePurchase <= 0) {
+      daysLeft = Math.round(Math.max(0, totalDays - daysSincePurchase));
+    } else {
+      const ratePerDay = used / daysSincePurchase;
+      daysLeft = ratePerDay > 0 ? Math.round(Math.max(0, item.stockCount / ratePerDay)) : 9999;
+    }
+
+    // pct = time remaining vs total expected lifespan
+    const pct = Math.round(Math.max(0, Math.min(100, (daysLeft / totalDays) * 100)));
+    return { pct, daysLeft, referenceDate: item.stockCountDate, fromStockCount: true };
+  }
+
+  // Default: time-based from purchase / startedUsing date
+  const referenceDate = item.startedUsing || last.date;
+  const daysSince  = (Date.now() - new Date(referenceDate+'T12:00:00')) / 86400000;
+  const totalDays  = (item.months||1) * 30.5 * (last.qty||1);
+  const daysLeft   = Math.round(Math.max(0, totalDays - daysSince));
+  const pct        = Math.round(Math.max(0, Math.min(100, (daysLeft / totalDays) * 100)));
+  return { pct, daysLeft, referenceDate };
+}
+
+function getStatus(pct, threshold) {
+  if (pct === null || pct === undefined) return 'nodata';
+  if (pct <= threshold/2) return 'critical';
+  if (pct <= threshold) return 'warn';
+  return 'ok';
+}
+
+const STATUS_COLOR = { critical:'#e85050', warn:'#e8a838', ok:'#4cbb8a', nodata:'#7880a0' };
+const STATUS_LABEL = { critical:'🔴 Critical', warn:'🟡 Low', ok:'🟢 Good', nodata:'⚪ No data' };
+
+// ═══════════════════════════════════════════
+//  PERSISTENCE — IndexedDB backed
+// ═══════════════════════════════════════════
+async function loadData() {
+  // Try IndexedDB first
+  let loadedItems    = await dbGet('items',    'items');
+  let loadedSettings = await dbGet('settings', 'settings');
+
+  // First-run migration from localStorage
+  if (!loadedItems) {
+    loadedItems = await migrateFromLocalStorage('stockroom_items', 'items', 'items', v => v);
+  }
+  if (!loadedSettings) {
+    loadedSettings = await migrateFromLocalStorage('stockroom_settings', 'settings', 'settings', v => v);
+  }
+
+  if (Array.isArray(loadedItems)) items = loadedItems;
+  if (loadedSettings && typeof loadedSettings === 'object') settings = { ...settings, ...loadedSettings };
+}
+
+async function saveData() {
+  if (!Array.isArray(items)) { console.error('stockroom: items is not an array, aborting save'); return; }
+  await dbPut('items', 'items', items);
+  if (activeProfile) await saveCurrentProfile();
+  registerBackgroundSync();
+  bcPost({ type: 'DATA_CHANGED' });
+}
+
+async function saveSettings() {
+  settings.threshold      = parseInt(document.getElementById('setting-threshold').value);
+  settings.country        = document.getElementById('setting-country').value;
+  settings.email          = document.getElementById('setting-email').value.trim();
+  settings.emailInterval  = parseInt(document.getElementById('setting-email-interval').value);
+  settings.emailStartDate = document.getElementById('setting-email-start').value || null;
+  settings.emailStartTime = document.getElementById('setting-email-start-time').value || '09:00';
+  await dbPut('settings', 'settings', settings);
+  updateLastSentUI();
+  pushScheduleToWorker();
+  scheduleRender('settings-ui', 'sns');
+}
+
+async function _saveSettings() {
+  // Internal: save settings without triggering UI side effects
+  await dbPut('settings', 'settings', settings);
+  bcPost({ type: 'SETTINGS_CHANGED' });
+}
+
+// Stamp updatedAt on an item whenever it's modified
+// ── Field-level timestamps (lightweight CRDT) ────────────
+// touchField stamps individual fields in item._fieldTs so mergeItems
+// can resolve conflicts at field granularity rather than whole-item LWW.
+// Fields with no _fieldTs entry fall back to item-level updatedAt.
+function touchField(item, ...fields) {
+  const now = new Date().toISOString();
+  item.updatedAt = now;
+  if (!item._fieldTs) item._fieldTs = {};
+  if (fields.length === 0) {
+    // No specific fields — stamp the whole item (backwards compat for touchItem callers)
+    return;
+  }
+  fields.forEach(f => { item._fieldTs[f] = now; });
+}
+
+// Keep touchItem as an alias for callers that set multiple fields at once
+function touchItem(item) { touchField(item); }
+
+// ── Logs union merge ─────────────────────────────────────
+// Logs are append-only — merge by ID union, never discard an entry
+function mergeLogs(localLogs = [], remoteLogs = []) {
+  const byId = new Map();
+  // Remote first so local can overwrite (local edits to existing logs win)
+  for (const l of remoteLogs) byId.set(l.id, l);
+  for (const l of localLogs)  byId.set(l.id, l);
+  return Array.from(byId.values()).sort((a, b) => new Date(a.date) - new Date(b.date));
+}
+
+// ── Field-level item merge ───────────────────────────────
+function mergeItemFields(local, remote) {
+  // Start with a shallow copy of local
+  const result = { ...local };
+
+  // Fields we track individually — everything except id, updatedAt, _fieldTs, logs
+  const SCALAR_FIELDS = [
+    'name','category','cadence','qty','months','url','store','notes',
+    'startedUsing','rating','imageUrl','storePrices','expiry',
+    'thresholdOverride','replacementInterval','replacementUnit',
+    'lastReplaced','ordered','orderedAt','quickAdded','tags',
+    'subscribeAndSave','stockCount','stockCountDate',
+  ];
+
+  const localTs  = local._fieldTs  || {};
+  const remoteTs = remote._fieldTs || {};
+  const itemLocalTime  = local.updatedAt  ? new Date(local.updatedAt).getTime()  : 0;
+  const itemRemoteTime = remote.updatedAt ? new Date(remote.updatedAt).getTime() : 0;
+
+  for (const field of SCALAR_FIELDS) {
+    if (!(field in remote)) continue; // remote doesn't have this field — keep local
+    const lt = localTs[field]  ? new Date(localTs[field]).getTime()  : itemLocalTime;
+    const rt = remoteTs[field] ? new Date(remoteTs[field]).getTime() : itemRemoteTime;
+    if (rt > lt) result[field] = remote[field];
+  }
+
+  // Logs: union merge by ID
+  result.logs = mergeLogs(local.logs, remote.logs);
+
+  // Merge _fieldTs — keep the newest timestamp per field
+  result._fieldTs = { ...remoteTs, ...localTs };
+  for (const f of Object.keys(remoteTs)) {
+    if (!localTs[f] || new Date(remoteTs[f]) > new Date(localTs[f])) {
+      result._fieldTs[f] = remoteTs[f];
+    }
+  }
+
+  // updatedAt = newest of the two
+  result.updatedAt = itemLocalTime >= itemRemoteTime ? local.updatedAt : remote.updatedAt;
+
+  return result;
+}
+
+async function mergeItems(local, remote, remoteWins = false) {
+  const deletedIds = await loadDeletedIds();
+  const merged = new Map();
+
+  for (const item of local) {
+    if (!deletedIds.has(item.id)) merged.set(item.id, item);
+  }
+
+  for (const remoteItem of remote) {
+    if (deletedIds.has(remoteItem.id)) continue;
+    const localItem = merged.get(remoteItem.id);
+    if (!localItem) {
+      // Item only in remote — add it
+      merged.set(remoteItem.id, remoteItem);
+    } else {
+      // Item in both — field-level merge
+      merged.set(remoteItem.id, mergeItemFields(localItem, remoteItem));
+    }
+  }
+
+  return Array.from(merged.values());
+}
+async function loadDeletedIds() {
+  const stored = await dbGet('deletedIds', 'deletedIds');
+  if (stored) return new Set(stored);
+  // Migration from localStorage
+  try {
+    const raw = localStorage.getItem('stockroom_deleted_ids');
+    if (raw) {
+      const set = new Set(JSON.parse(raw));
+      await saveDeletedIds(set);
+      localStorage.removeItem('stockroom_deleted_ids');
+      return set;
+    }
+  } catch(e) {}
+  return new Set();
+}
+async function saveDeletedIds(set) {
+  await dbPut('deletedIds', 'deletedIds', [...set]);
+}
+async function addTombstone(id) {
+  const set = await loadDeletedIds();
+  set.add(id);
+  await saveDeletedIds(set);
+}
+async function removeTombstone(id) {
+  const set = await loadDeletedIds();
+  set.delete(id);
+  await saveDeletedIds(set);
+}
+
+async function mergeItems(local, remote, remoteWins = false) {
+  const deletedIds = await loadDeletedIds();
+  const merged = new Map();
+  for (const item of local) {
+    if (!deletedIds.has(item.id)) merged.set(item.id, item);
+  }
+  for (const remoteItem of remote) {
+    if (deletedIds.has(remoteItem.id)) continue;
+    const localItem = merged.get(remoteItem.id);
+    if (!localItem) {
+      merged.set(remoteItem.id, remoteItem);
+    } else {
+      const localTime  = localItem.updatedAt  ? new Date(localItem.updatedAt).getTime()  : null;
+      const remoteTime = remoteItem.updatedAt ? new Date(remoteItem.updatedAt).getTime() : null;
+      if (localTime !== null && remoteTime !== null) {
+        if (remoteTime > localTime) merged.set(remoteItem.id, remoteItem);
+      } else if (remoteTime !== null && localTime === null) {
+        merged.set(remoteItem.id, remoteItem);
+      } else if (localTime !== null && remoteTime === null) {
+        // local wins
+      } else {
+        if (remoteWins) merged.set(remoteItem.id, remoteItem);
+      }
+    }
+  }
+  return Array.from(merged.values());
+}
+
+// ═══════════════════════════════════════════
+//  WIZARD
+// ═══════════════════════════════════════════
+function buildCountryGrid() {
+  const grid = document.getElementById('country-grid');
+  grid.innerHTML = COUNTRIES.map(c => `
+    <button class="country-btn${c.code===wizardCountry?' selected':''}" id="cbtn-${c.code}" onclick="selectCountry('${c.code}')">
+      <span style="font-size:22px">${c.flag}</span>
+      <span>${c.name}</span>
+      <span class="check">✓</span>
+    </button>`).join('');
+  updateCountryConfirm();
+}
+
+function selectCountry(code) {
+  wizardCountry = code;
+  document.querySelectorAll('.country-btn').forEach(b => b.classList.remove('selected'));
+  document.getElementById('cbtn-'+code)?.classList.add('selected');
+  updateCountryConfirm();
+}
+
+function updateCountryConfirm() {
+  const c = COUNTRIES.find(x => x.code === wizardCountry);
+  const el = document.getElementById('country-confirm');
+  if (el && c) el.textContent = `✓ Using ${c.flag} ${c.name} stores`;
+}
+
+function enableItemEdit() {
+  document.getElementById('item-modal-title').textContent = 'Edit Item';
+  document.getElementById('item-modal-subtitle').textContent = 'Editing: ' + (items.find(i => i.id === editingId)?.name || '');
+  document.getElementById('item-readonly-view').style.display = 'none';
+  document.getElementById('item-edit-view').style.display = 'block';
+}
+
+// ═══════════════════════════════════════════
+//  DRIVE PERMISSION EXPLANATION
+// ═══════════════════════════════════════════
+let _driveConnectContext = 'settings'; // 'wizard' or 'settings'
+
+function openDrivePermissionModal(context) {
+  _driveConnectContext = context || 'settings';
+  openModal('drive-permission-modal');
+}
+
+function proceedConnectDrive() {
+  closeModal('drive-permission-modal');
+  if (_driveConnectContext === 'wizard') {
+    wizardConnectDrive();
+  } else {
+    connectDrive();
+  }
+}
+
+function wizardConnectDrive() {
+  localStorage.setItem('stockroom_wizard_step', '2');
+  connectDrive();
+}
+
+function wizardConnectDropbox() {
+  localStorage.setItem('stockroom_wizard_step', '2');
+  connectDropbox(); // redirects in same tab, returns with token, then advances wizard
+}
+
+function wizardNext() {
+  localStorage.setItem('stockroom_country_set', '1');
+  document.getElementById('wizard-step-1').classList.remove('active');
+  document.getElementById('wizard-step-2').classList.add('active');
+  document.getElementById('dot-1').classList.remove('active');
+  document.getElementById('dot-1').classList.add('done');
+  document.getElementById('dot-2').classList.add('active');
+  document.getElementById('dot-2').style.width = '24px';
+}
+
+function wizardBack() {
+  document.getElementById('wizard-step-2').classList.remove('active');
+  document.getElementById('wizard-step-1').classList.add('active');
+  document.getElementById('dot-2').classList.remove('active');
+  document.getElementById('dot-2').style.width = '8px';
+  document.getElementById('dot-1').classList.remove('done');
+  document.getElementById('dot-1').classList.add('active');
+}
+
+async function wizardFinish() {
+  try {
+    settings.country = wizardCountry;
+    await _saveSettings();
+    localStorage.setItem('stockroom_seen', '1');
+    localStorage.setItem('stockroom_country_set', '1');
+    document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
+    const countrySel = document.getElementById('setting-country');
+    if (countrySel) countrySel.value = settings.country;
+    scheduleRender(...RENDER_REGIONS);
+    const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
+    if (stockTab) showView('stock', stockTab);
+    // Sync in background after wizard completes
+    if (kvConnected) setTimeout(() => kvSyncNow(true), 500);
+  } catch(e) {
+    console.error('wizardFinish error:', e);
+    // Still try to dismiss wizard even if something failed
+    localStorage.setItem('stockroom_seen', '1');
+    localStorage.setItem('stockroom_country_set', '1');
+    document.body.classList.remove('wizard-active');
+    document.getElementById('wizard').style.display = 'none';
+  }
+}
+
+// ═══════════════════════════════════════════
+//  VIEWS & TABS
+// ═══════════════════════════════════════════
+
+function setFilter(type, value, btn) {
+  if (type === 'status') {
+    activeFilter = value;
+    // deactivate all status + cadence chips, activate clicked
+    document.querySelectorAll('#filter-bar .filter-chip').forEach(c => c.classList.remove('active'));
+  } else {
+    activeCadence = activeCadence === value ? 'all' : value;
+    // toggle cadence chips
+    document.querySelectorAll('#filter-bar .filter-chip').forEach(c => {
+      if (c.textContent.includes('Monthly') || c.textContent.includes('Bulk')) c.classList.remove('active');
+    });
+  }
+  if (btn) btn.classList.add('active');
+  if (activeCadence === 'all' && type === 'cadence') btn.classList.remove('active');
+  updateFilterBadge();
+  renderGrid();
+}
+
+function setStoreFilter(store, btn) {
+  activeStore = store;
+  document.querySelectorAll('#store-filter-bar .filter-chip').forEach(c => c.classList.remove('active'));
+  btn.classList.add('active');
+  updateFilterBadge();
+  renderGrid();
+}
+
+function buildStoreFilterBar() {
+  const bar = document.getElementById('store-filter-bar');
+  const storeSet = new Set();
+  items.forEach(item => {
+    // Primary: item-level store name
+    if (item.store && item.store.trim()) storeSet.add(item.store.trim());
+    // Also collect from log entries (for legacy data)
+    (item.logs||[]).forEach(l => { if (l.store && l.store.trim()) storeSet.add(l.store.trim()); });
+  });
+  const stores = [...storeSet].sort();
+
+  bar.innerHTML = `<span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase">Store:</span>
+    <button class="filter-chip${activeStore==='all'?' active':''}" onclick="setStoreFilter('all',this)">All Stores</button>
+    ${stores.map(s => `<button class="filter-chip${activeStore===s?' active':''}" onclick="setStoreFilter('${s.replace(/'/g,"\\'")}',this)">${esc(s)}</button>`).join('')}`;
+}
+
+
+
+function setRatingFilter(rating, btn) {
+  activeRating = rating;
+  document.querySelectorAll('#rating-filter-bar .filter-chip').forEach(c => c.classList.remove('active'));
+  btn.classList.add('active');
+  updateFilterBadge();
+  renderGrid();
+}
+
+// ── Modal star rating ──
+const RATING_LABELS = { 0:'Not rated', 1:'Poor — look for alternatives', 2:'Below average', 3:'Acceptable', 4:'Good', 5:'Excellent — keep buying this' };
+
+function previewModalStars(val) {
+  document.querySelectorAll('#f-star-rating .star').forEach(s => {
+    const n = parseInt(s.dataset.val);
+    s.classList.toggle('preview', n <= val);
+    s.classList.remove('on');
+  });
+  const label = document.getElementById('f-rating-label');
+  if (label) {
+    label.textContent = RATING_LABELS[val] || '';
+    label.style.color = val <= 2 ? 'var(--danger)' : val >= 4 ? 'var(--ok)' : 'var(--muted)';
+  }
+}
+
+function resetModalStars() {
+  document.querySelectorAll('#f-star-rating .star').forEach(s => {
+    s.classList.remove('preview');
+    s.classList.toggle('on', parseInt(s.dataset.val) <= currentRating);
+  });
+  const label = document.getElementById('f-rating-label');
+  if (label) {
+    label.textContent = RATING_LABELS[currentRating] || 'Not rated';
+    label.style.color = !currentRating ? 'var(--muted)' : currentRating <= 2 ? 'var(--danger)' : currentRating >= 4 ? 'var(--ok)' : 'var(--muted)';
+  }
+}
+
+function setRating(val) {
+  currentRating = val;
+  renderStars();
+}
+
+function renderStars() {
+  document.querySelectorAll('#f-star-rating .star').forEach(s => {
+    s.classList.remove('preview');
+    s.classList.toggle('on', parseInt(s.dataset.val) <= currentRating);
+  });
+  const label = document.getElementById('f-rating-label');
+  label.textContent = RATING_LABELS[currentRating] || 'Not rated';
+  label.style.color = !currentRating ? 'var(--muted)' : currentRating <= 2 ? 'var(--danger)' : currentRating >= 4 ? 'var(--ok)' : 'var(--muted)';
+}
+
+function starsHTML(rating) {
+  if (!rating) return '<span style="color:var(--muted);font-size:11px;font-family:var(--mono)">unrated</span>';
+  const color = rating <= 1 ? '#e85050' : rating === 2 ? '#e8a838' : rating >= 4 ? '#4cbb8a' : '#7880a0';
+  return `<span class="card-stars" style="color:${color}" title="${RATING_LABELS[rating]||''}">${'★'.repeat(rating)}<span style="color:var(--border)">${'★'.repeat(5-rating)}</span></span>`;
+}
+
+// ═══════════════════════════════════════════
+//  EMAIL REMINDERS
+// ═══════════════════════════════════════════
+function getItemsDueWithin(days) {
+  return items
+    .map(item => { const s = calcStock(item); return s ? { item, daysLeft: s.daysLeft } : null; })
+    .filter(x => x && x.daysLeft <= days)
+    .sort((a, b) => a.daysLeft - b.daysLeft)
+    .map(({ item, daysLeft }) => {
+      const history  = getPriceHistory(item);
+      const lastPrice = history.length ? history[history.length - 1].raw || null : null;
+      return {
+        name:        item.name,
+        daysLeft,
+        store:       item.store || '',
+        url:         item.url   || '',
+        rating:      item.rating || null,
+        lastPrice,
+        storePrices: (item.storePrices || []).filter(sp => sp.store && sp.price),
+      };
+    });
+}
+
+// Push the user's schedule + current items to the Worker KV
+// so the hourly cron can act on it without the app being open
+async function checkKVStatus() {
+  const btn    = document.getElementById('kv-check-btn');
+  const status = document.getElementById('kv-status-text');
+  if (!WORKER_URL) { if (status) status.textContent = '✗ No backend URL configured'; return; }
+  if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+  try {
+    const res  = await fetch(`${WORKER_URL}/debug-schedule`);
+    const data = await res.json();
+    const allOk = data.email?.startsWith('✓') &&
+                  data.schedule && data.schedule !== '✗ missing' &&
+                  data.driveRefresh?.startsWith('✓');
+    const lines = [
+      `email: ${data.email}`,
+      `schedule: ${typeof data.schedule === 'object' && data.schedule ? '✓ set' : data.schedule}`,
+      `driveRefresh: ${data.driveRefresh}`,
+      `lastSent: ${data.lastSent}`,
+      data.nextSend ? `nextSend: ${data.nextSend}` : '',
+    ].filter(Boolean);
+    if (status) {
+      status.style.color = allOk ? 'var(--ok)' : 'var(--warn)';
+      status.innerHTML = lines.map(l => {
+        const isOk  = l.includes('✓');
+        const isBad = l.includes('✗');
+        const color = isOk ? 'var(--ok)' : isBad ? 'var(--danger)' : 'var(--muted)';
+        return `<span style="color:${color}">${l}</span>`;
+      }).join(' · ');
+    }
+    if (!data.driveRefresh?.startsWith('✓')) {
+      toast('⚠️ Drive refresh token missing — reconnect Google Drive in Settings');
+    } else if (!allOk) {
+      toast('⚠️ Some server settings missing — tap Re-push');
+    }
+  } catch(err) {
+    if (status) { status.style.color = 'var(--danger)'; status.textContent = '✗ Could not reach server'; }
+  } finally {
+    if (btn) { btn.textContent = 'Check'; btn.disabled = false; }
+  }
+}
+
+async function repushToServer() {
+  const btn    = document.getElementById('kv-repush-btn');
+  const status = document.getElementById('kv-status-text');
+  if (!WORKER_URL) { toast('No backend URL configured'); return; }
+  if (!settings.email) { toast('Set your email address first'); return; }
+
+  // Check if driveRefresh is missing first — repush can't fix that
+  try {
+    const check = await fetch(`${WORKER_URL}/debug-schedule`);
+    const data  = await check.json();
+    if (!data.driveRefresh?.startsWith('✓')) {
+      toast('⚠️ Drive refresh token missing — reconnect Google Drive first, then Re-push');
+      if (status) { status.style.color = 'var(--danger)'; status.textContent = '✗ Reconnect Google Drive first (Settings → Cloud Sync)'; }
+      return;
+    }
+  } catch(e) {}
+
+  if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+  try {
+    await pushScheduleToWorker();
+    await pushItemsToWorker();
+    if (status) { status.style.color = 'var(--ok)'; status.textContent = '✓ Re-pushed — tap Check to verify'; }
+    toast('Settings re-pushed to server ✓');
+    setTimeout(checkKVStatus, 1000);
+  } catch(err) {
+    toast('Re-push failed: ' + err.message);
+  } finally {
+    if (btn) { btn.textContent = 'Re-push'; btn.disabled = false; }
+  }
+}
+
+async function pushScheduleToWorker() {
+  if (!WORKER_URL || !settings.email || !settings.emailStartDate) return;
+  try {
+    const urgent   = getItemsDueWithin(7);
+    const upcoming = getItemsDueWithin(30).filter(i => i.daysLeft > 7);
+    await fetch(`${WORKER_URL}/set-schedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email:        settings.email,
+        emailHash:    _kvEmailHash || null,
+        startDate:    settings.emailStartDate,
+        startTime:    settings.emailStartTime || '09:00',
+        intervalDays: settings.emailInterval ?? 30,
+        household:    activeProfile === 'default' ? null : activeProfile,
+        urgent,
+        upcoming,
+      }),
+    });
+    // Trigger immediate check so schedule is active right away
+    // without waiting up to an hour for the cron
+    fetch(`${WORKER_URL}/check-now`, { method: 'POST' }).catch(() => {});
+  } catch(e) {
+    console.warn('Could not push schedule to Worker:', e.message);
+  }
+}
+
+async function pushItemsToWorker() {
+  if (!WORKER_URL || !settings.email) return;
+  try {
+    const urgent   = getItemsDueWithin(7);
+    const upcoming = getItemsDueWithin(30).filter(i => i.daysLeft > 7);
+    if (!urgent.length && !upcoming.length) return;
+    await fetch(`${WORKER_URL}/set-schedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email:        settings.email,
+        emailHash:    _kvEmailHash || null,
+        startDate:    settings.emailStartDate,
+        startTime:    settings.emailStartTime || '09:00',
+        intervalDays: settings.emailInterval ?? 30,
+        household:    activeProfile === 'default' ? null : activeProfile,
+        urgent,
+        upcoming,
+      }),
+    });
+  } catch(e) {}
+}
+
+function updateLastSentUI() {
+  const row      = document.getElementById('last-sent-row');
+  const textEl   = document.getElementById('last-sent-text');
+  const interval = settings.emailInterval ?? 30;
+  if (!row || !textEl) return;
+
+  if (!settings.email || interval === 0) { row.style.display = 'none'; return; }
+  row.style.display = 'flex';
+
+  const lastSent  = settings.emailLastSent;
+  const startDate = settings.emailStartDate;
+  const startTime = settings.emailStartTime || '09:00';
+  const now       = new Date();
+
+  if (!lastSent) {
+    if (startDate) {
+      const start     = new Date(`${startDate}T${startTime}:00`);
+      const minsUntil = Math.ceil((start - now) / 60000);
+      if (start > now) {
+        const timeStr = minsUntil < 120
+          ? `in ${minsUntil} minute${minsUntil !== 1 ? 's' : ''}`
+          : minsUntil < 1440
+            ? `in ${Math.ceil(minsUntil/60)} hour${Math.ceil(minsUntil/60) !== 1 ? 's' : ''}`
+            : `on ${fmtDate(startDate)} at ${startTime}`;
+        textEl.textContent = `☁️ First reminder scheduled ${timeStr} — Deno will send automatically`;
+      } else {
+        textEl.textContent = `⏳ First reminder is due — Deno cron will send on next hourly check`;
+      }
+    } else {
+      textEl.textContent = 'Set a start date above to schedule automatic reminders';
+    }
+    return;
+  }
+
+  const next      = new Date(new Date(lastSent).getTime() + interval * 86400000);
+  const daysUntil = Math.ceil((next - now) / 86400000);
+  textEl.textContent = `Last sent ${fmtDate(lastSent)} · Next ${daysUntil > 0
+    ? `in ${daysUntil} day${daysUntil !== 1 ? 's' : ''}`
+    : 'is overdue — Deno will send on next hourly check'}`;
+}
+
+async function resetLastSent() {
+  settings.emailLastSent = null;
+  await _saveSettings();
+  if (WORKER_URL && settings.email) {
+    fetch(`${WORKER_URL}/reset-schedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: settings.email }),
+    }).catch(() => {});
+  }
+  updateLastSentUI();
+  toast('Schedule reset — next send will be at your start date/time');
+}
+
+async function handleUnsubscribe() {
+  // Switch to settings tab so the user can see the email card
+  const settingsTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Settings'));
+  if (settingsTab) showView('settings', settingsTab);
+
+  // Show a confirmation prompt
+  setTimeout(async () => {
+    if (!confirm('Stop scheduled email reminders from STOCKROOM?\n\nYou can re-enable them any time in Settings → Email Reminders.')) return;
+
+    settings.emailStartDate = null;
+    settings.emailStartTime = null;
+    settings.emailLastSent  = null;
+    settings.emailInterval  = 0;
+    await _saveSettings();
+
+    // Clear schedule on Worker too
+    if (WORKER_URL) {
+      fetch(`${WORKER_URL}/unsubscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }).catch(() => {});
+    }
+
+    scheduleRender('grid', 'dashboard', 'settings-ui');
+    toast('Email reminders disabled ✓');
+
+    // Scroll to email settings card so they can see it
+    setTimeout(() => {
+      const emailCard = document.querySelector('#view-settings .settings-card h3');
+      let card = null;
+      document.querySelectorAll('#view-settings .settings-card h3').forEach(h => {
+        if (h.textContent.includes('Email')) card = h.closest('.settings-card');
+      });
+      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 300);
+  }, 400);
+}
+
+async function checkScheduledEmail() {
+  // Client-side: just update the UI — the Deno cron is the single source of truth for sending.
+  // Removed client-side send trigger to prevent double-sends if app opens after scheduled time.
+  updateLastSentUI();
+}
+
+async function sendReminderEmail(manual = true) {
+  const email = settings.email || document.getElementById('setting-email')?.value.trim();
+  if (!email) { if (manual) toast('Enter your email address in Settings first'); return; }
+
+  const urgent   = getItemsDueWithin(7);
+  const upcoming = getItemsDueWithin(30).filter(i => i.daysLeft > 7);
+
+  // Build S&S savings summary for email
+  const snsAll      = analyseSnS();
+  const snsEligible = snsAll.filter(r => r.status === 'eligible');
+  const snsActive   = snsAll.filter(r => r.status === 'active');
+  const snsSaving   = [...snsEligible, ...snsActive].reduce((s,r) => s + (r.annualSaving||0), 0);
+  const snsPayload  = (snsEligible.length + snsActive.length) >= SNS_MIN_ITEMS
+    ? { eligible: snsEligible.map(r => ({ name: r.item.name, annualSaving: r.annualSaving, snsLink: getSnSLink(r.item) })), totalSaving: snsSaving }
+    : null;
+
+  if (!urgent.length && !upcoming.length) {
+    if (manual) toast('Nothing running out in the next 30 days — nothing to send!');
+    return;
+  }
+
+  if (manual) {
+    const btn = document.getElementById('send-reminder-btn');
+    const statusEl = document.getElementById('email-status');
+    if (btn) { btn.textContent = '⏳ Sending…'; btn.disabled = true; }
+    if (statusEl) statusEl.style.display = 'none';
+  }
+
+  try {
+    const res = await fetch(`${WORKER_URL}/send-reminder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: email, urgent, upcoming, sns: snsPayload, manual }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      // Only update last-sent timestamp for scheduled sends, not manual ones
+      if (!manual) {
+        settings.emailLastSent = new Date().toISOString();
+        await _saveSettings();
+        updateLastSentUI();
+      }
+      if (manual) {
+        const total = urgent.length + upcoming.length;
+        const statusEl = document.getElementById('email-status');
+        if (statusEl) {
+          statusEl.textContent   = `✓ Reminder sent to ${email} (${total} item${total !== 1 ? 's' : ''})`;
+          statusEl.style.color   = 'var(--ok)';
+          statusEl.style.display = 'block';
+        }
+        toast('Reminder email sent ✓');
+      }
+    } else { throw new Error(data.error || 'Unknown error'); }
+  } catch(err) {
+    if (manual) {
+      const statusEl = document.getElementById('email-status');
+      if (statusEl) {
+        statusEl.textContent   = `✗ Failed: ${err.message}`;
+        statusEl.style.color   = 'var(--danger)';
+        statusEl.style.display = 'block';
+      }
+    }
+    console.error('Email reminder error:', err);
+  } finally {
+    if (manual) {
+      const btn = document.getElementById('send-reminder-btn');
+      if (btn) { btn.textContent = '📧 Send Now'; btn.disabled = false; }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════
+//  ITEM TEMPLATES
+// ═══════════════════════════════════════════
+const ITEM_TEMPLATES = [
+  // Kitchen
+  { name:'Coffee Beans',            category:'Kitchen',      cadence:'monthly', qty:1,  months:1,   emoji:'☕' },
+  { name:'Ground Coffee',           category:'Kitchen',      cadence:'monthly', qty:1,  months:0.5, emoji:'☕' },
+  { name:'Coffee Pods (48-pack)',   category:'Kitchen',      cadence:'monthly', qty:48, months:1,   emoji:'☕' },
+  { name:'Tea Bags (240-pack)',     category:'Kitchen',      cadence:'bulk',    qty:1,  months:3,   emoji:'🍵' },
+  { name:'Kitchen Roll',            category:'Kitchen',      cadence:'monthly', qty:1,  months:1,   emoji:'🧻' },
+  { name:'Olive Oil',               category:'Kitchen',      cadence:'monthly', qty:1,  months:2,   emoji:'🫒' },
+  { name:'Washing Up Liquid',       category:'Kitchen',      cadence:'monthly', qty:1,  months:1,   emoji:'🍽️' },
+  { name:'Foil / Cling Film',       category:'Kitchen',      cadence:'bulk',    qty:1,  months:3,   emoji:'📦' },
+  { name:'Dishwasher Salt',         category:'Kitchen',      cadence:'bulk',    qty:1,  months:2,   emoji:'🧂' },
+  { name:'Dishwasher Rinse Aid',    category:'Kitchen',      cadence:'bulk',    qty:1,  months:3,   emoji:'✨' },
+  { name:'Dishwasher Tablets',      category:'Kitchen',      cadence:'bulk',    qty:60, months:2,   emoji:'✨' },
+  { name:'Bin Bags',                category:'Kitchen',      cadence:'bulk',    qty:1,  months:2,   emoji:'🗑️' },
+  { name:'Zip Lock Bags',           category:'Kitchen',      cadence:'bulk',    qty:1,  months:4,   emoji:'📦' },
+  // Bathroom
+  { name:'Shampoo',                 category:'Bathroom',     cadence:'monthly', qty:1,  months:2,   emoji:'🧴' },
+  { name:'Conditioner',             category:'Bathroom',     cadence:'monthly', qty:1,  months:2,   emoji:'🧴' },
+  { name:'Shower Gel',              category:'Bathroom',     cadence:'monthly', qty:1,  months:1,   emoji:'🚿' },
+  { name:'Toothpaste',              category:'Bathroom',     cadence:'monthly', qty:1,  months:2,   emoji:'🦷' },
+  { name:'Toothbrush',              category:'Bathroom',     cadence:'bulk',    qty:1,  months:3,   emoji:'🪥', replacementInterval:3, replacementUnit:'months' },
+  { name:'Toothbrush Heads',        category:'Bathroom',     cadence:'bulk',    qty:4,  months:3,   emoji:'🪥', replacementInterval:3, replacementUnit:'months' },
+  { name:'Floss',                   category:'Bathroom',     cadence:'monthly', qty:1,  months:2,   emoji:'🦷' },
+  { name:'Mouthwash',               category:'Bathroom',     cadence:'monthly', qty:1,  months:2,   emoji:'🫧' },
+  { name:'Hand Soap',               category:'Bathroom',     cadence:'monthly', qty:1,  months:1,   emoji:'🧼' },
+  { name:'Deodorant',               category:'Bathroom',     cadence:'monthly', qty:1,  months:1,   emoji:'💨' },
+  { name:'Razor Blades (8-pack)',   category:'Bathroom',     cadence:'bulk',    qty:8,  months:2,   emoji:'🪒' },
+  { name:'Toilet Roll (9-pack)',    category:'Bathroom',     cadence:'bulk',    qty:9,  months:1,   emoji:'🧻' },
+  { name:'Cotton Buds',             category:'Bathroom',     cadence:'bulk',    qty:1,  months:3,   emoji:'🌿' },
+  { name:'Face Moisturiser',        category:'Bathroom',     cadence:'monthly', qty:1,  months:2,   emoji:'🧴' },
+  { name:'Sun Cream SPF50',         category:'Bathroom',     cadence:'bulk',    qty:1,  months:3,   emoji:'☀️' },
+  // Cleaning
+  { name:'Washing Powder',          category:'Cleaning',     cadence:'monthly', qty:1,  months:2,   emoji:'🧺' },
+  { name:'Washing Liquid',          category:'Cleaning',     cadence:'monthly', qty:1,  months:2,   emoji:'🧺' },
+  { name:'Fabric Softener',         category:'Cleaning',     cadence:'monthly', qty:1,  months:2,   emoji:'🌸' },
+  { name:'Laundry Capsules (40pk)', category:'Cleaning',     cadence:'bulk',    qty:40, months:2,   emoji:'🧺' },
+  { name:'Washing Machine Cleaner', category:'Cleaning',     cadence:'bulk',    qty:1,  months:3,   emoji:'🌀', replacementInterval:3, replacementUnit:'months' },
+  { name:'Surface Spray',           category:'Cleaning',     cadence:'monthly', qty:1,  months:1,   emoji:'🧹' },
+  { name:'Bleach',                  category:'Cleaning',     cadence:'monthly', qty:1,  months:2,   emoji:'🫧' },
+  { name:'Toilet Cleaner',          category:'Cleaning',     cadence:'monthly', qty:1,  months:2,   emoji:'🚽' },
+  { name:'Sponges (multi-pack)',    category:'Cleaning',     cadence:'monthly', qty:1,  months:1,   emoji:'🧽' },
+  { name:'Microfibre Cloths',       category:'Cleaning',     cadence:'bulk',    qty:1,  months:3,   emoji:'🧽' },
+  { name:'Mop Heads',               category:'Cleaning',     cadence:'bulk',    qty:1,  months:6,   emoji:'🧹', replacementInterval:6, replacementUnit:'months' },
+  { name:'Vacuum Bags',             category:'Cleaning',     cadence:'bulk',    qty:1,  months:3,   emoji:'🌀' },
+  { name:'Air Freshener',           category:'Cleaning',     cadence:'monthly', qty:1,  months:1,   emoji:'🌸' },
+  // Food & Drink
+  { name:'Milk (4-pint)',           category:'Food & Drink', cadence:'monthly', qty:4,  months:0.5, emoji:'🥛' },
+  { name:'Pasta (500g)',            category:'Food & Drink', cadence:'bulk',    qty:4,  months:1,   emoji:'🍝' },
+  { name:'Rice (1kg)',              category:'Food & Drink', cadence:'bulk',    qty:2,  months:2,   emoji:'🍚' },
+  { name:'Tinned Tomatoes',         category:'Food & Drink', cadence:'bulk',    qty:6,  months:2,   emoji:'🍅' },
+  { name:'Tinned Tuna',             category:'Food & Drink', cadence:'bulk',    qty:6,  months:2,   emoji:'🐟' },
+  { name:'Tinned Beans',            category:'Food & Drink', cadence:'bulk',    qty:6,  months:2,   emoji:'🫘' },
+  { name:'Cereal',                  category:'Food & Drink', cadence:'monthly', qty:1,  months:1,   emoji:'🥣' },
+  { name:'Bread',                   category:'Food & Drink', cadence:'monthly', qty:2,  months:0.5, emoji:'🍞' },
+  { name:'Cooking Oil',             category:'Food & Drink', cadence:'bulk',    qty:1,  months:2,   emoji:'🫙' },
+  { name:'Salt',                    category:'Food & Drink', cadence:'bulk',    qty:1,  months:6,   emoji:'🧂' },
+  { name:'Sugar',                   category:'Food & Drink', cadence:'bulk',    qty:1,  months:3,   emoji:'🍬' },
+  { name:'Dog Food',                category:'Food & Drink', cadence:'bulk',    qty:1,  months:1,   emoji:'🐕' },
+  { name:'Cat Food',                category:'Food & Drink', cadence:'bulk',    qty:1,  months:1,   emoji:'🐈' },
+  // Health
+  { name:'Paracetamol (32-pack)',   category:'Health',       cadence:'bulk',    qty:1,  months:6,   emoji:'💊' },
+  { name:'Ibuprofen (32-pack)',     category:'Health',       cadence:'bulk',    qty:1,  months:6,   emoji:'💊' },
+  { name:'Multivitamins',           category:'Health',       cadence:'monthly', qty:1,  months:1,   emoji:'💊' },
+  { name:'Vitamin D (90 caps)',     category:'Health',       cadence:'bulk',    qty:1,  months:3,   emoji:'☀️' },
+  { name:'Vitamin C',               category:'Health',       cadence:'monthly', qty:1,  months:1,   emoji:'🍊' },
+  { name:'Omega 3 Fish Oil',        category:'Health',       cadence:'monthly', qty:1,  months:1,   emoji:'🐟' },
+  { name:'Plasters (assorted)',     category:'Health',       cadence:'bulk',    qty:1,  months:6,   emoji:'🩹' },
+  { name:'Antiseptic Cream',        category:'Health',       cadence:'bulk',    qty:1,  months:12,  emoji:'🩺' },
+  { name:'Indigestion Tablets',     category:'Health',       cadence:'bulk',    qty:1,  months:6,   emoji:'💊' },
+  { name:'Antihistamine',           category:'Health',       cadence:'bulk',    qty:1,  months:6,   emoji:'💊' },
+  // Garden
+  { name:'Lawn Feed',               category:'Garden',       cadence:'bulk',    qty:1,  months:3,   emoji:'🌱' },
+  { name:'Compost (60L)',           category:'Garden',       cadence:'bulk',    qty:1,  months:3,   emoji:'🌿' },
+  { name:'Slug Pellets',            category:'Garden',       cadence:'bulk',    qty:1,  months:3,   emoji:'🐌' },
+  { name:'Bird Seed',               category:'Garden',       cadence:'monthly', qty:1,  months:1,   emoji:'🐦' },
+  { name:'Plant Feed',              category:'Garden',       cadence:'monthly', qty:1,  months:2,   emoji:'🌻' },
+  { name:'BBQ Charcoal',            category:'Garden',       cadence:'bulk',    qty:1,  months:2,   emoji:'🔥' },
+  { name:'BBQ Gas Cylinder',        category:'Garden',       cadence:'bulk',    qty:1,  months:3,   emoji:'🔥' },
+  { name:'Log Burner Fuel',         category:'Garden',       cadence:'bulk',    qty:1,  months:1,   emoji:'🪵' },
+  // Other
+  { name:'AA Batteries (16pk)',     category:'Other',        cadence:'bulk',    qty:16, months:6,   emoji:'🔋' },
+  { name:'AAA Batteries (16pk)',    category:'Other',        cadence:'bulk',    qty:16, months:6,   emoji:'🔋' },
+  { name:'Printer Ink',             category:'Other',        cadence:'bulk',    qty:1,  months:3,   emoji:'🖨️' },
+  { name:'Printer Paper (500pk)',   category:'Other',        cadence:'bulk',    qty:1,  months:3,   emoji:'📄' },
+  { name:'Postage Stamps (12pk)',   category:'Other',        cadence:'bulk',    qty:12, months:6,   emoji:'✉️' },
+  { name:'Light Bulbs (4pk)',       category:'Other',        cadence:'bulk',    qty:4,  months:12,  emoji:'💡' },
+  { name:'Smoke Alarm Battery',     category:'Other',        cadence:'bulk',    qty:1,  months:12,  emoji:'🔋', replacementInterval:12, replacementUnit:'months' },
+  { name:'Water Filter Cartridge',  category:'Other',        cadence:'bulk',    qty:1,  months:2,   emoji:'💧', replacementInterval:2, replacementUnit:'months' },
+  { name:'Candles',                 category:'Other',        cadence:'bulk',    qty:1,  months:3,   emoji:'🕯️' },
+  { name:'Tin Foil (30m)',          category:'Other',        cadence:'bulk',    qty:1,  months:3,   emoji:'🫙' },
+];
+
+let activeTemplateCat = 'all';
+
+function filterTemplates(cat, btn) {
+  activeTemplateCat = cat;
+  document.querySelectorAll('#template-cat-filter button').forEach(b => b.style.background = '');
+  if (btn) btn.style.background = 'var(--surface2)';
+  renderTemplateGrid();
+}
+
+function renderTemplateGrid() {
+  const grid = document.getElementById('templates-grid');
+  if (!grid) return;
+  const filtered = activeTemplateCat === 'all'
+    ? ITEM_TEMPLATES
+    : ITEM_TEMPLATES.filter(t => t.category === activeTemplateCat);
+  grid.innerHTML = filtered.map((t, i) => {
+    const realIdx = ITEM_TEMPLATES.indexOf(t);
+    return `<button onclick="applyTemplate(${realIdx})"
+      style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;cursor:pointer;text-align:left;transition:border-color 0.15s;width:100%"
+      onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <span style="font-size:22px;flex-shrink:0">${t.emoji}</span>
+      <div style="min-width:0">
+        <div style="font-size:12px;font-weight:600;color:var(--text);line-height:1.3">${esc(t.name)}</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:2px">${t.months}mo supply${t.replacementInterval ? ' · 🔔 reminder' : ''}</div>
+      </div>
+    </button>`;
+  }).join('');
+}
+
+function openTemplatesModal() {
+  activeTemplateCat = 'all';
+  // Reset category filter highlight
+  document.querySelectorAll('#template-cat-filter button').forEach((b, i) => {
+    b.style.background = i === 0 ? 'var(--surface2)' : '';
+  });
+  renderTemplateGrid();
+  openModal('templates-modal');
+}
+
+function applyTemplate(idx) {
+  const t = ITEM_TEMPLATES[idx];
+  closeModal('templates-modal');
+  document.getElementById('f-name').value     = t.name;
+  document.getElementById('f-category').value = t.category;
+  document.getElementById('f-cadence').value  = t.cadence;
+  document.getElementById('f-qty').value      = t.qty;
+  document.getElementById('f-months').value   = t.months;
+  // Pre-fill replacement reminder if template has one
+  const replIntervalEl = document.getElementById('f-replace-interval');
+  const replUnitEl     = document.getElementById('f-replace-unit');
+  if (replIntervalEl) replIntervalEl.value = t.replacementInterval || '';
+  if (replUnitEl && t.replacementUnit) replUnitEl.value = t.replacementUnit;
+  document.getElementById('f-name').focus();
+  toast(`Template: ${t.name}`);
+}
+
+// ═══════════════════════════════════════════
+//  BARCODE SCANNER — loaded lazily in scanner.js
+// ═══════════════════════════════════════════
+
+
+function getQuickAddItems() {
+  return items.filter(i => i.quickAdded);
+}
+
+function renderPendingDeliveries() {
+  const pending = items.filter(i => i.logs?.some(l => l.pendingDelivery));
+
+  // ── Stock view section ──────────────────────────────────
+  const section = document.getElementById('pending-deliveries-section');
+  const grid    = document.getElementById('pending-deliveries-grid');
+  const badge   = document.getElementById('pending-deliveries-badge');
+  if (section && grid) {
+    if (!pending.length) {
+      section.style.display = 'none';
+    } else {
+      section.style.display = 'block';
+      if (badge) badge.textContent = pending.length;
+      grid.innerHTML = pending.map(item => {
+        const pendingLog = [...item.logs].reverse().find(l => l.pendingDelivery);
+        const orderedDate = pendingLog?.date ? fmtDate(pendingLog.date) : '—';
+        const qty = pendingLog?.qty || item.qty || 1;
+        const price = pendingLog?.price || '';
+        return `<div class="incomplete-card" style="border-color:rgba(91,141,238,0.4)">
+          <div style="flex:1;min-width:0">
+            <div class="inc-name">${esc(item.name)}</div>
+            <div class="inc-meta">Ordered ${orderedDate} · qty ${qty}${price ? ' · ' + esc(price) : ''}</div>
+          </div>
+          <button class="btn btn-sm" style="background:rgba(76,187,138,0.15);color:var(--ok);border:1px solid rgba(76,187,138,0.3);white-space:nowrap"
+            onclick="openDeliveredModal('${item.id}')">📦 Delivered</button>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // ── Report view section ─────────────────────────────────
+  const reportEl = document.getElementById('report-pending-deliveries');
+  if (reportEl) {
+    if (!pending.length) {
+      reportEl.style.display = 'none';
+    } else {
+      reportEl.style.display = 'block';
+      reportEl.innerHTML = `
+        <div style="background:rgba(91,141,238,0.08);border:1px solid rgba(91,141,238,0.25);border-radius:12px;padding:18px 20px">
+          <div style="font-size:13px;font-weight:700;color:#5b8dee;margin-bottom:12px">📦 Pending Deliveries — ${pending.length} item${pending.length!==1?'s':''}</div>
+          ${pending.map(item => {
+            const pendingLog = [...item.logs].reverse().find(l => l.pendingDelivery);
+            const orderedDate = pendingLog?.date ? fmtDate(pendingLog.date) : '—';
+            const qty   = pendingLog?.qty   || item.qty || 1;
+            const price = pendingLog?.price || '';
+            return `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(91,141,238,0.15)">
+              <div>
+                <div style="font-size:14px;font-weight:600">${esc(item.name)}</div>
+                <div style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:2px">Ordered ${orderedDate} · qty ${qty}${price ? ' · ' + esc(price) : ''}</div>
+              </div>
+              <button class="btn btn-sm" style="background:rgba(76,187,138,0.15);color:var(--ok);border:1px solid rgba(76,187,138,0.3);white-space:nowrap"
+                onclick="openDeliveredModal('${item.id}')">📦 Delivered</button>
+            </div>`;
+          }).join('')}
+        </div>`;
+    }
+  }
+}
+
+function renderIncompleteSection() {
+  const incomplete = getQuickAddItems();
+  const section    = document.getElementById('incomplete-section');
+  const grid       = document.getElementById('incomplete-grid');
+  const badge      = document.getElementById('incomplete-count-badge');
+  const banner     = document.getElementById('incomplete-banner');
+  const bannerText = document.getElementById('incomplete-banner-text');
+
+  if (!incomplete.length) {
+    if (section) section.style.display = 'none';
+    if (banner)  banner.style.display  = 'none';
+    return;
+  }
+
+  // Show banner
+  if (banner) {
+    banner.style.display = 'flex';
+    if (bannerText) bannerText.textContent = `${incomplete.length} item${incomplete.length !== 1 ? 's' : ''} need setting up`;
+  }
+
+  // Show section on stock view
+  if (section) {
+    section.style.display = 'block';
+    if (badge) badge.textContent = incomplete.length;
+  }
+
+  if (grid) {
+    grid.innerHTML = incomplete.map(item => `
+      <div class="incomplete-card">
+        <div>
+          <div class="inc-name">${esc(item.name)}</div>
+          <div class="inc-meta">⚡ Quick added · no details yet</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button class="btn-icon" title="Complete setup" onclick="openEditModal('${item.id}');enableItemEdit()">✏️</button>
+          <button class="btn-icon" title="Remove" onclick="deleteItem('${item.id}')">🗑️</button>
+        </div>
+      </div>`).join('');
+  }
+}
+
+function scrollToIncomplete() {
+  // Switch to stock tab if not there
+  const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stock'));
+  if (stockTab && !stockTab.classList.contains('active')) showView('stock', stockTab);
+  // Scroll to section
+  setTimeout(() => {
+    const section = document.getElementById('incomplete-section');
+    if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 100);
+}
+
+// When an item is saved via the full edit form, clear quickAdded flag
+async function clearQuickAddedFlag(id) {
+  const item = items.find(i => i.id === id);
+  if (item) item.quickAdded = false;
+}
+
+// ═══════════════════════════════════════════
+//  REMINDERS SYSTEM
+// ═══════════════════════════════════════════
+
+const REMINDER_SUGGESTIONS = [
+  { name: 'Toothbrush Head',       interval: 3,  unit: 'months' },
+  { name: 'Water Filter Cartridge',interval: 2,  unit: 'months' },
+  { name: 'Shower Head',           interval: 6,  unit: 'months' },
+  { name: 'Air Filter',            interval: 3,  unit: 'months' },
+  { name: 'Smoke Alarm Battery',   interval: 12, unit: 'months' },
+  { name: 'Fridge Filter',         interval: 6,  unit: 'months' },
+  { name: 'Razor Blade',           interval: 2,  unit: 'weeks'  },
+  { name: 'Dishwasher Filter',     interval: 1,  unit: 'months' },
+  { name: 'Car Air Filter',        interval: 12, unit: 'months' },
+  { name: 'Boiler Service',        interval: 12, unit: 'months' },
+  { name: 'Vacuum Filter',         interval: 3,  unit: 'months' },
+  { name: 'Contact Lenses',        interval: 30, unit: 'days'   },
+];
+
+let reminders = []; // separate from items[]
+let editingReminderId = null;
+let loggingReminderId = null;
+
+// ── Persistence ───────────────────────────
+async function loadReminders() {
+  const stored = await dbGet('reminders', 'reminders');
+  if (stored) { reminders = stored; return; }
+  // Migration
+  const raw = localStorage.getItem('stockroom_reminders');
+  if (raw) {
+    try {
+      reminders = JSON.parse(raw) || [];
+      await dbPut('reminders', 'reminders', reminders);
+      localStorage.removeItem('stockroom_reminders');
+    } catch(e) { reminders = []; }
+  }
+}
+
+async function saveReminders() {
+  await dbPut('reminders', 'reminders', reminders);
+  if (activeProfile) await saveCurrentProfile();
+}
+
+// ── Calculations ──────────────────────────
+function getReminderIntervalDays(reminder) {
+  const n = reminder.interval || 1;
+  if (reminder.unit === 'days')   return n;
+  if (reminder.unit === 'weeks')  return n * 7;
+  if (reminder.unit === 'months') return n * 30.5;
+  return n * 30.5;
+}
+
+function getReminderDueDate(reminder) {
+  if (!reminder.lastReplaced) return null;
+  const lastMs   = new Date(reminder.lastReplaced + 'T12:00:00').getTime();
+  const intervalMs = getReminderIntervalDays(reminder) * 86400000;
+  return new Date(lastMs + intervalMs);
+}
+
+function getReminderDaysUntil(reminder) {
+  const due = getReminderDueDate(reminder);
+  if (!due) return null;
+  return Math.round((due.getTime() - Date.now()) / 86400000);
+}
+
+function getReminderStatus(reminder) {
+  const days = getReminderDaysUntil(reminder);
+  if (days === null)  return 'unknown';
+  if (days < 0)       return 'overdue';
+  if (days <= 30)     return 'soon';
+  return 'upcoming';
+}
+
+// ── Render ────────────────────────────────
+async function renderReminders() {
+  await loadReminders();
+
+  // Also collect reminders embedded in items
+  const allReminders = [
+    ...reminders,
+    ...items
+      .filter(i => i.replacementInterval && i.replacementUnit)
+      .map(i => {
+        // Use lastReplaced if set, otherwise fall back to startedUsing or first log date
+        const fallbackDate = i.startedUsing || i.logs?.[0]?.date || null;
+        return {
+          id:           'item_' + i.id,
+          name:         i.name,
+          interval:     i.replacementInterval,
+          unit:         i.replacementUnit,
+          lastReplaced: i.lastReplaced || fallbackDate || null,
+          lastReplacedIsFallback: !i.lastReplaced && !!fallbackDate,
+          notes:        i.notes || '',
+          fromItem:     i.id,
+        };
+      }),
+  ];
+
+  const overdue  = allReminders.filter(r => getReminderStatus(r) === 'overdue');
+  const soon     = allReminders.filter(r => getReminderStatus(r) === 'soon');
+  const upcoming = allReminders.filter(r => getReminderStatus(r) === 'upcoming');
+  const unknown  = allReminders.filter(r => getReminderStatus(r) === 'unknown');
+
+  const empty = document.getElementById('reminders-empty');
+  if (allReminders.length === 0) {
+    if (empty) empty.style.display = 'block';
+    ['overdue-section','soon-section','upcoming-section'].forEach(s => {
+      const el = document.getElementById('reminders-' + s);
+      if (el) el.style.display = 'none';
+    });
+    const nudge = document.getElementById('reminders-nudge');
+    if (nudge) nudge.style.display = 'none';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  // Nudge bar
+  const nudge     = document.getElementById('reminders-nudge');
+  const nudgeText = document.getElementById('reminders-nudge-text');
+  if (nudge && overdue.length > 0) {
+    nudge.style.display = 'flex';
+    nudgeText.textContent = `🔴 ${overdue.length} replacement${overdue.length !== 1 ? 's' : ''} overdue`;
+  } else if (nudge) {
+    nudge.style.display = 'none';
+  }
+
+  // Render each section
+  const renderSection = (list, containerId, sectionId, countId) => {
+    const section   = document.getElementById(sectionId);
+    const container = document.getElementById(containerId);
+    const countEl   = document.getElementById(countId);
+    if (!section || !container) return;
+    if (!list.length) { section.style.display = 'none'; return; }
+    section.style.display = 'block';
+    if (countEl) countEl.textContent = list.length;
+    container.innerHTML = list.map(r => reminderCardHTML(r)).join('');
+  };
+
+  // Sort overdue by most overdue first
+  overdue.sort((a,b)  => (getReminderDaysUntil(a)||0) - (getReminderDaysUntil(b)||0));
+  soon.sort((a,b)     => (getReminderDaysUntil(a)||0) - (getReminderDaysUntil(b)||0));
+  upcoming.sort((a,b) => (getReminderDaysUntil(a)||0) - (getReminderDaysUntil(b)||0));
+
+  renderSection([...overdue], 'reminders-overdue-list',    'reminders-overdue-section', 'overdue-count');
+  renderSection([...soon],    'reminders-soon-list',       'reminders-soon-section',    'soon-count');
+  renderSection([...upcoming, ...unknown], 'reminders-upcoming-list', 'reminders-upcoming-section', null);
+
+  // Also update stock view badge if reminders are overdue
+  updateRemindersBadge(overdue.length + soon.length);
+}
+
+function reminderCardHTML(r) {
+  const days     = getReminderDaysUntil(r);
+  const status   = getReminderStatus(r);
+  const dueDate  = getReminderDueDate(r);
+  const isFromItem = r.fromItem;
+
+  const statusColor = status === 'overdue' ? 'var(--danger)' : status === 'soon' ? 'var(--warn)' : 'var(--muted)';
+  const borderColor = status === 'overdue' ? 'rgba(232,80,80,0.3)' : status === 'soon' ? 'rgba(232,168,56,0.3)' : 'var(--border)';
+
+  let timeLabel = '';
+  if (days === null) {
+    timeLabel = 'No replacement date recorded';
+  } else if (days < 0) {
+    timeLabel = `Overdue by ${Math.abs(days)} day${Math.abs(days) !== 1 ? 's' : ''}`;
+  } else if (days === 0) {
+    timeLabel = 'Due today';
+  } else {
+    timeLabel = `Due in ${days} day${days !== 1 ? 's' : ''}`;
+  }
+
+  const intervalLabel = `Every ${r.interval} ${r.unit}`;
+  const lastLabel = r.lastReplaced
+    ? (r.lastReplacedIsFallback ? `First used ${timeAgo(r.lastReplaced)}` : `Last replaced ${timeAgo(r.lastReplaced)}`)
+    : 'Never replaced';
+  const nextLabel = dueDate ? `Next: ${fmtDate(dueDate.toISOString().slice(0,10))}` : 'Set a date to track';
+
+  return `<div style="background:var(--surface);border:1px solid ${borderColor};border-radius:12px;padding:14px 16px;margin-bottom:10px;display:flex;gap:12px;align-items:flex-start;cursor:pointer;transition:border-color 0.15s,box-shadow 0.15s" onclick="openReminderTimeline('${r.id}')" title="Tap to view timeline">
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+        <span style="font-size:15px;font-weight:700;color:var(--text)">${esc(r.name)}</span>
+        ${isFromItem ? `<span style="font-size:10px;color:var(--muted);font-family:var(--mono);padding:1px 6px;border:1px solid var(--border);border-radius:99px">linked</span>` : ''}
+        <span style="font-size:10px;color:var(--muted);margin-left:auto;opacity:0.5">📊 Timeline</span>
+      </div>
+      <div style="font-size:12px;font-weight:700;color:${statusColor};margin-bottom:4px">${timeLabel}</div>
+      <div style="font-size:11px;color:var(--muted);font-family:var(--mono);line-height:1.8">
+        ${intervalLabel} · ${lastLabel}<br>${nextLabel}
+      </div>
+      ${r.notes ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-top:6px">💬 ${esc(r.notes)}</div>` : ''}
+      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap" onclick="event.stopPropagation()">
+        <button class="btn btn-primary btn-sm" onclick="openLogReplacementModal('${r.id}')">✅ Mark replaced</button>
+        ${!isFromItem ? `<button class="btn btn-ghost btn-sm" onclick="openEditReminderModal('${r.id}')">✏️ Edit</button>` : `<button class="btn btn-ghost btn-sm" onclick="openEditModal('${r.fromItem}');enableItemEdit()">✏️ Edit item</button>`}
+        ${!isFromItem ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteReminder('${r.id}')">Delete</button>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ── Reminder Timeline ──────────────────────
+function openReminderTimeline(reminderId) {
+  // Reconstruct the reminder object (same logic as renderReminders)
+  let r = reminders.find(rem => rem.id === reminderId);
+  if (!r) {
+    const itemId = reminderId.replace('item_', '');
+    const item   = items.find(i => 'item_' + i.id === reminderId);
+    if (item) {
+      const fallbackDate = item.startedUsing || item.logs?.[0]?.date || null;
+      r = {
+        id:           reminderId,
+        name:         item.name,
+        interval:     item.replacementInterval,
+        unit:         item.replacementUnit,
+        lastReplaced: item.lastReplaced || fallbackDate || null,
+        lastReplacedIsFallback: !item.lastReplaced && !!fallbackDate,
+        fromItem:     item.id,
+      };
+    }
+  }
+  if (!r) return;
+
+  const intervalDays = getReminderIntervalDays(r);
+  const now          = new Date();
+  const today        = now.toISOString().slice(0, 10);
+  const status       = getReminderStatus(r);
+  const dueDate      = getReminderDueDate(r);
+
+  document.getElementById('rtl-title').textContent = r.name;
+  document.getElementById('rtl-subtitle').textContent =
+    `Every ${r.interval} ${r.unit} · ${r.lastReplaced
+      ? (r.lastReplacedIsFallback ? 'Started ' : 'Last replaced ') + fmtDate(r.lastReplaced)
+      : 'No start date recorded'}`;
+
+  // Wire up the Mark replaced button
+  const markBtn = document.getElementById('rtl-mark-btn');
+  markBtn.onclick = () => { closeModal('reminder-timeline-modal'); openLogReplacementModal(reminderId); };
+
+  // ── Build timeline nodes ─────────────────
+  // Show 2 past cycles + current + 3 future cycles + reorder point
+  const nodes = [];
+
+  if (r.lastReplaced) {
+    const startMs    = new Date(r.lastReplaced + 'T12:00:00').getTime();
+    const intervalMs = intervalDays * 86400000;
+
+    // Past replacement events (up to 2 before the most recent)
+    for (let i = 2; i >= 1; i--) {
+      const d = new Date(startMs - i * intervalMs);
+      if (d < new Date(startMs - 365 * 86400000 * 2)) continue; // don't go more than 2 years back
+      nodes.push({ type: 'past', date: d, label: 'Replaced' });
+    }
+    // Most recent replacement (anchor)
+    nodes.push({ type: 'anchor', date: new Date(startMs), label: r.lastReplacedIsFallback ? 'First used' : 'Last replaced' });
+    // Future replacement events
+    for (let i = 1; i <= 3; i++) {
+      const d = new Date(startMs + i * intervalMs);
+      const isPast = d < now;
+      nodes.push({
+        type:  isPast ? 'overdue' : (i === 1 ? 'next' : 'future'),
+        date:  d,
+        label: i === 1 ? 'Replace' : 'Replace',
+        cycle: i,
+      });
+    }
+    // Reorder point — 80% into the NEXT cycle (buy before you run out)
+    const nextDue   = new Date(startMs + intervalMs);
+    const cycleAfter = new Date(startMs + 2 * intervalMs);
+    const reorderDate = new Date(nextDue.getTime() + (cycleAfter.getTime() - nextDue.getTime()) * 0.2);
+    // Only show reorder if it's in the future
+    if (reorderDate > now) {
+      nodes.push({ type: 'reorder', date: reorderDate, label: 'Reorder by' });
+    }
+    // Sort all by date
+    nodes.sort((a, b) => a.date - b.date);
+  }
+
+  // ── Current period progress ──────────────
+  let progressPct = null;
+  let progressLabel = '';
+  if (dueDate && r.lastReplaced) {
+    const startMs  = new Date(r.lastReplaced + 'T12:00:00').getTime();
+    const endMs    = dueDate.getTime();
+    const nowMs    = now.getTime();
+    progressPct    = Math.min(100, Math.max(0, Math.round(((nowMs - startMs) / (endMs - startMs)) * 100)));
+    const daysLeft = getReminderDaysUntil(r);
+    progressLabel  = daysLeft === null ? '' : daysLeft < 0 ? `${Math.abs(daysLeft)}d overdue` : daysLeft === 0 ? 'Due today' : `${daysLeft}d remaining`;
+  }
+
+  // ── Render ───────────────────────────────
+  const statusColor = status === 'overdue' ? '#e85050' : status === 'soon' ? '#e8a838' : '#4cbb8a';
+
+  let html = '';
+
+  if (!r.lastReplaced) {
+    html = `<div style="text-align:center;padding:32px 16px;color:var(--muted)">
+      <div style="font-size:36px;margin-bottom:12px">📅</div>
+      <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px">No start date recorded</div>
+      <div style="font-size:13px;line-height:1.6">Mark this as replaced to start tracking the timeline.</div>
+    </div>`;
+  } else {
+    // Progress bar for current period
+    if (progressPct !== null) {
+      const barColor = status === 'overdue' ? '#e85050' : status === 'soon' ? '#e8a838' : '#4cbb8a';
+      html += `<div style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);font-family:var(--mono);margin-bottom:6px">
+          <span>${r.lastReplacedIsFallback ? 'First used' : 'Last replaced'}</span>
+          <span style="color:${barColor};font-weight:700">${progressLabel}</span>
+          <span>Due ${dueDate ? fmtDate(dueDate.toISOString().slice(0,10)) : '—'}</span>
+        </div>
+        <div style="height:10px;background:var(--surface2);border-radius:99px;overflow:hidden;position:relative">
+          <div style="height:100%;width:${progressPct}%;background:${barColor};border-radius:99px;transition:width 0.6s"></div>
+          ${progressPct >= 100 ? '' : `<div style="position:absolute;top:0;left:${progressPct}%;transform:translateX(-50%);width:2px;height:100%;background:${barColor};opacity:0.6"></div>`}
+        </div>
+        <div style="font-size:11px;color:var(--muted);text-align:center;margin-top:4px;font-family:var(--mono)">${progressPct}% through current cycle</div>
+      </div>`;
+    }
+
+    // Timeline nodes
+    if (nodes.length) {
+      html += `<div style="position:relative;padding:8px 0 8px 20px">`;
+
+      // Vertical line
+      html += `<div style="position:absolute;left:20px;top:20px;bottom:20px;width:2px;background:linear-gradient(to bottom,var(--surface2),var(--border),var(--surface2));border-radius:2px"></div>`;
+
+      nodes.forEach((node, idx) => {
+        const isPast    = node.type === 'past';
+        const isAnchor  = node.type === 'anchor';
+        const isOverdue = node.type === 'overdue';
+        const isNext    = node.type === 'next';
+        const isReorder = node.type === 'reorder';
+        const isFuture  = node.type === 'future';
+
+        const dotColor  = isOverdue ? '#e85050'
+          : isNext    ? statusColor
+          : isReorder ? '#e8a838'
+          : isAnchor  ? '#5b8dee'
+          : isPast    ? 'var(--border)'
+          : 'var(--surface2)';
+
+        const dotBorder = isNext || isReorder || isOverdue
+          ? `3px solid ${dotColor}`
+          : `2px solid ${dotColor}`;
+
+        const dotSize   = isNext || isReorder ? '16px' : isAnchor ? '14px' : '10px';
+        const dotBg     = isPast || isFuture ? 'var(--bg)' : isAnchor ? '#5b8dee' : isOverdue ? '#e85050' : isNext ? statusColor : '#e8a838';
+
+        const nameColor = isOverdue ? '#e85050' : isNext ? statusColor : isReorder ? '#e8a838' : isAnchor ? '#5b8dee' : isPast ? 'var(--muted)' : 'var(--muted)';
+        const fontWeight = isNext || isReorder || isAnchor ? '700' : '400';
+
+        const isToday   = node.date.toISOString().slice(0,10) === today;
+        const dateStr   = isToday ? 'Today' : fmtDate(node.date.toISOString().slice(0,10));
+        const relStr    = isToday ? '' : (() => {
+          const diff = Math.round((node.date - now) / 86400000);
+          if (diff < 0) return `${Math.abs(diff)}d ago`;
+          if (diff === 0) return 'today';
+          return `in ${diff}d`;
+        })();
+
+        const icon = isReorder ? '🛒' : isOverdue ? '⚠️' : isNext ? '🔔' : isAnchor ? '📌' : isPast ? '✅' : '○';
+        const chip = isReorder
+          ? `<span style="font-size:10px;font-weight:700;background:rgba(232,168,56,0.15);color:#e8a838;border:1px solid rgba(232,168,56,0.3);border-radius:99px;padding:1px 7px;font-family:var(--mono)">REORDER</span>`
+          : isNext
+          ? `<span style="font-size:10px;font-weight:700;background:rgba(76,187,138,0.15);color:${statusColor};border:1px solid rgba(76,187,138,0.3);border-radius:99px;padding:1px 7px;font-family:var(--mono)">NEXT</span>`
+          : isOverdue
+          ? `<span style="font-size:10px;font-weight:700;background:rgba(232,80,80,0.15);color:#e85050;border:1px solid rgba(232,80,80,0.3);border-radius:99px;padding:1px 7px;font-family:var(--mono)">OVERDUE</span>`
+          : '';
+
+        html += `<div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:${idx < nodes.length-1 ? '18' : '4'}px;position:relative">
+          <div style="flex-shrink:0;width:${dotSize};height:${dotSize};border-radius:50%;background:${dotBg};border:${dotBorder};margin-top:3px;position:relative;z-index:1;margin-left:calc(-${dotSize}/2 + 1px)"></div>
+          <div style="flex:1;min-width:0;padding-bottom:4px">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              <span style="font-size:14px;font-weight:${fontWeight};color:${nameColor}">${icon} ${esc(node.label)}</span>
+              ${chip}
+            </div>
+            <div style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:2px">
+              ${dateStr}${relStr ? ` <span style="opacity:0.6">· ${relStr}</span>` : ''}
+            </div>
+          </div>
+        </div>`;
+      });
+
+      html += `</div>`;
+    }
+
+    // Summary row
+    const nextReplaceDate = dueDate ? fmtDate(dueDate.toISOString().slice(0,10)) : '—';
+    const reorderNode = nodes.find(n => n.type === 'reorder');
+    const reorderDateStr = reorderNode ? fmtDate(reorderNode.date.toISOString().slice(0,10)) : null;
+    html += `<div style="margin-top:16px;padding:12px 14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);font-size:12px;font-family:var(--mono);line-height:2;color:var(--muted)">
+      <div>🔔 <span style="color:var(--text)">Next replacement:</span> ${nextReplaceDate}</div>
+      ${reorderDateStr ? `<div>🛒 <span style="color:var(--text)">Reorder by:</span> <span style="color:#e8a838">${reorderDateStr}</span></div>` : ''}
+      <div>↻ <span style="color:var(--text)">Cycle:</span> every ${r.interval} ${r.unit} (${Math.round(intervalDays)} days)</div>
+    </div>`;
+  }
+
+  document.getElementById('rtl-body').innerHTML = html;
+  openModal('reminder-timeline-modal');
+}
+
+function updateRemindersBadge(count) {
+  // Add a badge to the Reminders tab if there are overdue/soon items
+  const tab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Reminders'));
+  if (!tab) return;
+  const existing = tab.querySelector('.reminder-badge');
+  if (existing) existing.remove();
+  if (count > 0) {
+    const badge = document.createElement('span');
+    badge.className = 'reminder-badge';
+    badge.textContent = count;
+    badge.style.cssText = 'background:var(--danger);color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:99px;margin-left:4px;font-family:var(--mono)';
+    tab.appendChild(badge);
+  }
+}
+
+// ── Add / Edit ─────────────────────────────
+function openAddReminderModal(prefill) {
+  editingReminderId = null;
+  document.getElementById('reminder-modal-title').textContent = '🔔 Add Reminder';
+  document.getElementById('r-name').value          = prefill?.name     || '';
+  document.getElementById('r-interval').value      = prefill?.interval || 3;
+  document.getElementById('r-unit').value          = prefill?.unit     || 'months';
+  document.getElementById('r-last-replaced').value = '';
+  document.getElementById('r-notes').value         = '';
+  document.getElementById('r-item-link').value     = '';
+
+  // Populate item link dropdown
+  const sel = document.getElementById('r-item-link');
+  sel.innerHTML = '<option value="">— standalone reminder —</option>'
+    + items.filter(i => !i.quickAdded).map(i => `<option value="${i.id}">${esc(i.name)}</option>`).join('');
+
+  // Render suggestion chips
+  const sugg = document.getElementById('reminder-suggestions');
+  sugg.innerHTML = REMINDER_SUGGESTIONS.map(s =>
+    `<button onclick="applySuggestion(${JSON.stringify(s).replace(/"/g,'&quot;')})"
+      style="font-size:11px;padding:4px 10px;border-radius:99px;background:var(--surface2);border:1px solid var(--border);color:var(--text);cursor:pointer;white-space:nowrap"
+      onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">${esc(s.name)}</button>`
+  ).join('');
+
+  openModal('reminder-modal');
+  setTimeout(() => document.getElementById('r-name').focus(), 100);
+}
+
+function applySuggestion(s) {
+  document.getElementById('r-name').value     = s.name;
+  document.getElementById('r-interval').value = s.interval;
+  document.getElementById('r-unit').value     = s.unit;
+}
+
+function openEditReminderModal(id) {
+  const r = reminders.find(r => r.id === id);
+  if (!r) return;
+  editingReminderId = id;
+  document.getElementById('reminder-modal-title').textContent = '🔔 Edit Reminder';
+  document.getElementById('r-name').value          = r.name     || '';
+  document.getElementById('r-interval').value      = r.interval || 3;
+  document.getElementById('r-unit').value          = r.unit     || 'months';
+  document.getElementById('r-last-replaced').value = r.lastReplaced || '';
+  document.getElementById('r-notes').value         = r.notes    || '';
+  const sel = document.getElementById('r-item-link');
+  sel.innerHTML = '<option value="">— standalone reminder —</option>'
+    + items.filter(i => !i.quickAdded).map(i => `<option value="${i.id}">${esc(i.name)}</option>`).join('');
+  sel.value = r.linkedItemId || '';
+  openModal('reminder-modal');
+}
+
+async function saveReminder() {
+  if (!canWrite("reminders")) { showLockBanner("reminders"); return; }
+  const name = document.getElementById('r-name').value.trim();
+  if (!name) { toast('Enter a name for this reminder'); return; }
+
+  const intervalVal = parseInt(document.getElementById('r-interval').value) || 3;
+  const unit        = document.getElementById('r-unit').value;
+  const lastDate    = document.getElementById('r-last-replaced').value;
+  const notes       = document.getElementById('r-notes').value.trim();
+  const linkedItemId = document.getElementById('r-item-link').value || null;
+
+  if (editingReminderId) {
+    const r = reminders.find(r => r.id === editingReminderId);
+    if (r) {
+      r.name = name; r.interval = intervalVal; r.unit = unit;
+      r.lastReplaced = lastDate || r.lastReplaced; r.notes = notes;
+      r.linkedItemId = linkedItemId;
+    }
+  } else {
+    reminders.push({
+      id:           uid(),
+      name,
+      interval:     intervalVal,
+      unit,
+      lastReplaced: lastDate || null,
+      notes,
+      linkedItemId,
+      createdAt:    new Date().toISOString(),
+    });
+  }
+
+  // Also update linked item's replacement fields
+  if (linkedItemId) {
+    const item = items.find(i => i.id === linkedItemId);
+    if (item) {
+      item.replacementInterval = intervalVal;
+      item.replacementUnit     = unit;
+      item.lastReplaced        = lastDate || item.lastReplaced || null;
+      touchItem(item);
+      await saveData();
+    }
+  }
+
+  await saveReminders();
+  closeModal('reminder-modal');
+  renderReminders();
+  setTimeout(syncAll, 400);
+  toast('Reminder saved ✓');
+}
+
+async function deleteReminder(id) {
+  if (!canWrite("reminders")) { showLockBanner("reminders"); return; }
+  if (!confirm('Delete this reminder?')) return;
+  reminders = reminders.filter(r => r.id !== id);
+  await saveReminders();
+  renderReminders();
+  toast('Reminder deleted');
+}
+
+// ── Log replacement ───────────────────────
+function openLogReplacementModal(id) {
+  loggingReminderId = id;
+  const isItem   = id.startsWith('item_');
+  const itemId   = isItem ? id.replace('item_', '') : null;
+  const item     = itemId ? items.find(i => i.id === itemId) : null;
+  const reminder = !isItem ? reminders.find(r => r.id === id) : null;
+  const name     = item?.name || reminder?.name || '';
+  const interval = item ? `${item.replacementInterval} ${item.replacementUnit}` : reminder ? `${reminder.interval} ${reminder.unit}` : '';
+
+  document.getElementById('log-replacement-title').textContent    = `Replaced: ${name}`;
+  document.getElementById('log-replacement-subtitle').textContent = interval ? `Next replacement in ${interval}` : 'When did you replace it?';
+  document.getElementById('log-replacement-date').value           = today();
+  openModal('log-replacement-modal');
+}
+
+async function confirmLogReplacement() {
+  if (!canWrite("reminders")) { showLockBanner("reminders"); return; }
+  const date     = document.getElementById('log-replacement-date').value || today();
+  const id       = loggingReminderId;
+  const isItem   = id.startsWith('item_');
+  const itemId   = isItem ? id.replace('item_', '') : null;
+
+  if (itemId) {
+    const item = items.find(i => i.id === itemId);
+    if (item) { item.lastReplaced = date; touchField(item, 'lastReplaced'); saveData(); }
+  } else {
+    const r = reminders.find(r => r.id === id);
+    if (r) { r.lastReplaced = date; saveReminders(); }
+    // Also update linked item
+    if (r?.linkedItemId) {
+      const item = items.find(i => i.id === r.linkedItemId);
+      if (item) { item.lastReplaced = date; touchField(item, 'lastReplaced'); saveData(); }
+    }
+  }
+
+  closeModal('log-replacement-modal');
+  renderReminders();
+  setTimeout(syncAll, 400);
+  toast('Replacement logged ✓');
+}
+
+// ── Smart reminder actions ──────────────────
+async function applyReminderReplaced(reminderId, date, token) {
+  // Verify via backend then apply locally
+  try {
+    const res  = await fetch(`${WORKER_URL}/reminder-pending?id=${encodeURIComponent(reminderId)}&token=${encodeURIComponent(token)}`);
+    const data = await res.json();
+    // Whether KV has it or not, apply locally with the provided date
+    const useDate = data.date || date || today();
+    _applyReplacedLocally(reminderId, useDate);
+  } catch(e) {
+    // Offline or error — still apply locally
+    _applyReplacedLocally(reminderId, date || today());
+  }
+}
+
+async function _applyReplacedLocally(reminderId, date) {
+  let changed = false;
+  if (reminderId.startsWith('item_')) {
+    const itemId = reminderId.replace('item_', '');
+    const item   = items.find(i => i.id === itemId);
+    if (item) { item.lastReplaced = date; touchField(item, 'lastReplaced'); saveData(); changed = true; }
+  } else {
+    const r = reminders.find(r => r.id === reminderId);
+    if (r) {
+      r.lastReplaced = date;
+      await saveReminders();
+      changed = true;
+      if (r.linkedItemId) {
+        const item = items.find(i => i.id === r.linkedItemId);
+        if (item) { item.lastReplaced = date; touchField(item, 'lastReplaced'); saveData(); }
+      }
+    }
+  }
+  if (changed) {
+    renderReminders();
+    setTimeout(syncAll, 400);
+    showToast('✅ Marked as replaced');
+    bcPost({ type: 'REMINDER_REPLACED', reminderId, date });
+  }
+}
+
+// Poll backend for any reminder replacements triggered via email (runs on load + visibility change)
+async function pollReminderReplacements() {
+  if (!WORKER_URL) return;
+  // Get tokens for all current reminders that are due/overdue
+  const allR = [
+    ...reminders,
+    ...items.filter(i => i.replacementInterval).map(i => ({
+      id: 'item_' + i.id, name: i.name, interval: i.replacementInterval, unit: i.replacementUnit,
+      lastReplaced: i.lastReplaced || i.startedUsing || i.logs?.[0]?.date || null,
+    })),
+  ].filter(r => ['overdue','soon','today'].includes(getReminderStatus(r)));
+
+  for (const r of allR) {
+    try {
+      const tokenRes  = await fetch(`${WORKER_URL}/reminder-token`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ reminderId: r.id }) });
+      const { token } = await tokenRes.json();
+      if (!token) continue;
+      const checkRes  = await fetch(`${WORKER_URL}/reminder-pending?id=${encodeURIComponent(r.id)}&token=${encodeURIComponent(token)}`);
+      const check     = await checkRes.json();
+      if (check.replaced) _applyReplacedLocally(r.id, check.date || today());
+    } catch(e) { /* ignore network errors */ }
+  }
+}
+
+// ── In-app notification check ─────────────
+async function checkReminderNotifications() {
+  if (!notifEnabled || Notification.permission !== 'granted') return;
+
+  const allReminders = [
+    ...reminders,
+    ...items.filter(i => i.replacementInterval).map(i => ({
+      id: 'item_' + i.id, name: i.name, interval: i.replacementInterval,
+      unit: i.replacementUnit, lastReplaced: i.lastReplaced || i.startedUsing || i.logs?.[0]?.date || null,
+    })),
+  ];
+
+  const overdue  = allReminders.filter(r => getReminderStatus(r) === 'overdue');
+  const dueToday = allReminders.filter(r => getReminderDaysUntil(r) === 0);
+
+  if (!overdue.length && !dueToday.length) return;
+
+  const today2 = new Date().toISOString().slice(0,10);
+  if (localStorage.getItem('stockroom_last_reminder_notif') === today2) return;
+
+  // Send one notification per due/overdue reminder (up to 3) with a Replaced action button
+  const toNotify = [...overdue, ...dueToday].slice(0, 3);
+  toNotify.forEach(r => sendReminderActionNotification(r));
+  localStorage.setItem('stockroom_last_reminder_notif', today2);
+}
+
+async function sendReminderActionNotification(r) {
+  if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) {
+    // Fallback: plain notification
+    sendLocalNotification(`🔔 ${r.name}`, 'Tap to open STOCKROOM', 'stockroom-reminder-' + r.id);
+    return;
+  }
+  // Fetch a token for this reminder so the SW can call /reminder-done
+  let token = '';
+  try {
+    const res = await fetch(`${WORKER_URL}/reminder-token`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ reminderId: r.id }),
+    });
+    const data = await res.json();
+    token = data.token || '';
+  } catch(e) { /* no token — will open app instead */ }
+
+  const status = getReminderStatus(r);
+  const body   = status === 'overdue'
+    ? `Overdue by ${Math.abs(getReminderDaysUntil(r))} day${Math.abs(getReminderDaysUntil(r)) !== 1 ? 's' : ''}`
+    : 'Due today';
+
+  const reg = await navigator.serviceWorker.ready;
+  reg.showNotification(`🔔 ${r.name}`, {
+    body,
+    tag:       'stockroom-reminder-' + r.id,
+    renotify:  true,
+    icon:      './icon-192.png',
+    badge:     './icon-192.png',
+    actions: [
+      { action: 'replaced', title: '✅ Replaced' },
+      { action: 'open',     title: '📦 Open app' },
+    ],
+    data: {
+      url:        window.location.href,
+      reminderId: r.id,
+      reminderName: r.name,
+      token,
+      workerUrl:  WORKER_URL,
+    },
+  });
+}
+
+
+async function markOrdered(id) {
+  if (!canWrite("stockroom")) { showLockBanner("stockroom"); return; }
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  item.ordered   = true;
+  item.orderedAt = new Date().toISOString();
+  touchField(item, 'ordered','orderedAt');
+  await saveData();
+  scheduleRender('grid', 'dashboard', 'shopping');
+  setTimeout(syncAll, 400);
+  toast(`📦 ${item.name} marked as ordered`);
+}
+
+async function unmarkOrdered(id) {
+  if (!canWrite("stockroom")) { showLockBanner("stockroom"); return; }
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  item.ordered   = false;
+  item.orderedAt = null;
+  touchField(item, 'ordered','orderedAt');
+  await saveData();
+  scheduleRender('grid', 'dashboard', 'shopping');
+  setTimeout(syncAll, 400);
+  toast('Removed ordered status');
+}
+
+// ═══════════════════════════════════════════
+//  30 — COMPACT VIEW
+// ═══════════════════════════════════════════
+function toggleCompactView() {
+  compactView = !compactView;
+  const grid = document.getElementById('items-grid');
+  const btn  = document.getElementById('compact-toggle-btn');
+  if (grid) grid.classList.toggle('compact-view', compactView);
+  if (btn)  btn.textContent = compactView ? '⊞' : '⊟';
+  try { localStorage.setItem('stockroom_compact', compactView ? '1' : ''); } catch(e){}
+}
+
+function loadCompactView() {
+  compactView = !!localStorage.getItem('stockroom_compact');
+  const grid = document.getElementById('items-grid');
+  const btn  = document.getElementById('compact-toggle-btn');
+  if (grid && compactView) grid.classList.add('compact-view');
+  if (btn) btn.textContent = compactView ? '⊞' : '⊟';
+}
+
+// ═══════════════════════════════════════════
+//  19 — HOUSEHOLD PROFILES
+// ═══════════════════════════════════════════
+async function getProfiles() {
+  const stored = await dbGet('profiles', 'profiles');
+  if (stored) return stored;
+  // Migration from localStorage
+  try {
+    const raw = localStorage.getItem('stockroom_profiles');
+    if (raw) {
+      const profiles = JSON.parse(raw) || {};
+      await dbPut('profiles', 'profiles', profiles);
+      localStorage.removeItem('stockroom_profiles');
+      return profiles;
+    }
+  } catch(e) {}
+  return {};
+}
+
+async function saveProfiles(profiles) {
+  await dbPut('profiles', 'profiles', profiles);
+}
+
+async function loadProfile(key) {
+  activeProfile = key || 'default';
+  try { localStorage.setItem('stockroom_active_profile', activeProfile); } catch(e){}
+  const profiles  = await getProfiles();
+  const profile   = profiles[activeProfile];
+  if (profile) {
+    const deletedIds = await loadDeletedIds();
+    items        = (profile.items || []).filter(i => !deletedIds.has(i.id));
+    settings     = { threshold: 20, country: 'GB', ...profile.settings };
+    reminders    = profile.reminders   || [];
+    groceryItems = profile.groceries   || [];
+    groceryDepts = profile.departments?.length ? profile.departments : DEFAULT_DEPTS.map(d => ({...d}));
+  } else {
+    await loadData();
+    await loadReminders();
+    await loadGrocery();
+    await saveCurrentProfile();
+  }
+  updateProfileLabel();
+  scheduleRender(...RENDER_REGIONS);
+  updateSyncUI();
+  applyTabPermissions();
+}
+
+async function saveCurrentProfile() {
+  const deletedIds = await loadDeletedIds();
+  const profiles = await getProfiles();
+  const existing = profiles[activeProfile] || {};
+  profiles[activeProfile] = {
+    ...existing,
+    items:       JSON.parse(JSON.stringify(items.filter(i => !deletedIds.has(i.id)))),
+    settings,
+    reminders:   JSON.parse(JSON.stringify(reminders)),
+    groceries:   JSON.parse(JSON.stringify(groceryItems)),
+    departments: JSON.parse(JSON.stringify(groceryDepts)),
+  };
+  await saveProfiles(profiles);
+}
+
+async function updateProfileLabel() {
+  const profiles = await getProfiles();
+  const profile  = profiles[activeProfile];
+  const name     = profile?.name || (activeProfile === 'default' ? 'Home' : activeProfile);
+  const colour   = profile?.colour || '#e8a838';
+  const label    = document.getElementById('profile-label');
+  if (label) label.innerHTML = `/ <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${colour};margin-right:4px;vertical-align:middle"></span>${name.toUpperCase()}`;
+}
+
+function openProfilePicker() {
+  renderProfileList();
+  openModal('profile-modal');
+}
+
+const HOUSEHOLD_COLOURS = [
+  '#e8a838','#5b8dee','#4cbb8a','#e85050','#b45dee',
+  '#ee8c5b','#5bdee8','#dee85b','#ee5bab','#7880a0',
+];
+const MAX_HOUSEHOLDS = 5;
+
+async function renderProfileList() {
+  const profiles = await getProfiles();
+  const list     = document.getElementById('profile-list');
+  const addSec   = document.getElementById('profile-add-section');
+  if (!list) return;
+
+  if (!profiles['default']) profiles['default'] = { name: 'Home', colour: '#e8a838', items: [], settings: {} };
+
+  const entries = Object.entries(profiles);
+  if (addSec) addSec.style.display = entries.length >= MAX_HOUSEHOLDS ? 'none' : 'block';
+
+  list.innerHTML = entries.map(([key, p]) => {
+    const isActive = key === activeProfile;
+    const colour   = p.colour || '#e8a838';
+    const count    = (p.items || []).length;
+    const reminderCount = (p.reminders || []).length;
+    const syncFile = p.driveFileName ? `<span style="font-size:10px;color:var(--muted);font-family:var(--mono)">${esc(p.driveFileName)}</span>` : '';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:${isActive ? 'rgba(232,168,56,0.08)' : 'var(--surface2)'};border:2px solid ${isActive ? colour : 'var(--border)'};border-radius:12px;transition:border-color 0.2s">
+      <div style="width:14px;height:14px;border-radius:50%;background:${colour};flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px;font-weight:700;color:${isActive ? colour : 'var(--text)'}">${esc(p.name || key)}${isActive ? ' ✓' : ''}</div>
+        <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${count} item${count!==1?'s':''} · ${reminderCount} reminder${reminderCount!==1?'s':''}</div>
+        ${syncFile}
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        ${!isActive ? `<button class="btn btn-primary btn-sm" onclick="switchProfile('${key}')">Switch</button>` : '<span style="font-size:11px;color:var(--accent);font-weight:700">Active</span>'}
+        <button class="btn btn-ghost btn-sm" onclick="openHouseholdEdit('${key}')" title="Edit">✏️</button>
+        ${key !== 'default' ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteProfile('${key}')" title="Delete">✕</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openHouseholdEdit(key) {
+  getProfiles().then(profiles => {
+    const p = profiles[key] || {};
+    document.getElementById('household-edit-key').value  = key;
+    document.getElementById('household-edit-name').value = p.name || '';
+    const currentColour = p.colour || '#e8a838';
+    const colourPicker  = document.getElementById('household-edit-colours');
+    if (colourPicker) {
+      colourPicker.innerHTML = HOUSEHOLD_COLOURS.map(c => `
+        <div onclick="selectHouseholdColour('${c}')"
+          data-colour="${c}"
+          style="width:28px;height:28px;border-radius:50%;background:${c};cursor:pointer;
+                 border:3px solid ${c === currentColour ? 'var(--text)' : 'transparent'};
+                 transition:border-color 0.15s;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>
+      `).join('');
+    }
+    openModal('household-edit-modal');
+  });
+}
+
+function selectHouseholdColour(colour) {
+  document.querySelectorAll('#household-edit-colours [data-colour]').forEach(el => {
+    el.style.borderColor = el.dataset.colour === colour ? 'var(--text)' : 'transparent';
+  });
+}
+
+async function saveHouseholdEdit() {
+  const key    = document.getElementById('household-edit-key').value;
+  const name   = document.getElementById('household-edit-name').value.trim();
+  if (!name) { toast('Enter a name'); return; }
+  const selected = document.querySelector('#household-edit-colours [style*="var(--text)"]');
+  const colour   = selected?.dataset.colour || '#e8a838';
+  const profiles = await getProfiles();
+  if (profiles[key]) {
+    profiles[key].name   = name;
+    profiles[key].colour = colour;
+    await saveProfiles(profiles);
+  }
+  closeModal('household-edit-modal');
+  renderProfileList();
+  renderSettingsHouseholdList();
+  if (key === activeProfile) updateProfileLabel();
+  toast('Household updated ✓');
+  _syncQueue.enqueue();
+}
+
+async function switchProfile(key) {
+  await saveCurrentProfile();
+  closeModal('profile-modal');
+  await loadProfile(key);
+  const profiles = await getProfiles();
+  toast(`Switched to ${profiles[key]?.name || key}`);
+}
+
+async function addProfile() {
+  const profiles = await getProfiles();
+  if (Object.keys(profiles).length >= MAX_HOUSEHOLDS) {
+    toast(`Maximum ${MAX_HOUSEHOLDS} households reached`);
+    return;
+  }
+  const nameEl  = document.getElementById('new-profile-name');
+  const count   = Object.keys(profiles).length + 1;
+  const name    = nameEl?.value.trim() || `Home ${count}`;
+  const colour  = HOUSEHOLD_COLOURS[count % HOUSEHOLD_COLOURS.length];
+  const key     = 'profile_' + Date.now();
+  profiles[key] = {
+    name,
+    colour,
+    items:       [],
+    settings:    { threshold: 20, country: settings.country || 'GB' },
+    reminders:   [],
+    groceries:   [],
+    departments: DEFAULT_DEPTS.map(d => ({...d})),
+  };
+  await saveProfiles(profiles);
+  if (nameEl) nameEl.value = '';
+  renderProfileList();
+  renderSettingsHouseholdList();
+  toast(`"${name}" created — switch to it to set it up`);
+  // Sync so new household persists across devices and reloads
+  _syncQueue.enqueue();
+}
+
+async function deleteProfile(key) {
+  const profiles = await getProfiles();
+  const name = profiles[key]?.name || key;
+  if (!confirm(`Delete "${name}" and all its items, groceries and reminders?\n\nThis cannot be undone.`)) return;
+  delete profiles[key];
+  await saveProfiles(profiles);
+  if (activeProfile === key) await loadProfile('default');
+  renderProfileList();
+  renderSettingsHouseholdList();
+  toast(`"${name}" deleted`);
+  _syncQueue.enqueue();
+}
+
+// ═══════════════════════════════════════════
+//  20 — EXPIRY DATES
+// ═══════════════════════════════════════════
+function getExpiryStatus(item) {
+  if (!item.expiry) return null;
+  const daysUntil = Math.floor((new Date(item.expiry + 'T12:00:00') - Date.now()) / 86400000);
+  if (daysUntil < 0)   return { label: 'Expired', color: 'var(--danger)', days: daysUntil };
+  if (daysUntil <= 30) return { label: `Expires in ${daysUntil}d`, color: 'var(--warn)', days: daysUntil };
+  return { label: `Expires ${fmtDate(item.expiry)}`, color: 'var(--muted)', days: daysUntil };
+}
+
+// ═══════════════════════════════════════════
+//  21 — REORDER POINT OVERRIDE
+// ═══════════════════════════════════════════
+function getItemThreshold(item) {
+  return item.thresholdOverride ?? settings.threshold ?? 20;
+}
+
+// Patch getStatus to use per-item threshold
+const _origGetStatus = getStatus;
+// eslint-disable-next-line no-global-assign
+function getStatus(pct, threshold, item) {
+  const t = item ? getItemThreshold(item) : (threshold ?? 20);
+  if (pct === null || pct === undefined) return 'nodata';
+  if (pct <= t / 2) return 'critical';
+  if (pct <= t) return 'warn';
+  return 'ok';
+}
+
+// ═══════════════════════════════════════════
+//  23 — SMART REORDER SUGGESTION
+// ═══════════════════════════════════════════
+function getReorderSuggestion(item) {
+  if (!item.logs || item.logs.length < 2) return null;
+
+  // Average days between purchases
+  const sorted = [...item.logs].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const gaps   = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const gap = (new Date(sorted[i].date) - new Date(sorted[i-1].date)) / 86400000;
+    if (gap > 0) gaps.push(gap);
+  }
+  if (!gaps.length) return null;
+
+  const avgGapDays = gaps.reduce((a,b) => a+b, 0) / gaps.length;
+  const avgQty     = sorted.reduce((a,b) => a + (b.qty || 1), 0) / sorted.length;
+  const totalDays  = (item.months || 1) * 30.5 * (item.qty || 1);
+
+  // How many units to cover until next shop window?
+  const shopWindowDays = Math.min(avgGapDays, 30);
+  const suggestedQty   = Math.ceil((shopWindowDays / totalDays) * (item.qty || 1));
+
+  return {
+    qty: Math.max(1, suggestedQty),
+    shopWindowDays: Math.round(shopWindowDays),
+    avgGapDays: Math.round(avgGapDays),
+  };
+}
+
+// ═══════════════════════════════════════════
+//  35 — USAGE ANALYTICS
+// ═══════════════════════════════════════════
+function openAnalyticsModal(id) {
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+
+  const titleEl   = document.getElementById('analytics-title');
+  const contentEl = document.getElementById('analytics-content');
+  if (!titleEl || !contentEl) return;
+
+  titleEl.textContent = `📊 ${item.name}`;
+
+  if (!item.logs || item.logs.length < 2) {
+    contentEl.innerHTML = `<p style="color:var(--muted);font-size:13px">Not enough purchase history yet. Log at least 2 purchases to see analytics.</p>`;
+    openModal('analytics-modal');
+    return;
+  }
+
+  const sorted = [...item.logs].sort((a,b) => new Date(a.date) - new Date(b.date));
+  const gaps   = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const gap = (new Date(sorted[i].date) - new Date(sorted[i-1].date)) / 86400000;
+    if (gap > 0) gaps.push({ gap: Math.round(gap), date: sorted[i].date });
+  }
+
+  const avgGap  = Math.round(gaps.reduce((a,b) => a+b.gap, 0) / gaps.length);
+  const minGap  = Math.min(...gaps.map(g => g.gap));
+  const maxGap  = Math.max(...gaps.map(g => g.gap));
+  const prices  = sorted.filter(l => l.price).map(l => ({ val: parsePriceValue(l.price), raw: l.price, date: l.date })).filter(p => p.val);
+  const avgPrice = prices.length ? prices.reduce((a,b) => a + b.val, 0) / prices.length : null;
+  const totalSpend = prices.reduce((a,b) => a + b.val, 0);
+
+  const suggestion = getReorderSuggestion(item);
+
+  // Mini gap chart
+  const barW = 100 / gaps.length;
+  const maxG  = Math.max(...gaps.map(g => g.gap), 1);
+  const gapBars = gaps.map(g =>
+    `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px" title="${g.date}: ${g.gap} days">
+      <div style="width:100%;max-width:32px;height:${Math.round((g.gap/maxG)*60)+4}px;background:var(--accent2);border-radius:3px 3px 0 0;opacity:0.8"></div>
+      <div style="font-size:9px;color:var(--muted);font-family:var(--mono)">${g.gap}d</div>
+    </div>`
+  ).join('');
+
+  contentEl.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+      <div style="background:var(--surface2);border-radius:10px;padding:12px">
+        <div style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-bottom:4px">AVG RESTOCK</div>
+        <div style="font-size:22px;font-weight:700;color:var(--text)">${avgGap}<span style="font-size:13px;color:var(--muted)">d</span></div>
+        <div style="font-size:11px;color:var(--muted)">range: ${minGap}–${maxGap} days</div>
+      </div>
+      <div style="background:var(--surface2);border-radius:10px;padding:12px">
+        <div style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-bottom:4px">TOTAL SPEND</div>
+        <div style="font-size:22px;font-weight:700;color:var(--ok)">£${totalSpend.toFixed(2)}</div>
+        <div style="font-size:11px;color:var(--muted)">${prices.length} purchase${prices.length !== 1 ? 's' : ''}${avgPrice ? ` · avg £${avgPrice.toFixed(2)}` : ''}</div>
+      </div>
+    </div>
+    ${gaps.length > 1 ? `
+    <div style="margin-bottom:16px">
+      <div style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Days between restocks</div>
+      <div style="display:flex;align-items:flex-end;gap:3px;height:72px">${gapBars}</div>
+    </div>` : ''}
+    ${suggestion ? `
+    <div style="background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.2);border-radius:10px;padding:12px;margin-bottom:12px">
+      <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:4px">💡 Smart Reorder Suggestion</div>
+      <div style="font-size:13px;color:var(--text)">Buy <strong>×${suggestion.qty}</strong> — covers your typical ${suggestion.shopWindowDays}-day shop window</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:3px">Based on your avg restock interval of ${suggestion.avgGapDays} days</div>
+    </div>` : ''}
+    <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">
+      First purchased: ${fmtDate(sorted[0].date)} · Total purchases: ${sorted.length}
+    </div>`;
+
+  openModal('analytics-modal');
+}
+
+// ═══════════════════════════════════════════
+//  28 — CAMERA PHOTO
+// ═══════════════════════════════════════════
+let cameraStream = null;
+
+function openCameraModal() {
+  openModal('camera-modal');
+  const video = document.getElementById('camera-video');
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    .then(stream => { cameraStream = stream; video.srcObject = stream; })
+    .catch(() => { toast('Could not access camera — check permissions'); closeModal('camera-modal'); });
+}
+
+function closeCameraModal() {
+  if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+  closeModal('camera-modal');
+}
+
+function capturePhoto() {
+  const video  = document.getElementById('camera-video');
+  const canvas = document.createElement('canvas');
+  canvas.width  = video.videoWidth  || 640;
+  canvas.height = video.videoHeight || 480;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+  pendingImageUrl = dataUrl;
+  showImagePreview(dataUrl, 'Photo captured');
+  closeCameraModal();
+}
+
+// ═══════════════════════════════════════════
+//  36 — SHARED HOUSEHOLD / JOIN CODE
+// ═══════════════════════════════════════════
+function generateJoinCode() {
+  // 6-character alphanumeric code stored in localStorage
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+function getOrCreateJoinCode() {
+  let code = localStorage.getItem('stockroom_join_code');
+  if (!code) { code = generateJoinCode(); localStorage.setItem('stockroom_join_code', code); }
+  return code;
+}
+
+function renderHealthDashboard() {
+  const el = document.getElementById('health-dashboard');
+  if (!el || !items.length) { if (el) el.innerHTML = ''; return; }
+  const threshold = settings.threshold;
+  let critical = 0, warn = 0, ok = 0, nodata = 0;
+  items.forEach(item => {
+    const s = calcStock(item);
+    const status = getStatus(s?.pct ?? null, threshold);
+    if (status === 'critical') critical++;
+    else if (status === 'warn') warn++;
+    else if (status === 'ok') ok++;
+    else nodata++;
+  });
+  const pill = (count, label, color, filterVal) => count === 0 ? '' :
+    `<button onclick="setFilter('status','${filterVal}',this)" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:99px;border:1px solid ${color}33;background:${color}15;color:${color};font-size:12px;font-weight:700;cursor:pointer;font-family:var(--sans)">
+      ${label} <span style="font-size:14px;font-weight:800">${count}</span>
+    </button>`;
+  el.innerHTML =
+    pill(critical, '🔴 Critical', '#e85050', 'critical') +
+    pill(warn,     '🟡 Low',      '#e8a838', 'warn') +
+    pill(ok,       '🟢 Good',     '#4cbb8a', 'ok') +
+    (nodata ? `<span style="font-size:12px;color:var(--muted);padding:5px 4px">${nodata} no data</span>` : '');
+}
+
+// ═══════════════════════════════════════════
+//  DELETE LOG ENTRIES
+// ═══════════════════════════════════════════
+async function deleteLogEntry(itemId, logId) {
+  if (!canWrite("stockroom")) { showLockBanner("stockroom"); return; }
+  const item = items.find(i => i.id === itemId);
+  if (!item) return;
+  item.logs = (item.logs||[]).filter(l => l.id !== logId);
+  touchItem(item);
+  await saveData();
+  // Re-render the log history in place
+  renderLogHistory(item);
+  scheduleRender('grid', 'dashboard');
+  setTimeout(syncAll, 400);
+}
+
+function renderLogHistory(item) {
+  const histWrap    = document.getElementById('log-history');
+  const histEntries = document.getElementById('log-history-entries');
+  if (!histWrap || !histEntries) return;
+  if (!item.logs || !item.logs.length) { histWrap.style.display = 'none'; return; }
+
+  histWrap.style.display = 'block';
+  const pricedLogs = item.logs.map(l => parsePriceValue(l.price)).filter(p => p !== null);
+  const minPrice   = pricedLogs.length ? Math.min(...pricedLogs) : null;
+  const maxPrice   = pricedLogs.length ? Math.max(...pricedLogs) : null;
+
+  histEntries.innerHTML = [...item.logs].reverse().slice(0,8).map((l, i, arr) => {
+    const thisPrice = parsePriceValue(l.price);
+    const prevLog   = arr[i + 1];
+    const prevPrice = prevLog ? parsePriceValue(prevLog.price) : null;
+    let priceTrendEl = '';
+    if (thisPrice !== null && prevPrice !== null) {
+      const diff = thisPrice - prevPrice;
+      if (Math.abs(diff) >= 0.01)
+        priceTrendEl = diff > 0
+          ? `<span style="color:var(--danger);font-size:10px">↑</span>`
+          : `<span style="color:var(--ok);font-size:10px">↓</span>`;
+    }
+    const isCheapest = thisPrice !== null && thisPrice === minPrice && pricedLogs.length > 1;
+    const isMostExp  = thisPrice !== null && thisPrice === maxPrice && pricedLogs.length > 1 && minPrice !== maxPrice;
+    return `<div class="log-entry" style="display:flex;align-items:center;gap:8px">
+      <div style="flex:1;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="color:var(--muted);font-size:12px">${esc(l.store)||'—'}</span>
+        <span style="color:var(--muted);font-family:var(--mono);font-size:11px">${fmtDate(l.date)}</span>
+        <span style="font-family:var(--mono);font-size:12px;display:flex;align-items:center;gap:4px">
+          ×${l.qty}
+          ${l.price ? `<span style="color:${isCheapest?'var(--ok)':isMostExp?'var(--danger)':'var(--text)'};font-weight:700">${esc(l.price)}</span>${priceTrendEl}${isCheapest?'<span style="font-size:10px">🏷</span>':''}` : ''}
+        </span>
+      </div>
+      <button onclick="deleteLogEntry('${item.id}','${l.id}')" title="Delete this entry" style="background:none;border:none;cursor:pointer;font-size:14px;color:var(--muted);padding:2px 4px;border-radius:4px;flex-shrink:0" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--muted)'">✕</button>
+    </div>`;
+  }).join('');
+
+  if (pricedLogs.length >= 2) {
+    const avg = (pricedLogs.reduce((a,b)=>a+b,0) / pricedLogs.length).toFixed(2);
+    histEntries.innerHTML += `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);font-family:var(--mono);display:flex;gap:16px">
+      <span>avg £${avg}</span>
+      <span style="color:var(--ok)">low £${minPrice.toFixed(2)}</span>
+      <span style="color:var(--danger)">high £${maxPrice.toFixed(2)}</span>
+    </div>`;
+  }
+}
+
+// ═══════════════════════════════════════════
+//  QUICK LOG FROM SHOPPING LIST
+// ═══════════════════════════════════════════
+function quickLogFromShopping(itemId) {
+  // Open the log modal pre-filled, then switch back to shopping after save
+  openLogModal(itemId);
+  // Mark that we came from shopping so we can return after save
+  sessionStorage.setItem('log_return_view', 'shopping');
+}
+
+
+// ═══════════════════════════════════════════
+//  PWA — SERVICE WORKER + INSTALL PROMPT
+// ═══════════════════════════════════════════
+let deferredInstallPrompt = null;
+
+// ── iOS detection ─────────────────────────
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
+  || window.navigator.standalone === true;
+const isAndroid = /android/i.test(navigator.userAgent);
+
+if ('serviceWorker' in navigator) {
+  const isDeployed = location.hostname.includes('github.io') || location.hostname.includes('artbot5000');
+  if (isDeployed) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').then(reg => {
+        reg.update();
+        if (reg.waiting) showUpdateBanner(reg.waiting);
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              showUpdateBanner(newWorker);
+            }
+          });
+        });
+      }).catch(e => console.warn('SW failed:', e));
+
+      // Only reload automatically if the user explicitly triggered the update
+      let _userTriggeredUpdate = false;
+      window._markUserTriggeredUpdate = () => { _userTriggeredUpdate = true; };
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (_userTriggeredUpdate) { location.reload(); }
+        // If not user-triggered (e.g. SW auto-activating), just show the banner
+        // so the user can choose when to refresh — don't force-reload
+      });
+    });
+
+    // Show iOS install banner if on iOS, not installed, and not dismissed
+    if (isIOS && !isInStandaloneMode && !localStorage.getItem('stockroom_ios_banner_dismissed')) {
+      setTimeout(() => {
+        const banner = document.getElementById('ios-install-banner');
+        if (banner) banner.style.display = 'block';
+      }, 3000);
+    }
+  }
+}
+
+function showUpdateBanner(worker) {
+  const banner = document.getElementById('update-banner');
+  if (banner) { banner.style.display = 'flex'; banner._worker = worker; }
+}
+
+function applyUpdate() {
+  const banner = document.getElementById('update-banner');
+  if (window._markUserTriggeredUpdate) window._markUserTriggeredUpdate();
+  if (banner?._worker) banner._worker.postMessage({ type: 'SKIP_WAITING' });
+  else location.reload(true);
+}
+
+// Android install prompt
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  if (!localStorage.getItem('stockroom_install_dismissed')) {
+    setTimeout(() => {
+      const banner = document.getElementById('install-banner');
+      if (banner) banner.classList.add('show');
+    }, 3000);
+  }
+  const row = document.getElementById('install-prompt-row');
+  if (row) row.style.display = 'flex';
+});
+
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  const banner = document.getElementById('install-banner');
+  if (banner) banner.classList.remove('show');
+  const iosBanner = document.getElementById('ios-install-banner');
+  if (iosBanner) iosBanner.style.display = 'none';
+  toast('STOCKROOM installed ✓');
+});
+
+async function installPWA() {
+  if (isIOS) {
+    // Can't prompt on iOS — show the iOS banner instead
+    const banner = document.getElementById('ios-install-banner');
+    if (banner) { banner.style.display = 'block'; banner.scrollIntoView({ behavior: 'smooth' }); }
+    return;
+  }
+  if (!deferredInstallPrompt) {
+    toast('Use "Add to Home Screen" from your browser menu');
+    return;
+  }
+  deferredInstallPrompt.prompt();
+  const { outcome } = await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  const banner = document.getElementById('install-banner');
+  if (banner) banner.classList.remove('show');
+}
+
+function dismissInstallBanner() {
+  const banner = document.getElementById('install-banner');
+  if (banner) banner.classList.remove('show');
+  try { localStorage.setItem('stockroom_install_dismissed', '1'); } catch(e){}
+}
+
+function dismissIOSBanner() {
+  const banner = document.getElementById('ios-install-banner');
+  if (banner) banner.style.display = 'none';
+  try { localStorage.setItem('stockroom_ios_banner_dismissed', '1'); } catch(e){}
+}
+
+// ═══════════════════════════════════════════
+//  PUSH NOTIFICATIONS
+// ═══════════════════════════════════════════
+let notifEnabled = false;
+
+function loadNotifSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('stockroom_notif') || '{}');
+    notifEnabled = saved.enabled || false;
+    const daysEl = document.getElementById('notif-days');
+    if (daysEl && saved.days) daysEl.value = saved.days;
+  } catch(e){}
+  // Set platform-specific description
+  const note = document.getElementById('notif-platform-note');
+  if (note) {
+    if (isIOS && !isInStandaloneMode) {
+      note.innerHTML = 'Push notifications on iPhone require the app to be <strong style="color:var(--text)">installed to your home screen</strong> via Safari. Once installed, notifications work like a native app.';
+      note.style.color = 'var(--warn)';
+    } else if (isIOS && isInStandaloneMode) {
+      note.textContent = 'Running as installed app — notifications are fully supported on your iPhone.';
+      note.style.color = 'var(--ok)';
+    } else {
+      note.textContent = 'Get notified when items are running low — no email needed. Works best when installed to your home screen.';
+    }
+  }
+  updateNotifUI();
+}
+
+function saveNotifSettings() {
+  try {
+    const days = document.getElementById('notif-days')?.value || '14';
+    localStorage.setItem('stockroom_notif', JSON.stringify({ enabled: notifEnabled, days }));
+  } catch(e){}
+}
+
+function updateNotifUI() {
+  const btn        = document.getElementById('notif-btn');
+  const statusText = document.getElementById('notif-status-text');
+  const threshRow  = document.getElementById('notif-threshold-row');
+  const installRow = document.getElementById('install-prompt-row');
+  const installInfo = document.getElementById('install-prompt-info');
+  const installBtn  = document.getElementById('install-prompt-btn');
+  if (!btn || !statusText) return;
+
+  const permission = 'Notification' in window ? Notification.permission : 'unsupported';
+
+  // iOS not installed — notifications won't work, show install prompt instead
+  if (isIOS && !isInStandaloneMode) {
+    statusText.textContent = 'Requires home screen install on iPhone';
+    statusText.style.color = 'var(--warn)';
+    btn.style.display = 'none';
+    if (installRow) installRow.style.display = 'flex';
+    if (installInfo) installInfo.innerHTML = '<h4>Add to Home Screen first</h4><p>iOS only supports notifications when installed via Safari → Share → Add to Home Screen</p>';
+    if (installBtn) { installBtn.textContent = 'How to install'; installBtn.onclick = () => {
+      const banner = document.getElementById('ios-install-banner');
+      if (banner) { banner.style.display = 'block'; banner.scrollIntoView({ behavior: 'smooth' }); }
+    }; }
+    if (threshRow) threshRow.style.display = 'none';
+    return;
+  }
+
+  if (permission === 'unsupported') {
+    statusText.textContent = 'Not supported on this browser';
+    btn.style.display = 'none';
+    return;
+  }
+  if (permission === 'denied') {
+    statusText.textContent = 'Blocked — enable notifications in browser/phone settings';
+    statusText.style.color = 'var(--danger)';
+    btn.style.display = 'none';
+    return;
+  }
+  if (notifEnabled && permission === 'granted') {
+    statusText.textContent = isIOS
+      ? 'Active — you\'ll be alerted when items run low'
+      : 'Active — you\'ll be alerted when items run low';
+    statusText.style.color = 'var(--ok)';
+    btn.textContent = 'Disable';
+    btn.className   = 'btn btn-danger btn-sm';
+    btn.style.display = 'inline-flex';
+    if (threshRow)  threshRow.style.display  = 'flex';
+    if (installRow) installRow.style.display = (!isIOS && deferredInstallPrompt) ? 'flex' : 'none';
+  } else {
+    statusText.textContent = 'Not enabled';
+    statusText.style.color = 'var(--muted)';
+    btn.textContent   = 'Enable';
+    btn.className     = 'btn btn-ghost btn-sm';
+    btn.style.display = 'inline-flex';
+    if (threshRow)  threshRow.style.display  = 'none';
+    if (installRow) installRow.style.display = (!isIOS && deferredInstallPrompt) ? 'flex' : 'none';
+  }
+}
+
+async function toggleNotifications() {
+  if (notifEnabled) {
+    notifEnabled = false;
+    saveNotifSettings();
+    updateNotifUI();
+    toast('Notifications disabled');
+    return;
+  }
+  if (!('Notification' in window)) { toast('Not supported on this browser'); return; }
+  const permission = await Notification.requestPermission();
+  if (permission === 'granted') {
+    notifEnabled = true;
+    saveNotifSettings();
+    updateNotifUI();
+    toast('Notifications enabled ✓');
+    setTimeout(() => sendLocalNotification(
+      '📦 STOCKROOM notifications active',
+      'You\'ll be notified when items are running low.',
+      'stockroom-test'
+    ), 600);
+  } else {
+    toast('Notifications blocked — enable in browser settings');
+    updateNotifUI();
+  }
+}
+
+function sendLocalNotification(title, body, tag) {
+  if (!notifEnabled || Notification.permission !== 'granted') return;
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.ready.then(reg => {
+      reg.showNotification(title, {
+        body, tag: tag || 'stockroom', renotify: true,
+        icon: './icon-192.png', badge: './icon-192.png',
+        data: { url: window.location.href },
+      });
+    });
+  } else {
+    new Notification(title, { body, icon: './icon-192.png', tag: tag || 'stockroom' });
+  }
+}
+
+async function checkLowStockNotifications() {
+  if (!notifEnabled || Notification.permission !== 'granted') return;
+  const days = parseInt(document.getElementById('notif-days')?.value || '14');
+  const due  = items
+    .map(item => { const s = calcStock(item); return s && s.daysLeft <= days ? { item, daysLeft: s.daysLeft } : null; })
+    .filter(Boolean)
+    .sort((a, b) => a.daysLeft - b.daysLeft);
+  if (!due.length) return;
+
+  const today = new Date().toISOString().slice(0, 10);
+  if (localStorage.getItem('stockroom_last_notif') === today) return;
+
+  // Include household name so user knows which household triggered the alert
+  const profiles = await getProfiles();
+  const householdName = profiles[activeProfile]?.name || 'Home';
+  const hLabel = Object.keys(profiles).length > 1 ? ` · ${householdName}` : '';
+
+  const critical = due.filter(d => d.daysLeft <= 7);
+  const title = (critical.length
+    ? `🔴 ${critical.length} item${critical.length !== 1 ? 's' : ''} critically low!`
+    : `📦 ${due.length} item${due.length !== 1 ? 's' : ''} running low`) + hLabel;
+  const body = due.slice(0, 3).map(d => `• ${d.item.name} (${d.daysLeft}d left)`).join('\n')
+    + (due.length > 3 ? `\n+ ${due.length - 3} more` : '');
+
+  sendLocalNotification(title, body, 'stockroom-lowstock');
+  try { localStorage.setItem('stockroom_last_notif', today); } catch(e){}
+}
+
+// ═══════════════════════════════════════════
+//  SORT
+// ═══════════════════════════════════════════
+let activeSort = 'status';
+
+function setSort(val) {
+  activeSort = val;
+  renderGrid();
+}
+
+// ═══════════════════════════════════════════
+//  SWIPE TO LOG
+// ═══════════════════════════════════════════
+const swipeState = {};
+const SWIPE_THRESHOLD  = 110; // px to trigger (was 72)
+const SWIPE_LOCK_ANGLE = 30;  // degrees — swipe must be within this of horizontal
+
+function swipeStart(e, id) {
+  const t = e.touches[0];
+  swipeState[id] = { startX: t.clientX, startY: t.clientY, triggered: false, locked: null };
+}
+
+function swipeMove(e, id) {
+  const s = swipeState[id];
+  if (!s) return;
+  const dx = e.touches[0].clientX - s.startX;
+  const dy = e.touches[0].clientY - s.startY;
+  if (dx < 0) return; // only right swipe
+
+  // Direction lock: decide horizontal vs vertical on first meaningful movement
+  if (s.locked === null && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+    const angle = Math.abs(Math.atan2(Math.abs(dy), dx) * 180 / Math.PI);
+    s.locked = angle < SWIPE_LOCK_ANGLE ? 'h' : 'v';
+  }
+  if (s.locked !== 'h') return; // vertical scroll — ignore
+
+  const hint = document.getElementById('swipe-hint-' + id);
+  if (hint) hint.style.opacity = Math.min(1, dx / SWIPE_THRESHOLD);
+  if (dx > SWIPE_THRESHOLD && !s.triggered) {
+    s.triggered = true;
+    if (hint) hint.style.opacity = 1;
+    navigator.vibrate && navigator.vibrate(30);
+  }
+}
+
+async function swipeEnd(e, id) {
+  const s = swipeState[id];
+  if (!s) return;
+  const hint = document.getElementById('swipe-hint-' + id);
+  if (hint) hint.style.opacity = 0;
+  // Use changedTouches for final position — only open if user ended the swipe far enough right
+  const endX = e.changedTouches[0].clientX;
+  const finalDx = endX - s.startX;
+  if (s.triggered && finalDx >= SWIPE_THRESHOLD) openLogModal(id);
+  delete swipeState[id];
+}
+
+// ═══════════════════════════════════════════
+//  UNDO DELETE
+// ═══════════════════════════════════════════
+let deletedItem   = null;
+let deletedIndex  = null;
+let undoTimer     = null;
+
+async function deleteItem(id) {
+  const idx  = items.findIndex(i => i.id === id);
+  const item = items[idx];
+  if (!item) return;
+
+  // Stash for undo
+  deletedItem  = item;
+  deletedIndex = idx;
+  items.splice(idx, 1);
+  await addTombstone(id);
+  await saveData();
+  scheduleRender('grid', 'dashboard', 'shopping');
+  setTimeout(syncAll, 400);
+
+  // Show undo toast
+  clearTimeout(undoTimer);
+  const t = document.getElementById('undo-toast');
+  const m = document.getElementById('undo-msg');
+  if (m) m.textContent = `"${item.name}" removed`;
+  if (t) t.classList.add('show');
+  undoTimer = setTimeout(() => {
+    if (t) t.classList.remove('show');
+    deletedItem  = null;
+    deletedIndex = null;
+  }, 5000);
+}
+
+async function undoDelete() {
+  clearTimeout(undoTimer);
+  const t = document.getElementById('undo-toast');
+  if (t) t.classList.remove('show');
+  if (!deletedItem) return;
+  // Remove tombstone so the item can come back
+  await removeTombstone(deletedItem.id);
+  items.splice(deletedIndex, 0, deletedItem);
+  deletedItem  = null;
+  deletedIndex = null;
+  await saveData();
+  scheduleRender('grid', 'dashboard', 'shopping');
+  setTimeout(syncAll, 400);
+  toast('Restored ✓');
+}
+
+
+let lastAutoSync = 0;
+const AUTO_SYNC_COOLDOWN = 30000; // min 30s between auto-syncs
+
+// Sync when user switches back to the tab/app
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    const now = Date.now();
+    if (now - lastAutoSync > AUTO_SYNC_COOLDOWN) {
+      lastAutoSync = now;
+      checkCloudAhead();
+    }
+    // Check if any reminder was marked replaced via email while app was in background
+    setTimeout(pollReminderReplacements, 800);
+  }
+});
+
+// ── Service Worker message handler ───────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', event => {
+    if (event.data?.type === 'REMINDER_REPLACED') {
+      const { reminderId, date } = event.data;
+      _applyReplacedLocally(reminderId, date);
+    }
+    if (event.data?.type === 'BG_SYNC') {
+      console.log('BG_SYNC received from SW');
+      syncAll().catch(e => console.warn('BG_SYNC syncAll failed:', e));
+    }
+  });
+}
+
+// ── BroadcastChannel — cross-tab sync ────────────────────
+// When any tab saves data, all other open tabs update instantly.
+// Zero server cost, works natively in Chrome/Firefox/Safari.
+const _bc = ('BroadcastChannel' in window) ? new BroadcastChannel('stockroom') : null;
+
+// Message types:
+//   { type: 'DATA_CHANGED' }         — items changed, reload from IDB and re-render
+//   { type: 'REMINDER_REPLACED', reminderId, date } — reminder marked done in another tab
+//   { type: 'GROCERY_CHANGED' }      — grocery list changed
+//   { type: 'SETTINGS_CHANGED' }     — settings updated
+
+if (_bc) {
+  _bc.onmessage = async event => {
+    const { type } = event.data;
+
+    if (type === 'DATA_CHANGED') {
+      // Another tab saved items — reload from IndexedDB and re-render
+      const fresh = await dbGet('items', 'items');
+      if (fresh && Array.isArray(fresh)) {
+        items = fresh;
+        scheduleRender('grid', 'dashboard', 'shopping', 'sns', 'filters');
+      }
+    }
+
+    if (type === 'REMINDER_REPLACED') {
+      const { reminderId, date } = event.data;
+      await _applyReplacedLocally(reminderId, date);
+    }
+
+    if (type === 'GROCERY_CHANGED') {
+      const fresh = await dbGet('groceries', 'items');
+      if (fresh) {
+        groceryItems = fresh;
+        renderGrocery();
+      }
+    }
+
+    if (type === 'SETTINGS_CHANGED') {
+      const fresh = await dbGet('settings', 'settings');
+      if (fresh) {
+        settings = { ...settings, ...fresh };
+        scheduleRender('settings-ui');
+      }
+    }
+  };
+}
+
+function bcPost(message) {
+  try { _bc?.postMessage(message); } catch(e) {}
+}
+
+// ── Register background sync after every save ─────────────
+// The browser will fire the 'sync' event in the SW when connectivity
+// returns, even if this tab is closed.
+async function registerBackgroundSync() {
+  if (!('serviceWorker' in navigator) || !('SyncManager' in window)) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    await reg.sync.register('stockroom-sync');
+  } catch(e) {
+    // Background Sync not supported or permission denied — silent fallback
+  }
+}
+
+// ── Check for pending sync flag set by SW while app was closed ─
+async function checkPendingSWSync() {
+  if (!('caches' in window)) return;
+  try {
+    const cache   = await caches.open('stockroom-flags');
+    const pending = await cache.match('pending-sync');
+    if (pending) {
+      await cache.delete('pending-sync');
+      console.log('Pending SW sync flag found — syncing now');
+      setTimeout(syncAll, 800);
+    }
+  } catch(e) {}
+}
+
+// Poll every 5 minutes as a backstop
+setInterval(() => {
+  if (document.visibilityState === 'visible') {
+    lastAutoSync = Date.now();
+    checkCloudAhead();
+  }
+}, 5 * 60 * 1000);
+
+// Check if cloud is ahead of local — if so, sync silently
+async function checkCloudAhead() {
+  if (!kvConnected && !_shareState) return;
+  try {
+    let remoteModified = null;
+
+    if (_shareState) {
+      remoteModified = await proxyGetModifiedTime();
+    } else if (kvConnected) {
+      const res = await fetchKV(`${WORKER_URL}/data/modified`, {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({emailHash: _kvEmailHash, verifier: _kvVerifier, household: activeProfile})
+      });
+      if (res.ok) remoteModified = (await res.json()).modifiedTime;
+    } else if (false && false) { // dropbox disabled in KV build
+      const res = await fetch('https://api.dropboxapi.com/2/files/get_metadata', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${dropboxToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: DROPBOX_FILE }),
+      });
+      if (res.ok) remoteModified = (await res.json()).server_modified;
+    }
+
+    if (!remoteModified) return;
+
+    const remoteTime = new Date(remoteModified).getTime();
+    const localTime  = settings.lastSynced ? new Date(settings.lastSynced).getTime() : 0;
+
+    if (remoteTime > localTime + 5000) {
+      // Cloud is ahead — sync silently
+      await syncAll();
+      hideSyncBanner();
+    }
+  } catch(e) {
+    console.warn('Auto-sync check failed:', e.message);
+  }
+}
+
+function showSyncBanner() {
+  const b = document.getElementById('sync-banner');
+  if (b) b.style.display = 'flex';
+}
+
+function hideSyncBanner() {
+  const b = document.getElementById('sync-banner');
+  if (b) b.style.display = 'none';
+}
+
+async function syncNowAndDismissBanner() {
+  hideSyncBanner();
+  await syncAll();
+}
+
+// ═══════════════════════════════════════════
+//  FILTER PANEL TOGGLE
+// ═══════════════════════════════════════════
+let filtersOpen = false;
+
+function toggleFilters() {
+  filtersOpen = !filtersOpen;
+  const panel = document.getElementById('filter-panel');
+  const icon  = document.getElementById('filter-toggle-icon');
+  panel.style.display = filtersOpen ? 'flex' : 'none';
+  icon.textContent = filtersOpen ? '▾' : '▸';
+  // State is in-memory only — always resets to closed on page load
+}
+
+function loadFilterPanelState() {
+  // Always default to closed — never restore across page loads
+  filtersOpen = false;
+  try { sessionStorage.removeItem('stockroom_filters_open'); } catch(e) {}
+  const panel = document.getElementById('filter-panel');
+  const icon  = document.getElementById('filter-toggle-icon');
+  if (panel) panel.style.display = 'none';
+  if (icon)  icon.textContent    = '▸';
+}
+
+function updateFilterBadge() {
+  const badge = document.getElementById('filter-active-badge');
+  if (!badge) return;
+  const active = [
+    activeFilter !== 'all',
+    activeCadence !== 'all',
+    activeStore !== 'all',
+    activeRating !== 0,
+  ].filter(Boolean).length;
+  if (active > 0) {
+    badge.textContent = active;
+    badge.style.display = 'inline';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function resetAllFilters() {
+  activeFilter  = 'all';
+  activeCadence = 'all';
+  activeStore   = 'all';
+  activeRating  = 0;
+  // Reset chip visual states
+  document.querySelectorAll('#filter-bar .filter-chip').forEach((c,i) => c.classList.toggle('active', i === 0));
+  document.querySelectorAll('#store-filter-bar .filter-chip').forEach((c,i) => c.classList.toggle('active', i === 0));
+  document.querySelectorAll('#rating-filter-bar .filter-chip').forEach((c,i) => c.classList.toggle('active', i === 0));
+  updateFilterBadge();
+  renderGrid();
+}
+
+
+function reconcileFilters() {
+  const threshold = settings.threshold;
+  const nonQuick  = items.filter(i => !i.quickAdded);
+
+  // Helper: count items passing all current filters except the one being tested
+  const anyMatch = (testFn) => nonQuick.some(item => {
+    const s      = calcStock(item);
+    const status = getStatus(s?.pct ?? null, threshold);
+    return testFn(item, status);
+  });
+
+  let changed = false;
+
+  // Status filter stale?
+  if (activeFilter !== 'all') {
+    const stillHas = anyMatch((item, status) => status === activeFilter);
+    if (!stillHas) {
+      activeFilter = 'all';
+      // Reset status chip UI
+      document.querySelectorAll('#filter-bar .filter-chip').forEach(c => {
+        const txt = c.textContent.trim();
+        if (txt === 'All' || txt.includes('All')) c.classList.add('active');
+        else c.classList.remove('active');
+      });
+      changed = true;
+    }
+  }
+
+  // Cadence filter stale?
+  if (activeCadence !== 'all') {
+    const stillHas = anyMatch((item) => item.cadence === activeCadence);
+    if (!stillHas) {
+      activeCadence = 'all';
+      document.querySelectorAll('#filter-bar .filter-chip').forEach(c => {
+        if (c.textContent.includes('Monthly') || c.textContent.includes('Bulk')) c.classList.remove('active');
+      });
+      changed = true;
+    }
+  }
+
+  // Store filter stale?
+  if (activeStore !== 'all') {
+    const allStores = new Set();
+    nonQuick.forEach(item => {
+      if (item.store?.trim()) allStores.add(item.store.trim());
+      (item.logs||[]).forEach(l => { if (l.store?.trim()) allStores.add(l.store.trim()); });
+    });
+    if (!allStores.has(activeStore)) {
+      activeStore = 'all';
+      changed = true;
+    }
+  }
+
+  // Rating filter stale?
+  if (activeRating !== 0) {
+    const stillHas = activeRating === -1
+      ? anyMatch(item => !item.rating)
+      : anyMatch(item => item.rating === activeRating);
+    if (!stillHas) {
+      activeRating = 0;
+      document.querySelectorAll('#rating-filter-bar .filter-chip').forEach(c => c.classList.remove('active'));
+      const allRatingBtn = document.querySelector('#rating-filter-bar .filter-chip');
+      if (allRatingBtn) allRatingBtn.classList.add('active');
+      changed = true;
+    }
+  }
+
+  // Tag filter stale?
+  if (activeTagFilter !== null) {
+    const stillHas = anyMatch(item => (item.tags||[]).includes(activeTagFilter));
+    if (!stillHas) {
+      activeTagFilter = null;
+      changed = true;
+    }
+  }
+
+  if (changed) updateFilterBadge();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  REACTIVE RENDER SCHEDULER
+//  Replaces renderAll() with targeted dirty-flag rendering.
+//  Multiple saves in the same frame coalesce into one render pass.
+// ═══════════════════════════════════════════════════════════
+
+const RENDER_REGIONS = ['grid','dashboard','filters','shopping','sns','settings-ui'];
+const _dirty  = new Set();
+let   _raf    = null;
+let   _rendering = false;
+
+function scheduleRender(...regions) {
+  if (regions.length === 0) regions = RENDER_REGIONS; // full render if no args
+  regions.forEach(r => _dirty.add(r));
+  if (_raf) return; // already scheduled — extra dirty flags will be picked up
+  _raf = requestAnimationFrame(_flushRender);
+}
+
+function _flushRender() {
+  _raf = null;
+  if (_rendering) {
+    // Re-schedule — a previous render is still running (async)
+    _raf = requestAnimationFrame(_flushRender);
+    return;
+  }
+  _rendering = true;
+  const regions = new Set(_dirty);
+  _dirty.clear();
+
+  try {
+    // Always update item count
+    const countEl = document.getElementById('item-count');
+    if (countEl) countEl.textContent = items.length + ' item' + (items.length!==1?'s':'');
+
+    if (regions.has('filters')) {
+      buildStoreFilterBar();
+      buildTagFilterBar();
+      buildShoppingTagFilterBarInline();
+      reconcileFilters();
+    }
+    if (regions.has('dashboard')) {
+      renderHealthDashboard();
+      renderPendingDeliveries();
+      renderIncompleteSection();
+    }
+    if (regions.has('sns')) {
+      updateSnSBanner();
+    }
+    if (regions.has('grid')) {
+      renderGrid();
+    }
+    if (regions.has('shopping') && document.getElementById('shopping-panel')?.style.display !== 'none') {
+      renderShoppingList();
+    }
+    if (regions.has('settings-ui')) {
+      const t  = document.getElementById('setting-threshold');
+      const c  = document.getElementById('setting-country');
+      const e  = document.getElementById('setting-email');
+      const iv = document.getElementById('setting-email-interval');
+      const sd = document.getElementById('setting-email-start');
+      const st = document.getElementById('setting-email-start-time');
+      if (t)  t.value  = settings.threshold;
+      if (c)  c.value  = settings.country;
+      if (e)  e.value  = settings.email || '';
+      if (iv) iv.value = settings.emailInterval ?? 30;
+      if (sd) sd.value = settings.emailStartDate || '';
+      if (st) st.value = settings.emailStartTime || '09:00';
+      updateLastSentUI();
+    }
+  } finally {
+    _rendering = false;
+    // If new dirty flags arrived during render, flush again
+    if (_dirty.size > 0) _raf = requestAnimationFrame(_flushRender);
+  }
+}
+
+// Legacy alias — keeps existing callers working, schedules a full render
+function renderAll() { scheduleRender(...RENDER_REGIONS); }
+
+function renderGrid() {
+  const threshold = settings.threshold;
+  const grid = document.getElementById('items-grid');
+
+  // Defensive guard — should never happen but prevents blank screens
+  if (!Array.isArray(items)) {
+    console.error('stockroom: items is not an array in renderGrid', items);
+    items = [];
+  }
+
+  let filtered = items.filter(item => {
+    // Quick-added items live in their own section
+    if (item.quickAdded) return false;
+    const s = calcStock(item);
+    const status = getStatus(s?.pct ?? null, threshold);
+
+    // Status filter
+    if (activeFilter !== 'all' && status !== activeFilter) return false;
+
+    // Cadence filter
+    if (activeCadence !== 'all' && item.cadence !== activeCadence) return false;
+
+    // Store filter — match item-level store, or any log entry
+    if (activeStore !== 'all') {
+      const itemStore = item.store && item.store.trim() === activeStore;
+      const logStore = (item.logs||[]).some(l => l.store && l.store.trim() === activeStore);
+      if (!itemStore && !logStore) return false;
+    }
+
+    // Rating filter
+    if (activeRating === -1 && item.rating) return false;        // unrated only
+    if (activeRating === -1 && !item.rating) return true;
+    if (activeRating > 0 && item.rating !== activeRating) return false;
+
+    // Tag filter
+    if (activeTagFilter !== null) {
+      if (!(item.tags || []).includes(activeTagFilter)) return false;
+    }
+
+    return true;
+  });
+
+  if (items.length === 0) {
+    grid.innerHTML = `<div class="empty-state">
+      <div class="icon">📦</div>
+      <h3>Your stockroom is empty</h3>
+      <p>Add the household consumables you buy regularly — coffee, toilet paper, cleaning supplies, anything you don't want to run out of.</p>
+      <button class="btn btn-primary" onclick="openAddModal()">+ Add Your First Item</button>
+    </div>`;
+    return;
+  }
+
+  if (filtered.length === 0) {
+    grid.innerHTML = `<div class="empty-state"><div class="icon">🔍</div><h3>No items match this filter</h3><p>Try a different filter above.</p></div>`;
+    return;
+  }
+
+  // Sort
+  filtered.sort((a, b) => {
+    switch (activeSort) {
+      case 'name':
+        return (a.name||'').localeCompare(b.name||'');
+      case 'days': {
+        const da = calcStock(a)?.daysLeft ?? 9999;
+        const db = calcStock(b)?.daysLeft ?? 9999;
+        return da - db;
+      }
+      case 'lastbought': {
+        const la = a.logs?.at(-1)?.date || '0000';
+        const lb = b.logs?.at(-1)?.date || '0000';
+        return lb.localeCompare(la); // most recent first
+      }
+      case 'rating':
+        return (b.rating||0) - (a.rating||0);
+      case 'added':
+        return 0; // preserve insertion order
+      case 'status':
+      default: {
+        const pa = calcStock(a)?.pct ?? 101;
+        const pb = calcStock(b)?.pct ?? 101;
+        return pa - pb;
+      }
+    }
+  });
+
+  grid.innerHTML = filtered.map(item => cardHTML(item, threshold)).join('');
+}
+
+function cardHTML(item, threshold) {
+  const s = calcStock(item);
+  const pct = s?.pct ?? null;
+  const daysLeft = s?.daysLeft ?? null;
+  const status = getStatus(pct, threshold);
+  const color = STATUS_COLOR[status];
+  const lastLog = item.logs?.at(-1);
+
+  const fillColor = status === 'critical' ? '#e85050' : status === 'warn' ? '#e8a838' : '#4cbb8a';
+  const cadenceBadge = item.cadence === 'bulk'
+    ? `<span class="cadence-badge badge-bulk">📦 Bulk</span>`
+    : `<span class="cadence-badge badge-monthly">🗓️ Monthly</span>`;
+  const statusBadge = `<span class="status-badge" style="background:${color}22;color:${color}">${STATUS_LABEL[status]}</span>`;
+
+  return `
+  <div class="item-card" style="border-left:3px solid ${color}" data-id="${item.id}"
+    ontouchstart="swipeStart(event,'${item.id}')" ontouchmove="swipeMove(event,'${item.id}')" ontouchend="swipeEnd(event,'${item.id}')">
+    <div class="swipe-hint" id="swipe-hint-${item.id}">📋</div>
+    ${item.imageUrl ? `<img class="card-image" src="${esc(item.imageUrl)}" alt="${esc(item.name)}" onerror="this.style.display='none'">` : ''}
+    <div class="card-top">
+      <div class="card-category">${item.category||'Other'}</div>
+      <div class="card-btns">
+        <button class="btn-icon" title="Update stock count" onclick="openStockCountModal('${item.id}')">🔢</button>
+        <button class="btn-icon" title="Usage analytics" onclick="openAnalyticsModal('${item.id}')">📊</button>
+        <button class="btn-icon" title="Price history" onclick="openPriceHistoryModal('${item.id}')" ${getPriceHistory(item).length < 2 ? 'style="opacity:0.35;cursor:default"' : ''}>💰</button>
+        <button class="btn-icon" title="Share item" onclick="shareItem('${item.id}')">↗️</button>
+        <button class="btn-icon" title="Edit" onclick="openEditModal('${item.id}')">✏️</button>
+        <button class="btn-icon" title="Delete" onclick="deleteItem('${item.id}')">🗑️</button>
+      </div>
+    </div>
+    <div class="card-name" style="margin-bottom:12px">${esc(item.name)}</div>
+    <div class="stock-bar-wrap">
+      <div class="stock-bar-label">
+        <span>STOCK</span>
+        <span style="color:${color}">${pct !== null ? pct+'%' : '?'}</span>
+      </div>
+      <div class="stock-bar">
+        <div class="stock-bar-fill" style="width:${pct??0}%;background:${fillColor}"></div>
+      </div>
+    </div>
+    <div class="card-meta">
+      <div class="meta-item"><strong>${daysLeft !== null ? daysLeft+'d left' : 'No data'}</strong>Est. remaining</div>
+      <div class="meta-item" title="${fmtDate(lastLog?.date)}"><strong>${timeAgo(lastLog?.date)}</strong>Last bought</div>
+      <div class="meta-item"><strong>${item.startedUsing ? fmtDate(item.startedUsing) : '—'}</strong>Started using</div>
+      <div class="meta-item"><strong>${item.months||1}mo</strong>Per purchase</div>
+    </div>
+    ${item.stockCount != null ? `<div style="font-size:11px;color:var(--accent2);font-family:var(--mono);margin-bottom:8px">🔢 Stock count: ${item.stockCount} units remaining · counted ${fmtDate(item.stockCountDate)}</div>` : ''}
+    ${priceTrendHTML(item)}
+    ${frequencyInsightHTML(item)}
+    <div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      ${cadenceBadge}${statusBadge}
+      ${item.ordered ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(91,141,238,0.15);border:1px solid rgba(91,141,238,0.3);color:#5b8dee;font-family:var(--mono)">📦 Ordered</span>` : ''}
+      ${(() => { const ex = getExpiryStatus(item); return ex ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(232,168,56,0.1);border:1px solid rgba(232,168,56,0.3);color:${ex.color};font-family:var(--mono)" title="${fmtDate(item.expiry)}">⏰ ${ex.label}</span>` : ''; })()}
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <div class="card-star-rating" title="Click to rate">
+        ${[1,2,3,4,5].map(n => `<span class="card-star${(item.rating||0)>=n?' on':''}" onclick="rateItem('${item.id}',${n})" data-id="${item.id}" data-val="${n}"
+          onmouseover="previewCardStars('${item.id}',${n})" onmouseout="resetCardStars('${item.id}')">★</span>`).join('')}
+      </div>
+      <span class="card-rating-label" id="rl-${item.id}" style="font-size:11px;color:${!item.rating?'var(--muted)':item.rating<=2?'var(--danger)':item.rating>=4?'var(--ok)':'var(--muted)'}">
+        ${item.rating ? RATING_LABELS[item.rating] : 'Not rated'}
+      </span>
+    </div>
+    ${cardTagsHTML(item)}
+    ${item.notes ? `<div class="card-notes">💬 ${esc(item.notes)}</div>` : ''}
+    ${storePricesCardHTML(item)}
+    ${item.url ? `<a class="card-link" href="${esc(item.url)}" target="_blank" rel="noopener">🛒 Buy now ↗</a>` : ''}
+    ${item.logs?.some(l => l.pendingDelivery) && !item.startedUsing
+      ? `<div style="font-size:12px;color:var(--warn);background:rgba(232,168,56,0.1);border:1px solid rgba(232,168,56,0.25);border-radius:8px;padding:8px 12px;margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+           <span>⏳ When did you start using this?</span>
+           <button class="btn btn-sm" style="background:rgba(232,168,56,0.2);color:var(--warn);border:none;font-size:12px" onclick="openStartedUsingModal('${item.id}')">Set date</button>
+         </div>`
+      : ''}
+    <div style="display:flex;gap:6px;margin-top:10px">
+      <button class="btn btn-ghost btn-sm log-btn" style="flex:1" onclick="openLogPurchaseModal('${item.id}')">📋 Log Purchase</button>
+      ${item.ordered
+        ? `<button class="btn btn-sm log-btn" style="flex:1;background:rgba(76,187,138,0.15);color:var(--ok);border:1px solid rgba(76,187,138,0.3)" onclick="openDeliveredModal('${item.id}')">📦 Delivered</button>`
+        : `<button class="btn btn-ghost btn-sm log-btn" style="flex:1;color:var(--muted)" onclick="openDeliveredModal('${item.id}')">📦 Delivered</button>`
+      }
+    </div>
+  </div>`;
+}
+
+function storePricesCardHTML(item) {
+  const prices = (item.storePrices || []).filter(sp => sp.store && sp.price);
+  if (!prices.length) return '';
+  const parsed = prices.map(sp => ({ ...sp, val: parsePriceValue(sp.price) }));
+  const validPrices = parsed.filter(p => p.val !== null);
+  const minVal = validPrices.length ? Math.min(...validPrices.map(p => p.val)) : null;
+  const chips = parsed.map(sp => {
+    const isBest = sp.val !== null && sp.val === minVal && validPrices.length > 1;
+    return `<span style="font-size:11px;font-family:var(--mono);padding:2px 8px;border-radius:99px;background:${isBest?'rgba(76,187,138,0.15)':'var(--surface2)'};border:1px solid ${isBest?'rgba(76,187,138,0.4)':'var(--border)'};color:${isBest?'var(--ok)':'var(--muted)'};white-space:nowrap">
+      ${esc(sp.store)}: ${esc(sp.price)}${isBest?' 🏷':''}
+    </span>`;
+  }).join('');
+  return `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">${chips}</div>`;
+}
+
+function esc(str) {
+  return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ═══════════════════════════════════════════
+//  PRODUCT IMAGE FETCHING
+// ═══════════════════════════════════════════
+let pendingImageUrl = null; // holds fetched image URL until item is saved
+
+const CATEGORY_EMOJI = {
+  'Kitchen':'🍳', 'Bathroom':'🛁', 'Cleaning':'🧹',
+  'Food & Drink':'☕', 'Health':'💊', 'Garden':'🌱',
+  'Office':'📎', 'Other':'📦'
+};
+
+// ═══════════════════════════════════════════
+//  CUSTOM TAGS
+// ═══════════════════════════════════════════
+const TAG_COLORS = [
+  { bg:'rgba(91,141,238,0.15)',  border:'rgba(91,141,238,0.5)',  text:'#5b8dee' },  // blue
+  { bg:'rgba(76,187,138,0.15)', border:'rgba(76,187,138,0.5)',  text:'#4cbb8a' },  // green
+  { bg:'rgba(232,168,56,0.15)', border:'rgba(232,168,56,0.5)',  text:'#e8a838' },  // amber
+  { bg:'rgba(193,100,232,0.15)',border:'rgba(193,100,232,0.5)', text:'#c164e8' },  // purple
+  { bg:'rgba(232,80,80,0.15)',  border:'rgba(232,80,80,0.5)',   text:'#e85050' },  // red
+];
+
+let activeTagFilter = null; // null = all, 0-4 = tag index
+
+function getCustomTags() {
+  return settings.customTags || ['','','','',''];
+}
+
+function cardTagsHTML(item) {
+  const tags = getCustomTags();
+  const itemTags = item.tags || [];
+  const defined = tags.filter(t => t && t.trim());
+  if (!defined.length) return '';
+
+  const chips = tags.map((tag, i) => {
+    if (!tag || !tag.trim()) return '';
+    const c = TAG_COLORS[i];
+    const active = itemTags.includes(i);
+    return `<span class="item-tag ${active ? 'active' : 'inactive'}"
+      style="background:${active ? c.bg : 'transparent'};border-color:${c.border};color:${c.text}"
+      onclick="toggleItemTag('${item.id}',${i})"
+      title="${active ? 'Remove tag' : 'Add tag'}">${esc(tag)}</span>`;
+  }).join('');
+
+  return `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">${chips}</div>`;
+}
+
+async function toggleItemTag(itemId, tagIndex) {
+  if (!canWrite("stockroom")) { showLockBanner("stockroom"); return; }
+  const item = items.find(i => i.id === itemId);
+  if (!item) return;
+  if (!item.tags) item.tags = [];
+  const idx = item.tags.indexOf(tagIndex);
+  if (idx === -1) item.tags.push(tagIndex);
+  else item.tags.splice(idx, 1);
+  touchItem(item);
+  await saveData();
+  // Re-render just this card's tags without full grid re-render
+  scheduleRender('grid');
+  _syncQueue.enqueue();
+}
+
+function buildTagFilterBar() {
+  const bar = document.getElementById('tag-filter-bar');
+  if (!bar) return;
+  const tags = getCustomTags();
+  const defined = tags.map((t,i) => ({t,i})).filter(({t}) => t && t.trim());
+  const hasRoom = defined.length < 5;
+
+  const label = `<span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Tags:</span>`;
+  const allChip = defined.length
+    ? `<button class="tag-filter-chip${activeTagFilter===null?' active':''}" onclick="setTagFilter(null,this)">All</button>`
+    : '';
+  const chips = defined.map(({t,i}) => {
+    const c = TAG_COLORS[i];
+    const isActive = activeTagFilter === i;
+    return `<span class="tag-filter-chip${isActive?' active':''}"
+      style="${isActive?`background:${c.bg};border-color:${c.border};color:${c.text}`:''}"
+      onclick="setTagFilter(${i},this)">
+      ${esc(t)}
+      <span class="tag-x" onclick="event.stopPropagation();deleteTag(${i})" title="Remove tag">×</span>
+    </span>`;
+  }).join('');
+  const addBtn = hasRoom
+    ? `<button class="btn-add-tag" onclick="showAddTagInput('tag-filter-bar')">+ Tag</button>`
+    : '';
+  bar.innerHTML = label + allChip + chips + addBtn;
+}
+
+function buildShoppingTagFilterBarInline() {
+  const bar = document.getElementById('shopping-tag-filter-bar');
+  if (!bar) return;
+  const tags = getCustomTags();
+  const defined = tags.map((t,i) => ({t,i})).filter(({t}) => t && t.trim());
+  const hasRoom = defined.length < 5;
+
+  const label = `<span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Tags:</span>`;
+  const allChip = defined.length
+    ? `<button class="tag-filter-chip${shoppingTagFilter===null?' active':''}" onclick="setShoppingTagFilter(null,this)">All</button>`
+    : '';
+  const chips = defined.map(({t,i}) => {
+    const c = TAG_COLORS[i];
+    const isActive = shoppingTagFilter === i;
+    return `<span class="tag-filter-chip${isActive?' active':''}"
+      style="${isActive?`background:${c.bg};border-color:${c.border};color:${c.text}`:''}"
+      onclick="setShoppingTagFilter(${i},this)">
+      ${esc(t)}
+    </span>`;
+  }).join('');
+  const addBtn = hasRoom
+    ? `<button class="btn-add-tag" onclick="showAddTagInput('shopping-tag-filter-bar')">+ Tag</button>`
+    : '';
+  bar.innerHTML = label + allChip + chips + addBtn;
+}
+
+function showAddTagInput(barId) {
+  const bar = document.getElementById(barId);
+  if (!bar) return;
+  const addBtn = bar.querySelector('.btn-add-tag');
+  if (!addBtn) return;
+  const inp = document.createElement('input');
+  inp.className = 'tag-inline-input';
+  inp.placeholder = 'Tag name…';
+  inp.maxLength = 20;
+  addBtn.replaceWith(inp);
+  inp.focus();
+
+  let committed = false;
+  const commit = () => {
+    if (committed) return;
+    committed = true;
+    const val = inp.value.trim();
+    if (val) addTag(val);
+    else { buildTagFilterBar(); buildShoppingTagFilterBarInline(); }
+  };
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { committed = true; buildTagFilterBar(); buildShoppingTagFilterBarInline(); }
+  });
+  inp.addEventListener('blur', commit);
+}
+
+async function addTag(name) {
+  if (!isOwner()) { toast("Settings are read-only"); return; }
+  const tags = getCustomTags();
+  const firstEmpty = tags.findIndex(t => !t || !t.trim());
+  if (firstEmpty === -1) return;
+  tags[firstEmpty] = name;
+  settings.customTags = tags;
+  await _saveSettings();
+  buildTagFilterBar();
+  buildShoppingTagFilterBarInline();
+  renderGrid();
+  _syncQueue.enqueue();
+}
+
+async function deleteTag(index) {
+  if (!isOwner()) { toast("Settings are read-only"); return; }
+  if (!confirm(`Remove tag "${getCustomTags()[index]}"? Items will lose this tag.`)) return;
+  const tags = getCustomTags();
+  tags[index] = '';
+  settings.customTags = tags;
+  items.forEach(item => {
+    if (item.tags) item.tags = item.tags.filter(t => t !== index);
+  });
+  if (activeTagFilter === index) activeTagFilter = null;
+  if (shoppingTagFilter === index) shoppingTagFilter = null;
+  await _saveSettings();
+  await saveData();
+  buildTagFilterBar();
+  buildShoppingTagFilterBarInline();
+  renderGrid();
+  _syncQueue.enqueue();
+}
+
+function setTagFilter(index, btn) {
+  activeTagFilter = index;
+  buildTagFilterBar();
+  renderGrid();
+}
+
+function buildTagSettingsRows() {} // no-op — tags now managed inline
+
+
+
+async function fetchProductImage() {
+  const url = document.getElementById('f-url').value.trim();
+  if (!url) { alert('Enter a product URL first.'); return; }
+
+  const btn = document.getElementById('fetch-img-btn');
+  const wrap = document.getElementById('img-preview-wrap');
+  const status = document.getElementById('img-preview-status');
+  const preview = document.getElementById('img-preview');
+
+  btn.textContent = '⏳ Fetching…';
+  btn.disabled = true;
+  status.textContent = '';
+  wrap.style.display = 'none';
+
+  const imageUrl = await extractOgImage(url);
+
+  btn.textContent = '🖼 Fetch Image';
+  btn.disabled = false;
+
+  if (imageUrl) {
+    pendingImageUrl = imageUrl;
+    preview.src = imageUrl;
+    preview.onerror = () => {
+      status.textContent = '⚠️ Image loaded but may not display';
+      status.style.color = 'var(--warn)';
+    };
+    status.textContent = '✓ Image found';
+    status.style.color = 'var(--ok)';
+    wrap.style.display = 'flex';
+  } else {
+    status.textContent = '';
+    pendingImageUrl = null;
+    wrap.style.display = 'none';
+    toast('No image found for this URL — the retailer may block scraping');
+  }
+}
+
+async function fetchProductImage() {
+  const name = document.getElementById('f-name').value.trim();
+  const url  = document.getElementById('f-url').value.trim();
+  if (!name && !url) { alert('Enter a product name first.'); return; }
+
+  const btn    = document.getElementById('fetch-img-btn');
+  const wrap   = document.getElementById('img-preview-wrap');
+  const status = document.getElementById('img-preview-status');
+  const preview = document.getElementById('img-preview');
+
+  btn.textContent = '⏳ Searching…';
+  btn.disabled = true;
+  status.textContent = '';
+  wrap.style.display = 'none';
+
+  const imageUrl = await findProductImage(name || url);
+
+  btn.textContent = '🖼 Find Image';
+  btn.disabled = false;
+
+  if (imageUrl) {
+    pendingImageUrl = imageUrl;
+    preview.src = imageUrl;
+    preview.onerror = () => {
+      status.textContent = '⚠️ Image may not display cross-origin';
+      status.style.color = 'var(--warn)';
+    };
+    status.textContent = '✓ Image found';
+    status.style.color = 'var(--ok)';
+    wrap.style.display = 'flex';
+  } else {
+    pendingImageUrl = null;
+    wrap.style.display = 'none';
+    toast('No image found — try a more specific product name');
+  }
+}
+
+async function findProductImage(query) {
+  // 1. Open Food Facts — best for food, drink, household consumables
+  try {
+    const offUrl = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=5&fields=image_url,image_front_url,product_name`;
+    const res = await fetch(offUrl, { signal: AbortSignal.timeout(6000) });
+    if (res.ok) {
+      const data = await res.json();
+      const products = data.products || [];
+      for (const p of products) {
+        const img = p.image_front_url || p.image_url;
+        if (img && img.startsWith('http')) return img;
+      }
+    }
+  } catch(e) {}
+
+  // 2. Open Beauty Facts — covers toiletries, cleaning products, cosmetics
+  try {
+    const obfUrl = `https://world.openbeautyfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=5&fields=image_url,image_front_url`;
+    const res = await fetch(obfUrl, { signal: AbortSignal.timeout(6000) });
+    if (res.ok) {
+      const data = await res.json();
+      const products = data.products || [];
+      for (const p of products) {
+        const img = p.image_front_url || p.image_url;
+        if (img && img.startsWith('http')) return img;
+      }
+    }
+  } catch(e) {}
+
+  // 3. DuckDuckGo image search as fallback — works for anything not in the above databases
+  try {
+    const ddgUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(`https://duckduckgo.com/?q=${encodeURIComponent(query + ' product')}&iax=images&ia=images&format=json`)}`;
+    const res = await fetch(ddgUrl, { signal: AbortSignal.timeout(8000) });
+    if (res.ok) {
+      const wrapper = await res.json();
+      const html = wrapper.contents || '';
+      // DDG embeds image data in a JSON block in the page
+      const match = html.match(/"height":\d+,"image":"(https?:[^"]+)","source"/);
+      if (match && match[1]) return match[1].replace(/\\\//g, '/');
+    }
+  } catch(e) {}
+
+  return null;
+}
+
+function clearProductImage() {
+  pendingImageUrl = null;
+  document.getElementById('img-preview-wrap').style.display = 'none';
+  document.getElementById('img-preview').src = '';
+}
+
+function showImagePreview(imageUrl, statusText) {
+  showModalImagePreview(imageUrl);
+  if (statusText) {
+    const status = document.getElementById('img-preview-status');
+    if (status) { status.textContent = '✓ ' + statusText; status.style.color = 'var(--ok)'; }
+  }
+}
+
+function showModalImagePreview(imageUrl) {
+  if (!imageUrl) { clearProductImage(); return; }
+  pendingImageUrl = imageUrl;
+  const preview = document.getElementById('img-preview');
+  const wrap = document.getElementById('img-preview-wrap');
+  const status = document.getElementById('img-preview-status');
+  preview.src = imageUrl;
+  status.textContent = '✓ Saved image';
+  status.style.color = 'var(--ok)';
+  wrap.style.display = 'flex';
+}
+
+
+
+function parsePriceValue(priceStr) {
+  if (!priceStr) return null;
+  const num = parseFloat(String(priceStr).replace(/[^0-9.]/g, ''));
+  return isNaN(num) ? null : num;
+}
+
+function getPriceHistory(item) {
+  if (!item.logs || !item.logs.length) return [];
+  return item.logs
+    .map(l => ({ date: l.date, price: parsePriceValue(l.price), raw: l.price, store: l.store }))
+    .filter(l => l.price !== null)
+    .slice(-6); // last 6 priced purchases
+}
+
+function getPriceTrend(item) {
+  const history = getPriceHistory(item);
+  if (history.length < 2) return null;
+  const last = history[history.length - 1].price;
+  const prev = history[history.length - 2].price;
+  const diff = last - prev;
+  const pct  = Math.round(Math.abs(diff) / prev * 100);
+  if (Math.abs(diff) < 0.01) return { dir: 'flat', diff: 0, pct: 0, last, prev };
+  return { dir: diff > 0 ? 'up' : 'down', diff, pct, last, prev };
+}
+
+function priceTrendHTML(item) {
+  const history = getPriceHistory(item);
+  if (!history.length) return '';
+  const last = history[history.length - 1];
+  const trend = getPriceTrend(item);
+  const lastFormatted = last.raw || `£${last.price.toFixed(2)}`;
+
+  let trendBadge = '';
+  if (trend) {
+    if (trend.dir === 'up')   trendBadge = `<span style="color:var(--danger);font-size:10px;font-family:var(--mono)">↑${trend.pct}%</span>`;
+    if (trend.dir === 'down') trendBadge = `<span style="color:var(--ok);font-size:10px;font-family:var(--mono)">↓${trend.pct}%</span>`;
+    if (trend.dir === 'flat') trendBadge = `<span style="color:var(--muted);font-size:10px;font-family:var(--mono)">→</span>`;
+  }
+
+  // Mini sparkline dots for last 4 prices
+  const sparkline = history.slice(-4).length > 1 ? (() => {
+    const prices = history.slice(-4).map(h => h.price);
+    const min = Math.min(...prices), max = Math.max(...prices);
+    const range = max - min || 1;
+    return `<span style="display:inline-flex;align-items:flex-end;gap:2px;height:14px;margin-left:4px">
+      ${prices.map(p => {
+        const h = Math.round(4 + ((p - min) / range) * 9);
+        const c = p === prices[prices.length-1] ? 'var(--accent)' : 'var(--border)';
+        return `<span style="width:3px;height:${h}px;background:${c};border-radius:1px;display:inline-block"></span>`;
+      }).join('')}
+    </span>`;
+  })() : '';
+
+  return `<div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);margin-bottom:6px">
+    <span style="font-family:var(--mono)">💰 ${esc(lastFormatted)}</span>
+    ${trendBadge}${sparkline}
+    ${history.length > 1 ? `<span style="opacity:0.5">(${history.length} prices)</span>` : ''}
+  </div>`;
+}
+
+function getFrequencyAnalysis(item) {
+  if (!item.logs || item.logs.length < 2) return null;
+  const sorted = [...item.logs].sort((a,b) => new Date(a.date) - new Date(b.date));
+  const gaps = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const days = (new Date(sorted[i].date) - new Date(sorted[i-1].date)) / 86400000;
+    if (days > 0) gaps.push(days);
+  }
+  if (!gaps.length) return null;
+  const avgDays = gaps.reduce((a,b) => a+b, 0) / gaps.length;
+  const avgMonths = avgDays / 30.5;
+  const configuredMonths = item.months || 1;
+  const ratio = avgMonths / configuredMonths;
+  // Only suggest if meaningfully different (>25% off)
+  const significant = ratio < 0.75 || ratio > 1.25;
+  return { avgDays: Math.round(avgDays), avgMonths: parseFloat(avgMonths.toFixed(1)), configuredMonths, significant, purchases: sorted.length };
+}
+
+function frequencyInsightHTML(item) {
+  const f = getFrequencyAnalysis(item);
+  if (!f || !f.significant) return '';
+  const actual = f.avgMonths < 1
+    ? `~${Math.round(f.avgDays)} days`
+    : `~${f.avgMonths} months`;
+  const configured = f.configuredMonths === 1 ? '1 month' : `${f.configuredMonths} months`;
+  const faster = f.avgMonths < f.configuredMonths;
+  return `<div style="background:rgba(91,141,238,0.08);border:1px solid rgba(91,141,238,0.25);border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:11px;line-height:1.5;display:flex;align-items:flex-start;gap:8px">
+    <span>💡</span>
+    <span style="color:var(--muted)">
+      Based on ${f.purchases} purchases, you actually restock every ${actual}
+      — ${faster ? 'faster' : 'slower'} than your configured ${configured}.
+      <button onclick="applyFrequencySuggestion('${item.id}',${f.avgMonths})" style="background:none;border:none;color:var(--accent2);cursor:pointer;font-size:11px;font-family:var(--sans);text-decoration:underline;padding:0;margin-left:4px">Update setting</button>
+    </span>
+  </div>`;
+}
+
+async function applyFrequencySuggestion(id, avgMonths) {
+  if (!canWrite("stockroom")) { showLockBanner("stockroom"); return; }
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  const rounded = Math.max(0.5, Math.round(avgMonths * 2) / 2); // round to nearest 0.5
+  item.months = rounded;
+  await saveData();
+  scheduleRender('grid');
+  toast(`Updated to ${rounded} month${rounded !== 1 ? 's' : ''} per purchase ✓`);
+  _syncQueue.enqueue();
+}
+
+
+const DOMAIN_STORE_MAP = {
+  'amazon.co.uk': 'Amazon UK', 'amazon.com': 'Amazon US', 'amazon.ca': 'Amazon CA',
+  'amazon.com.au': 'Amazon AU', 'amazon.de': 'Amazon DE', 'amazon.fr': 'Amazon FR',
+  'amazon.es': 'Amazon ES', 'amazon.it': 'Amazon IT', 'amazon.nl': 'Amazon NL',
+  'amazon.co.jp': 'Amazon JP',
+  'costco.co.uk': 'Costco UK', 'costco.com': 'Costco US', 'costco.ca': 'Costco CA',
+  'costco.com.au': 'Costco AU',
+  'tesco.com': 'Tesco', 'tesco.ie': 'Tesco IE',
+  'sainsburys.co.uk': 'Sainsbury\'s',
+  'ocado.com': 'Ocado',
+  'waitrose.com': 'Waitrose',
+  'asda.com': 'ASDA',
+  'morrisons.com': 'Morrisons',
+  'walmart.com': 'Walmart US', 'walmart.ca': 'Walmart CA',
+  'target.com': 'Target',
+  'woolworths.com.au': 'Woolworths',
+  'coles.com.au': 'Coles',
+  'rewe.de': 'REWE', 'dm.de': 'dm',
+  'carrefour.fr': 'Carrefour',
+  'bol.com': 'Bol.com',
+  'ah.nl': 'Albert Heijn',
+  'dunnesstoresgrocery.com': 'Dunnes',
+  'elcorteingles.es': 'El Corte Inglés',
+  'ica.se': 'ICA',
+  'rakuten.co.jp': 'Rakuten',
+  'iherb.com': 'iHerb',
+  'hollandandbarrett.com': 'Holland & Barrett',
+  'boots.com': 'Boots',
+  'superdrug.com': 'Superdrug',
+  'whsmith.co.uk': 'WHSmith',
+  'johnlewis.com': 'John Lewis',
+  'marks-and-spencer.com': 'M&S', 'marksandspencer.com': 'M&S',
+};
+
+function urlToStoreName(url) {
+  if (!url || !url.trim()) return '';
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, '');
+    // Exact match first
+    if (DOMAIN_STORE_MAP[hostname]) return DOMAIN_STORE_MAP[hostname];
+    // Partial match — find any key that the hostname ends with
+    const match = Object.keys(DOMAIN_STORE_MAP).find(k => hostname.endsWith(k));
+    if (match) return DOMAIN_STORE_MAP[match];
+    // Fallback: capitalise the second-level domain
+    const parts = hostname.split('.');
+    const sld = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
+    return sld.charAt(0).toUpperCase() + sld.slice(1);
+  } catch(e) { return ''; }
+}
+
+function autoFillStore() {
+  const url = document.getElementById('f-url').value.trim();
+  const storeField = document.getElementById('f-store');
+  // Only auto-fill if the field is empty or was previously auto-filled
+  if (!storeField.dataset.manual) {
+    const detected = urlToStoreName(url);
+    storeField.value = detected;
+    storeField.dataset.autoFilled = detected ? '1' : '';
+  }
+}
+
+
+window._reportHousehold = '__all__';
+
+async function setReportHousehold(key) {
+  window._reportHousehold = key;
+  if (key !== '__all__' && key !== activeProfile) {
+    // Load that household's items temporarily for the report view
+    const profiles = await getProfiles();
+    const profile  = profiles[key];
+    if (profile) {
+      // Temporarily override items for report rendering
+      const savedItems = items;
+      items = profile.items || [];
+      renderReport();
+      items = savedItems;
+      return;
+    }
+  }
+  renderReport();
+}
+
+function renderReport() {
+  const threshold = settings.threshold;
+  document.getElementById('report-date').textContent = 'Generated: ' + new Date().toLocaleDateString('en-GB',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  renderPendingDeliveries();
+
+  // Render household tabs if multiple households exist
+  getProfiles().then(profiles => {
+    const keys = Object.keys(profiles);
+    const tabsEl = document.getElementById('report-household-tabs');
+    if (!tabsEl) return;
+    if (keys.length <= 1) { tabsEl.style.display = 'none'; return; }
+    tabsEl.style.display = 'flex';
+    tabsEl.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px';
+    tabsEl.innerHTML = [{ key: '__all__', name: 'All Households', colour: '#7880a0' },
+      ...keys.map(k => ({ key: k, name: profiles[k]?.name || k, colour: profiles[k]?.colour || '#e8a838' }))
+    ].map(({ key, name, colour }) => {
+      const active = (window._reportHousehold || '__all__') === key;
+      return `<button onclick="setReportHousehold('${key}')"
+        style="padding:6px 14px;border-radius:99px;border:2px solid ${active ? colour : 'var(--border)'};
+               background:${active ? colour + '22' : 'transparent'};color:${active ? colour : 'var(--muted)'};
+               font-size:12px;font-weight:${active ? '700' : '400'};cursor:pointer;transition:all 0.2s">
+        ${esc(name)}
+      </button>`;
+    }).join('');
+  });
+
+  // Determine which items to report on
+  const reportItems = items; // current household items (or will be combined below)
+
+  const groups = { critical:[], warn:[], ok:[], nodata:[] };
+  reportItems.forEach(item => {
+    const s = calcStock(item);
+    const status = getStatus(s?.pct??null, threshold);
+    groups[status].push({item, pct:s?.pct??null, daysLeft:s?.daysLeft??null});
+  });
+
+  const needBuy = [...groups.critical, ...groups.warn];
+  let html = '';
+
+  if (needBuy.length) {
+    html += `<div id="need-to-buy"><h3>⚠️ BUY BEFORE YOU RUN OUT</h3><div class="buy-chips">
+      ${needBuy.map(({item,daysLeft}) => `<span class="buy-chip">${esc(item.name)} <span style="color:${daysLeft<7?'#e85050':'#e8a838'};font-family:var(--mono)">(${daysLeft??'?'}d)</span></span>`).join('')}
+    </div></div>`;
+  }
+
+  const makeTable = entries => {
+    if (!entries.length) return '<p style="color:var(--muted);font-size:13px;padding:10px 0">None</p>';
+    return `<table class="report-table">
+      <thead><tr><th>Item</th><th>Category</th><th>Rating</th><th>Last Price</th><th>Est. %</th><th>Days Left</th><th>Buy</th></tr></thead>
+      <tbody>${entries.map(({item,pct,daysLeft}) => {
+        const history = getPriceHistory(item);
+        const trend = getPriceTrend(item);
+        const lastPrice = history.length ? history[history.length-1].raw || `£${history[history.length-1].price.toFixed(2)}` : '—';
+        const trendStr = trend ? (trend.dir==='up'?` <span style="color:#e85050">↑${trend.pct}%</span>`:trend.dir==='down'?` <span style="color:#4cbb8a">↓${trend.pct}%</span>`:'') : '';
+        return `
+        <tr>
+          <td><strong>${esc(item.name)}</strong></td>
+          <td style="color:var(--muted)">${esc(item.category||'Other')}</td>
+          <td>${starsHTML(item.rating)}</td>
+          <td style="font-family:var(--mono);font-size:12px">${esc(lastPrice)}${trendStr}</td>
+          <td style="font-family:var(--mono);font-weight:700;color:${STATUS_COLOR[getStatus(pct,threshold)]}">${pct!==null?pct+'%':'—'}</td>
+          <td style="font-family:var(--mono)">${daysLeft!==null?daysLeft+'d':'—'}</td>
+          <td>${item.url?`<a href="${esc(item.url)}" target="_blank" rel="noopener" style="color:var(--accent2);font-size:12px;text-decoration:none">Buy ↗</a>`:'—'}</td>
+        </tr>`;}).join('')}
+      </tbody></table>`;
+  };
+
+  const section = (title, color, entries) => `
+    <div class="report-section">
+      <h3 style="color:${color};border-color:${color}44">${title} (${entries.length})</h3>
+      ${makeTable(entries)}
+    </div>`;
+
+  html += section('🔴 Critical — Order Now', '#e85050', groups.critical);
+  html += section('🟡 Getting Low — Order Soon', '#e8a838', groups.warn);
+  html += section('🟢 Well Stocked', '#4cbb8a', groups.ok);
+  if (groups.nodata.length) html += section('⚪ No Purchase Data', '#7880a0', groups.nodata);
+
+  document.getElementById('report-content').innerHTML = html || '<p style="color:var(--muted);text-align:center;padding:60px">No items yet.</p>';
+}
+
+// ═══════════════════════════════════════════
+//  MONTHLY SPEND TRACKER
+// ═══════════════════════════════════════════
+let spendVisible = false;
+
+function toggleSpendView() {
+  spendVisible = !spendVisible;
+  const section = document.getElementById('spend-section');
+  const btn     = document.getElementById('spend-toggle-btn');
+  if (section) section.style.display = spendVisible ? 'block' : 'none';
+  if (btn)     btn.style.background  = spendVisible ? 'var(--surface2)' : '';
+  if (spendVisible) renderSpendChart();
+}
+
+function getMonthlySpend() {
+  // Aggregate all log entries by month
+  const byMonth = {};
+  items.forEach(item => {
+    (item.logs || []).forEach(log => {
+      if (!log.date || !log.price) return;
+      const val = parsePriceValue(log.price);
+      if (val === null) return;
+      const key = log.date.slice(0, 7); // YYYY-MM
+      if (!byMonth[key]) byMonth[key] = { total: 0, entries: [] };
+      byMonth[key].total += val;
+      byMonth[key].entries.push({ item: item.name, price: val, raw: log.price, store: log.store });
+    });
+  });
+  // Sort by month
+  return Object.entries(byMonth)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-12); // last 12 months
+}
+
+function renderSpendChart() {
+  const chartEl     = document.getElementById('spend-chart');
+  const breakdownEl = document.getElementById('spend-breakdown');
+  if (!chartEl || !breakdownEl) return;
+
+  const data = getMonthlySpend();
+  if (!data.length) {
+    chartEl.innerHTML     = `<p style="color:var(--muted);font-size:13px">No price data logged yet. Add prices when logging purchases to track spend over time.</p>`;
+    breakdownEl.innerHTML = '';
+    return;
+  }
+
+  const totals  = data.map(([, d]) => d.total);
+  const maxVal  = Math.max(...totals);
+  const W = 440, H = 180, PAD = { t: 16, r: 16, b: 40, l: 52 };
+  const chartW  = W - PAD.l - PAD.r;
+  const chartH  = H - PAD.t - PAD.b;
+  const barW    = Math.min(36, (chartW / data.length) - 4);
+  const currency = '£';
+
+  const bars = data.map(([month, d], i) => {
+    const barH = maxVal > 0 ? (d.total / maxVal) * chartH : 0;
+    const x    = PAD.l + (i / data.length) * chartW + (chartW / data.length - barW) / 2;
+    const y    = PAD.t + chartH - barH;
+    const isLatest = i === data.length - 1;
+    const label = new Date(month + '-01').toLocaleDateString('en-GB', { month: 'short' });
+    return `
+      <rect x="${x}" y="${y}" width="${barW}" height="${barH}" rx="3" fill="${isLatest ? '#e8a838' : '#2e3350'}"/>
+      <text x="${x + barW/2}" y="${y - 5}" text-anchor="middle" font-size="9" fill="${isLatest ? '#e8a838' : '#7880a0'}" font-family="monospace">${currency}${d.total.toFixed(0)}</text>
+      <text x="${x + barW/2}" y="${H - PAD.b + 14}" text-anchor="middle" font-size="9" fill="#7880a0" font-family="monospace">${label}</text>`;
+  }).join('');
+
+  // avg line
+  const avg  = totals.reduce((a, b) => a + b, 0) / totals.length;
+  const avgY = PAD.t + chartH - (avg / maxVal) * chartH;
+  const avgLine = `
+    <line x1="${PAD.l}" y1="${avgY}" x2="${W - PAD.r}" y2="${avgY}" stroke="#7880a0" stroke-dasharray="4,3" stroke-width="1"/>
+    <text x="${PAD.l - 4}" y="${avgY + 4}" text-anchor="end" font-size="9" fill="#7880a0" font-family="monospace">avg</text>`;
+
+  // y-axis
+  const yLabel = v => {
+    const yy = PAD.t + chartH - (v / maxVal) * chartH;
+    return `<text x="${PAD.l - 6}" y="${yy + 4}" text-anchor="end" font-size="9" fill="#7880a0" font-family="monospace">${currency}${v.toFixed(0)}</text>`;
+  };
+  const yLabels = [0, maxVal / 2, maxVal].map(yLabel).join('');
+
+  chartEl.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;border-radius:8px;background:#1a1d27">
+      ${yLabels}${avgLine}${bars}
+    </svg>
+    <div style="display:flex;gap:16px;margin-top:8px;font-size:11px;font-family:monospace;color:var(--muted)">
+      <span>Total logged: ${currency}${totals.reduce((a,b)=>a+b,0).toFixed(2)}</span>
+      <span>Monthly avg: ${currency}${avg.toFixed(2)}</span>
+      <span style="color:#e8a838">This month: ${currency}${totals[totals.length-1].toFixed(2)}</span>
+    </div>`;
+
+  // Breakdown by category for latest month
+  const [latestMonth, latestData] = data[data.length - 1];
+  const byCat = {};
+  latestData.entries.forEach(e => {
+    const item = items.find(i => i.name === e.item);
+    const cat  = item?.category || 'Other';
+    if (!byCat[cat]) byCat[cat] = 0;
+    byCat[cat] += e.price;
+  });
+
+  const catRows = Object.entries(byCat)
+    .sort(([, a], [, b]) => b - a)
+    .map(([cat, total]) => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
+        <span style="color:var(--muted)">${CATEGORY_EMOJI[cat]||'📦'} ${cat}</span>
+        <span style="font-family:monospace;font-weight:700">${currency}${total.toFixed(2)}</span>
+      </div>`).join('');
+
+  const mLabel = new Date(latestMonth + '-01').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  breakdownEl.innerHTML = `
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+      <div style="font-size:13px;font-weight:700;margin-bottom:10px">Breakdown — ${mLabel}</div>
+      ${catRows || '<p style="font-size:13px;color:var(--muted)">No data for this month.</p>'}
+    </div>`;
+}
+
+
+function exportReport() {
+  renderReport();
+  const win = window.open('','_blank');
+  win.document.write(`<html><head><title>Stockroom Report</title><style>body{font-family:sans-serif;padding:20px;color:#111}table{width:100%;border-collapse:collapse}td,th{padding:10px;border-bottom:1px solid #eee;text-align:left}h3{margin:24px 0 10px}</style></head><body><h1>Stockroom Report</h1><p>${new Date().toLocaleDateString()}</p>${document.getElementById('report-content').innerHTML}</body></html>`);
+  win.document.close(); win.print();
+}
+
+// ═══════════════════════════════════════════
+//  EMAIL REPORT (mailto: — Part A)
+// ═══════════════════════════════════════════
+function buildEmailBody() {
+  const threshold = settings.threshold;
+  const now = Date.now();
+  const dateStr = new Date().toLocaleDateString('en-GB', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+
+  // Classify items
+  const within7  = [];
+  const within30 = [];
+  const ok       = [];
+
+  items.forEach(item => {
+    const s = calcStock(item);
+    if (!s) return;
+    if (s.daysLeft <= 7)  within7.push({ item, ...s });
+    else if (s.daysLeft <= 30) within30.push({ item, ...s });
+    else ok.push({ item, ...s });
+  });
+
+  within7.sort((a,b)  => a.daysLeft - b.daysLeft);
+  within30.sort((a,b) => a.daysLeft - b.daysLeft);
+
+  const runOutDate = daysLeft => new Date(now + daysLeft * 86400000)
+    .toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+
+  const stars = r => r ? '★'.repeat(r) + '☆'.repeat(5-r) : 'unrated';
+
+  const formatSection = (entries, label) => {
+    if (!entries.length) return `${label}\n(none)\n`;
+    return `${label}\n${'─'.repeat(40)}\n` +
+      entries.map(({item, daysLeft, pct}) => {
+        const lines = [
+          `• ${item.name}`,
+          `  Runs out: ${runOutDate(daysLeft)} (${daysLeft} days, ${pct}% remaining)`,
+        ];
+        if (item.store) lines.push(`  Store: ${item.store}`);
+        if (item.rating) lines.push(`  Rating: ${stars(item.rating)}`);
+        if (item.url)   lines.push(`  Buy: ${item.url}`);
+        return lines.join('\n');
+      }).join('\n\n') + '\n';
+  };
+
+  const body = [
+    `STOCKROOM REPORT — ${dateStr}`,
+    `${'═'.repeat(50)}`,
+    ``,
+    `🔴 RUNNING OUT THIS WEEK (within 7 days) — ${within7.length} item${within7.length!==1?'s':''}`,
+    formatSection(within7, ''),
+    `🟡 RUNNING OUT THIS MONTH (8–30 days) — ${within30.length} item${within30.length!==1?'s':''}`,
+    formatSection(within30, ''),
+    `🟢 WELL STOCKED — ${ok.length} item${ok.length!==1?'s':''}`,
+    ok.length ? ok.map(({item}) => `• ${item.name}`).join('\n') : '(none)',
+    ``,
+    `─────────────────────────────────────────`,
+    `Total items tracked: ${items.length}`,
+    `Generated by STOCKROOM`,
+  ].join('\n');
+
+  return body;
+}
+
+function emailReport() {
+  const body   = buildEmailBody();
+  const within7 = items.filter(i => { const s = calcStock(i); return s && s.daysLeft <= 7; }).length;
+  const within30 = items.filter(i => { const s = calcStock(i); return s && s.daysLeft > 7 && s.daysLeft <= 30; }).length;
+  const subject = `Stockroom Report — ${within7} urgent, ${within30} due soon`;
+  const mailto  = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  window.location.href = mailto;
+}
+
+
+
+async function rateItem(id, val) {
+  if (!canWrite("stockroom")) { showLockBanner("stockroom"); return; }
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  item.rating = item.rating === val ? null : val;
+  touchItem(item);
+  await saveData();
+  _syncQueue.enqueue();
+  // Update stars in place — clear preview, set on
+  const rating = item.rating || 0;
+  document.querySelectorAll(`.card-star[data-id="${id}"]`).forEach(s => {
+    s.classList.remove('preview');
+    s.classList.toggle('on', parseInt(s.dataset.val) <= rating);
+  });
+  const label = document.getElementById('rl-' + id);
+  if (label) {
+    label.textContent = item.rating ? RATING_LABELS[item.rating] : 'Not rated';
+    label.style.color = !item.rating ? 'var(--muted)' : item.rating <= 2 ? 'var(--danger)' : item.rating >= 4 ? 'var(--ok)' : 'var(--muted)';
+  }
+  currentRating = item.rating || 0;
+}
+
+function previewCardStars(id, val) {
+  document.querySelectorAll(`.card-star[data-id="${id}"]`).forEach(s => {
+    const n = parseInt(s.dataset.val);
+    s.classList.toggle('preview', n <= val);
+    s.classList.remove('on');
+  });
+  const item = items.find(i => i.id === id);
+  const label = document.getElementById('rl-' + id);
+  if (label) {
+    label.textContent = RATING_LABELS[val] || '';
+    label.style.color = val <= 2 ? 'var(--danger)' : val >= 4 ? 'var(--ok)' : 'var(--muted)';
+  }
+}
+
+function resetCardStars(id) {
+  const item = items.find(i => i.id === id);
+  const rating = item?.rating || 0;
+  document.querySelectorAll(`.card-star[data-id="${id}"]`).forEach(s => {
+    const n = parseInt(s.dataset.val);
+    s.classList.remove('preview');
+    s.classList.toggle('on', n <= rating);
+  });
+  const label = document.getElementById('rl-' + id);
+  if (label) {
+    label.textContent = rating ? RATING_LABELS[rating] : 'Not rated';
+    label.style.color = !rating ? 'var(--muted)' : rating <= 2 ? 'var(--danger)' : rating >= 4 ? 'var(--ok)' : 'var(--muted)';
+  }
+}
+
+
+// ═══════════════════════════════════════════
+//  PRICE HISTORY MODAL
+// ═══════════════════════════════════════════
+function openPriceHistoryModal(id) {
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  const history = getPriceHistory(item);
+  if (!history.length) return;
+
+  document.getElementById('ph-title').textContent = '💰 ' + item.name;
+
+  const prices  = history.map(h => h.price);
+  const minP    = Math.min(...prices);
+  const maxP    = Math.max(...prices);
+  const avgP    = prices.reduce((a,b)=>a+b,0) / prices.length;
+  const trend   = getPriceTrend(item);
+  const lastP   = prices[prices.length-1];
+  const currency = (history.at(-1)?.raw||'').replace(/[\d.,\s]/g,'').trim() || '£';
+
+  // Subtitle: trend summary
+  let trendDesc = 'Stable price';
+  if (trend) {
+    if (trend.dir === 'up')   trendDesc = `↑ Up ${trend.pct}% vs last purchase`;
+    if (trend.dir === 'down') trendDesc = `↓ Down ${trend.pct}% vs last purchase`;
+  }
+  document.getElementById('ph-subtitle').textContent = `${history.length} purchase${history.length!==1?'s':''} · ${trendDesc}`;
+
+  // ── SVG bar chart ──
+  const W = 440, H = 160, PAD = { t:16, r:16, b:36, l:48 };
+  const chartW = W - PAD.l - PAD.r;
+  const chartH = H - PAD.t - PAD.b;
+  const range  = maxP - minP || 1;
+  const barW   = Math.min(40, (chartW / history.length) - 6);
+
+  const bars = history.map((h, i) => {
+    const x    = PAD.l + (i / history.length) * chartW + (chartW / history.length - barW) / 2;
+    const barH = ((h.price - minP) / range) * (chartH * 0.75) + chartH * 0.15;
+    const y    = PAD.t + chartH - barH;
+    const isLow  = h.price === minP && prices.length > 1;
+    const isHigh = h.price === maxP && prices.length > 1 && minP !== maxP;
+    const isLast = i === history.length - 1;
+    const fill   = isLow ? '#4cbb8a' : isHigh ? '#e85050' : isLast ? '#e8a838' : '#2e3350';
+    const label  = `${currency}${h.price.toFixed(2)}`;
+    const dateLabel = new Date(h.date+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'});
+    return `
+      <rect x="${x}" y="${y}" width="${barW}" height="${barH}" rx="3" fill="${fill}"/>
+      <text x="${x+barW/2}" y="${y-5}" text-anchor="middle" font-size="10" fill="${fill}" font-family="monospace">${label}</text>
+      <text x="${x+barW/2}" y="${H-PAD.b+14}" text-anchor="middle" font-size="9" fill="#7880a0" font-family="monospace">${dateLabel}</text>`;
+  }).join('');
+
+  // avg line
+  const avgY = PAD.t + chartH - (((avgP - minP) / range) * (chartH * 0.75) + chartH * 0.15);
+  const avgLine = `
+    <line x1="${PAD.l}" y1="${avgY}" x2="${W-PAD.r}" y2="${avgY}" stroke="#7880a0" stroke-dasharray="4,3" stroke-width="1"/>
+    <text x="${PAD.l-4}" y="${avgY+4}" text-anchor="end" font-size="9" fill="#7880a0" font-family="monospace">avg</text>`;
+
+  // y-axis labels
+  const yLabels = [minP, avgP, maxP].map(p => {
+    const y = PAD.t + chartH - (((p - minP) / range) * (chartH * 0.75) + chartH * 0.15);
+    return `<text x="${PAD.l-6}" y="${y+4}" text-anchor="end" font-size="9" fill="#7880a0" font-family="monospace">${currency}${p.toFixed(2)}</text>`;
+  }).join('');
+
+  document.getElementById('ph-chart').innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;border-radius:8px;background:#1a1d27">
+      ${yLabels}${avgLine}${bars}
+    </svg>
+    <div style="display:flex;gap:14px;margin-top:8px;font-size:11px;font-family:monospace">
+      <span style="color:#4cbb8a">● Lowest: ${currency}${minP.toFixed(2)}</span>
+      <span style="color:#7880a0">● Avg: ${currency}${avgP.toFixed(2)}</span>
+      <span style="color:#e85050">● Highest: ${currency}${maxP.toFixed(2)}</span>
+      <span style="color:#e8a838">● Latest: ${currency}${lastP.toFixed(2)}</span>
+    </div>`;
+
+  // ── Table ──
+  document.getElementById('ph-table').innerHTML = `
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+      <table class="report-table">
+        <thead><tr><th>Date</th><th>Store</th><th>Qty</th><th>Price</th><th>vs Prev</th></tr></thead>
+        <tbody>${[...history].reverse().map((h,i,arr) => {
+          const prev = arr[i+1];
+          const prevP = prev ? prev.price : null;
+          let vsEl = '—';
+          if (prevP !== null) {
+            const diff = h.price - prevP;
+            const pct  = Math.round(Math.abs(diff)/prevP*100);
+            vsEl = Math.abs(diff) < 0.01 ? '→' :
+              diff > 0 ? `<span style="color:var(--danger)">↑${pct}%</span>` :
+                         `<span style="color:var(--ok)">↓${pct}%</span>`;
+          }
+          const isLow  = h.price === minP && prices.length > 1;
+          const isHigh = h.price === maxP && prices.length > 1 && minP !== maxP;
+          return `<tr>
+            <td style="font-family:monospace;font-size:12px">${fmtDate(h.date)}</td>
+            <td style="color:var(--muted);font-size:12px">${esc(h.store||'—')}</td>
+            <td style="font-family:monospace;font-size:12px">${history[history.length-1-i]?.qty||'—'}</td>
+            <td style="font-family:monospace;font-weight:700;color:${isLow?'var(--ok)':isHigh?'var(--danger)':'var(--text)'}">${h.raw||currency+h.price.toFixed(2)}${isLow?' 🏷':''}</td>
+            <td style="font-size:12px">${vsEl}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+
+  openModal('price-history-modal');
+}
+
+
+let stockCountId = null;
+
+function openStockCountModal(id) {
+  stockCountId = id;
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  const last = item.logs?.at(-1);
+  const totalPurchased = last?.qty || 1;
+
+  document.getElementById('sc-subtitle').textContent = `How many units of "${item.name}" do you have left?`;
+  document.getElementById('sc-explanation').textContent =
+    `You last bought ${totalPurchased} unit${totalPurchased!==1?'s':''} on ${fmtDate(last?.date)}. ` +
+    `Enter how many you have now — the app will calculate your actual consumption rate and project when you'll run out.`;
+  document.getElementById('sc-remaining').value = item.stockCount != null ? item.stockCount : '';
+  document.getElementById('sc-date').value = today();
+  document.getElementById('sc-preview').style.display = 'none';
+
+  const remaining = document.getElementById('sc-remaining');
+  const dateEl = document.getElementById('sc-date');
+  const preview = () => updateStockCountPreview(item);
+  remaining.oninput = preview;
+  dateEl.onchange = preview;
+
+  if (item.stockCount != null) updateStockCountPreview(item);
+  openModal('stock-count-modal');
+}
+
+function updateStockCountPreview(item) {
+  const remaining = parseFloat(document.getElementById('sc-remaining').value);
+  const countDate = document.getElementById('sc-date').value;
+  const preview = document.getElementById('sc-preview');
+  const previewText = document.getElementById('sc-preview-text');
+
+  if (isNaN(remaining) || !countDate) { preview.style.display = 'none'; return; }
+
+  const last = item.logs?.at(-1);
+  const totalPurchased = last?.qty || 1;
+  const daysSincePurchase = (Date.now() - new Date((last?.date||countDate)+'T12:00:00')) / 86400000;
+  const used = totalPurchased - remaining;
+
+  let daysLeft;
+  if (used <= 0 || daysSincePurchase <= 0) {
+    const totalDays = (item.months||1) * 30.5 * totalPurchased;
+    daysLeft = Math.round(Math.max(0, totalDays - daysSincePurchase));
+  } else {
+    const ratePerDay = used / daysSincePurchase;
+    daysLeft = ratePerDay > 0 ? Math.round(remaining / ratePerDay) : null;
+  }
+
+  const pct = Math.round(Math.max(0, Math.min(100, (remaining / totalPurchased) * 100)));
+  const runOutDate = daysLeft != null
+    ? new Date(Date.now() + daysLeft * 86400000).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})
+    : 'unknown';
+
+  let msg;
+  if (used > 0 && daysSincePurchase > 0) {
+    const ratePerDay = used / daysSincePurchase;
+    msg = `Used ${used.toFixed(1)} of ${totalPurchased} in ${Math.round(daysSincePurchase)} days ` +
+          `(${ratePerDay.toFixed(2)}/day). ` +
+          `${remaining} left → runs out ~${runOutDate} (${daysLeft ?? '?'} days, ${pct}% remaining).`;
+  } else {
+    msg = `${remaining} of ${totalPurchased} units remaining (${pct}%) → runs out ~${runOutDate}.`;
+  }
+
+  previewText.textContent = msg;
+  previewText.style.color = pct <= 15 ? 'var(--danger)' : pct <= 30 ? 'var(--warn)' : 'var(--ok)';
+  preview.style.display = 'block';
+}
+
+async function saveStockCount() {
+  if (!canWrite("stockroom")) { showLockBanner("stockroom"); return; }
+  const item = items.find(i => i.id === stockCountId);
+  if (!item) return;
+  const val = document.getElementById('sc-remaining').value.trim();
+  const countDate = document.getElementById('sc-date').value;
+
+  if (val === '') {
+    item.stockCount = null;
+    item.stockCountDate = null;
+  } else {
+    item.stockCount = parseFloat(val);
+    item.stockCountDate = countDate || today();
+  }
+
+  await saveData();
+  closeModal('stock-count-modal');
+  scheduleRender('grid', 'dashboard');
+  toast(val === '' ? 'Stock count cleared' : 'Stock count updated ✓');
+  _syncQueue.enqueue();
+}
+
+// ═══════════════════════════════════════════
+//  SUBSCRIBE & SAVE
+// ═══════════════════════════════════════════
+
+const SNS_DISCOUNT      = 0.05;  // 5% when 4+ items
+const SNS_MIN_PURCHASES = 3;     // need at least 3 purchases
+const SNS_MIN_SPAN_DAYS = 60;    // spanning at least 60 days
+const SNS_MIN_ITEMS     = 4;     // need 4+ to hit 5% tier
+
+function isAmazonStore(store) {
+  return store && /amazon/i.test(store);
+}
+
+function isAmazonUrl(url) {
+  return url && /amazon\./i.test(url);
+}
+
+function getSnSLink(item) {
+  // Deep link to Subscribe & Save on Amazon using the product URL
+  if (!item.url) return null;
+  try {
+    const u = new URL(item.url);
+    // Extract ASIN from Amazon URL
+    const asinMatch = item.url.match(/\/([A-Z0-9]{10})(?:[/?]|$)/);
+    if (!asinMatch) return item.url; // fallback to product page
+    const asin   = asinMatch[1];
+    const domain = u.hostname; // e.g. www.amazon.co.uk
+    return `https://${domain}/dp/${asin}?th=1&psc=1&subscribeSave=1`;
+  } catch(e) { return item.url; }
+}
+
+function analyseSnS() {
+  // Returns array of qualifying items with savings data
+  const results = [];
+
+  items.forEach(item => {
+    const isAmazon = isAmazonStore(item.store) || isAmazonUrl(item.url);
+    if (!isAmazon) return;
+
+    const logs = (item.logs || []).filter(l => l.date).sort((a,b) => new Date(a.date) - new Date(b.date));
+    if (logs.length < SNS_MIN_PURCHASES) {
+      // Tracking — not enough purchases yet
+      if (logs.length >= 1) {
+        results.push({ item, status: 'tracking', logs, purchaseCount: logs.length, spanDays: 0, avgMonthlySpend: null, annualSaving: null });
+      }
+      return;
+    }
+
+    const firstDate = new Date(logs[0].date + 'T12:00:00');
+    const lastDate  = new Date(logs[logs.length-1].date + 'T12:00:00');
+    const spanDays  = (lastDate - firstDate) / 86400000;
+
+    if (spanDays < SNS_MIN_SPAN_DAYS) {
+      results.push({ item, status: 'tracking', logs, purchaseCount: logs.length, spanDays, avgMonthlySpend: null, annualSaving: null });
+      return;
+    }
+
+    // Calculate avg monthly spend from price logs
+    const pricedLogs = logs.filter(l => parsePriceValue(l.price) !== null);
+    let avgMonthlySpend = null;
+    let annualSaving    = null;
+
+    if (pricedLogs.length >= 1) {
+      const avgPrice    = pricedLogs.reduce((s,l) => s + parsePriceValue(l.price), 0) / pricedLogs.length;
+      const monthsSpan  = spanDays / 30.5;
+      const buysPerMonth = logs.length / monthsSpan;
+      avgMonthlySpend   = avgPrice * buysPerMonth;
+      annualSaving      = avgMonthlySpend * 12 * SNS_DISCOUNT;
+    }
+
+    const status = item.subscribeAndSave ? 'active' : 'eligible';
+    results.push({ item, status, logs, purchaseCount: logs.length, spanDays: Math.round(spanDays), avgMonthlySpend, annualSaving });
+  });
+
+  return results;
+}
+
+function renderSavingsView() {
+  const all      = analyseSnS();
+  const active   = all.filter(r => r.status === 'active');
+  const eligible = all.filter(r => r.status === 'eligible');
+  const tracking = all.filter(r => r.status === 'tracking');
+  const qualifies = (active.length + eligible.length) >= SNS_MIN_ITEMS;
+
+  const totalAnnualSaving = [...active, ...eligible]
+    .reduce((s, r) => s + (r.annualSaving || 0), 0);
+  const activeAnnualSaving = active
+    .reduce((s, r) => s + (r.annualSaving || 0), 0);
+
+  let html = '';
+
+  if (!all.length) {
+    html = `<div class="sns-empty">
+      <div style="font-size:48px;margin-bottom:16px">🛒</div>
+      <h3 style="font-size:18px;color:var(--text);margin-bottom:8px">No Amazon purchases found</h3>
+      <p style="font-size:14px;line-height:1.7">Add items purchased from Amazon and log at least 3 purchases to see Subscribe &amp; Save opportunities.</p>
+    </div>`;
+    document.getElementById('savings-content').innerHTML = html;
+    return;
+  }
+
+  // Summary card
+  const qualifiesMsg = qualifies
+    ? `<span style="color:var(--ok);font-weight:700">✓ You qualify for 5% off</span> — you have ${active.length + eligible.length} eligible Amazon items.`
+    : `You need <strong>${SNS_MIN_ITEMS - (active.length + eligible.length)}</strong> more eligible item${(SNS_MIN_ITEMS - active.length - eligible.length) !== 1 ? 's' : ''} to reach the 5% discount tier.`;
+
+  html += `<div class="sns-summary-card">
+    ${totalAnnualSaving > 0 ? `<div class="sns-summary-stat"><div class="val">£${totalAnnualSaving.toFixed(2)}</div><div class="lbl">Est. annual saving</div></div>` : ''}
+    ${activeAnnualSaving > 0 ? `<div class="sns-summary-stat"><div class="val" style="color:var(--accent2)">£${activeAnnualSaving.toFixed(2)}</div><div class="lbl">Already saving/yr</div></div>` : ''}
+    <div class="sns-summary-stat"><div class="val" style="color:var(--warn)">${active.length + eligible.length}</div><div class="lbl">Eligible items</div></div>
+    <div class="sns-summary-stat"><div class="val" style="color:var(--muted)">${tracking.length}</div><div class="lbl">Being tracked</div></div>
+    <div style="flex:1;min-width:200px">
+      <p style="font-size:13px;line-height:1.6;color:var(--muted)">${qualifiesMsg}</p>
+      <p style="font-size:12px;color:var(--muted);margin-top:6px">Amazon Subscribe &amp; Save gives 5% off when you subscribe to 4+ products in a single delivery.</p>
+    </div>
+  </div>`;
+
+  const makeItem = (r) => {
+    const { item, status, purchaseCount, spanDays, avgMonthlySpend, annualSaving } = r;
+    const snsLink  = getSnSLink(item);
+    const lastPrice = (() => { const pl = (item.logs||[]).filter(l=>parsePriceValue(l.price)!==null); return pl.length ? pl[pl.length-1].price : null; })();
+
+    const badge = status === 'active'
+      ? `<span class="sns-badge sns-badge-active">✓ S&amp;S Active</span>`
+      : status === 'eligible'
+        ? `<span class="sns-badge sns-badge-eligible">💡 Eligible</span>`
+        : `<span class="sns-badge sns-badge-tracking">⏳ Tracking (${purchaseCount}/${SNS_MIN_PURCHASES} purchases)</span>`;
+
+    const savingEl = annualSaving
+      ? `<div class="sns-saving">£${annualSaving.toFixed(2)}/yr saving</div>`
+      : lastPrice
+        ? `<div style="font-size:12px;color:var(--muted)">Add prices to see £ saving</div>`
+        : `<div style="font-size:12px;color:var(--muted)">Log prices to calculate saving</div>`;
+
+    const toggleBtn = status !== 'tracking'
+      ? `<button class="btn btn-sm ${status === 'active' ? 'btn-ghost' : 'btn-primary'}" onclick="toggleSnS('${item.id}')">${status === 'active' ? 'Mark as not subscribed' : '✓ Mark as subscribed'}</button>`
+      : '';
+
+    const snsBuyBtn = snsLink && status !== 'active'
+      ? `<a href="${esc(snsLink)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">🔗 Subscribe on Amazon</a>`
+      : '';
+
+    return `<div class="sns-item">
+      <div class="sns-item-header">
+        <div class="sns-item-name">${esc(item.name)}</div>
+        ${badge}
+      </div>
+      <div class="sns-stats">
+        <div class="sns-stat"><strong>${purchaseCount}</strong><span>purchases</span></div>
+        ${spanDays ? `<div class="sns-stat"><strong>${Math.round(spanDays/30.5 * 10)/10}mo</strong><span>tracked</span></div>` : ''}
+        ${lastPrice ? `<div class="sns-stat"><strong>${esc(lastPrice)}</strong><span>last price</span></div>` : ''}
+        ${avgMonthlySpend ? `<div class="sns-stat"><strong>£${avgMonthlySpend.toFixed(2)}</strong><span>/month avg</span></div>` : ''}
+      </div>
+      ${savingEl}
+      <div class="sns-actions">${toggleBtn}${snsBuyBtn}</div>
+    </div>`;
+  };
+
+  if (eligible.length) {
+    html += `<div class="sns-section-title">💡 Eligible — not yet subscribed (${eligible.length})</div>`;
+    html += eligible.map(makeItem).join('');
+  }
+  if (active.length) {
+    html += `<div class="sns-section-title">✓ Already subscribed (${active.length})</div>`;
+    html += active.map(makeItem).join('');
+  }
+  if (tracking.length) {
+    html += `<div class="sns-section-title">⏳ Building history (${tracking.length})</div>`;
+    html += tracking.map(makeItem).join('');
+  }
+
+  document.getElementById('savings-content').innerHTML = html;
+}
+
+async function toggleSnS(id) {
+  if (!canWrite("savings")) { showLockBanner("savings"); return; }
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  item.subscribeAndSave = !item.subscribeAndSave;
+  await saveData();
+  renderSavingsView();
+  scheduleRender('sns');
+  toast(item.subscribeAndSave ? 'Marked as subscribed ✓' : 'Marked as not subscribed');
+  _syncQueue.enqueue();
+}
+
+function updateSnSBanner() {
+  const banner = document.getElementById('sns-banner');
+  if (!banner) return;
+  const all      = analyseSnS();
+  const eligible = all.filter(r => r.status === 'eligible');
+  const active   = all.filter(r => r.status === 'active');
+  const total    = eligible.length + active.length;
+
+  if (total < 1) { banner.style.display = 'none'; return; }
+
+  const qualifies = total >= SNS_MIN_ITEMS;
+  const totalSaving = [...eligible, ...active].reduce((s,r) => s + (r.annualSaving||0), 0);
+  const savingStr   = totalSaving > 0 ? ` — save <strong>£${totalSaving.toFixed(2)}/yr</strong>` : '';
+
+  if (qualifies) {
+    banner.innerHTML = `<div class="sns-banner" onclick="switchToSavings()">
+      <div class="sns-banner-text">💰 You qualify for <strong>Amazon Subscribe &amp; Save 5%</strong> on ${total} items${savingStr}</div>
+      <button class="btn btn-ghost btn-sm" style="flex-shrink:0">View savings →</button>
+    </div>`;
+  } else if (eligible.length > 0) {
+    const needed = SNS_MIN_ITEMS - total;
+    banner.innerHTML = `<div class="sns-banner" onclick="switchToSavings()">
+      <div class="sns-banner-text">💡 <strong>${total} Amazon item${total!==1?'s':''}</strong> could be on Subscribe &amp; Save — ${needed} more needed for 5% discount${savingStr}</div>
+      <button class="btn btn-ghost btn-sm" style="flex-shrink:0">View savings →</button>
+    </div>`;
+  } else {
+    banner.style.display = 'none';
+    return;
+  }
+  banner.style.display = 'block';
+}
+
+function switchToSavings() {
+  const tab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Savings'));
+  if (tab) showView('savings', tab);
+}
+
+// ═══════════════════════════════════════════
+//  SHOPPING LIST
+// ═══════════════════════════════════════════
+let shoppingStores = new Set(['__all__']);
+let shoppingDays = 30;
+let shoppingTagFilter = null; // null = all tags
+
+function updateStockShoppingHeader(mode) {
+  const stockBtn    = document.getElementById('hdr-stock-btn');
+  const shoppingBtn = document.getElementById('hdr-shopping-btn');
+  const toggle      = document.getElementById('days-toggle');
+  const countEl     = document.getElementById('item-count');
+  if (mode === 'stock') {
+    if (stockBtn)    { stockBtn.style.fontWeight = '700'; stockBtn.style.color = 'var(--text)'; }
+    if (shoppingBtn) { shoppingBtn.style.fontWeight = '400'; shoppingBtn.style.color = 'var(--muted)'; }
+    if (toggle)      toggle.style.display = 'none';
+    if (countEl)     countEl.style.display = '';
+  } else {
+    if (stockBtn)    { stockBtn.style.fontWeight = '400'; stockBtn.style.color = 'var(--muted)'; }
+    if (shoppingBtn) { shoppingBtn.style.fontWeight = '700'; shoppingBtn.style.color = 'var(--text)'; }
+    if (toggle)      toggle.style.display = '';
+    if (countEl)     countEl.style.display = 'none';
+  }
+}
+
+// ── View Transitions helpers ──────────────────────────────
+const TAB_ORDER = ['stock', 'grocery', 'reminders', 'savings', 'report', 'settings'];
+let _currentView = 'stock';
+
+function _vtSupported() { return !!document.startViewTransition; }
+
+function _doTransition(direction, fn) {
+  if (!_vtSupported() || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    fn(); return;
+  }
+  const content = document.getElementById('view-content');
+  if (content) content.style.viewTransitionName = direction === 'back' ? 'main-view-back' : 'main-view';
+  document.startViewTransition(() => { fn(); });
+}
+
+function setStockOnlyUI(visible) {
+  const ids = ['health-dashboard', 'filter-toggle-btn', 'sort-select', 'compact-toggle-btn', 'filter-panel', 'tag-filter-bar', 'sns-banner', 'pending-deliveries-section', 'incomplete-section'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = visible ? '' : 'none';
+  });
+  const filterWrap = document.querySelector('#view-stock > div:nth-child(5)');
+  if (filterWrap) filterWrap.style.display = visible ? '' : 'none';
+}
+
+function switchToStock() {
+  _currentViewName = 'stock';
+  _doTransition('back', () => {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('view-stock').classList.add('active');
+    const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
+    if (stockTab) stockTab.classList.add('active');
+    document.getElementById('items-grid').style.display = '';
+    document.getElementById('shopping-panel').style.display = 'none';
+    setStockOnlyUI(true);
+    updateStockShoppingHeader('stock');
+    _currentView = 'stock';
+  });
+  if (_householdEnabled) pushPresence();
+}
+
+function switchToShopping() {
+  _currentViewName = 'shopping';
+  _doTransition('forward', () => {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('view-stock').classList.add('active');
+    const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
+    if (stockTab) stockTab.classList.add('active');
+    document.getElementById('items-grid').style.display = 'none';
+    document.getElementById('shopping-panel').style.display = '';
+    setStockOnlyUI(false);
+    renderShoppingList();
+    updateStockShoppingHeader('shopping');
+  });
+  if (_householdEnabled) pushPresence();
+}
+
+function showShoppingListInline() { switchToShopping(); }
+
+function showView(name, btn) {
+  _currentViewName = name;
+  // Check tab access for shared users
+  const sectionMap = { grocery:'groceries', reminders:'reminders', savings:'savings', report:'report', stock:'stockroom', shopping:'stockroom' };
+  const section    = sectionMap[name];
+  if (section && !canView(section)) {
+    showLockBanner(section);
+    return;
+  }
+  // Tab switches are instant — no transition (feels snappier on the tab bar)
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('view-'+name).classList.add('active');
+  btn.classList.add('active');
+  if (name === 'report')    { renderReport(); if (spendVisible) renderSpendChart(); }
+  if (name === 'reminders') renderReminders();
+  if (name === 'shopping')  renderShoppingList();
+  if (name === 'savings')   renderSavingsView();
+  if (name === 'grocery')   renderGrocery();
+  if (name === 'stock') {
+    updateStockShoppingHeader('stock');
+    setStockOnlyUI(true);
+    document.getElementById('items-grid').style.display = '';
+    document.getElementById('shopping-panel').style.display = 'none';
+  }
+  if (name === 'settings') { renderSettingsForUser(); if (kvConnected) { loadTrustedDevices(); loadPasskeys(); } }
+  _currentView = name;
+  if (_householdEnabled) pushPresence();
+}
+
+function getShoppingItems() {
+  return items.filter(item => {
+    const s = calcStock(item);
+    if (!s) return false;
+    if (s.daysLeft > shoppingDays) return false;
+    // Store filter
+    if (!shoppingStores.has('__all__')) {
+      const itemStore = item.store && item.store.trim();
+      if (!itemStore || !shoppingStores.has(itemStore)) return false;
+    }
+    // Tag filter
+    if (shoppingTagFilter !== null) {
+      if (!(item.tags || []).includes(shoppingTagFilter)) return false;
+    }
+    return true;
+  }).map(item => {
+    const s = calcStock(item);
+    return { item, daysLeft: s.daysLeft, pct: s.pct };
+  }).sort((a, b) => a.daysLeft - b.daysLeft);
+}
+
+function getAllStoresFromItems() {
+  const storeSet = new Set();
+  items.forEach(item => {
+    if (item.store && item.store.trim()) storeSet.add(item.store.trim());
+    (item.logs||[]).forEach(l => { if (l.store && l.store.trim()) storeSet.add(l.store.trim()); });
+  });
+  return [...storeSet].sort();
+}
+
+function openStorePickerModal() {
+  const stores = getAllStoresFromItems();
+  const container = document.getElementById('store-picker-options');
+
+  // Build item counts per store
+  const countPerStore = {};
+  stores.forEach(s => {
+    countPerStore[s] = items.filter(item => {
+      const st = calcStock(item);
+      return st && st.daysLeft <= shoppingDays && (
+        (item.store && item.store.trim() === s) ||
+        (item.logs||[]).some(l => l.store && l.store.trim() === s)
+      );
+    }).length;
+  });
+
+  // "All stores" row
+  const allChecked = shoppingStores.has('__all__');
+  let html = `<div class="store-picker-row" onclick="toggleStorePick('__all__',this)">
+    <input type="checkbox" id="sp-all" ${allChecked?'checked':''} onclick="event.stopPropagation();toggleStorePick('__all__',this.closest('.store-picker-row'))">
+    <label for="sp-all" onclick="event.preventDefault()">🌐 All Stores</label>
+  </div>`;
+
+  if (stores.length === 0) {
+    html += `<p style="font-size:13px;color:var(--muted);padding:10px 0">No stores found. Add stores when logging purchases.</p>`;
+  } else {
+    html += stores.map(s => {
+      const checked = shoppingStores.has('__all__') || shoppingStores.has(s);
+      const id = 'sp-' + s.replace(/\s+/g,'_');
+      const cnt = countPerStore[s] || 0;
+      return `<div class="store-picker-row" onclick="toggleStorePick('${esc(s)}',this)">
+        <input type="checkbox" id="${id}" ${checked?'checked':''} onclick="event.stopPropagation();toggleStorePick('${esc(s)}',this.closest('.store-picker-row'))">
+        <label for="${id}" onclick="event.preventDefault()">${esc(s)}</label>
+        <span class="store-item-count">${cnt} item${cnt!==1?'s':''} due</span>
+      </div>`;
+    }).join('');
+  }
+
+  container.innerHTML = html;
+
+  openModal('store-picker-modal');
+}
+
+function toggleStorePick(store, row) {
+  const cb = row.querySelector('input[type=checkbox]');
+  if (store === '__all__') {
+    shoppingStores = new Set(['__all__']);
+    // uncheck all individual store boxes
+    document.querySelectorAll('#store-picker-options input[type=checkbox]').forEach(c => {
+      c.checked = c.id === 'sp-all';
+    });
+    if (cb) cb.checked = true;
+  } else {
+    // Deselect "all"
+    shoppingStores.delete('__all__');
+    const allCb = document.getElementById('sp-all');
+    if (allCb) allCb.checked = false;
+
+    if (cb) cb.checked = !cb.checked;
+    if (cb && cb.checked) shoppingStores.add(store);
+    else shoppingStores.delete(store);
+
+    // If nothing selected, revert to all
+    if (shoppingStores.size === 0) {
+      shoppingStores.add('__all__');
+      if (allCb) allCb.checked = true;
+    }
+  }
+}
+
+
+function setShoppingTagFilter(index, btn) {
+  shoppingTagFilter = index;
+  buildShoppingTagFilterBarInline();
+  renderShoppingList();
+}
+
+
+function toggleShoppingDays() {
+  shoppingDays = shoppingDays === 30 ? 7 : 30;
+  document.getElementById('days-opt-30').classList.toggle('active', shoppingDays === 30);
+  document.getElementById('days-opt-30').classList.toggle('faded', shoppingDays !== 30);
+  document.getElementById('days-opt-7').classList.toggle('active', shoppingDays === 7);
+  document.getElementById('days-opt-7').classList.toggle('faded', shoppingDays !== 7);
+  renderShoppingList();
+}
+
+function applyShoppingList() {
+  closeModal('store-picker-modal');
+  showShoppingListInline();
+}
+
+function renderShoppingList() {
+  buildShoppingTagFilterBarInline();
+  const shoppingItems = getShoppingItems();
+  const storeLabel = shoppingStores.has('__all__') ? 'All Stores' : [...shoppingStores].join(', ');
+
+  // Update subtitle and store pills
+  document.getElementById('shopping-subtitle').textContent =
+    `Items running out within ${shoppingDays} days · ${storeLabel}`;
+
+  const pillsEl = document.getElementById('shopping-store-pills');
+  const pillStores = shoppingStores.has('__all__') ? ['All Stores'] : [...shoppingStores];
+  pillsEl.innerHTML = pillStores.map(s =>
+    `<span style="font-size:12px;font-weight:600;padding:4px 12px;border-radius:99px;background:var(--surface2);border:1px solid var(--border);color:var(--text)">${esc(s)}</span>`
+  ).join('');
+
+  const container = document.getElementById('shopping-content');
+
+  if (shoppingItems.length === 0) {
+    container.innerHTML = getShoppingPresenceBar() + `<div class="shopping-empty">
+      <div style="font-size:48px;margin-bottom:16px">🎉</div>
+      <h3 style="font-size:18px;color:var(--text);margin-bottom:8px">You're all stocked up!</h3>
+      <p style="font-size:14px;line-height:1.7">No items are running out within ${shoppingDays} days for the selected stores.</p>
+      <button class="btn btn-ghost" style="margin-top:16px" onclick="openStorePickerModal()">Change filters</button>
+    </div>`;
+    return;
+  }
+
+  // Group by store
+  const byStore = {};
+  shoppingItems.forEach(({ item, daysLeft, pct }) => {
+    const store = item.store || 'No store set';
+    if (!byStore[store]) byStore[store] = [];
+    byStore[store].push({ item, daysLeft, pct });
+  });
+
+  // If all stores, also group items with no store
+  const q = encodeURIComponent;
+
+  container.innerHTML = getShoppingPresenceBar() + Object.entries(byStore).map(([store, entries]) => {
+    const itemsHTML = entries.map(({ item, daysLeft, pct }) => {
+      const runOutDate = new Date(Date.now() + daysLeft * 86400000)
+        .toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+      const urgency = daysLeft <= 7 ? 'urgent' : daysLeft <= 14 ? 'soon' : '';
+      const urgencyColor = daysLeft <= 7 ? 'var(--danger)' : daysLeft <= 14 ? 'var(--warn)' : 'var(--muted)';
+      const rating = item.rating ? starsHTML(item.rating) : '';
+
+      // Build links
+      const buyLink = item.url
+        ? `<a class="shopping-link primary" href="${esc(item.url)}" target="_blank" rel="noopener">🛒 Buy now</a>`
+        : '';
+
+      const altLinks = getStores(settings.country).slice(0,3).map(s =>
+        `<a class="shopping-link alt" href="${s.url(q(item.name))}" target="_blank" rel="noopener">🔍 ${s.name.replace(/^[^\s]+\s/,'')}</a>`
+      ).join('');
+
+      const poorRating = item.rating && item.rating <= 2
+        ? `<a class="shopping-link warn" href="${getStores(settings.country)[0].url(q(item.name+' alternative'))}" target="_blank" rel="noopener">⚠️ Find alternative</a>`
+        : '';
+
+      const orderedBadge = item.ordered
+        ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(91,141,238,0.15);border:1px solid rgba(91,141,238,0.3);color:#5b8dee;font-family:var(--mono)">📦 Ordered</span>`
+        : '';
+
+      return `<div class="shopping-item ${urgency}" id="si-${item.id}">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span class="shopping-item-name">${esc(item.name)}</span>
+            ${rating}
+            ${orderedBadge}
+          </div>
+          <div class="shopping-item-meta">
+            <span class="shopping-meta-pill" style="color:${urgencyColor}">⏱ Runs out: <strong style="color:${urgencyColor}">${runOutDate}</strong></span>
+            <span class="shopping-meta-pill">📅 ${daysLeft}d left</span>
+            <span class="shopping-meta-pill">📊 ${pct}% remaining</span>
+            ${item.cadence==='bulk'?'<span class="shopping-meta-pill">📦 Bulk buy</span>':''}
+          </div>
+          <div class="shopping-links">
+            ${buyLink}${altLinks}${poorRating}
+            ${!item.ordered
+              ? `<button class="btn btn-ghost btn-sm" style="font-size:12px;color:#5b8dee;border-color:#5b8dee" onclick="markOrdered('${item.id}')">📦 Mark ordered</button>`
+              : `<button class="btn btn-ghost btn-sm" style="font-size:12px;color:var(--muted)" onclick="unmarkOrdered('${item.id}')">↩ Unmark</button>`
+            }
+            <button class="btn btn-ghost btn-sm" style="font-size:12px;color:var(--ok);border-color:var(--ok)" onclick="openDeliveredModal('${item.id}')">📦 Delivered</button>
+          </div>
+        </div>
+        <input type="checkbox" class="shopping-checkbox" title="Mark as bought" onchange="toggleShoppingCheck('${item.id}',this)">
+      </div>`;
+    }).join('');
+
+    return `<div class="shopping-store-section">
+      <div class="shopping-store-header">
+        <h3>🏪 ${esc(store)}</h3>
+        <span class="shopping-store-count">${entries.length} item${entries.length!==1?'s':''}</span>
+      </div>
+      ${itemsHTML}
+    </div>`;
+  }).join('');
+}
+
+function toggleShoppingCheck(itemId, cb) {
+  const el = document.getElementById('si-' + itemId);
+  if (el) el.classList.toggle('checked', cb.checked);
+}
+
+function exportShoppingList() {
+  const shoppingItems = getShoppingItems();
+  if (!shoppingItems.length) { toast('Nothing to export'); return; }
+
+  const lines = ['STOCKROOM — Shopping List', `Generated: ${new Date().toLocaleDateString('en-GB')}`, `Stores: ${shoppingStores.has('__all__')?'All':[...shoppingStores].join(', ')}`, `Window: Next ${shoppingDays} days`, '', '---', ''];
+
+  const byStore = {};
+  shoppingItems.forEach(({item, daysLeft}) => {
+    const store = item.store || 'No store set';
+    if (!byStore[store]) byStore[store] = [];
+    byStore[store].push({item, daysLeft});
+  });
+
+  Object.entries(byStore).forEach(([store, entries]) => {
+    lines.push(`## ${store}`);
+    entries.forEach(({item, daysLeft}) => {
+      const runOut = new Date(Date.now() + daysLeft * 86400000).toLocaleDateString('en-GB');
+      lines.push(`[ ] ${item.name}`);
+      lines.push(`    Runs out: ${runOut} (${daysLeft}d)`);
+      if (item.url) lines.push(`    Buy: ${item.url}`);
+      if (item.rating) lines.push(`    Rating: ${'★'.repeat(item.rating)}${'☆'.repeat(5-item.rating)}`);
+      lines.push('');
+    });
+    lines.push('');
+  });
+
+  const blob = new Blob([lines.join('\n')], {type:'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `shopping_list_${new Date().toISOString().split('T')[0]}.txt`;
+  a.click();
+}
+
+
+
+function openAddModal() {
+  editingId = null;
+  document.getElementById('item-modal-title').textContent = 'Add Item';
+  document.getElementById('item-modal-subtitle').textContent = 'Track a new consumable in your stockroom.';
+  // Always show edit form for new items
+  document.getElementById('item-readonly-view').style.display = 'none';
+  document.getElementById('item-edit-view').style.display = 'block';
+  tempStorePrices = [];
+  renderTempStorePrices();
+  document.getElementById('store-prices-section').style.display = 'none';
+  document.getElementById('f-name').value = '';
+  document.getElementById('f-category').value = 'Kitchen';
+  document.getElementById('f-cadence').value = 'monthly';
+  document.getElementById('f-qty').value = 1;
+  document.getElementById('f-months').value = 1;
+  document.getElementById('f-url').value = '';
+  pendingImageUrl = null;
+  clearProductImage();
+  const storeField = document.getElementById('f-store');
+  storeField.value = '';
+  storeField.dataset.manual = '';
+  storeField.dataset.autoFilled = '';
+  document.getElementById('f-notes').value = '';
+  currentRating = 0;
+  renderStars();
+  document.getElementById('f-last-date').value = today();
+  document.getElementById('f-last-qty').value = 1;
+  document.getElementById('f-last-price').value = '';
+  document.getElementById('f-started-using').value = '';
+  document.getElementById('price-search-input').value = '';
+  document.getElementById('price-links').innerHTML = '';
+  openModal('item-modal');
+}
+
+function openEditModal(id) {
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  editingId = id;
+  document.getElementById('item-modal-title').textContent = 'Item Details';
+  document.getElementById('item-modal-subtitle').textContent = item.name;
+
+  // Populate readonly view
+  document.getElementById('ro-category').textContent = item.category || 'Other';
+  document.getElementById('ro-name').textContent = item.name;
+  const lastLog = item.logs?.at(-1);
+  const metaParts = [];
+  if (item.cadence === 'bulk') metaParts.push('📦 Bulk');
+  else metaParts.push('🗓️ Monthly');
+  if (item.qty) metaParts.push(`${item.qty} unit${item.qty !== 1 ? 's' : ''} per purchase`);
+  if (item.months) metaParts.push(`${item.months} month${item.months !== 1 ? 's' : ''} supply`);
+  if (lastLog?.price) metaParts.push(`Last price: ${lastLog.price}`);
+  document.getElementById('ro-meta').textContent = metaParts.join(' · ');
+  document.getElementById('ro-store').textContent = item.store ? `🏪 ${item.store}` : '';
+
+  // Show readonly, hide edit form
+  document.getElementById('item-readonly-view').style.display = 'block';
+  document.getElementById('item-edit-view').style.display = 'none';
+  // Load store prices
+  tempStorePrices = JSON.parse(JSON.stringify(item.storePrices || []));
+  renderTempStorePrices();
+  if (tempStorePrices.length) document.getElementById('store-prices-section').style.display = 'block';
+
+  // Pre-populate edit form fields (ready for when user clicks Edit)
+  document.getElementById('f-name').value = item.name;
+  document.getElementById('f-category').value = item.category||'Kitchen';
+  document.getElementById('f-cadence').value = item.cadence||'monthly';
+  document.getElementById('f-qty').value = item.qty||1;
+  document.getElementById('f-months').value = item.months||1;
+  document.getElementById('f-url').value = item.url||'';
+  pendingImageUrl = item.imageUrl || null;
+  showModalImagePreview(item.imageUrl || null);
+  const storeField = document.getElementById('f-store');
+  storeField.value = item.store || urlToStoreName(item.url||'');
+  storeField.dataset.manual = item.store ? '1' : '';
+  storeField.dataset.autoFilled = '';
+  document.getElementById('f-notes').value = item.notes||'';
+  const expiryEl    = document.getElementById('f-expiry');
+  const thresholdEl = document.getElementById('f-threshold');
+  if (expiryEl)    expiryEl.value    = item.expiry || '';
+  if (thresholdEl) thresholdEl.value = item.thresholdOverride != null ? item.thresholdOverride : '';
+  const replIntervalEl = document.getElementById('f-replace-interval');
+  const replUnitEl     = document.getElementById('f-replace-unit');
+  if (replIntervalEl) replIntervalEl.value = item.replacementInterval || '';
+  if (replUnitEl)     replUnitEl.value     = item.replacementUnit     || 'months';
+  currentRating = item.rating || 0;
+  renderStars();
+  const last = item.logs?.at(-1);
+  document.getElementById('f-last-date').value = last?.date||today();
+  document.getElementById('f-last-qty').value = last?.qty||1;
+  document.getElementById('f-last-price').value = last?.price||'';
+  document.getElementById('f-started-using').value = item.startedUsing||'';
+  document.getElementById('price-search-input').value = item.name;
+  updatePriceLinks();
+  openModal('item-modal');
+}
+
+function openLogModal(id) { openLogPurchaseModal(id); } // backward compat for swipe + shopping list
+
+function openLogPurchaseModal(id) {
+  loggingId = id;
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  document.getElementById('log-modal-title').textContent = 'Log Purchase — ' + item.name;
+  document.getElementById('log-date').value  = today();
+  document.getElementById('log-qty').value   = item.qty || 1;
+  document.getElementById('log-price').value = '';
+  document.getElementById('log-store').value = item.store || urlToStoreName(item.url||'') || '';
+  renderLogHistory(item);
+  openModal('log-modal');
+}
+
+// ═══════════════════════════════════════════
+//  SAVE / DELETE
+// ═══════════════════════════════════════════
+async function saveItem() {
+  if (!canWrite("stockroom")) { showLockBanner("stockroom"); return; }
+  const name = document.getElementById('f-name').value.trim();
+  if (!name) { alert('Please enter a name for this item.'); return; }
+  const startedUsing = document.getElementById('f-started-using').value || null;
+  const storeVal = document.getElementById('f-store').value.trim()
+    || urlToStoreName(document.getElementById('f-url').value.trim());
+
+  if (editingId) {
+    const item = items.find(i => i.id === editingId);
+    if (item) {
+      item.name         = name;
+      item.category     = document.getElementById('f-category').value;
+      item.cadence      = document.getElementById('f-cadence').value;
+      item.qty          = parseFloat(document.getElementById('f-qty').value)||1;
+      item.months       = parseFloat(document.getElementById('f-months').value)||1;
+      item.url          = document.getElementById('f-url').value.trim();
+      item.store        = storeVal;
+      // Propagate new store name to all log entries so filter bar stays clean
+      if (storeVal && item.logs) {
+        item.logs.forEach(l => { if (l.store && l.store !== storeVal) l.store = storeVal; });
+      }
+      item.notes        = document.getElementById('f-notes').value.trim();
+      item.startedUsing = startedUsing;
+      item.rating       = currentRating || null;
+      item.imageUrl     = pendingImageUrl || item.imageUrl || null;
+      item.storePrices  = tempStorePrices.filter(sp => sp.store || sp.price);
+      item.expiry       = document.getElementById('f-expiry')?.value || null;
+      const tOverride   = parseInt(document.getElementById('f-threshold')?.value);
+      item.thresholdOverride = isNaN(tOverride) ? null : tOverride;
+      const replInterval = parseInt(document.getElementById('f-replace-interval')?.value);
+      item.replacementInterval = isNaN(replInterval) ? null : replInterval;
+      item.replacementUnit     = document.getElementById('f-replace-unit')?.value || 'months';
+
+      // Update the most recent log entry's date and qty
+      const lastDate  = document.getElementById('f-last-date').value;
+      const lastQty   = parseFloat(document.getElementById('f-last-qty').value)||1;
+      const lastPrice = document.getElementById('f-last-price').value.trim();
+      if (lastDate) {
+        if (item.logs && item.logs.length) {
+          item.logs[item.logs.length - 1].date  = lastDate;
+          item.logs[item.logs.length - 1].qty   = lastQty;
+          item.logs[item.logs.length - 1].price = lastPrice;
+          item.logs.sort((a,b) => new Date(a.date) - new Date(b.date));
+        } else {
+          item.logs = [{ id: uid(), date: lastDate, qty: lastQty, price: lastPrice, store: storeVal }];
+        }
+      }
+      touchField(item,
+        'name','category','cadence','qty','months','url','store',
+        'notes','startedUsing','rating','imageUrl','storePrices',
+        'expiry','thresholdOverride','replacementInterval','replacementUnit'
+      );
+    }
+  } else {
+    const lastDate  = document.getElementById('f-last-date').value;
+    const lastQty   = parseFloat(document.getElementById('f-last-qty').value)||1;
+    const lastPrice = document.getElementById('f-last-price').value.trim();
+    items.push({
+      id:                uid(),
+      name,
+      category:          document.getElementById('f-category').value,
+      cadence:           document.getElementById('f-cadence').value,
+      qty:               parseFloat(document.getElementById('f-qty').value)||1,
+      months:            parseFloat(document.getElementById('f-months').value)||1,
+      url:               document.getElementById('f-url').value.trim(),
+      store:             storeVal,
+      notes:             document.getElementById('f-notes').value.trim(),
+      startedUsing,
+      rating:            currentRating || null,
+      imageUrl:          pendingImageUrl || null,
+      storePrices:       tempStorePrices.filter(sp => sp.store || sp.price),
+      expiry:            document.getElementById('f-expiry')?.value || null,
+      thresholdOverride: (() => { const v = parseInt(document.getElementById('f-threshold')?.value); return isNaN(v) ? null : v; })(),
+      logs:              lastDate ? [{ id:uid(), date:lastDate, qty:lastQty, price:lastPrice, store:storeVal }] : [],
+      updatedAt:         new Date().toISOString(),
+    });
+  }
+  await saveData();
+  closeModal('item-modal');
+  if (editingId) clearQuickAddedFlag(editingId);
+  scheduleRender('grid', 'dashboard', 'filters', 'shopping', 'sns');
+  toast('Item saved ✓');
+  _syncQueue.enqueue('Saving item…');
+}
+
+async function saveLog() {
+  if (!canWrite("stockroom")) { showLockBanner("stockroom"); return; }
+  const item = items.find(i => i.id === loggingId);
+  if (!item) return;
+  if (!item.logs) item.logs = [];
+  item.logs.push({
+    id:             uid(),
+    date:           document.getElementById('log-date').value,
+    qty:            parseFloat(document.getElementById('log-qty').value)||1,
+    price:          document.getElementById('log-price').value.trim(),
+    store:          document.getElementById('log-store').value.trim(),
+    pendingDelivery: true,
+  });
+  item.logs.sort((a,b) => new Date(a.date) - new Date(b.date));
+  // Mark as ordered
+  item.ordered   = true;
+  item.orderedAt = new Date().toISOString();
+  touchField(item, 'logs', 'ordered', 'orderedAt');
+  await saveData();
+  closeModal('log-modal');
+  scheduleRender('grid', 'dashboard', 'shopping');
+  setTimeout(syncAll, 400);
+
+  // If triggered from "Delivered" button with no prior log, go straight to delivered modal
+  const logThenDeliver = sessionStorage.getItem('log_then_deliver');
+  if (logThenDeliver && logThenDeliver === loggingId) {
+    sessionStorage.removeItem('log_then_deliver');
+    setTimeout(() => openDeliveredModal(loggingId), 200);
+  } else {
+    toast('Purchase logged — tap Delivered when it arrives ✓');
+  }
+}
+
+// ── Delivered flow ─────────────────────────────────────────
+let deliveringId = null;
+
+function openDeliveredModal(id) {
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+
+  // If no pending purchase log exists, route through log purchase first
+  const hasPendingLog = item.logs?.some(l => l.pendingDelivery);
+  if (!hasPendingLog) {
+    sessionStorage.setItem('log_then_deliver', id);
+    openLogPurchaseModal(id);
+    // Tweak the log modal to signal this is a combined flow
+    setTimeout(() => {
+      const title = document.getElementById('log-modal-title');
+      if (title) title.textContent = '📦 Purchase Details — ' + item.name;
+      const sub = document.querySelector('#log-modal .subtitle');
+      if (sub) sub.textContent = 'Enter the purchase details then we\'ll confirm delivery.';
+      const saveBtn = document.querySelector('#log-modal .btn-primary');
+      if (saveBtn) { saveBtn.textContent = 'Next — Confirm Delivery →'; saveBtn.style.background = 'var(--ok)'; }
+    }, 30);
+    return;
+  }
+
+  deliveringId = id;
+  document.getElementById('delivered-modal-title').textContent = `📦 Delivered — ${item.name}`;
+  document.getElementById('delivered-date').value = today();
+  const pendingLog = [...(item.logs||[])].reverse().find(l => l.pendingDelivery);
+  document.getElementById('delivered-qty').value = pendingLog?.qty || item.qty || 1;
+  document.getElementById('delivered-started-now').checked = false;
+  document.getElementById('delivered-started-row').style.display = 'none';
+  document.getElementById('delivered-started-hint').style.display = 'block';
+  document.getElementById('delivered-started-date').value = today();
+  openModal('delivered-modal');
+}
+
+function toggleDeliveredStarted() {
+  const checked = document.getElementById('delivered-started-now').checked;
+  document.getElementById('delivered-started-row').style.display = checked ? 'block' : 'none';
+  document.getElementById('delivered-started-hint').style.display = checked ? 'none' : 'block';
+}
+
+async function saveDelivered() {
+  if (!canWrite("stockroom")) { showLockBanner("stockroom"); return; }
+  const item = items.find(i => i.id === deliveringId);
+  if (!item) return;
+
+  const deliveryDate  = document.getElementById('delivered-date').value || today();
+  const qty           = parseFloat(document.getElementById('delivered-qty').value) || 1;
+  const startedNow    = document.getElementById('delivered-started-now').checked;
+  const startedDate   = startedNow ? (document.getElementById('delivered-started-date').value || deliveryDate) : null;
+
+  if (!item.logs) item.logs = [];
+
+  // Find and update the most recent pending log, or create a new delivered log
+  const pendingIdx = [...item.logs].map((l,i)=>({l,i})).reverse().find(({l})=>l.pendingDelivery)?.i;
+  if (pendingIdx !== undefined) {
+    item.logs[pendingIdx].pendingDelivery = false;
+    item.logs[pendingIdx].deliveredDate   = deliveryDate;
+    item.logs[pendingIdx].qty             = qty;
+  } else {
+    item.logs.push({ id: uid(), date: deliveryDate, qty, pendingDelivery: false, deliveredDate });
+    item.logs.sort((a,b) => new Date(a.date) - new Date(b.date));
+  }
+
+  // Clear ordered flag
+  item.ordered   = false;
+  item.orderedAt = null;
+
+  // Set startedUsing if user said they're starting now
+  if (startedDate) item.startedUsing = startedDate;
+
+  touchItem(item);
+  await saveData();
+  closeModal('delivered-modal');
+  scheduleRender('grid', 'dashboard', 'shopping');
+  setTimeout(syncAll, 400);
+
+  // Offer reminder setup
+  openDeliveryReminderModal(deliveringId, !startedDate);
+}
+
+// ── Post-delivery reminder modal ───────────────────────────
+let deliveryReminderItemId = null;
+let deliveryNeedsStartDate = false;
+
+function openDeliveryReminderModal(id, needsStartDate) {
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  deliveryReminderItemId = id;
+  deliveryNeedsStartDate = needsStartDate;
+
+  document.getElementById('delivery-reminder-subtitle').textContent =
+    needsStartDate
+      ? `Come back and set a "started using" date to keep calculations accurate.`
+      : `Do you want a reminder when it's time to replace this?`;
+
+  const hasReminder = item.replacementInterval;
+  const body = document.getElementById('delivery-reminder-body');
+  body.innerHTML = `
+    ${needsStartDate ? `
+      <div style="background:rgba(232,168,56,0.1);border:1px solid rgba(232,168,56,0.25);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:13px;color:var(--warn);line-height:1.5">
+        ⏳ When you open the first pack, tap <strong>"Set date"</strong> on the card — it anchors the stock clock and any reminders to the right start point.
+      </div>` : ''}
+    <div style="margin-bottom:14px">
+      <label class="form-label">Replace every</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input class="form-input" id="dr-interval" type="number" min="1" max="365" value="${item.replacementInterval||3}" style="width:80px">
+        <select class="form-input" id="dr-unit" style="flex:1">
+          <option value="days"   ${(item.replacementUnit||'months')==='days'   ?'selected':''}>days</option>
+          <option value="weeks"  ${(item.replacementUnit||'months')==='weeks'  ?'selected':''}>weeks</option>
+          <option value="months" ${(item.replacementUnit||'months')==='months' ?'selected':''}>months</option>
+        </select>
+      </div>
+    </div>
+    ${!hasReminder ? `<p style="font-size:12px;color:var(--muted)">You can also set this later via ✏️ Edit on the item.</p>` : ''}
+  `;
+  openModal('delivery-reminder-modal');
+}
+
+async function saveDeliveryReminder() {
+  const item = items.find(i => i.id === deliveryReminderItemId);
+  if (!item) return;
+  const interval = parseInt(document.getElementById('dr-interval').value) || 3;
+  const unit     = document.getElementById('dr-unit').value || 'months';
+  item.replacementInterval = interval;
+  item.replacementUnit     = unit;
+  touchItem(item);
+  await saveData();
+  closeModal('delivery-reminder-modal');
+  scheduleRender('grid');
+  setTimeout(syncAll, 400);
+  toast(`🔔 Reminder set: every ${interval} ${unit}`);
+}
+
+// ── Started using modal ────────────────────────────────────
+let startedUsingItemId = null;
+
+function openStartedUsingModal(id) {
+  startedUsingItemId = id;
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  document.getElementById('started-using-title').textContent = `📅 ${item.name} — when did you start using it?`;
+  document.getElementById('started-using-date').value = today();
+  openModal('started-using-modal');
+}
+
+async function saveStartedUsing() {
+  if (!canWrite("stockroom")) { showLockBanner("stockroom"); return; }
+  const item = items.find(i => i.id === startedUsingItemId);
+  if (!item) return;
+  const date = document.getElementById('started-using-date').value || today();
+  item.startedUsing = date;
+  touchField(item, 'startedUsing');
+  await saveData();
+  closeModal('started-using-modal');
+  scheduleRender('grid', 'dashboard');
+  setTimeout(syncAll, 400);
+  toast('Start date saved — stock clock updated ✓');
+}
+
+async function deleteItem(id) {
+  const item = items.find(i => i.id === id);
+  if (!item || !confirm('Remove "' + item.name + '" from your stockroom?')) return;
+  items = items.filter(i => i.id !== id);
+  await addTombstone(id);
+  await saveData();
+  closeModal('item-modal');
+  scheduleRender('grid', 'dashboard', 'shopping');
+  toast('Item removed');
+  _syncQueue.enqueue('Deleting item…');
+}
+
+// ═══════════════════════════════════════════
+//  PRICE LINKS
+// ═══════════════════════════════════════════
+function updatePriceLinks() {
+  const raw = document.getElementById('price-search-input').value.trim()
+            || document.getElementById('f-name').value.trim();
+  const container = document.getElementById('price-links');
+  if (!raw) { container.innerHTML = ''; return; }
+  const q = encodeURIComponent(raw);
+  container.innerHTML = getStores(settings.country).map(s =>
+    `<a class="price-link" href="${s.url(q)}" target="_blank" rel="noopener">${s.name}</a>`
+  ).join('');
+}
+
+// ═══════════════════════════════════════════
+//  DATA MANAGEMENT
+// ═══════════════════════════════════════════
+function exportData() {
+  requireReauth('Re-enter your passphrase to export your data.', _doExportData, { passkeyAllowed: true });
+}
+
+function _doExportData() {
+  const blob = new Blob([JSON.stringify({items,settings},null,2)],{type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'stockroom_backup_' + today() + '.json';
+  a.click();
+  // Track export time for reminder system
+  try { localStorage.setItem('stockroom_last_export', String(Date.now())); } catch(e) {}
+  document.getElementById('export-reminder-banner')?.remove();
+}
+
+async function importData(e) {
+  if (!isOwner()) { toast("Settings are read-only"); return; }
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async ev => {
+    try {
+      const d = JSON.parse(ev.target.result);
+      if (d.items) items = d.items;
+      if (d.settings) settings = {...settings, ...d.settings};
+      await saveData();
+      await _saveSettings();
+      scheduleRender(...RENDER_REGIONS);
+      toast('Data imported ✓');
+    } catch(err) { alert('Could not parse file. Make sure it is a valid Stockroom JSON export.'); }
+  };
+  reader.readAsText(file);
+}
+
+async function clearAll() {
+  if (!isOwner()) {
+    // Guest clearing orphaned share data — no reauth needed, just local wipe
+    if (!confirm('Clear all data from the shared household? This removes the local copy only — it does not affect the owner\'s data.')) return;
+    items = [];
+    _shareState   = null;
+    _sharedFileId = null;
+    _shareKey     = null;
+    saveShareState();
+    try { localStorage.removeItem('stockroom_share_keys'); } catch(e) {}
+    applyTabPermissions();
+    scheduleRender(...RENDER_REGIONS);
+    toast('Shared data cleared');
+    if (kvConnected) kvSyncNow().catch(() => {});
+    return;
+  }
+  if (!confirm('This will permanently delete ALL your items, purchase history, and shared data. Are you sure?')) return;
+  requireReauth('Confirm your identity to clear all data.', _doClearAll, { passkeyAllowed: true });
+}
+
+async function _doClearAll() {
+  // Delete all share targets from backend first
+  for (const target of (_shareTargets || [])) {
+    try {
+      await fetchKV(`${WORKER_URL}/share/delete`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code: target.code }),
+      });
+    } catch(e) { console.warn('clearAll: could not delete share', target.code, e.message); }
+  }
+  _shareTargets = [];
+  try { localStorage.removeItem('stockroom_share_keys'); } catch(e) {}
+  // Clear own data locally and push empty state to server
+  items = [];
+  await saveData();
+  await kvPush().catch(e => console.warn('clearAll: push failed', e.message));
+  renderShareTargetsList();
+  scheduleRender(...RENDER_REGIONS);
+  toast('All data cleared');
+}
+
+// ═══════════════════════════════════════════
+//  TOAST
+// ═══════════════════════════════════════════
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// ═══════════════════════════════════════════
+//  CLOSE MODAL ON BACKDROP CLICK
+// ═══════════════════════════════════════════
+document.querySelectorAll('.modal-backdrop').forEach(b => {
+  b.addEventListener('click', e => { if (e.target === b) b.classList.remove('open'); });
+});
+
+// ═══════════════════════════════════════════
+//  BUILD SETTINGS COUNTRY DROPDOWN
+// ═══════════════════════════════════════════
+function buildSettingsCountrySelect() {
+  const sel = document.getElementById('setting-country');
+  sel.innerHTML = COUNTRIES.map(c => `<option value="${c.code}">${c.flag} ${c.name}</option>`).join('');
+}
+
+// ═══════════════════════════════════════════
+//  GOOGLE DRIVE SYNC
+// ═══════════════════════════════════════════
+function connectDrive() {
+  try { sessionStorage.setItem('stockroom_pre_auth_view', 'settings'); } catch(e){}
+  try { sessionStorage.setItem('stockroom_auth_provider', 'drive'); } catch(e){}
+
+  // Use code flow (not implicit) so Worker can get a refresh token for cron
+  const redirectUri = `${WORKER_URL}/auth/google`;
+  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth`
+    + `?client_id=${CLIENT_ID}`
+    + `&redirect_uri=${encodeURIComponent(redirectUri)}`
+    + `&response_type=code`
+    + `&scope=${encodeURIComponent(SCOPES)}`
+    + `&access_type=offline`
+    + `&prompt=consent`;
+  location.href = authUrl;
+}
+
+// ═══════════════════════════════════════════
+//  EMAIL REPORTS (Part C)
+// ═══════════════════════════════════════════
+
+function updateEmailDayVisibility() {
+  const freq = document.getElementById('email-frequency')?.value;
+  const dayField = document.getElementById('email-day-field');
+  if (dayField) dayField.style.display = freq === 'weekly' ? 'block' : 'none';
+}
+
+function renderEmailSettingsUI() {
+  const needsSetup  = document.getElementById('email-setup-needed');
+  const notReg      = document.getElementById('email-not-registered');
+  const regEl       = document.getElementById('email-registered');
+
+  if (!WORKER_URL) {
+    if (needsSetup) needsSetup.style.display = 'block';
+    if (notReg)     notReg.style.display     = 'none';
+    if (regEl)      regEl.style.display      = 'none';
+    return;
+  }
+  if (needsSetup) needsSetup.style.display = 'none';
+
+  if (emailRegistered) {
+    if (notReg) notReg.style.display = 'none';
+    if (regEl)  regEl.style.display  = 'block';
+    const label  = document.getElementById('email-registered-label');
+    const detail = document.getElementById('email-registered-detail');
+    if (label)  label.textContent  = `Sending to ${emailAddress}`;
+    if (detail) detail.textContent = `${capitalize(emailFrequency)}${emailFrequency==='weekly'?' on '+capitalize(emailDayOfWeek):''}`;
+    const freqSel = document.getElementById('email-frequency-update');
+    const daySel  = document.getElementById('email-day-update');
+    if (freqSel) freqSel.value = emailFrequency;
+    if (daySel)  daySel.value  = emailDayOfWeek;
+  } else {
+    if (notReg) notReg.style.display = 'block';
+    if (regEl)  regEl.style.display  = 'none';
+  }
+}
+
+function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
+
+async function connectEmailReports() {
+  if (!WORKER_URL) { toast('Worker URL not configured'); return; }
+  const email = document.getElementById('email-input')?.value.trim();
+  if (!email || !email.includes('@')) { alert('Please enter a valid email address.'); return; }
+
+  const frequency  = document.getElementById('email-frequency')?.value || 'weekly';
+  const dayOfWeek  = document.getElementById('email-day')?.value       || 'monday';
+
+  // Build state param containing registration details
+  const state = btoa(JSON.stringify({ email, frequency, dayOfWeek }));
+
+  // Build OAuth URL pointing to Worker's /auth endpoint as redirect
+  const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth'
+    + `?client_id=${CLIENT_ID}`
+    + `&redirect_uri=${encodeURIComponent(WORKER_URL + '/auth')}`
+    + `&response_type=code`
+    + `&scope=${encodeURIComponent('https://www.googleapis.com/auth/drive.file')}`
+    + `&access_type=offline`
+    + `&prompt=consent`
+    + `&state=${encodeURIComponent(state)}`;
+
+  // Store email locally so we can check status on return
+  try { localStorage.setItem('stockroom_pending_email', email); } catch(e){}
+  window.location.href = authUrl;
+}
+
+async function checkEmailRegistrationOnLoad() {
+  if (!WORKER_URL) return;
+
+  // Check if returning from OAuth
+  const params = new URLSearchParams(window.location.search);
+  const authResult = params.get('email_auth');
+  const returnEmail = params.get('email');
+  if (authResult) {
+    // Clean URL
+    history.replaceState(null, '', location.pathname);
+    if (authResult === 'success' && returnEmail) {
+      emailRegistered = true;
+      emailAddress    = returnEmail;
+      try { localStorage.setItem('stockroom_email', JSON.stringify({ emailRegistered, emailAddress, emailFrequency, emailDayOfWeek })); } catch(e){}
+      toast('Email reports enabled ✓');
+    } else {
+      const reason = params.get('reason') || 'unknown';
+      alert(`Email setup failed: ${reason}. Please try again.`);
+    }
+    renderEmailSettingsUI();
+    return;
+  }
+
+  // Restore from localStorage
+  try {
+    const saved = JSON.parse(localStorage.getItem('stockroom_email') || '{}');
+    if (saved.emailRegistered && saved.emailAddress) {
+      emailRegistered = saved.emailRegistered;
+      emailAddress    = saved.emailAddress;
+      emailFrequency  = saved.emailFrequency || 'weekly';
+      emailDayOfWeek  = saved.emailDayOfWeek || 'monday';
+      // Verify still registered with worker
+      const res = await fetch(`${WORKER_URL}/status?email=${encodeURIComponent(emailAddress)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (!data.registered) {
+          emailRegistered = false;
+          localStorage.removeItem('stockroom_email');
+        } else {
+          emailFrequency = data.frequency || emailFrequency;
+          emailDayOfWeek = data.dayOfWeek || emailDayOfWeek;
+        }
+      }
+    }
+  } catch(e) {}
+
+  renderEmailSettingsUI();
+}
+
+async function updateEmailSettings() {
+  if (!WORKER_URL || !emailRegistered) return;
+  const frequency = document.getElementById('email-frequency-update')?.value || emailFrequency;
+  const dayOfWeek = document.getElementById('email-day-update')?.value       || emailDayOfWeek;
+  emailFrequency  = frequency;
+  emailDayOfWeek  = dayOfWeek;
+  try { localStorage.setItem('stockroom_email', JSON.stringify({ emailRegistered, emailAddress, emailFrequency, emailDayOfWeek })); } catch(e){}
+  try {
+    await fetch(`${WORKER_URL}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: emailAddress, frequency, dayOfWeek }),
+    });
+    renderEmailSettingsUI();
+    toast('Email schedule updated ✓');
+  } catch(e) { toast('Could not update — check your connection'); }
+}
+
+async function disableEmailReports() {
+  if (!confirm(`Stop email reports to ${emailAddress}?`)) return;
+  try {
+    if (WORKER_URL) {
+      await fetch(`${WORKER_URL}/unregister`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: emailAddress }),
+      });
+    }
+  } catch(e) {}
+  emailRegistered = false;
+  emailAddress    = '';
+  try { localStorage.removeItem('stockroom_email'); } catch(e){}
+  renderEmailSettingsUI();
+  toast('Email reports disabled');
+}
+
+async function sendEmailNow() {
+  if (!WORKER_URL || !emailRegistered) return;
+  toast('Sending…');
+  try {
+    const res = await fetch(`${WORKER_URL}/send-now`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: emailAddress }),
+    });
+    const data = await res.json();
+    if (data.ok) toast('Report sent ✓ — check your inbox');
+    else toast('Send failed: ' + (data.error || 'unknown error'));
+  } catch(e) { toast('Could not reach email service'); }
+}
+
+async function handleOAuthRedirect() {
+  const qParams = new URLSearchParams(location.search);
+
+  // ── Google Drive code flow (returns via query string from Worker) ──
+  const driveAuth = qParams.get('drive_auth');
+  if (driveAuth) {
+    history.replaceState(null, '', location.pathname);
+    if (driveAuth === 'success') {
+      // Refresh token is now stored in backend KV — frontend just sets connected flag
+      driveConnected = true;
+      try { localStorage.setItem('stockroom_drive', JSON.stringify({ driveConnected })); } catch(e){}
+      updateSyncUI();
+      const wizardStep = localStorage.getItem('stockroom_wizard_step');
+      if (wizardStep === '2') { localStorage.removeItem('stockroom_wizard_step'); wizardNext(); }
+      // First sync via backend proxy — no access token needed
+      syncNow().then(() => {
+        try {
+          const preAuthView = sessionStorage.getItem('stockroom_pre_auth_view');
+          sessionStorage.removeItem('stockroom_pre_auth_view');
+          if (preAuthView === 'settings') {
+            const tab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Settings'));
+            if (tab) showView('settings', tab);
+          } else {
+            localStorage.setItem('stockroom_seen', '1');
+            document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
+            const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
+            if (stockTab) showView('stock', stockTab);
+          }
+        } catch(e){}
+      });
+    } else {
+      const reason = qParams.get('reason') || 'unknown';
+      // Map raw Google/OAuth errors to friendly messages
+      const friendly = reason.includes('Bad Request') || reason.includes('invalid_grant')
+        ? 'Sign-in expired — please try connecting Google Drive again'
+        : reason === 'no_code'
+        ? 'Sign-in was cancelled'
+        : `Drive connection failed: ${reason}`;
+      toast(friendly);
+    }
+    return;
+  }
+
+  // ── Dropbox PKCE code flow (returns via query string from Worker) ──
+  const dropboxAuth = qParams.get('dropbox_auth');
+  if (dropboxAuth) {
+    history.replaceState(null, '', location.pathname);
+    if (dropboxAuth === 'success') {
+      fetch(`${WORKER_URL}/auth/dropbox-token`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.access_token) {
+            dropboxToken     = data.access_token;
+            dropboxConnected = true;
+            try { sessionStorage.setItem('stockroom_dropbox_token', data.access_token); } catch(e){}
+            try { localStorage.setItem('stockroom_dropbox', JSON.stringify({ dropboxConnected })); } catch(e){}
+            updateSyncUI();
+            const wizardStep = localStorage.getItem('stockroom_wizard_step');
+            if (wizardStep === '2') { localStorage.removeItem('stockroom_wizard_step'); wizardNext(); }
+            syncDropbox().then(() => {
+              try {
+                const preAuthView = sessionStorage.getItem('stockroom_pre_auth_view');
+                sessionStorage.removeItem('stockroom_pre_auth_view');
+                if (preAuthView === 'settings') {
+                  const tab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Settings'));
+                  if (tab) showView('settings', tab);
+                } else {
+                  // Came from wizard — go to Stockroom
+                  localStorage.setItem('stockroom_seen', '1');
+                  document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
+                  const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
+                  if (stockTab) showView('stock', stockTab);
+                }
+              } catch(e){}
+            });
+          }
+        })
+        .catch(e => { console.error('Dropbox token fetch failed:', e); toast('Dropbox connection failed — try again'); });
+    } else {
+      toast('Dropbox sign-in expired or was cancelled — please try again');
+    }
+    return;
+  }
+}
+
+// ── Drive sync via backend proxy ─────────────────────────
+// The frontend never talks to Drive directly. All reads/writes
+// go through WORKER_URL which uses the stored refresh token.
+// No access token, no sessionStorage token, no re-auth needed.
+
+async function drivePull() {
+  const hParam = activeProfile && activeProfile !== 'default' ? `&household=${encodeURIComponent(activeProfile)}` : '';
+  const sParam = _shareState?.code ? `&share=${encodeURIComponent(_shareState.code)}` : '';
+  const res = await fetch(`${WORKER_URL}/sync/pull?1=1${hParam}${sParam}`);
+  if (res.status === 503) throw new Error('NOT_CONNECTED');
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Pull failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+async function drivePush(payload) {
+  const hParam = activeProfile && activeProfile !== 'default' ? `&household=${encodeURIComponent(activeProfile)}` : '';
+  const sParam = _shareState?.code ? `&share=${encodeURIComponent(_shareState.code)}` : '';
+  const res = await fetch(`${WORKER_URL}/sync/push?1=1${hParam}${sParam}`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    payload,
+  });
+  if (res.status === 503) throw new Error('NOT_CONNECTED');
+  if (res.status === 403) throw new Error('READ_ONLY');
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Push failed: ${res.status}`);
+  }
+}
+
+async function syncNow() {
+  if (!kvConnected && !_shareState) return;
+  updateSyncPill('syncing');
+  try {
+    // Pull from backend (owner uses /sync/pull, joined members use proxy)
+    const remote = _shareState ? await proxyReadDrive() : await drivePull();
+
+    if (remote && Array.isArray(remote.items)) {
+      const localLastSynced  = settings.lastSynced ? new Date(settings.lastSynced).getTime() : 0;
+      const remoteLastSynced = remote.lastSynced   ? new Date(remote.lastSynced).getTime()   : 0;
+      const remoteWins       = remoteLastSynced > localLastSynced;
+
+      items = await mergeItems(items, remote.items, remoteWins);
+      await saveData();
+
+      if (remote.settings) {
+        const localTags     = settings.customTags;
+        settings            = { ...remote.settings, ...settings };
+        const remoteTags    = remote.settings.customTags || [];
+        const localDefined  = (localTags||[]).filter(t=>t&&t.trim()).length;
+        const remoteDefined = remoteTags.filter(t=>t&&t.trim()).length;
+        settings.customTags = localDefined >= remoteDefined ? (localTags||[]) : remoteTags;
+        await _saveSettings();
+      }
+      if (remote.groceries) {
+        const remoteG = remote.groceries;
+        if (remoteWins || remoteG.length > groceryItems.length) { groceryItems = remoteG; await saveGrocery(); }
+      }
+      if (remote.departments?.length) {
+        if (remoteWins || remote.departments.length > groceryDepts.length) { groceryDepts = remote.departments; await saveGroceryDepts(); }
+      }
+      if (remote.reminders && Array.isArray(remote.reminders)) {
+        if (remoteWins || remote.reminders.length > reminders.length) { reminders = remote.reminders; await saveReminders(); }
+      }
+      if (remote.deletedIds && Array.isArray(remote.deletedIds)) {
+        const merged = await loadDeletedIds();
+        remote.deletedIds.forEach(id => merged.add(id));
+        await saveDeletedIds(merged);
+      }
+      // Merge household directory
+      if (remote.householdDir && typeof remote.householdDir === 'object') {
+        const localProfiles = await getProfiles();
+        let changed = false;
+        Object.entries(remote.householdDir).forEach(([key, meta]) => {
+          if (!localProfiles[key]) {
+            localProfiles[key] = { name: meta.name, colour: meta.colour, items: [], settings: {}, reminders: [], groceries: [], departments: [] };
+            changed = true;
+          } else {
+            if (meta.name && localProfiles[key].name !== meta.name) { localProfiles[key].name = meta.name; changed = true; }
+            if (meta.colour && localProfiles[key].colour !== meta.colour) { localProfiles[key].colour = meta.colour; changed = true; }
+          }
+        });
+        if (changed) {
+          await saveProfiles(localProfiles);
+          renderSettingsHouseholdList();
+        }
+      }
+      // Restore share targets from Drive if KV was wiped
+      if (remote.shareTargets && Array.isArray(remote.shareTargets) && remote.shareTargets.length) {
+        _shareTargets = remote.shareTargets;
+        renderShareTargetsList();
+        // Re-seed KV so the backend can validate codes again
+        if (WORKER_URL && isOwner()) {
+          remote.shareTargets.forEach(t => {
+            if (t.code) {
+              fetch(`${WORKER_URL}/share/restore`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(t),
+              }).catch(() => {});
+            }
+          });
+        }
+      }
+      scheduleRender(...RENDER_REGIONS);
+    }
+
+    // Push merged data back
+    settings.lastSynced = new Date().toISOString();
+    await _saveSettings();
+    const uploadedIds  = new Set(items.map(i => i.id));
+    const tombstones   = await loadDeletedIds();
+    tombstones.forEach(id => { if (uploadedIds.has(id)) tombstones.delete(id); });
+    await saveDeletedIds(tombstones);
+    // Include household directory and share targets in Drive payload
+    // so both survive KV wipes and are restored on reconnect
+    const allProfiles  = await getProfiles();
+    const householdDir = Object.fromEntries(
+      Object.entries(allProfiles).map(([k, p]) => [k, { name: p.name, colour: p.colour }])
+    );
+    const payload = JSON.stringify({
+      items, settings, lastSynced: settings.lastSynced,
+      groceries: groceryItems, departments: groceryDepts,
+      reminders, deletedIds: [...tombstones],
+      householdDir, activeProfile,
+      shareTargets: _shareTargets, // persists share targets to Drive
+    });
+    if (_shareState) await proxyWriteDrive(payload);
+    else               await drivePush(payload);
+
+    updateSyncPill('synced');
+  } catch(err) {
+    console.error('Drive sync error:', err);
+    if (err.message === 'NOT_CONNECTED') {
+      updateSyncPill('error');
+      const label = document.getElementById('sync-label');
+      if (label) label.textContent = 'Connect Drive';
+      if (!sessionStorage.getItem('connect_drive_prompted')) {
+        sessionStorage.setItem('connect_drive_prompted', '1');
+        toast('Connect Google Drive in Settings to enable sync');
+      }
+    } else if (err.message === 'OWNER_NOT_CONNECTED') {
+      updateSyncPill('error');
+      toast('The household owner needs to reconnect Google Drive');
+    } else if (err.message?.startsWith('ACCESS_DENIED')) {
+      updateSyncPill('error');
+      toast('Access denied — your invite link may have been revoked');
+    } else {
+      updateSyncPill('error');
+      if (!err.message.includes('fetch') && !err.message.includes('NetworkError')) {
+        toast('Sync failed — ' + err.message);
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════
+//  KV AUTH & SYNC (replaces Drive/Dropbox)
+// ═══════════════════════════════════════════
+
+// Fetch with 10s timeout — prevents UI hanging on network issues
+async function fetchKV(url, opts = {}) {
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), 10000);
+  try {
+    return await fetch(url, { ...opts, signal: controller.signal });
+  } catch(e) {
+    if (e.name === 'AbortError') throw new Error('Request timed out — check your connection');
+    throw e;
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
+// ── State ──────────────────────────────────
+let kvConnected      = false;
+let _kvEmail         = '';
+let _kvEmailHash     = '';
+let _kvVerifier      = '';
+let _kvKey           = null;
+let _kvSessionToken  = null;
+
+// Sentinel — thrown by kvPull when ciphertext exists but decryption fails.
+// Distinct from null (no data) so kvSyncNow can surface a recovery prompt
+// rather than silently leaving the user with an empty stockroom.
+class KvDecryptError extends Error {
+  constructor(msg) { super(msg); this.name = 'KvDecryptError'; }
+}
+let _kvAuthMethod    = '';
+// Recovery flow state
+let _recoveryEmail     = '';
+let _recoveryEmailHash = '';
+let _recoveryToken     = '';
+let _recoveryDataKey   = null;
+
+// ── Crypto helpers (client-side) ───────────
+// ── Crypto version config ─────────────────────────────────
+// Must match CRYPTO_V2_SWITCHOVER in main.ts
+const CRYPTO_V2_SWITCHOVER = '2026-05-01';
+
+// v1 key derivation — kept for legacy login and migration decryption only
+async function kvDeriveKey(email, passphrase) {
+  const raw  = new TextEncoder().encode(email.toLowerCase().trim() + ':' + passphrase);
+  const base = await crypto.subtle.importKey('raw', raw, 'PBKDF2', false, ['deriveKey']);
+  const salt = new TextEncoder().encode('stockroom-kv-v1-' + email.toLowerCase().trim());
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 },
+    true, ['encrypt', 'decrypt']
+  );
+}
+
+// ── v2 crypto primitives ───────────────────────────────────
+// 600k PBKDF2 iterations, server-stored random KDF salt, AES-KW wrapping.
+
+function generateKdfSalt() {
+  return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
+}
+
+async function derivePassphraseWrapKeyV2(passphrase, emailHash, kdfSaltB64) {
+  if (!kdfSaltB64) throw new Error('v2 KDF salt missing');
+  const salt = Uint8Array.from(atob(kdfSaltB64), c => c.charCodeAt(0));
+  const raw  = new TextEncoder().encode(passphrase + ':' + emailHash);
+  const base = await crypto.subtle.importKey('raw', raw, 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 600000, hash: 'SHA-256' },
+    base, { name: 'AES-KW', length: 256 }, false, ['wrapKey', 'unwrapKey']
+  );
+}
+
+async function generateDataKeyV2Extractable() {
+  return crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+}
+
+async function wrapDataKeyV2(dataKey, wrapKey) {
+  const wrapped = await crypto.subtle.wrapKey('raw', dataKey, wrapKey, 'AES-KW');
+  return btoa(String.fromCharCode(...new Uint8Array(wrapped)));
+}
+
+async function unwrapDataKeyV2(wrappedB64, wrapKey, extractable = false) {
+  const wrapped = Uint8Array.from(atob(wrappedB64), c => c.charCodeAt(0));
+  return crypto.subtle.unwrapKey(
+    'raw', wrapped, wrapKey, 'AES-KW',
+    { name: 'AES-GCM', length: 256 }, extractable, ['encrypt', 'decrypt']
+  );
+}
+
+async function deriveRecoveryWrapKeyV2(code, emailHash) {
+  const raw  = new TextEncoder().encode(code.replace(/-/g,'').toUpperCase() + ':' + emailHash);
+  const base = await crypto.subtle.importKey('raw', raw, 'PBKDF2', false, ['deriveKey']);
+  const salt = new TextEncoder().encode('stockroom-recovery-v2-' + emailHash);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 600000, hash: 'SHA-256' },
+    base, { name: 'AES-KW', length: 256 }, false, ['wrapKey', 'unwrapKey']
+  );
+}
+
+async function buildRecoveryEnvelopesV2(codes, dataKey, emailHash) {
+  const envelopes = [];
+  for (const code of codes) {
+    const wrapKey  = await deriveRecoveryWrapKeyV2(code, emailHash);
+    const envelope = await wrapDataKeyV2(dataKey, wrapKey);
+    const codeHash = await hashRecoveryCode(code, emailHash);
+    envelopes.push(JSON.stringify({ envelope, codeHash, version: 'v2' }));
+  }
+  return envelopes;
+}
+
+async function kvEncrypt(key, plaintext) {
+  const iv         = crypto.getRandomValues(new Uint8Array(12));
+  const encoded    = new TextEncoder().encode(plaintext);
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded);
+  const combined   = new Uint8Array(iv.length + ciphertext.byteLength);
+  combined.set(iv, 0);
+  combined.set(new Uint8Array(ciphertext), iv.length);
+  return btoa(String.fromCharCode(...combined));
+}
+
+async function kvDecrypt(key, ciphertext) {
+  const combined = Uint8Array.from(atob(ciphertext), c => c.charCodeAt(0));
+  const iv       = combined.slice(0, 12);
+  const data     = combined.slice(12);
+  const plain    = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
+  return new TextDecoder().decode(plain);
+}
+
+async function kvHashEmail(email) {
+  const encoded = new TextEncoder().encode(email.toLowerCase().trim());
+  const hash    = await crypto.subtle.digest('SHA-256', encoded);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('').slice(0, 32);
+}
+
+async function kvMakeVerifier(passphrase, emailHash) {
+  // SHA-256(passphrase + ':' + emailHash) — proves passphrase without revealing it
+  const encoded = new TextEncoder().encode(passphrase + ':' + emailHash);
+  const hash    = await crypto.subtle.digest('SHA-256', encoded);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+// ══════════════════════════════════════════
+//  ECDH ASYMMETRIC SHARE KEY SYSTEM
+// ══════════════════════════════════════════
+// Each account has a P-256 ECDH keypair.
+//   Public key  → stored on server (unauthenticated read), used by others to wrap keys for us.
+//   Private key → stored in IDB locally, never leaves the device unencrypted.
+//
+// Share flow:
+//   Owner creates share → fetches guest's public key → ECDH-derives shared secret →
+//   HKDF → AES-KW wrap key → wraps the AES-GCM share key → stores on server.
+//   Guest joins → fetches wrapped key + owner public key → ECDH-derives same shared secret →
+//   unwraps share key → decrypts shared data. No secret ever in a URL.
+
+const ECDH_DB_NAME    = 'stockroom-kv-ecdh';
+const ECDH_STORE_NAME = 'keys';
+
+async function openEcdhDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(ECDH_DB_NAME, 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore(ECDH_STORE_NAME);
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror   = e => reject(e.target.error);
+  });
+}
+
+async function generateEcdhKeypair() {
+  return crypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true, // extractable so we can export for storage
+    ['deriveKey', 'deriveBits']
+  );
+}
+
+// Store private key as JWK in IDB, keyed by emailHash
+async function storeEcdhPrivateKey(emailHash, privateKey) {
+  const jwk = await crypto.subtle.exportKey('jwk', privateKey);
+  const db  = await openEcdhDb();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction(ECDH_STORE_NAME, 'readwrite');
+    tx.objectStore(ECDH_STORE_NAME).put(JSON.stringify(jwk), emailHash);
+    tx.oncomplete = () => resolve();
+    tx.onerror    = () => reject(tx.error);
+  });
+}
+
+// Load private key from IDB
+async function loadEcdhPrivateKey(emailHash) {
+  try {
+    const db = await openEcdhDb();
+    const jwkStr = await new Promise((resolve, reject) => {
+      const tx  = db.transaction(ECDH_STORE_NAME, 'readonly');
+      const req = tx.objectStore(ECDH_STORE_NAME).get(emailHash);
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror   = () => reject(req.error);
+    });
+    if (!jwkStr) return null;
+    return crypto.subtle.importKey(
+      'jwk', JSON.parse(jwkStr),
+      { name: 'ECDH', namedCurve: 'P-256' },
+      false, ['deriveKey', 'deriveBits']
+    );
+  } catch(e) { console.warn('loadEcdhPrivateKey failed:', e.message); return null; }
+}
+
+// Derive an AES-KW wrapping key from two ECDH keys via HKDF
+async function ecdhDeriveWrapKey(myPrivateKey, theirPublicKeyJwk) {
+  const theirPub = await crypto.subtle.importKey(
+    'jwk', theirPublicKeyJwk,
+    { name: 'ECDH', namedCurve: 'P-256' },
+    false, []
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'ECDH', public: theirPub }, myPrivateKey, 256
+  );
+  // HKDF over the raw ECDH bits → deterministic AES-KW key
+  const hkdfKey = await crypto.subtle.importKey('raw', bits, 'HKDF', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'HKDF', hash: 'SHA-256',
+      salt:  new TextEncoder().encode('stockroom-ecdh-share-v1'),
+      info:  new Uint8Array(0) },
+    hkdfKey,
+    { name: 'AES-KW', length: 256 },
+    false, ['wrapKey', 'unwrapKey']
+  );
+}
+
+// Wrap a share key (AES-GCM CryptoKey) using ECDH-derived AES-KW key
+// Returns base64 string
+async function ecdhWrapShareKey(myPrivateKey, theirPublicKeyJwk, shareKey) {
+  const wrapKey = await ecdhDeriveWrapKey(myPrivateKey, theirPublicKeyJwk);
+  const wrapped = await crypto.subtle.wrapKey('raw', shareKey, wrapKey, 'AES-KW');
+  return btoa(String.fromCharCode(...new Uint8Array(wrapped)));
+}
+
+// Unwrap a share key using ECDH-derived AES-KW key
+// wrappedB64: base64 string returned by ecdhWrapShareKey
+async function ecdhUnwrapShareKey(myPrivateKey, theirPublicKeyJwk, wrappedB64) {
+  const wrapKey = await ecdhDeriveWrapKey(myPrivateKey, theirPublicKeyJwk);
+  const wrapped = Uint8Array.from(atob(wrappedB64), c => c.charCodeAt(0));
+  return crypto.subtle.unwrapKey(
+    'raw', wrapped, wrapKey, 'AES-KW',
+    { name: 'AES-GCM', length: 256 },
+    true, ['encrypt', 'decrypt']
+  );
+}
+
+// Idempotent: generate keypair if not in IDB, then upload public key if not on server.
+// Safe to call on every login — exits early if already done.
+async function ensureEcdhKeypair(emailHash) {
+  if (!emailHash) return;
+  try {
+    let privateKey = await loadEcdhPrivateKey(emailHash);
+    let needsUpload = false;
+
+    if (!privateKey) {
+      // First time on this device — generate
+      const kp = await generateEcdhKeypair();
+      await storeEcdhPrivateKey(emailHash, kp.privateKey);
+      privateKey = kp.privateKey;
+      // Upload public key
+      const pubJwk = await crypto.subtle.exportKey('jwk', kp.publicKey);
+      await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/store`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash, publicKeyJwk: pubJwk }),
+      });
+      console.log('ECDH keypair generated and public key uploaded');
+      return;
+    }
+
+    // Private key exists locally — check server has our public key
+    const check = await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/get`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash }),
+    });
+    if (!check.ok) needsUpload = true;
+
+    if (needsUpload) {
+      // Re-derive public key from stored private key isn't possible with Web Crypto
+      // (private key is non-extractable after import). Regenerate the pair.
+      const kp = await generateEcdhKeypair();
+      await storeEcdhPrivateKey(emailHash, kp.privateKey);
+      const pubJwk = await crypto.subtle.exportKey('jwk', kp.publicKey);
+      await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/store`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash, publicKeyJwk: pubJwk }),
+      });
+      console.log('ECDH public key re-uploaded');
+    }
+  } catch(e) {
+    console.warn('ensureEcdhKeypair failed (non-fatal):', e.message);
+  }
+}
+
+
+// ── Dev diagnostic — run window.stockroomDiag() in browser console ──
+window.stockroomDiag = async function() {
+  const out = [];
+  out.push('=== STOCKROOM DIAGNOSTIC ===');
+  out.push(`kvConnected:  ${kvConnected}`);
+  out.push(`_kvEmail:     ${_kvEmail || '(empty)'}`);
+  out.push(`_kvEmailHash: ${_kvEmailHash || '(empty)'}`);
+  out.push(`_kvVerifier:  ${_kvVerifier ? _kvVerifier.slice(0,8)+'…' : '(empty)'}`);
+  out.push(`_kvKey:       ${_kvKey ? 'SET' : 'NULL'}`);
+  out.push(`_kvSessionToken: ${_kvSessionToken ? 'SET' : 'null'}`);
+  out.push(`device_secret:   ${localStorage.getItem('stockroom_device_secret') ? 'SET' : 'absent'}`);
+  try {
+    const sk = JSON.parse(localStorage.getItem('stockroom_kv_session_key') || 'null');
+    out.push(`session_key cache: ${sk ? `SET (expires ${new Date(sk.expiry).toISOString()}, emailHash match: ${sk.emailHash === _kvEmailHash})` : 'absent'}`);
+  } catch(e) { out.push('session_key cache: parse error'); }
+  out.push(`local items: ${items?.length ?? 'undefined'}`);
+  out.push(`_shareState: ${_shareState ? JSON.stringify({code:_shareState.code,type:_shareState.type,ownerName:_shareState.ownerName}) : 'null'}`);
+  out.push(`_shareKey:   ${_shareKey ? 'SET' : 'null'}`);
+  try {
+    const sk = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+    out.push(`share_keys local: ${Object.keys(sk).length ? Object.keys(sk).join(', ') : 'none'}`);
+  } catch(e) { out.push('share_keys local: parse error'); }
+  // Check what the server has for this account
+  if (_kvEmailHash && _kvVerifier) {
+    try {
+      const r = await fetch(`${WORKER_URL}/key/get`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash: _kvEmailHash, verifier: _kvVerifier }),
+      });
+      const d = await r.json();
+      out.push(`server key/get status: ${r.status}`);
+      out.push(`server key/get body:   ${JSON.stringify(d)}`);
+    } catch(e) { out.push(`server key/get error: ${e.message}`); }
+    // Try a raw pull to see if ciphertext exists
+    try {
+      const r = await fetch(`${WORKER_URL}/data/pull`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash: _kvEmailHash, verifier: _kvVerifier }),
+      });
+      const d = await r.json();
+      out.push(`server data/pull status: ${r.status}`);
+      out.push(`ciphertext present: ${!!d.ciphertext} (${d.ciphertext ? d.ciphertext.length + ' chars' : 'none'})`);
+    } catch(e) { out.push(`server data/pull error: ${e.message}`); }
+  } else {
+    out.push('Cannot check server — no emailHash/verifier in session');
+  }
+  out.push('=== END ===');
+  console.log(out.join('\n'));
+  return out.join('\n');
+};
+
+// ── Email verification flow ────────────────────────────────
+// _emailVerifyCallback is set before showing step-1f.
+// On successful verification it is called to continue the normal flow.
+let _emailVerifyEmail     = '';
+let _emailVerifyEmailHash = '';
+let _emailVerifyCallback  = null; // fn to call after verification succeeds
+
+async function showEmailVerification(email, emailHash, onSuccess) {
+  _emailVerifyEmail     = email;
+  _emailVerifyEmailHash = emailHash;
+  _emailVerifyCallback  = onSuccess;
+
+  // Display email address in the step
+  const display = document.getElementById('verify-email-display');
+  if (display) display.textContent = email;
+
+  // Clear previous state
+  const otpInput = document.getElementById('email-verify-otp');
+  const errEl    = document.getElementById('email-verify-error');
+  const okEl     = document.getElementById('email-verify-ok');
+  if (otpInput) otpInput.value = '';
+  if (errEl)    errEl.style.display = 'none';
+  if (okEl)     okEl.style.display  = 'none';
+
+  // Show the step
+  document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+  document.getElementById('wizard-step-1f')?.classList.add('active');
+  setTimeout(() => otpInput?.focus(), 100);
+
+  // Send OTP
+  await sendEmailVerificationOtp(email, emailHash);
+}
+
+async function sendEmailVerificationOtp(email, emailHash) {
+  const okEl  = document.getElementById('email-verify-ok');
+  const errEl = document.getElementById('email-verify-error');
+  const btn   = document.getElementById('email-verify-resend-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Sending…'; }
+  try {
+    const res = await fetchKV(`${WORKER_URL}/email/verify/send`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash, email }),
+    });
+    const data = await res.json();
+    if (res.status === 429) {
+      if (okEl) { okEl.textContent = 'Code already sent — check your email.'; okEl.style.display = 'block'; }
+      return;
+    }
+    if (!res.ok) throw new Error(data.error || 'Could not send code');
+    if (data.alreadyVerified) {
+      // Email already verified — skip straight to callback
+      if (_emailVerifyCallback) await _emailVerifyCallback();
+      return;
+    }
+    if (okEl) { okEl.textContent = 'Code sent — check your inbox.'; okEl.style.display = 'block'; }
+  } catch(e) {
+    if (errEl) { errEl.textContent = e.message; errEl.style.display = 'block'; }
+  } finally {
+    // Resend cooldown
+    if (btn) {
+      let secs = 60;
+      const tick = setInterval(() => {
+        secs--;
+        btn.textContent = secs > 0 ? `Resend (${secs}s)` : 'Resend code';
+        if (secs <= 0) { clearInterval(tick); btn.disabled = false; }
+      }, 1000);
+    }
+  }
+}
+
+async function submitEmailVerification() {
+  const otp   = document.getElementById('email-verify-otp')?.value.trim();
+  const errEl = document.getElementById('email-verify-error');
+  const okEl  = document.getElementById('email-verify-ok');
+  if (!otp || otp.length !== 6) {
+    if (errEl) { errEl.textContent = 'Enter the 6-digit code from your email'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (errEl) errEl.style.display = 'none';
+  if (okEl)  okEl.style.display  = 'none';
+  const btn = document.querySelector('#wizard-step-1f .btn-primary');
+  if (btn) { btn.textContent = '⏳ Verifying…'; btn.disabled = true; }
+  try {
+    const res = await fetchKV(`${WORKER_URL}/email/verify/check`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash: _emailVerifyEmailHash, otp }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Verification failed');
+    // Verified — continue to next step
+    if (_emailVerifyCallback) await _emailVerifyCallback();
+  } catch(e) {
+    if (errEl) { errEl.textContent = e.message; errEl.style.display = 'block'; }
+  } finally {
+    if (btn) { btn.textContent = 'Verify email →'; btn.disabled = false; }
+  }
+}
+
+async function resendEmailVerification() {
+  const errEl = document.getElementById('email-verify-error');
+  const okEl  = document.getElementById('email-verify-ok');
+  if (errEl) errEl.style.display = 'none';
+  if (okEl)  okEl.style.display  = 'none';
+  await sendEmailVerificationOtp(_emailVerifyEmail, _emailVerifyEmailHash);
+}
+
+function showKvRegister() {
+  document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+  document.getElementById('wizard-step-1')?.classList.add('active');
+}
+
+function showKvLogin() {
+  document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+  document.getElementById('wizard-step-1b')?.classList.add('active');
+}
+
+async function kvRegister() {
+  const email      = document.getElementById('kv-email')?.value.trim();
+  const passphrase = document.getElementById('kv-pass')?.value;
+  const errEl      = document.getElementById('kv-wizard-error');
+  const btn        = document.querySelector('[onclick="kvRegister()"]');
+  if (!email || !passphrase) { if(errEl){errEl.textContent='Enter email and passphrase';errEl.style.display='block';} return; }
+  if (passphrase.length < 8) { if(errEl){errEl.textContent='Passphrase must be at least 8 characters';errEl.style.display='block';} return; }
+  if (btn) { btn.textContent = '⏳ Creating…'; btn.disabled = true; }
+  try {
+    const emailHash = await kvHashEmail(email);
+    const verifier  = await kvMakeVerifier(passphrase, emailHash);
+    // Always use v2 for new registrations — the switchover date only controls migration of
+    // existing v1 accounts, not the crypto version chosen for brand-new ones.
+    const useV2     = true;
+
+    // Register — send plaintext email so server can send migration notifications
+    const res = await fetchKV(`${WORKER_URL}/user/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash, verifier, email }),
+    });
+    const data = await res.json();
+    if (res.status === 409) { showDuplicateAccountScreen(email); return; }
+    if (!res.ok) throw new Error(data.error || 'Registration failed');
+
+    let dataKey, passphraseEnvelope, saltB64, kdfSalt, recoveryCodes, recoveryEnvelopes;
+
+    if (useV2) {
+      kdfSalt            = generateKdfSalt();
+      const wrapKey      = await derivePassphraseWrapKeyV2(passphrase, emailHash, kdfSalt);
+      dataKey            = await generateDataKeyV2Extractable();
+      passphraseEnvelope = await wrapDataKeyV2(dataKey, wrapKey);
+      saltB64            = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+      recoveryCodes      = generateRecoveryCodes(10);
+      recoveryEnvelopes  = await buildRecoveryEnvelopesV2(recoveryCodes, dataKey, emailHash);
+    } else {
+      dataKey            = await generateDataKey();
+      const wrapped      = await derivePassphraseWrapKey(passphrase, emailHash, null);
+      passphraseEnvelope = await wrapDataKey(dataKey, wrapped.wrapKey);
+      saltB64            = wrapped.saltB64;
+      recoveryCodes      = generateRecoveryCodes(10);
+      recoveryEnvelopes  = await buildRecoveryEnvelopes(recoveryCodes, dataKey, emailHash);
+    }
+
+    const storeRes = await fetchKV(`${WORKER_URL}/key/store`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        emailHash, verifier, salt: saltB64, passphraseEnvelope, recoveryEnvelopes,
+        ...(useV2 ? { kdfSalt } : {}),
+      }),
+    });
+    if (!storeRes.ok) throw new Error('Could not store key envelopes — try again');
+
+    _kvKey = dataKey;
+    await kvStoreSession(email, emailHash, verifier, dataKey);
+    if(errEl) errEl.style.display = 'none';
+    // Verify email ownership before continuing to protect screen
+    await showEmailVerification(email, emailHash, () => showProtectDataScreen(recoveryCodes));
+  } catch(err) {
+    if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
+  } finally {
+    if (btn) { btn.textContent = 'Create account with passphrase →'; btn.disabled = false; }
+  }
+}
+
+async function kvLogin() {
+  const email      = document.getElementById('kv-login-email')?.value.trim();
+  const passphrase = document.getElementById('kv-login-pass')?.value;
+  const errEl      = document.getElementById('kv-login-error');
+  const btn        = document.querySelector('[onclick="kvLogin()"]');
+  if (!email || !passphrase) { if(errEl){errEl.textContent='Enter email and passphrase';errEl.style.display='block';} return; }
+  if (btn) { btn.textContent = '⏳ Signing in…'; btn.disabled = true; }
+  try {
+    const emailHash = await kvHashEmail(email);
+    const verifier  = await kvMakeVerifier(passphrase, emailHash);
+    const res = await fetchKV(`${WORKER_URL}/user/verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash, verifier }),
+    });
+    const data = await res.json();
+    if (res.status === 404) throw new Error('Account not found — check your email or create a new account');
+    if (res.status === 401) throw new Error('Incorrect passphrase');
+    if (!res.ok) throw new Error(data.error || 'Sign-in failed');
+
+    // Fetch key envelope — response carries cryptoVersion, kdfSalt, migrationDue
+    let dataKey;
+    const keyRes  = await fetchKV(`${WORKER_URL}/key/get`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash, verifier }),
+    });
+    const keyData = await keyRes.json();
+
+    if (keyRes.ok && !keyData.legacy && keyData.envelope) {
+      if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
+        const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
+        dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+      } else {
+        const { wrapKey } = await derivePassphraseWrapKey(passphrase, emailHash, keyData.salt);
+        dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
+      }
+    } else {
+      dataKey = await kvDeriveKey(email, passphrase);
+    }
+
+    await kvStoreSession(email, emailHash, verifier, dataKey);
+    if(errEl) errEl.style.display = 'none';
+    await offerTrustDevice(email, emailHash, verifier, dataKey);
+
+    // Trigger v1→v2 migration if server says it's due
+    if (keyData.migrationDue) {
+      await runCryptoMigration(email, emailHash, verifier, passphrase, dataKey);
+      return;
+    }
+    await postLoginWizardRoute();
+  } catch(err) {
+    if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
+  } finally {
+    if (btn) { btn.textContent = 'Sign in →'; btn.disabled = false; }
+  }
+}
+
+// ── Passkey (WebAuthn) helpers ────────────────────────────
+
+function passkeySupported() {
+  // Basic check — show buttons if the API exists at all
+  return !!(window.PublicKeyCredential && navigator.credentials);
+}
+
+async function passkeyPlatformSupported() {
+  // More thorough async check
+  if (!window.PublicKeyCredential) return false;
+  try {
+    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch(e) {
+    return !!navigator.credentials?.create;
+  }
+}
+
+function b64urlToUint8(b64) {
+  const b64std = b64.replace(/-/g,'+').replace(/_/g,'/');
+  const pad    = b64std.length % 4 ? '='.repeat(4 - b64std.length % 4) : '';
+  return Uint8Array.from(atob(b64std + pad), c => c.charCodeAt(0));
+}
+
+function uint8ToB64url(bytes) {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+
+async function exportPublicKey(credentialResponse) {
+  // Extract the SPKI public key from attestation object for storage
+  // For simplicity we store the rawId and use it for identification
+  return uint8ToB64url(new Uint8Array(credentialResponse.rawId));
+}
+
+// ── Passkey Registration ──────────────────────────────────
+async function kvRegisterWithPasskey() {
+  const email  = document.getElementById('kv-email')?.value.trim();
+  const errEl  = document.getElementById('kv-wizard-error');
+  const btn    = document.querySelector('[onclick="kvRegisterWithPasskey()"]');
+  if (!email) { if(errEl){errEl.textContent='Enter your email address first';errEl.style.display='block';} return; }
+  if (!passkeySupported()) { if(errEl){errEl.textContent='Passkeys not supported on this device — use passphrase below';errEl.style.display='block';} return; }
+  if (btn) { btn.textContent = '⏳ Setting up…'; btn.disabled = true; }
+  try {
+    const emailHash = await kvHashEmail(email);
+    // Get challenge from server
+    const beginRes = await fetchKV(`${WORKER_URL}/passkey/register/begin`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash, email }),
+    });
+    const beginData = await beginRes.json();
+    if (!beginRes.ok) throw new Error(beginData.error || 'Could not start registration');
+
+    // Create credential on device (triggers Face ID / fingerprint)
+    const credential = await navigator.credentials.create({
+      publicKey: {
+        challenge:              b64urlToUint8(beginData.challenge),
+        rp:                     beginData.rp,
+        user: {
+          id:          new TextEncoder().encode(beginData.user.id),
+          name:        beginData.user.name,
+          displayName: beginData.user.displayName,
+        },
+        pubKeyCredParams:       beginData.pubKeyCredParams,
+        timeout:                beginData.timeout,
+        attestation:            beginData.attestation,
+        authenticatorSelection: beginData.authenticatorSelection,
+      },
+    });
+    if (!credential) throw new Error('Passkey creation cancelled');
+
+    const credId    = uint8ToB64url(new Uint8Array(credential.rawId));
+    const clientDataJSON    = uint8ToB64url(new Uint8Array(credential.response.clientDataJSON));
+    const attestationObject = uint8ToB64url(new Uint8Array(credential.response.attestationObject));
+    // Extract public key from attestation for storage (SPKI format)
+    let publicKey = credId; // fallback - will be replaced by SPKI key
+    try {
+      const pkResult = credential.response.getPublicKey?.();
+      const pk = pkResult instanceof Promise ? await pkResult : pkResult;
+      if (pk) {
+        publicKey = uint8ToB64url(new Uint8Array(pk));
+        console.log('Public key extracted, length:', pk.byteLength, 'bytes');
+      } else {
+        console.warn('getPublicKey() returned null — signature verification will be skipped');
+      }
+    } catch(e) { console.warn('getPublicKey failed:', e.message); }
+
+    // Register with server
+    const finishRes = await fetchKV(`${WORKER_URL}/passkey/register/finish`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        emailHash, email, credentialId: credId,
+        publicKey, clientDataJSON, attestationObject,
+        deviceName: getDeviceName(),
+      }),
+    });
+    const finishData = await finishRes.json();
+    if (!finishRes.ok) throw new Error(finishData.error || 'Registration failed');
+
+    // Store credential ID locally for future logins
+    const storedCreds = JSON.parse(localStorage.getItem('stockroom_passkey_creds') || '{}');
+    storedCreds[emailHash] = credId;
+    localStorage.setItem('stockroom_passkey_creds', JSON.stringify(storedCreds));
+
+    // Set up session
+    await kvStorePasskeySession(email, emailHash, finishData.sessionToken);
+
+    if(errEl) errEl.style.display = 'none';
+    await postLoginWizardRoute();
+  } catch(err) {
+    if (err.name === 'NotAllowedError') {
+      if(errEl){errEl.textContent='Passkey setup was cancelled — try again or use passphrase below';errEl.style.display='block';}
+    } else {
+      if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
+    }
+  } finally {
+    if (btn) { btn.textContent = '🔑 Create account with Face ID / Fingerprint'; btn.disabled = false; }
+  }
+}
+
+// ── Passkey Login ─────────────────────────────────────────
+async function kvLoginWithPasskey() {
+  const email  = document.getElementById('kv-login-email')?.value.trim();
+  const errEl  = document.getElementById('kv-login-error');
+  const btn    = document.querySelector('[onclick="kvLoginWithPasskey()"]');
+  if (!email) { if(errEl){errEl.textContent='Enter your email address first';errEl.style.display='block';} return; }
+  if (!passkeySupported()) { if(errEl){errEl.textContent='Passkeys not supported — use passphrase below';errEl.style.display='block';} return; }
+  if (btn) { btn.textContent = '⏳ Checking…'; btn.disabled = true; }
+  try {
+    const emailHash = await kvHashEmail(email);
+
+    // Get challenge
+    const beginRes = await fetchKV(`${WORKER_URL}/passkey/auth/begin`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash }),
+    });
+    const beginData = await beginRes.json();
+    if (beginRes.status === 404) throw new Error('No passkeys found for this account — use passphrase below or register a passkey first');
+    if (!beginRes.ok) throw new Error(beginData.error || 'Could not start sign-in');
+
+    // Get assertion from device (triggers Face ID / fingerprint)
+    const assertion = await navigator.credentials.get({
+      publicKey: {
+        challenge:        b64urlToUint8(beginData.challenge),
+        rpId:             beginData.rpId,
+        allowCredentials: beginData.allowCredentials.map(c => ({
+          type: 'public-key',
+          id:   b64urlToUint8(c.id),
+        })),
+        userVerification: beginData.userVerification,
+        timeout:          beginData.timeout,
+      },
+    });
+    if (!assertion) throw new Error('Sign-in cancelled');
+
+    const credId          = uint8ToB64url(new Uint8Array(assertion.rawId));
+    const clientDataJSON  = uint8ToB64url(new Uint8Array(assertion.response.clientDataJSON));
+    const authenticatorData = uint8ToB64url(new Uint8Array(assertion.response.authenticatorData));
+    const signature       = uint8ToB64url(new Uint8Array(assertion.response.signature));
+
+    // Finish auth on server
+    const finishRes = await fetchKV(`${WORKER_URL}/passkey/auth/finish`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash, credentialId: credId, clientDataJSON, authenticatorData, signature }),
+    });
+    const finishData = await finishRes.json();
+    if (!finishRes.ok) throw new Error(finishData.error || 'Sign-in failed');
+
+    await kvStorePasskeySession(email, emailHash, finishData.sessionToken);
+    if(errEl) errEl.style.display = 'none';
+    await postLoginWizardRoute();
+  } catch(err) {
+    if (err.name === 'NotAllowedError') {
+      if(errEl){errEl.textContent='Sign-in was cancelled — try again';errEl.style.display='block';}
+    } else {
+      if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
+    }
+  } finally {
+    if (btn) { btn.textContent = '🔑 Sign in with Face ID / Fingerprint'; btn.disabled = false; }
+  }
+}
+
+// ══════════════════════════════════════════
+//  RE-AUTHENTICATION GATE
+// ══════════════════════════════════════════
+// Prompts for passphrase (or passkey) before sensitive actions.
+// Usage: requireReauth('reason text', callback, { passkeyAllowed: true/false })
+
+let _reauthCallback = null;
+let _reauthPasskeyAllowed = true;
+
+function requireReauth(reason, callback, opts = {}) {
+  if (!kvConnected) { toast('Sign in first'); return; }
+  _reauthCallback = callback;
+  _reauthPasskeyAllowed = opts.passkeyAllowed !== false;
+  document.getElementById('reauth-reason').textContent = reason;
+  document.getElementById('reauth-pass').value = '';
+  document.getElementById('reauth-error').style.display = 'none';
+  // Show/hide passkey option
+  const pkOpt = document.getElementById('reauth-passkey-option');
+  if (pkOpt) pkOpt.style.display = (_reauthPasskeyAllowed && passkeySupported()) ? 'block' : 'none';
+  document.getElementById('reauth-modal').style.display = 'flex';
+  setTimeout(() => document.getElementById('reauth-pass')?.focus(), 100);
+}
+
+function closeReauth() {
+  document.getElementById('reauth-modal').style.display = 'none';
+  _reauthCallback = null;
+}
+
+async function reauthWithPassphrase() {
+  const pass  = document.getElementById('reauth-pass')?.value;
+  const errEl = document.getElementById('reauth-error');
+  if (!pass) { errEl.textContent = 'Enter your passphrase'; errEl.style.display = 'block'; return; }
+  try {
+    const verifier = await kvMakeVerifier(pass, _kvEmailHash);
+    const res = await fetchKV(`${WORKER_URL}/user/verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash: _kvEmailHash, verifier }),
+    });
+    if (res.status === 401) { errEl.textContent = 'Incorrect passphrase'; errEl.style.display = 'block'; return; }
+    if (!res.ok) throw new Error('Verification failed');
+    errEl.style.display = 'none';
+    document.getElementById('reauth-modal').style.display = 'none';
+    if (_reauthCallback) { _reauthCallback(); _reauthCallback = null; }
+  } catch(e) {
+    errEl.textContent = e.message; errEl.style.display = 'block';
+  }
+}
+
+async function reauthWithPasskey() {
+  const errEl = document.getElementById('reauth-error');
+  if (!passkeySupported()) { errEl.textContent = 'Passkeys not supported'; errEl.style.display = 'block'; return; }
+  try {
+    const beginRes = await fetchKV(`${WORKER_URL}/passkey/auth/begin`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash: _kvEmailHash }),
+    });
+    const beginData = await beginRes.json();
+    if (!beginRes.ok) throw new Error(beginData.error || 'Could not start verification');
+    const assertion = await navigator.credentials.get({
+      publicKey: {
+        challenge:        b64urlToUint8(beginData.challenge),
+        rpId:             beginData.rpId,
+        allowCredentials: beginData.allowCredentials.map(c => ({
+          type: 'public-key', id: b64urlToUint8(c.id),
+        })),
+        userVerification: beginData.userVerification,
+        timeout:          beginData.timeout,
+      },
+    });
+    if (!assertion) throw new Error('Verification cancelled');
+    const credId          = uint8ToB64url(new Uint8Array(assertion.rawId));
+    const clientDataJSON  = uint8ToB64url(new Uint8Array(assertion.response.clientDataJSON));
+    const authenticatorData = uint8ToB64url(new Uint8Array(assertion.response.authenticatorData));
+    const signature       = uint8ToB64url(new Uint8Array(assertion.response.signature));
+    const finishRes = await fetchKV(`${WORKER_URL}/passkey/auth/finish`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash: _kvEmailHash, credentialId: credId, clientDataJSON, authenticatorData, signature }),
+    });
+    if (!finishRes.ok) { const d = await finishRes.json().catch(()=>({})); throw new Error(d.error || 'Verification failed'); }
+    errEl.style.display = 'none';
+    document.getElementById('reauth-modal').style.display = 'none';
+    if (_reauthCallback) { _reauthCallback(); _reauthCallback = null; }
+  } catch(e) {
+    if (e.name === 'NotAllowedError') { errEl.textContent = 'Verification cancelled'; }
+    else { errEl.textContent = e.message; }
+    errEl.style.display = 'block';
+  }
+}
+
+// ══════════════════════════════════════════
+//  PROTECTING YOUR DATA SCREEN
+// ══════════════════════════════════════════
+
+// Shared post-login wizard routing — called by all sign-in paths
+async function postLoginWizardRoute() {
+  const protectSeen = localStorage.getItem('stockroom_protect_seen');
+  const countrySet  = localStorage.getItem('stockroom_country_set');
+  if (!protectSeen) {
+    // Show security checklist first
+    showProtectDataScreen([]);
+  } else if (countrySet) {
+    // Everything done — go to stockroom
+    document.body.classList.remove('wizard-active');
+    document.getElementById('wizard').style.display = 'none';
+    localStorage.setItem('stockroom_seen', '1');
+    await kvSyncNow(true);
+    scheduleRender(...RENDER_REGIONS);
+    const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
+    if (stockTab) showView('stock', stockTab);
+  } else {
+    // Need country selection
+    document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('wizard-step-2').classList.add('active');
+    // Ensure country grid is populated
+    if (!document.getElementById('country-grid').children.length) buildCountryGrid();
+  }
+}
+
+let _protectRecoveryCodes = []; // held in memory during setup only
+
+function showProtectDataScreen(recoveryCodes, isMigration = false) {
+  _protectRecoveryCodes = recoveryCodes || [];
+  const hasCodes = _protectRecoveryCodes.length > 0;
+  const step1d = document.getElementById('wizard-step-1d');
+  document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+  if (step1d) {
+    step1d.classList.add('active');
+    // Update heading and subtext for migration context
+    const heading = step1d.querySelector('h1');
+    const subtext = step1d.querySelector('p');
+    if (isMigration) {
+      if (heading) heading.textContent = '🔐 Encryption upgraded';
+      if (subtext)  subtext.textContent = 'Your account now uses stronger encryption. Save your new recovery codes — your old ones no longer work.';
+    } else {
+      if (heading) heading.textContent = 'Protecting your data';
+      if (subtext)  subtext.textContent = 'Complete these steps to keep your account safe.';
+    }
+  }
+  document.body.classList.add('wizard-active'); document.getElementById('wizard').style.display = 'flex';
+  // Reset state
+  document.getElementById('protect-passkey-done').style.display    = 'none';
+  document.getElementById('protect-passkey-buttons').style.display  = 'flex';
+  document.getElementById('protect-codes-grid').style.display       = 'none';
+  document.getElementById('protect-codes-confirm').style.display    = 'none';
+  document.getElementById('protect-codes-checkbox').checked         = false;
+  if (hasCodes) {
+    document.getElementById('protect-codes-hidden').style.display     = '';
+    document.getElementById('protect-continue-btn').disabled          = true;
+    document.getElementById('protect-continue-btn').style.opacity     = '0.5';
+  } else {
+    document.getElementById('protect-codes-hidden').innerHTML = '<p style="font-size:12px;color:var(--ok);line-height:1.5">✓ Recovery codes already set up. Generate new ones in Settings → Account if needed.</p>';
+    document.getElementById('protect-continue-btn').disabled  = false;
+    document.getElementById('protect-continue-btn').style.opacity = '1';
+  }
+  // Hide passkey option if not supported
+  passkeyPlatformSupported().then(supported => {
+    if (!supported) document.getElementById('protect-passkey-section').style.display = 'none';
+  });
+}
+
+function revealRecoveryCodes() {
+  const grid = document.getElementById('protect-codes-list');
+  if (!grid || !_protectRecoveryCodes.length) return;
+  grid.innerHTML = _protectRecoveryCodes.map((c, i) =>
+    `<div style="padding:3px 0"><span style="color:var(--muted)">${String(i+1).padStart(2,'0')}.</span> <strong>${c}</strong></div>`
+  ).join('');
+  document.getElementById('protect-codes-grid').style.display   = '';
+  document.getElementById('protect-codes-hidden').style.display = 'none';
+  document.getElementById('protect-codes-confirm').style.display = 'flex';
+}
+
+function copyRecoveryCodes() {
+  const text = _protectRecoveryCodes.map((c, i) => `${i+1}. ${c}`).join('\n');
+  navigator.clipboard?.writeText(text).then(() => toast('Recovery codes copied ✓')).catch(() => {});
+}
+
+async function protectAddPasskey() {
+  await addPasskeyToAccount();
+  // Check if passkey was added (session token updated)
+  if (_kvAuthMethod === 'passkey' || localStorage.getItem('stockroom_passkey_creds')) {
+    document.getElementById('protect-passkey-done').style.display   = '';
+    document.getElementById('protect-passkey-buttons').style.display = 'none';
+  }
+}
+
+function protectSkipPasskey() {
+  const section = document.getElementById('protect-passkey-section');
+  if (section) {
+    section.style.opacity = '0.4';
+    section.style.pointerEvents = 'none';
+    document.getElementById('protect-passkey-buttons').style.display = 'none';
+    const skip = document.createElement('div');
+    skip.style.cssText = 'font-size:12px;color:var(--muted)';
+    skip.textContent   = 'Skipped — you can add a passkey later in Settings';
+    section.appendChild(skip);
+  }
+}
+
+function updateProtectContinueBtn() {
+  const checked = document.getElementById('protect-codes-checkbox')?.checked;
+  const btn     = document.getElementById('protect-continue-btn');
+  if (btn) { btn.disabled = !checked; btn.style.opacity = checked ? '1' : '0.5'; }
+}
+
+function protectContinue() {
+  _protectRecoveryCodes = [];
+  localStorage.setItem('stockroom_protect_seen', '1');
+  document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+  if (localStorage.getItem('stockroom_country_set')) {
+    document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
+    localStorage.setItem('stockroom_seen', '1');
+    kvSyncNow();
+    scheduleRender(...RENDER_REGIONS);
+  } else {
+    document.getElementById('wizard-step-2')?.classList.add('active');
+  }
+}
+
+// Open Security Checklist from Settings
+async function openSecurityChecklist() {
+  if (!kvConnected) { toast('Sign in first'); return; }
+  showProtectDataScreen([]);
+}
+
+// ══════════════════════════════════════════
+//  RECOVERY CODE SIGN-IN
+// ══════════════════════════════════════════
+
+// ── Recovery Step A: Enter email ─────────────────────────
+async function recoveryStepEmail() {
+  const email = document.getElementById('recovery-email')?.value.trim();
+  const errEl = document.getElementById('recovery-email-error');
+  if (!email) { if(errEl){errEl.textContent='Enter your email address';errEl.style.display='block';} return; }
+  _recoveryEmail = email;
+  if(errEl) errEl.style.display='none';
+  document.getElementById('recovery-step-email').style.display = 'none';
+  document.getElementById('recovery-step-code').style.display  = '';
+  setTimeout(() => document.getElementById('recovery-code-input')?.focus(), 100);
+}
+
+// ── Recovery Step B: Enter recovery code → validate → send email OTP ──
+async function recoveryStepCode() {
+  const code  = document.getElementById('recovery-code-input')?.value.trim();
+  const errEl = document.getElementById('recovery-code-error');
+  const btn   = document.querySelector('[onclick="recoveryStepCode()"]');
+  if (!code || code.replace(/-/g,'').length < 16) {
+    if(errEl){errEl.textContent='Enter a valid recovery code (XXXX-XXXX-XXXX-XXXX)';errEl.style.display='block';} return;
+  }
+  if (btn) { btn.textContent = '⏳ Verifying…'; btn.disabled = true; }
+  try {
+    const emailHash = await kvHashEmail(_recoveryEmail);
+    const codeHash  = await hashRecoveryCode(code, emailHash);
+    const res = await fetchKV(`${WORKER_URL}/key/recover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash, codeHash }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Invalid recovery code');
+    const wrapKey = await deriveRecoveryWrapKey(code, emailHash);
+    const dataKey = await unwrapDataKey(data.envelope, wrapKey);
+    _recoveryEmailHash = emailHash;
+    _recoveryToken     = data.recoveryToken;
+    _recoveryDataKey   = dataKey;
+    // Send email OTP as second factor
+    const otpRes = await fetchKV(`${WORKER_URL}/recovery/request`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: _recoveryEmail }),
+    });
+    if (!otpRes.ok) {
+      const otpData = await otpRes.json().catch(()=>({}));
+      throw new Error(otpData.error || 'Could not send email verification');
+    }
+    if(errEl) errEl.style.display = 'none';
+    document.getElementById('recovery-step-code').style.display = 'none';
+    document.getElementById('recovery-step-otp').style.display  = '';
+    setTimeout(() => document.getElementById('recovery-otp-input')?.focus(), 100);
+  } catch(err) {
+    if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
+  } finally {
+    if (btn) { btn.textContent = 'Verify code →'; btn.disabled = false; }
+  }
+}
+
+// ── Recovery Step C: Verify email OTP ───────────────────
+async function recoveryStepOtp() {
+  const otp   = document.getElementById('recovery-otp-input')?.value.trim();
+  const errEl = document.getElementById('recovery-otp-error');
+  const btn   = document.querySelector('[onclick="recoveryStepOtp()"]');
+  if (!otp || otp.length !== 6) { if(errEl){errEl.textContent='Enter the 6-digit code from your email';errEl.style.display='block';} return; }
+  if (btn) { btn.textContent = '⏳ Verifying…'; btn.disabled = true; }
+  try {
+    const res = await fetchKV(`${WORKER_URL}/recovery/verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: _recoveryEmail, otp }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Invalid code');
+    if(errEl) errEl.style.display = 'none';
+    document.getElementById('recovery-step-otp').style.display   = 'none';
+    document.getElementById('recovery-step-reset').style.display = '';
+    setTimeout(() => document.getElementById('recovery-new-pass')?.focus(), 100);
+  } catch(err) {
+    if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
+  } finally {
+    if (btn) { btn.textContent = 'Verify email code →'; btn.disabled = false; }
+  }
+}
+
+async function recoveryResendOtp() {
+  try {
+    await fetchKV(`${WORKER_URL}/recovery/request`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: _recoveryEmail }),
+    });
+    toast('Verification code resent');
+  } catch(e) { toast('Could not resend — try again'); }
+}
+
+function recoveryBack(step) {
+  document.getElementById('recovery-step-code').style.display  = 'none';
+  document.getElementById('recovery-step-otp').style.display   = 'none';
+  document.getElementById('recovery-step-reset').style.display = 'none';
+  if (step === 'email') document.getElementById('recovery-step-email').style.display = '';
+  else if (step === 'code') document.getElementById('recovery-step-code').style.display = '';
+}
+
+// ── Recovery Step D: Set new passphrase ─────────────────
+async function completeRecovery() {
+  const newPass     = document.getElementById('recovery-new-pass')?.value;
+  const confirmPass = document.getElementById('recovery-confirm-pass')?.value;
+  const errEl       = document.getElementById('recovery-reset-error');
+  const btn         = document.querySelector('[onclick="completeRecovery()"]');
+  if (!newPass || newPass.length < 8) { if(errEl){errEl.textContent='Passphrase must be at least 8 characters';errEl.style.display='block';} return; }
+  if (newPass !== confirmPass) { if(errEl){errEl.textContent='Passphrases do not match';errEl.style.display='block';} return; }
+  if (!_recoveryToken || !_recoveryEmailHash || !_recoveryDataKey) {
+    if(errEl){errEl.textContent='Recovery session expired — start again';errEl.style.display='block';} return;
+  }
+  if (btn) { btn.textContent = '⏳ Resetting…'; btn.disabled = true; }
+  try {
+    const { wrapKey, saltB64 } = await derivePassphraseWrapKey(newPass, _recoveryEmailHash, null);
+    const newVerifier          = await kvMakeVerifier(newPass, _recoveryEmailHash);
+    const newEnvelope          = await wrapDataKey(_recoveryDataKey, wrapKey);
+    const res = await fetchKV(`${WORKER_URL}/recovery/reset`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash: _recoveryEmailHash, recoveryToken: _recoveryToken, newVerifier, newSalt: saltB64, newEnvelope }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Reset failed');
+    await kvStoreSession(_recoveryEmail, _recoveryEmailHash, newVerifier, _recoveryDataKey);
+    const newCodes     = generateRecoveryCodes(10);
+    const newEnvelopes = await buildRecoveryEnvelopes(newCodes, _recoveryDataKey, _recoveryEmailHash);
+    await fetchKV(`${WORKER_URL}/key/update-recovery`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash: _recoveryEmailHash, verifier: newVerifier, recoveryEnvelopes: newEnvelopes }),
+    });
+    _recoveryEmail = _recoveryEmailHash = _recoveryToken = '';
+    _recoveryDataKey = null;
+    if(errEl) errEl.style.display = 'none';
+    localStorage.setItem('stockroom_seen', '1');
+    toast('Access restored ✓ — please save your new recovery codes');
+    showProtectDataScreen(newCodes);
+  } catch(err) {
+    if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
+  } finally {
+    if (btn) { btn.textContent = 'Reset passphrase & Sign in →'; btn.disabled = false; }
+  }
+}
+
+function showDuplicateAccountScreen(email) {
+  document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+  document.getElementById('wizard-step-1e')?.classList.add('active');
+  const display = document.getElementById('duplicate-email-display');
+  if (display) display.textContent = email || '';
+  // Pre-fill login and recovery email fields so all routes start ready
+  const loginEl  = document.getElementById('kv-login-email');
+  const recovEl  = document.getElementById('recovery-email');
+  if (loginEl)  loginEl.value  = email || '';
+  if (recovEl)  recovEl.value  = email || '';
+}
+
+function duplicateGoToLogin() {
+  // Email already pre-filled by showDuplicateAccountScreen
+  document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+  document.getElementById('wizard-step-1b')?.classList.add('active');
+  // Clear any stale login error
+  const errEl = document.getElementById('kv-login-error');
+  if (errEl) errEl.style.display = 'none';
+}
+
+function duplicateGoToRecovery() {
+  // Email already pre-filled; show step-1c at the email sub-step
+  document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+  document.getElementById('wizard-step-1c')?.classList.add('active');
+  document.getElementById('recovery-step-email').style.display = '';
+  document.getElementById('recovery-step-code').style.display  = 'none';
+  document.getElementById('recovery-step-otp').style.display   = 'none';
+  document.getElementById('recovery-step-reset').style.display = 'none';
+  const errEl = document.getElementById('recovery-email-error');
+  if (errEl) errEl.style.display = 'none';
+  setTimeout(() => document.getElementById('recovery-code-input')?.focus(), 100);
+}
+
+function duplicateGoToImport() {
+  // Dismiss wizard, land on settings, trigger file picker
+  localStorage.setItem('stockroom_seen', '1');
+  document.body.classList.remove('wizard-active');
+  document.getElementById('wizard').style.display = 'none';
+  const settingsTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Settings'));
+  if (settingsTab) showView('settings', settingsTab);
+  setTimeout(() => document.getElementById('import-file')?.click(), 300);
+}
+
+function duplicateGoToNewAccount() {
+  document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+  document.getElementById('wizard-step-1')?.classList.add('active');
+  // Clear the email that caused the conflict and focus it with a note
+  const emailEl = document.getElementById('kv-email');
+  if (emailEl) { emailEl.value = ''; emailEl.focus(); }
+  const errEl = document.getElementById('kv-wizard-error');
+  if (errEl) {
+    errEl.textContent = 'That email is already registered — enter a different one to create a new account.';
+    errEl.style.display = 'block';
+  }
+}
+
+function showDecryptErrorBanner() {
+  // Remove any existing banner first
+  document.getElementById('kv-decrypt-error-banner')?.remove();
+
+  const banner = document.createElement('div');
+  banner.id = 'kv-decrypt-error-banner';
+  banner.style.cssText = [
+    'position:fixed;top:0;left:0;right:0;z-index:9000',
+    'background:var(--danger,#e05c5c);color:#fff',
+    'padding:14px 16px;font-size:13px;line-height:1.5',
+    'display:flex;align-items:center;justify-content:space-between;gap:12px',
+    'box-shadow:0 2px 12px rgba(0,0,0,0.4)',
+  ].join(';');
+
+  banner.innerHTML = `
+    <div>
+      <strong>⚠️ Your data could not be decrypted.</strong><br>
+      <span style="opacity:.9;font-size:12px">Your items are safe on the server — re-entering your passphrase will restore them.</span>
+    </div>
+    <button onclick="dismissDecryptErrorAndReauth()" style="
+      background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);
+      color:#fff;border-radius:8px;padding:7px 14px;font-size:13px;
+      cursor:pointer;white-space:nowrap;flex-shrink:0
+    ">Re-enter passphrase</button>
+  `;
+  document.body.prepend(banner);
+}
+
+async function dismissDecryptErrorAndReauth() {
+  document.getElementById('kv-decrypt-error-banner')?.remove();
+  // Wipe ALL cached key material — including device trust — so kvEnsureKey
+  // cannot restore a bad key and is forced to show the passphrase prompt.
+  _kvKey = null;
+  try { localStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
+  try { localStorage.removeItem('stockroom_kv_key_fallback'); } catch(e) {}
+  try { localStorage.removeItem('stockroom_device_secret'); } catch(e) {}
+  try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
+  try { await removeWrappedKey(getOrCreateDeviceId()); } catch(e) {}
+  // Show passphrase prompt directly — don't go through kvEnsureKey's
+  // device-trust branches which might restore another cached bad key.
+  const result = await showPassphrasePrompt();
+  if (!result) return;
+  const { passphrase, trust } = result;
+  try {
+    const verifier = await kvMakeVerifier(passphrase, _kvEmailHash);
+    let dataKey;
+    try {
+      const keyRes  = await fetchKV(`${WORKER_URL}/key/get`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash: _kvEmailHash, verifier }),
+      });
+      const keyData = await keyRes.json();
+      if (keyRes.status === 401) { toast('Incorrect passphrase — try again'); showDecryptErrorBanner(); return; }
+      if (keyRes.ok && !keyData.legacy && keyData.envelope) {
+        const { wrapKey } = await derivePassphraseWrapKey(passphrase, _kvEmailHash, keyData.salt);
+        dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
+      }
+    } catch(e) {}
+    if (!dataKey) dataKey = await kvDeriveKey(_kvEmail, passphrase);
+    _kvKey = dataKey;
+    // Re-cache as fresh 4-hour session
+    try {
+      const exported = await crypto.subtle.exportKey('raw', _kvKey);
+      const keyB64   = btoa(String.fromCharCode(...new Uint8Array(exported)));
+      localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
+        keyData: keyB64, emailHash: _kvEmailHash,
+        expiry: Date.now() + 4 * 60 * 60 * 1000,
+      }));
+    } catch(e) {}
+    if (trust) await trustThisDeviceWith(_kvEmail, _kvEmailHash, _kvVerifier, _kvKey);
+    updateSyncPill('syncing');
+    await kvSyncNow();
+  } catch(e) {
+    toast('Could not unlock — ' + e.message);
+    showDecryptErrorBanner();
+  }
+}
+
+// ── Crypto v1 → v2 migration ──────────────────────────────
+// Triggered on login when server reports migrationDue = true.
+// The user is already signed in with their v1 key in memory.
+// We re-encrypt the server ciphertext with a fresh v2 key and push.
+async function runCryptoMigration(email, emailHash, verifier, passphrase, v1DataKey) {
+  try {
+    // Show a non-dismissible progress overlay
+    const overlay = document.createElement('div');
+    overlay.id = 'crypto-migration-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:10000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:#fff;font-family:var(--sans)';
+    overlay.innerHTML = `
+      <div style="font-size:40px">🔐</div>
+      <div style="font-size:18px;font-weight:700">Upgrading your encryption</div>
+      <div id="crypto-migration-status" style="font-size:13px;color:rgba(255,255,255,0.7);text-align:center;max-width:300px;line-height:1.6">
+        Fetching your data…
+      </div>
+      <div style="width:200px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;overflow:hidden">
+        <div id="crypto-migration-bar" style="height:100%;width:0%;background:var(--accent,#e8a838);border-radius:2px;transition:width 0.4s"></div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const setStatus = (msg, pct) => {
+      const s = document.getElementById('crypto-migration-status');
+      const b = document.getElementById('crypto-migration-bar');
+      if (s) s.textContent = msg;
+      if (b) b.style.width = pct + '%';
+    };
+
+    // 1. Pull current (v1) ciphertext from server
+    setStatus('Fetching your data…', 10);
+    const pullRes = await fetchKV(`${WORKER_URL}/data/pull`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash, verifier }),
+    });
+    if (!pullRes.ok) throw new Error('Could not fetch data for migration');
+    const { ciphertext: v1Ciphertext } = await pullRes.json();
+
+    // 2. Decrypt with v1 key
+    setStatus('Decrypting with current key…', 25);
+    let plaintext;
+    if (v1Ciphertext) {
+      plaintext = await kvDecrypt(v1DataKey, v1Ciphertext);
+    }
+
+    // 3. Generate fresh v2 key material
+    setStatus('Generating new encryption key…', 40);
+    const kdfSalt         = generateKdfSalt();
+    const newVerifier     = verifier; // passphrase unchanged during migration
+    const wrapKey         = await derivePassphraseWrapKeyV2(passphrase, emailHash, kdfSalt);
+    const v2DataKey       = await generateDataKeyV2Extractable();
+    const passphraseEnv   = await wrapDataKeyV2(v2DataKey, wrapKey);
+    const saltB64         = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+
+    // 4. Re-encrypt data with v2 key
+    setStatus('Re-encrypting your data…', 55);
+    const v2Ciphertext = plaintext ? await kvEncrypt(v2DataKey, plaintext) : null;
+
+    // 5. Generate fresh recovery envelopes with v2
+    setStatus('Updating recovery codes…', 70);
+    const recoveryCodes     = generateRecoveryCodes(10);
+    const recoveryEnvelopes = await buildRecoveryEnvelopesV2(recoveryCodes, v2DataKey, emailHash);
+
+    // 6. Push to server — atomically archives v1 and writes v2
+    setStatus('Saving to server…', 85);
+    const migrateRes = await fetchKV(`${WORKER_URL}/crypto/migrate`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        emailHash,
+        verifier,
+        newVerifier,
+        newSalt:              saltB64,
+        newEnvelope:          passphraseEnv,
+        newKdfSalt:           kdfSalt,
+        newRecoveryEnvelopes: recoveryEnvelopes,
+        ciphertext:           v2Ciphertext,
+      }),
+    });
+    if (!migrateRes.ok) {
+      const d = await migrateRes.json().catch(() => ({}));
+      throw new Error(d.error || 'Migration failed — your data is unchanged');
+    }
+
+    // 7. Update local session with v2 key
+    setStatus('Done! Finishing up…', 95);
+    _kvKey = v2DataKey;
+    await kvStoreSession(email, emailHash, verifier, v2DataKey);
+
+    // 8. Re-backup all share keys encrypted with the new v2 data key.
+    // The old backups were encrypted with the v1 key and are now unreadable.
+    // We also re-push shared data so guests get a fresh copy under the new owner key.
+    if (_shareTargets?.length) {
+      setStatus('Re-encrypting share keys…', 97);
+      for (const target of _shareTargets) {
+        try {
+          // Recover the share key — it may still be in localStorage cache from this session
+          const sk = await recoverShareKeyWithOldKey(target.code, v1DataKey);
+          if (sk) {
+            // Back up with new v2 key
+            await backupShareKey(target.code, sk);
+            // Re-push shared data (owner now has v2 key in _kvKey)
+            await pushSharedData(target.code, sk);
+          } else {
+            console.warn('Migration: could not recover share key for', target.code, '— share backup skipped');
+          }
+        } catch(e) {
+          console.warn('Migration: share key re-backup failed for', target.code, e.message);
+        }
+      }
+    }
+
+    overlay.remove();
+
+    // Show recovery codes — user must save new v2 codes
+    showProtectDataScreen(recoveryCodes, true /* isMigration */);
+
+  } catch(err) {
+    document.getElementById('crypto-migration-overlay')?.remove();
+    console.error('Migration failed:', err);
+    // Non-fatal — user can still use the app on v1; migration will retry next login
+    toast('Encryption upgrade failed — ' + err.message + '. Will retry next sign-in.');
+    await postLoginWizardRoute();
+  }
+}
+
+// ── Sync pill 5-tap debug trigger ─────────────────────────
+let _syncPillTaps = 0;
+let _syncPillTimer = null;
+
+function handleSyncPillTap() {
+  _syncPillTaps++;
+  if (_syncPillTimer) clearTimeout(_syncPillTimer);
+  _syncPillTimer = setTimeout(() => { _syncPillTaps = 0; }, 1500);
+  if (_syncPillTaps >= 5) {
+    _syncPillTaps = 0;
+    showMobileDiag();
+  }
+}
+
+async function showMobileDiag() {
+  // Collect diagnostic info
+  const lines = [];
+  lines.push(`kvConnected: ${kvConnected}`);
+  lines.push(`_kvEmail: ${_kvEmail || '(empty)'}`);
+  lines.push(`_kvEmailHash: ${_kvEmailHash || '(empty)'}`);
+  lines.push(`_kvVerifier: ${_kvVerifier ? _kvVerifier.slice(0,8)+'…' : '(empty)'}`);
+  lines.push(`_kvKey: ${_kvKey ? 'SET' : 'NULL'}`);
+  lines.push(`_shareState: ${_shareState ? _shareState.code : 'null'}`);
+  lines.push(`_shareKey: ${_shareKey ? 'SET' : 'null'}`);
+  lines.push(`local items: ${items?.length ?? '?'}`);
+
+  try {
+    const sk = JSON.parse(localStorage.getItem('stockroom_kv_session_key') || 'null');
+    lines.push(`session_key: ${sk ? `SET (exp ${new Date(sk.expiry).toLocaleTimeString()}, match: ${sk.emailHash === _kvEmailHash})` : 'absent'}`);
+  } catch(e) { lines.push('session_key: parse error'); }
+
+  lines.push(`device_secret: ${localStorage.getItem('stockroom_device_secret') ? 'SET' : 'absent'}`);
+
+  const localKeys = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+  lines.push(`share_keys: ${Object.keys(localKeys).join(', ') || 'none'}`);
+
+  // Server checks if we have credentials
+  if (_kvEmailHash && _kvVerifier) {
+    try {
+      const r = await fetchKV(`${WORKER_URL}/key/get`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash: _kvEmailHash, verifier: _kvVerifier }),
+      });
+      const d = await r.json();
+      lines.push(`key/get: ${r.status} cv=${d.cryptoVersion||'?'} env=${!!d.envelope} kdf=${!!d.kdfSalt} mig=${d.migrationDue}`);
+    } catch(e) { lines.push(`key/get error: ${e.message}`); }
+
+    try {
+      const r = await fetchKV(`${WORKER_URL}/data/pull`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash: _kvEmailHash, verifier: _kvVerifier }),
+      });
+      const d = await r.json();
+      lines.push(`data/pull: ${r.status} ct=${d.ciphertext ? d.ciphertext.length+'ch' : 'none'}`);
+    } catch(e) { lines.push(`data/pull error: ${e.message}`); }
+  } else {
+    lines.push('(no credentials — server checks skipped)');
+  }
+
+  // Show modal
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;flex-direction:column;padding:20px;overflow-y:auto';
+  modal.innerHTML = `
+    <div style="background:#1a1d27;border:1px solid #2a2d3a;border-radius:12px;padding:16px;max-width:500px;width:100%;margin:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span style="font-size:13px;font-weight:700;color:#e8a838">🔧 Diagnostic</span>
+        <button onclick="this.closest('[style*=fixed]').remove()" style="background:transparent;border:none;color:#6b7280;font-size:18px;cursor:pointer;padding:0 4px">✕</button>
+      </div>
+      <pre style="font-family:monospace;font-size:11px;color:#e8e8f0;line-height:1.8;white-space:pre-wrap;word-break:break-all;margin:0 0 12px">${lines.join('\n')}</pre>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button onclick="navigator.clipboard?.writeText(${JSON.stringify(lines.join('\n'))}).then(()=>toast('Copied ✓'))" style="background:#2a2d3a;border:none;color:#e8e8f0;border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer">Copy</button>
+        <button onclick="clearLocalKeyMaterial();this.closest('[style*=fixed]').remove()" style="background:#e05c5c;border:none;color:#fff;border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer">Clear cached keys & retry</button>
+        <button onclick="this.closest('[style*=fixed]').remove()" style="background:transparent;border:1px solid #2a2d3a;color:#6b7280;border-radius:8px;padding:8px 14px;font-size:12px;cursor:pointer">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+async function clearLocalKeyMaterial() {
+  _kvKey = null;
+  try { localStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
+  try { localStorage.removeItem('stockroom_kv_key_fallback'); } catch(e) {}
+  try { localStorage.removeItem('stockroom_device_secret'); } catch(e) {}
+  try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
+  try { await removeWrappedKey(getOrCreateDeviceId()); } catch(e) {}
+  document.getElementById('kv-decrypt-error-banner')?.remove();
+  toast('Cached keys cleared — signing in again…');
+  // Re-attempt sync which will prompt for passphrase cleanly
+  await kvSyncNow();
+}
+
+function showForgotPassphrase() {
+  document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+  document.getElementById('wizard-step-1c')?.classList.add('active');
+  const loginEmail = document.getElementById('kv-login-email')?.value.trim();
+  if (loginEmail) {
+    const recovEl = document.getElementById('recovery-email');
+    if (recovEl) recovEl.value = loginEmail;
+  }
+  document.getElementById('recovery-step-email').style.display = '';
+  document.getElementById('recovery-step-code').style.display  = 'none';
+  document.getElementById('recovery-step-otp').style.display   = 'none';
+  document.getElementById('recovery-step-reset').style.display = 'none';
+}
+
+// ── Store passkey session (no encryption key — different model) ──
+async function kvStorePasskeySession(email, emailHash, sessionToken, dataKey) {
+  _kvEmail        = email;
+  _kvEmailHash    = emailHash;
+  _kvSessionToken = sessionToken;
+  _kvVerifier     = ''; // passkey users authenticate via sessionToken
+  _kvAuthMethod   = 'passkey';
+  kvConnected     = true;
+  // Use provided real data key; fall back to random if none (old call sites)
+  _kvKey = dataKey || await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+  // Store session
+  try {
+    localStorage.setItem('stockroom_kv_session', JSON.stringify({ email, emailHash, sessionToken, authMethod: 'passkey' }));
+    // Cache key for 24h
+    const exported = await crypto.subtle.exportKey('raw', _kvKey);
+    const keyData  = btoa(String.fromCharCode(...new Uint8Array(exported)));
+    localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
+      keyData, emailHash,
+      expiry: Date.now() + 24 * 60 * 60 * 1000,
+    }));
+  } catch(e) {}
+  const el = document.getElementById('kv-account-email');
+  if (el) el.textContent = email;
+  updateSyncUI();
+  // Ensure ECDH keypair exists for secure sharing (non-blocking)
+  ensureEcdhKeypair(emailHash).catch(e => console.warn('ensureEcdhKeypair:', e.message));
+}
+
+// ── Restore passkey session on page load ──────────────────
+async function kvRestorePasskeySession(session) {
+  const { email, emailHash, sessionToken } = session;
+  // Verify session is still valid on backend
+  try {
+    const res = await fetchKV(`${WORKER_URL}/passkey/verify-session`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash, sessionToken }),
+    });
+    if (!res.ok) return false;
+  } catch(e) {
+    // Network error — try to restore from cached key
+  }
+  _kvEmail        = email;
+  _kvEmailHash    = emailHash;
+  _kvSessionToken = sessionToken;
+  _kvVerifier     = '';
+  _kvAuthMethod   = 'passkey';
+  kvConnected     = true;
+  const el = document.getElementById('kv-account-email');
+  if (el) el.textContent = email;
+  updateSyncUI();
+  return true;
+}
+
+// ── Add passkey to existing account (from Settings) ───────
+async function addPasskeyToAccount() {
+  if (!passkeySupported()) { toast('Passkeys not supported on this device'); return; }
+  if (!kvConnected) { toast('Sign in first'); return; }
+  requireReauth('Re-enter your passphrase to add a passkey.', _doAddPasskeyToAccount, { passkeyAllowed: false });
+}
+
+async function _doAddPasskeyToAccount() {
+  try {
+    const beginRes = await fetchKV(`${WORKER_URL}/passkey/register/begin`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash: _kvEmailHash, email: _kvEmail }),
+    });
+    const beginData = await beginRes.json();
+    if (!beginRes.ok) throw new Error(beginData.error || 'Could not start setup');
+
+    const credential = await navigator.credentials.create({
+      publicKey: {
+        challenge:              b64urlToUint8(beginData.challenge),
+        rp:                     beginData.rp,
+        user: {
+          id:          new TextEncoder().encode(beginData.user.id),
+          name:        beginData.user.name,
+          displayName: beginData.user.displayName,
+        },
+        pubKeyCredParams:       beginData.pubKeyCredParams,
+        timeout:                beginData.timeout,
+        attestation:            beginData.attestation,
+        authenticatorSelection: beginData.authenticatorSelection,
+      },
+    });
+    if (!credential) throw new Error('Setup cancelled');
+
+    const credId    = uint8ToB64url(new Uint8Array(credential.rawId));
+    const clientDataJSON    = uint8ToB64url(new Uint8Array(credential.response.clientDataJSON));
+    const attestationObject = uint8ToB64url(new Uint8Array(credential.response.attestationObject));
+    let publicKey = credId;
+    try {
+      const pkResult = credential.response.getPublicKey?.();
+      const pk = pkResult instanceof Promise ? await pkResult : pkResult;
+      if (pk) publicKey = uint8ToB64url(new Uint8Array(pk));
+    } catch(e) { console.warn('getPublicKey failed:', e.message); }
+
+    const verifierToSend = _kvSessionToken ? undefined : _kvVerifier;
+    const finishRes = await fetchKV(`${WORKER_URL}/passkey/register/finish`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        emailHash: _kvEmailHash, email: _kvEmail,
+        credentialId: credId, publicKey, clientDataJSON, attestationObject,
+        deviceName: getDeviceName(),
+        ...(verifierToSend ? { verifier: verifierToSend } : {}),
+      }),
+    });
+    const finishData = await finishRes.json();
+    if (!finishRes.ok) throw new Error(finishData.error || 'Setup failed');
+
+    // Update session token
+    _kvSessionToken = finishData.sessionToken;
+    _kvAuthMethod   = 'passkey';
+    try {
+      const s = JSON.parse(localStorage.getItem('stockroom_kv_session') || '{}');
+      s.sessionToken = finishData.sessionToken;
+      s.authMethod   = 'passkey';
+      localStorage.setItem('stockroom_kv_session', JSON.stringify(s));
+      const storedCreds = JSON.parse(localStorage.getItem('stockroom_passkey_creds') || '{}');
+      storedCreds[_kvEmailHash] = credId;
+      localStorage.setItem('stockroom_passkey_creds', JSON.stringify(storedCreds));
+    } catch(e) {}
+
+    toast('Passkey added ✓ — you can now sign in with Face ID / Fingerprint');
+    loadPasskeys();
+  } catch(err) {
+    if (err.name === 'NotAllowedError') { toast('Setup cancelled'); }
+    else { toast('Could not add passkey: ' + err.message); }
+  }
+}
+
+// ── Load and display passkeys in Settings ─────────────────
+async function generateNewRecoveryCodes() {
+  if (!kvConnected || !_kvKey) { toast('Sign in first'); return; }
+  requireReauth('Re-enter your passphrase to generate new recovery codes.', _doGenerateNewRecoveryCodes, { passkeyAllowed: true });
+}
+
+async function _doGenerateNewRecoveryCodes() {
+  if (!confirm('Generate 10 new recovery codes?\n\nThis will invalidate all your existing recovery codes.')) return;
+  try {
+    const newCodes     = generateRecoveryCodes(10);
+    const newEnvelopes = await buildRecoveryEnvelopes(newCodes, _kvKey, _kvEmailHash);
+    const body = _kvSessionToken
+      ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken, recoveryEnvelopes: newEnvelopes }
+      : { emailHash: _kvEmailHash, verifier: _kvVerifier, recoveryEnvelopes: newEnvelopes };
+    const res = await fetchKV(`${WORKER_URL}/key/update-recovery`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error('Could not update recovery codes');
+    // Show new codes
+    showProtectDataScreen(newCodes);
+    toast('New recovery codes generated — save them now');
+  } catch(err) { toast('Could not generate codes: ' + err.message); }
+}
+
+// ══════════════════════════════════════════
+//  EXPORT REMINDER SYSTEM
+// ══════════════════════════════════════════
+
+function checkExportReminder() {
+  if (!kvConnected) return;
+  try {
+    const lastExport = localStorage.getItem('stockroom_last_export');
+    const now        = Date.now();
+    const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+    const sixtyDays  = 60 * 24 * 60 * 60 * 1000;
+    if (!lastExport) {
+      // Never exported — remind after 30 days of account age
+      const session = JSON.parse(localStorage.getItem('stockroom_kv_session') || '{}');
+      return; // Don't nag on first load
+    }
+    const daysSince = now - parseInt(lastExport);
+    if (daysSince > sixtyDays) {
+      showExportReminder('urgent');
+    } else if (daysSince > thirtyDays) {
+      showExportReminder('normal');
+    }
+  } catch(e) {}
+}
+
+function showExportReminder(level) {
+  const existing = document.getElementById('export-reminder-banner');
+  if (existing) return; // already showing
+  const banner = document.createElement('div');
+  banner.id    = 'export-reminder-banner';
+  const isUrgent = level === 'urgent';
+  banner.style.cssText = `background:${isUrgent ? 'rgba(232,80,80,0.1)' : 'rgba(232,168,56,0.1)'};border-bottom:1px solid ${isUrgent ? 'rgba(232,80,80,0.3)' : 'rgba(232,168,56,0.3)'};padding:10px 16px;display:flex;align-items:center;gap:10px;font-size:13px`;
+  banner.innerHTML = `
+    <span style="flex:1">${isUrgent ? '⚠️' : '📦'} <strong>${isUrgent ? 'Over 60 days' : 'Over 30 days'} since your last data export.</strong> Export your data regularly as a backup.</span>
+    <button class="btn btn-sm" style="background:${isUrgent?'rgba(232,80,80,0.2)':'rgba(232,168,56,0.2)'};border:1px solid ${isUrgent?'rgba(232,80,80,0.4)':'rgba(232,168,56,0.4)'};color:${isUrgent?'var(--danger)':'var(--warn)'};white-space:nowrap" onclick="exportDataAndDismiss()">Export now</button>
+    <button class="btn btn-ghost btn-sm" onclick="this.closest('#export-reminder-banner').remove()">✕</button>
+  `;
+  // Insert after update banner
+  const updateBanner = document.getElementById('update-banner');
+  updateBanner?.parentNode?.insertBefore(banner, updateBanner.nextSibling) || document.querySelector('.app-header')?.after(banner);
+}
+
+async function exportDataAndDismiss() {
+  document.getElementById('export-reminder-banner')?.remove();
+  localStorage.setItem('stockroom_last_export', String(Date.now()));
+  // Trigger the existing export function
+  if (typeof exportData === 'function') exportData();
+}
+
+// Hook into existing export to track last export time
+const _origExportData = typeof exportData !== 'undefined' ? exportData : null;
+
+async function loadPasskeys() {
+  const container = document.getElementById('passkey-list');
+  if (!container) return;
+  if (!kvConnected) { container.innerHTML = '<p style="font-size:12px;color:var(--muted)">Sign in to manage passkeys.</p>'; return; }
+  try {
+    const body = _kvSessionToken
+      ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken }
+      : { emailHash: _kvEmailHash, verifier: _kvVerifier };
+    const res  = await fetch(`${WORKER_URL}/passkey/list`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) { container.innerHTML = '<p style="font-size:12px;color:var(--muted)">Could not load passkeys.</p>'; return; }
+    const { credentials } = await res.json();
+    if (!credentials.length) {
+      container.innerHTML = '<p style="font-size:12px;color:var(--muted)">No passkeys yet.</p>';
+    } else {
+      container.innerHTML = credentials.map(c => `
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px">
+          <div style="font-size:20px">🔑</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:700">${esc(c.deviceName)}</div>
+            <div style="font-size:11px;color:var(--muted)">Added ${new Date(c.createdAt).toLocaleDateString('en-GB')} · Last used ${new Date(c.lastUsed).toLocaleDateString('en-GB')}</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="removePasskey('${c.credentialId}')">Remove</button>
+        </div>`).join('');
+    }
+  } catch(e) {
+    container.innerHTML = '<p style="font-size:12px;color:var(--muted)">Could not load passkeys.</p>';
+  }
+}
+
+async function removePasskey(credentialId) {
+  if (!confirm('Remove this passkey? You\'ll need to use your passphrase or another passkey to sign in.')) return;
+  try {
+    const body = _kvSessionToken
+      ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken, credentialId }
+      : { emailHash: _kvEmailHash, verifier: _kvVerifier, credentialId };
+    const res = await fetch(`${WORKER_URL}/passkey/remove`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error('Could not remove');
+    toast('Passkey removed ✓');
+    loadPasskeys();
+  } catch(e) { toast('Could not remove passkey: ' + e.message); }
+}
+
+async function initPasskeyUI() {
+  // Show passkey buttons by default, hide only if definitely not supported
+  const supported = await passkeyPlatformSupported().catch(() => false);
+  const regOption   = document.getElementById('passkey-register-option');
+  const loginOption = document.getElementById('passkey-login-option');
+  const addBtn      = document.getElementById('add-passkey-btn');
+  if (!supported) {
+    if (regOption)   regOption.style.display   = 'none';
+    if (loginOption) loginOption.style.display  = 'none';
+    if (addBtn)      addBtn.style.display       = 'none';
+  } else {
+    if (regOption)   regOption.style.display   = '';
+    if (loginOption) loginOption.style.display  = '';
+    if (addBtn)      addBtn.style.display       = '';
+  }
+}
+// ── Key Envelope System ───────────────────────────────────
+// DATA KEY = random 256-bit AES key (encrypts all user data)
+// Wrapped by passphrase key, recovery code keys, passkey sessions.
+
+async function generateDataKey() {
+  return crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+}
+
+async function derivePassphraseWrapKey(passphrase, emailHash, saltB64) {
+  const salt    = saltB64
+    ? Uint8Array.from(atob(saltB64), c => c.charCodeAt(0))
+    : crypto.getRandomValues(new Uint8Array(32));
+  const raw     = new TextEncoder().encode(passphrase + ':' + emailHash);
+  const base    = await crypto.subtle.importKey('raw', raw, 'PBKDF2', false, ['deriveKey']);
+  const wrapKey = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 200000, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
+  );
+  return { wrapKey, saltB64: saltB64 || btoa(String.fromCharCode(...salt)) };
+}
+
+async function deriveRecoveryWrapKey(code, emailHash) {
+  const raw  = new TextEncoder().encode(code.replace(/-/g,'').toUpperCase() + ':' + emailHash);
+  const base = await crypto.subtle.importKey('raw', raw, 'PBKDF2', false, ['deriveKey']);
+  const salt = new TextEncoder().encode('stockroom-recovery-v1-' + emailHash);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
+  );
+}
+
+async function wrapDataKey(dataKey, wrapKey) {
+  const raw       = await crypto.subtle.exportKey('raw', dataKey);
+  const iv        = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, wrapKey, raw);
+  const combined  = new Uint8Array(iv.length + encrypted.byteLength);
+  combined.set(iv, 0); combined.set(new Uint8Array(encrypted), iv.length);
+  return btoa(String.fromCharCode(...combined));
+}
+
+async function unwrapDataKey(envelopeB64, wrapKey) {
+  const combined  = Uint8Array.from(atob(envelopeB64), c => c.charCodeAt(0));
+  const iv        = combined.slice(0, 12);
+  const encrypted = combined.slice(12);
+  const raw       = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wrapKey, encrypted);
+  return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+}
+
+function generateRecoveryCodes(count = 10) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({ length: count }, () => {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    return [0,4,8,12].map(s => Array.from(bytes.slice(s,s+4)).map(b => chars[b % chars.length]).join('')).join('-');
+  });
+}
+
+async function hashRecoveryCode(code, emailHash) {
+  const encoded = new TextEncoder().encode(code.replace(/-/g,'').toUpperCase() + ':' + emailHash);
+  const hash    = await crypto.subtle.digest('SHA-256', encoded);
+  return btoa(String.fromCharCode(...new Uint8Array(hash)));
+}
+
+async function buildRecoveryEnvelopes(codes, dataKey, emailHash) {
+  const envelopes = [];
+  for (const code of codes) {
+    const wrapKey  = await deriveRecoveryWrapKey(code, emailHash);
+    const envelope = await wrapDataKey(dataKey, wrapKey);
+    const codeHash = await hashRecoveryCode(code, emailHash);
+    envelopes.push(JSON.stringify({ envelope, codeHash }));
+  }
+  return envelopes;
+}
+
+// Uses IndexedDB to store a wrapped copy of the encryption key.
+// The wrapping key is device-specific (derived from a random device secret
+// stored in localStorage). The server stores device metadata (name, last seen)
+// keyed by deviceId so the owner can manage/revoke trusted devices.
+
+const DEVICE_DB_NAME    = 'stockroom-kv-device';
+const DEVICE_STORE_NAME = 'keys';
+
+async function openDeviceDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DEVICE_DB_NAME, 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore(DEVICE_STORE_NAME);
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror   = e => reject(e.target.error);
+  });
+}
+
+function getOrCreateDeviceId() {
+  let id = localStorage.getItem('stockroom_device_id');
+  if (!id) {
+    id = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+      .map(b => b.toString(16).padStart(2,'0')).join('');
+    localStorage.setItem('stockroom_device_id', id);
+  }
+  return id;
+}
+
+function getDeviceName() {
+  const ua = navigator.userAgent;
+  if (/iPhone/i.test(ua))  return 'iPhone';
+  if (/iPad/i.test(ua))    return 'iPad';
+  if (/Android/i.test(ua)) return /Mobile/i.test(ua) ? 'Android Phone' : 'Android Tablet';
+  if (/Mac/i.test(ua))     return 'Mac';
+  if (/Windows/i.test(ua)) return 'Windows PC';
+  return 'Browser';
+}
+
+async function deriveDeviceWrapKey(deviceSecret) {
+  const raw  = new TextEncoder().encode(deviceSecret);
+  const base = await crypto.subtle.importKey('raw', raw, 'PBKDF2', false, ['deriveKey']);
+  const salt = new TextEncoder().encode('stockroom-device-wrap-v1');
+  // Use encrypt/decrypt (not wrapKey/unwrapKey) — simpler and consistent
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 50000, hash: 'SHA-256' },
+    base,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function saveWrappedKey(deviceId, encryptionKey, deviceSecret) {
+  // Export raw key bytes, encrypt them with the device wrap key, store in IDB
+  const exported  = await crypto.subtle.exportKey('raw', encryptionKey); // needs extractable:true
+  const wrapKey   = await deriveDeviceWrapKey(deviceSecret);
+  const iv        = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, wrapKey, exported);
+  const combined  = new Uint8Array(iv.length + encrypted.byteLength);
+  combined.set(iv, 0);
+  combined.set(new Uint8Array(encrypted), iv.length);
+  const db = await openDeviceDb();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction(DEVICE_STORE_NAME, 'readwrite');
+    const req = tx.objectStore(DEVICE_STORE_NAME).put(btoa(String.fromCharCode(...combined)), deviceId);
+    req.onsuccess = () => resolve(true);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+async function loadWrappedKey(deviceId, deviceSecret) {
+  try {
+    const db     = await openDeviceDb();
+    const stored = await new Promise((resolve, reject) => {
+      const tx  = db.transaction(DEVICE_STORE_NAME, 'readonly');
+      const req = tx.objectStore(DEVICE_STORE_NAME).get(deviceId);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror   = () => reject(req.error);
+    });
+    if (!stored) return null;
+    const combined  = Uint8Array.from(atob(stored), c => c.charCodeAt(0));
+    const iv        = combined.slice(0, 12);
+    const encrypted = combined.slice(12);
+    const wrapKey   = await deriveDeviceWrapKey(deviceSecret);
+    const keyData   = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wrapKey, encrypted);
+    // Restore as extractable:true so it can be re-wrapped if needed
+    return crypto.subtle.importKey('raw', keyData, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+  } catch(e) {
+    console.warn('loadWrappedKey failed:', e.message);
+    return null;
+  }
+}
+
+async function removeWrappedKey(deviceId) {
+  try {
+    const db = await openDeviceDb();
+    await new Promise((resolve, reject) => {
+      const tx  = db.transaction(DEVICE_STORE_NAME, 'readwrite');
+      const req = tx.objectStore(DEVICE_STORE_NAME).delete(deviceId);
+      req.onsuccess = () => resolve();
+      req.onerror   = () => reject(req.error);
+    });
+  } catch(e) {}
+}
+
+async function offerTrustDevice(email, emailHash, verifier, key) {
+  const deviceId = getOrCreateDeviceId();
+  // Check if already trusted
+  const secret = localStorage.getItem('stockroom_device_secret');
+  if (secret) {
+    const existing = await loadWrappedKey(deviceId, secret);
+    if (existing) return; // already trusted
+  }
+  // Ask user
+  if (!confirm('Trust this device?\n\nYou\'ll stay signed in automatically on this device. You can remove it from Settings at any time.')) return;
+  await trustThisDeviceWith(email, emailHash, verifier, key);
+}
+
+async function trustThisDeviceWith(email, emailHash, verifier, key) {
+  try {
+    const deviceId = getOrCreateDeviceId();
+    let   secret   = localStorage.getItem('stockroom_device_secret');
+    if (!secret) {
+      secret = Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2,'0')).join('');
+      localStorage.setItem('stockroom_device_secret', secret);
+    }
+    await saveWrappedKey(deviceId, key, secret);
+    // Also store raw key bytes in localStorage as fallback for IDB failures
+    try {
+      const exported = await crypto.subtle.exportKey('raw', key);
+      const keyB64   = btoa(String.fromCharCode(...new Uint8Array(exported)));
+      localStorage.setItem('stockroom_kv_key_fallback', JSON.stringify({
+        keyB64, emailHash,
+        expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+      }));
+    } catch(e) {}
+    // Register on backend
+    const name = getDeviceName();
+    fetchKV(`${WORKER_URL}/device/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash, verifier, deviceId, name, addedAt: new Date().toISOString() }),
+    }).catch(() => {});
+    toast('This device is now trusted ✓');
+    loadTrustedDevices();
+  } catch(e) {
+    toast('Could not trust device: ' + e.message);
+  }
+}
+
+async function trustThisDevice() {
+  if (!_kvKey) { toast('Sign in first'); return; }
+  await trustThisDeviceWith(_kvEmail, _kvEmailHash, _kvVerifier, _kvKey);
+}
+
+function toggleTrustedDevicesPanel() {
+  const panel = document.getElementById('trusted-devices-panel');
+  const btn = event.target.closest('button');
+  if (!panel) return;
+  const hidden = panel.style.display === 'none';
+  panel.style.display = hidden ? 'block' : 'none';
+  if (btn) btn.textContent = hidden ? 'Hide devices' : 'Show devices';
+  if (hidden) loadTrustedDevices();
+}
+
+async function loadTrustedDevices() {
+  if (!kvConnected || !_kvEmailHash || !_kvVerifier) return;
+  const list = document.getElementById('trusted-devices-list');
+  const trustRow = document.getElementById('trust-this-device-row');
+  if (!list) return;
+
+  try {
+    const res  = await fetchKV(`${WORKER_URL}/device/list`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash: _kvEmailHash, verifier: _kvVerifier }),
+    });
+    const data = await res.json();
+    const devices = data.devices || [];
+    const myDeviceId = getOrCreateDeviceId();
+
+    if (!devices.length) {
+      list.innerHTML = '<p style="font-size:12px;color:var(--muted)">No trusted devices yet.</p>';
+    } else {
+      list.innerHTML = devices.map(d => {
+        const isThis = d.deviceId === myDeviceId;
+        const added  = d.addedAt ? new Date(d.addedAt).toLocaleDateString('en-GB') : '—';
+        const last   = d.lastSeen ? new Date(d.lastSeen).toLocaleDateString('en-GB') : '—';
+        return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border:1px solid ${isThis?'var(--accent)':'var(--border)'};border-radius:10px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:700">${esc(d.name)}${isThis?' <span style="font-size:11px;color:var(--accent);font-weight:400">(this device)</span>':''}</div>
+            <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">Added ${added} · Last seen ${last}</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="removeTrustedDevice('${d.deviceId}')">Remove</button>
+        </div>`;
+      }).join('');
+    }
+
+    // Show trust button only if this device isn't trusted
+    const isTrusted = devices.some(d => d.deviceId === myDeviceId);
+    if (trustRow) trustRow.style.display = isTrusted ? 'none' : 'block';
+  } catch(e) {
+    list.innerHTML = '<p style="font-size:12px;color:var(--muted)">Could not load devices.</p>';
+  }
+}
+
+async function removeTrustedDevice(deviceId) {
+  if (!confirm('Remove this device? It will need to sign in with a passphrase next time.')) return;
+  try {
+    await fetchKV(`${WORKER_URL}/device/remove`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash: _kvEmailHash, verifier: _kvVerifier, deviceId }),
+    });
+    // If removing this device, clear local trust data too
+    if (deviceId === getOrCreateDeviceId()) {
+      await removeWrappedKey(deviceId);
+      localStorage.removeItem('stockroom_device_secret');
+    }
+    toast('Device removed ✓');
+    loadTrustedDevices();
+  } catch(e) { toast('Could not remove device'); }
+}
+
+async function kvStoreSession(email, emailHash, verifier, key) {
+  _kvEmail     = email;
+  _kvEmailHash = emailHash;
+  _kvVerifier  = verifier;
+  _kvKey       = key;
+  kvConnected  = true;
+  try {
+    localStorage.setItem('stockroom_kv_session', JSON.stringify({ email, emailHash, verifier }));
+  } catch(e) {}
+  // Cache key for 4 hours so session survives refresh even without trusted device
+  if (key) {
+    try {
+      const exported = await crypto.subtle.exportKey('raw', key);
+      const keyData  = btoa(String.fromCharCode(...new Uint8Array(exported)));
+      localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
+        keyData, emailHash,
+        expiry: Date.now() + 4 * 60 * 60 * 1000,
+      }));
+    } catch(e) {}
+  }
+  const el = document.getElementById('kv-account-email');
+  if (el) el.textContent = email;
+  updateSyncUI();
+  // Ensure ECDH keypair exists for secure sharing (non-blocking)
+  ensureEcdhKeypair(emailHash).catch(e => console.warn('ensureEcdhKeypair:', e.message));
+}
+
+async function kvRestoreSession() {
+  try {
+    const raw = localStorage.getItem('stockroom_kv_session');
+    if (!raw) return false;
+    const { email, emailHash, verifier, sessionToken, authMethod } = JSON.parse(raw);
+    if (!email || !emailHash) return false;
+
+    // Passkey session restore
+    if (authMethod === 'passkey' && sessionToken) {
+      return await kvRestorePasskeySession({ email, emailHash, sessionToken });
+    }
+
+    if (!verifier) return false;
+
+    // Helper to fully restore session once key is found
+    const restoreWith = async (key, source) => {
+      _kvEmail     = email;
+      _kvEmailHash = emailHash;
+      _kvVerifier  = verifier;
+      _kvKey       = key;
+      kvConnected  = true;
+      const el = document.getElementById('kv-account-email');
+      if (el) el.textContent = email;
+      updateSyncUI();
+      console.log('Session restored from:', source);
+      return true;
+    };
+
+    // 1. Trusted device — try IndexedDB first
+    const deviceId = getOrCreateDeviceId();
+    const secret   = localStorage.getItem('stockroom_device_secret');
+    if (secret) {
+      try {
+        const wrappedKey = await loadWrappedKey(deviceId, secret);
+        if (wrappedKey) {
+          // Also cache raw key bytes in localStorage as a resilient fallback
+          try {
+            const exported = await crypto.subtle.exportKey('raw', wrappedKey);
+            const keyB64   = btoa(String.fromCharCode(...new Uint8Array(exported)));
+            localStorage.setItem('stockroom_kv_key_fallback', JSON.stringify({
+              keyB64,
+              emailHash,
+              expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000, // 30 days
+            }));
+          } catch(e) {}
+          fetch(`${WORKER_URL}/device/seen`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ emailHash, verifier, deviceId }),
+          }).catch(() => {});
+          return await restoreWith(wrappedKey, 'trusted-device-idb');
+        }
+      } catch(e) { console.warn('IDB restore failed:', e.message); }
+
+      // IDB failed — try localStorage key fallback
+      try {
+        const fb = JSON.parse(localStorage.getItem('stockroom_kv_key_fallback') || 'null');
+        if (fb && fb.emailHash === emailHash && Date.now() < fb.expiresAt) {
+          const raw2 = Uint8Array.from(atob(fb.keyB64), c => c.charCodeAt(0));
+          const key  = await crypto.subtle.importKey('raw', raw2, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+          return await restoreWith(key, 'trusted-device-localstorage-fallback');
+        }
+      } catch(e) { console.warn('LS key fallback failed:', e.message); }
+    }
+
+    // 2. 4-hour session key — stored in localStorage with expiry
+    try {
+      const cached = JSON.parse(localStorage.getItem('stockroom_kv_session_key') || 'null');
+      if (cached && cached.emailHash === emailHash && Date.now() < cached.expiry) {
+        const raw2 = Uint8Array.from(atob(cached.keyData), c => c.charCodeAt(0));
+        const key  = await crypto.subtle.importKey('raw', raw2, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+        return await restoreWith(key, '4hr-session');
+      } else if (cached) {
+        localStorage.removeItem('stockroom_kv_session_key');
+      }
+    } catch(e) {}
+
+    // 3. Credentials only — key will be prompted on first sync
+    // Don't make a network call here — just restore what we have from localStorage
+    _kvEmail     = email;
+    _kvEmailHash = emailHash;
+    _kvVerifier  = verifier;
+    kvConnected  = true;
+    const el2 = document.getElementById('kv-account-email');
+    if (el2) el2.textContent = email;
+    updateSyncUI();
+    return true;
+  } catch(e) {
+    console.warn('kvRestoreSession error:', e);
+    return false;
+  }
+}
+
+async function kvEnsureKey() {
+  if (_kvKey) return true;
+
+  // 1. Trusted device — IndexedDB (with localStorage fallback for desktop/mobile switches)
+  const secret = localStorage.getItem('stockroom_device_secret');
+  if (secret) {
+    const deviceId = getOrCreateDeviceId();
+    try {
+      const wrappedKey = await loadWrappedKey(deviceId, secret);
+      if (wrappedKey) { _kvKey = wrappedKey; return true; }
+    } catch(e) {}
+    // IDB failed — try localStorage raw key fallback
+    try {
+      const fb = JSON.parse(localStorage.getItem('stockroom_kv_key_fallback') || 'null');
+      if (fb && fb.emailHash === _kvEmailHash && Date.now() < fb.expiresAt) {
+        const raw = Uint8Array.from(atob(fb.keyB64), c => c.charCodeAt(0));
+        _kvKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+        if (_kvKey) return true;
+      }
+    } catch(e) {}
+    localStorage.removeItem('stockroom_device_secret');
+  }
+
+  // 2. 4-hour session — localStorage (survives page refresh and tab close)
+  try {
+    const cached = JSON.parse(localStorage.getItem('stockroom_kv_session_key') || 'null');
+    if (cached && cached.emailHash === _kvEmailHash && Date.now() < cached.expiry) {
+      const raw = Uint8Array.from(atob(cached.keyData), c => c.charCodeAt(0));
+      _kvKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+      if (_kvKey) return true;
+    } else if (cached) {
+      localStorage.removeItem('stockroom_kv_session_key');
+    }
+  } catch(e) {}
+
+  // 3. Passphrase prompt with trust option
+  const result = await showPassphrasePrompt();
+  if (!result) return false;
+  const { passphrase, trust } = result;
+
+  try {
+    const verifier = await kvMakeVerifier(passphrase, _kvEmailHash);
+
+    let dataKey;
+    const keyRes  = await fetchKV(`${WORKER_URL}/key/get`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash: _kvEmailHash, verifier }),
+    });
+    const keyData = await keyRes.json();
+
+    if (keyRes.status === 401) { toast('Incorrect passphrase'); return false; }
+
+    if (keyRes.ok && !keyData.legacy && keyData.envelope) {
+      // Envelope exists — must unwrap it. Do NOT fall through to legacy derive
+      // if this fails, as that would set a wrong key and cause KvDecryptError.
+      try {
+        if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
+          const wrapKey = await derivePassphraseWrapKeyV2(passphrase, _kvEmailHash, keyData.kdfSalt);
+          dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+        } else {
+          const { wrapKey } = await derivePassphraseWrapKey(passphrase, _kvEmailHash, keyData.salt);
+          dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
+        }
+      } catch(e) {
+        toast('Incorrect passphrase');
+        console.warn('kvEnsureKey: envelope unwrap failed —', e.message);
+        return false;
+      }
+    } else {
+      // No envelope (pre-envelope legacy account) — derive key directly
+      dataKey = await kvDeriveKey(_kvEmail, passphrase);
+    }
+
+    _kvKey = dataKey;
+
+    // Cache as 4-hour session in localStorage
+    try {
+      const exported = await crypto.subtle.exportKey('raw', _kvKey);
+      const keyData2 = btoa(String.fromCharCode(...new Uint8Array(exported)));
+      localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
+        keyData: keyData2, emailHash: _kvEmailHash,
+        expiry: Date.now() + 4 * 60 * 60 * 1000,
+      }));
+    } catch(e) {}
+
+    if (trust) await trustThisDeviceWith(_kvEmail, _kvEmailHash, _kvVerifier, _kvKey);
+    return true;
+  } catch(e) {
+    console.error('kvEnsureKey unexpected error:', e.message);
+    toast('Could not unlock — ' + e.message);
+    return false;
+  }
+}
+
+// Show a passphrase prompt modal (replaces browser prompt())
+function showPassphrasePrompt() {
+  return new Promise(resolve => {
+    // Remove any existing prompt
+    document.getElementById('kv-passphrase-modal')?.remove();
+
+    const modal = document.createElement('div');
+    modal.id    = 'kv-passphrase-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+    modal.innerHTML = `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px 24px;width:100%;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,0.4)">
+        <div style="font-size:32px;margin-bottom:12px;text-align:center">🔑</div>
+        <h3 style="font-size:17px;font-weight:700;margin-bottom:6px;text-align:center">Enter passphrase</h3>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:18px;text-align:center;line-height:1.5">
+          Decrypt your data for <strong style="color:var(--text)">${esc(_kvEmail)}</strong>
+        </p>
+        <input type="password" id="kv-pp-input" placeholder="Your passphrase"
+          style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--sans);font-size:15px;outline:none;margin-bottom:8px">
+        <p id="kv-pp-error" style="font-size:12px;color:var(--danger);margin-bottom:12px;display:none">Incorrect passphrase</p>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin-bottom:18px;cursor:pointer">
+          <input type="checkbox" id="kv-pp-trust" style="width:16px;height:16px;accent-color:var(--accent)">
+          Trust this device (stay signed in permanently)
+        </label>
+        <div style="display:flex;gap:10px">
+          <button id="kv-pp-cancel" style="flex:1;padding:10px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:14px;cursor:pointer">Cancel</button>
+          <button id="kv-pp-ok" style="flex:2;padding:10px;border-radius:8px;border:none;background:var(--accent);color:#111;font-size:14px;font-weight:700;cursor:pointer">Unlock →</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    const input    = modal.querySelector('#kv-pp-input');
+    const okBtn    = modal.querySelector('#kv-pp-ok');
+    const cancelBtn= modal.querySelector('#kv-pp-cancel');
+    const trustChk = modal.querySelector('#kv-pp-trust');
+
+    setTimeout(() => input.focus(), 100);
+
+    const submit = () => {
+      const passphrase = input.value;
+      const trust      = trustChk.checked;
+      if (!passphrase) return;
+      modal.remove();
+      resolve({ passphrase, trust });
+    };
+
+    okBtn.onclick     = submit;
+    cancelBtn.onclick = () => { modal.remove(); resolve(null); };
+    input.onkeydown   = e => { if (e.key === 'Enter') submit(); };
+  });
+}
+
+// ── Sync: push encrypted data to KV ────────
+async function kvPush() {
+  if (!kvConnected || !_kvEmailHash || !_kvVerifier) {
+    console.warn('kvPush: missing credentials, skipping');
+    return;
+  }
+  if (!await kvEnsureKey()) return;
+  const allProfiles  = await getProfiles();
+  const householdDir = Object.fromEntries(
+    Object.entries(allProfiles).map(([k, p]) => [k, { name: p.name, colour: p.colour }])
+  );
+  const tombstones = await loadDeletedIds();
+  const payload = JSON.stringify({
+    items, settings, lastSynced: new Date().toISOString(),
+    groceries: groceryItems, departments: groceryDepts,
+    reminders, deletedIds: [...tombstones],
+    householdDir, activeProfile,
+    shareTargets: _shareTargets,
+  });
+  const ciphertext = await kvEncrypt(_kvKey, payload);
+  const res = await fetchKV(`${WORKER_URL}/data/push`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      emailHash:    _kvEmailHash,
+      ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+      household:    activeProfile === 'default' ? null : activeProfile,
+      ciphertext,
+    }),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const msg = d.error || 'Push failed';
+    if (msg.includes('not found') || res.status === 401) {
+      console.warn('kvPush: auth failed —', msg);
+    }
+    throw new Error(msg);
+  }
+  // After successful push, re-encrypt for all active share targets
+  await pushAllSharedData().catch(e => console.warn('pushAllSharedData failed:', e.message));
+}
+
+// ── Sync: pull and decrypt data from KV ────
+async function kvPull() {
+  if (!kvConnected && !_shareState) return null;
+  if (kvConnected && (!_kvEmailHash || !_kvVerifier)) {
+    console.warn('kvPull: missing credentials, skipping');
+    return null;
+  }
+  // Only require encryption key for own-account pulls, not share pulls
+  if (kvConnected && !_shareState && !await kvEnsureKey()) return null;
+
+  // Guest pull — _shareState takes priority even if the guest also has their own account.
+  // A user with both a personal account AND a share must pull from the share, not their own data.
+  if (_shareState) {
+    if (!_shareKey) { console.warn('kvPull (share): no share key in memory'); return null; }
+    const res = await fetchKV(`${WORKER_URL}/share/data/pull`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ guestEmailHash: _kvEmailHash, guestVerifier: _kvVerifier, guestSessionToken: _kvSessionToken, code: _shareState.code, household: activeProfile }),
+    });
+    if (!res.ok) {
+      // Share has been deleted or guest removed — auto-clear local share state
+      if (res.status === 404 || res.status === 403) {
+        console.warn('kvPull (share): share gone from server, clearing local state');
+        const code = _shareState.code;
+        _shareState   = null;
+        _sharedFileId = null;
+        _shareKey     = null;
+        saveShareState();
+        try {
+          const stored = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+          delete stored[code];
+          localStorage.setItem('stockroom_share_keys', JSON.stringify(stored));
+        } catch(e) {}
+        applyTabPermissions();
+        items = [];
+        await saveData();
+        scheduleRender(...RENDER_REGIONS);
+        toast('Shared household access was removed — switching to your own account');
+        if (kvConnected) setTimeout(() => kvSyncNow(true), 500);
+      }
+      return null;
+    }
+    const { ciphertext } = await res.json();
+    if (!ciphertext) return null; // owner hasn't pushed yet — not an error
+    try {
+      const plain = await decryptWithShareKey(_shareKey, ciphertext);
+      return JSON.parse(plain);
+    } catch(e) { console.warn('kvPull (share): decrypt failed', e.message); return null; }
+  }
+
+  // Owner pull — from data/pull using own key
+  const res = await fetchKV(`${WORKER_URL}/data/pull`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      emailHash: _kvEmailHash,
+      ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+      household: activeProfile,
+    }),
+  });
+  if (!res.ok) return null;
+  const { ciphertext } = await res.json();
+  if (!ciphertext) return null;
+  try {
+    const plain = await kvDecrypt(_kvKey, ciphertext);
+    return JSON.parse(plain);
+  } catch(e) {
+    console.error('kvPull: decrypt failed — key mismatch or corrupted data.', e.message);
+    throw new KvDecryptError('Could not decrypt your data — the encryption key may be wrong.');
+  }
+}
+
+// ── syncNow for KV mode ────────────────────
+async function kvSyncNow(silent = false) {
+  if (!kvConnected && !_shareState) return;
+  if (kvConnected && (!_kvEmailHash || !_kvVerifier)) {
+    console.warn('kvSyncNow: missing credentials, skipping');
+    return;
+  }
+  if (!silent) updateSyncPill('syncing');
+  const _wasSilent = silent;
+  try {
+    const remote = await kvPull();
+    if (remote && Array.isArray(remote.items)) {
+      const localLastSynced  = settings.lastSynced ? new Date(settings.lastSynced).getTime() : 0;
+      const remoteLastSynced = remote.lastSynced   ? new Date(remote.lastSynced).getTime()   : 0;
+      const remoteWins       = remoteLastSynced > localLastSynced;
+      items = await mergeItems(items, remote.items, remoteWins);
+      await saveData();
+      if (remote.settings) {
+        const localTags = settings.customTags;
+        settings = { ...remote.settings, ...settings };
+        const remoteTags = remote.settings.customTags || [];
+        settings.customTags = (localTags||[]).filter(t=>t&&t.trim()).length >= (remoteTags).filter(t=>t&&t.trim()).length ? (localTags||[]) : remoteTags;
+        await _saveSettings();
+      }
+      if (remote.groceries) {
+        if (remoteWins || remote.groceries.length > groceryItems.length) { groceryItems = remote.groceries; await saveGrocery(); }
+      }
+      if (remote.departments?.length) {
+        if (remoteWins || remote.departments.length > groceryDepts.length) { groceryDepts = remote.departments; await saveGroceryDepts(); }
+      }
+      if (remote.reminders && Array.isArray(remote.reminders)) {
+        if (remoteWins || remote.reminders.length > reminders.length) { reminders = remote.reminders; await saveReminders(); }
+      }
+      if (remote.deletedIds && Array.isArray(remote.deletedIds)) {
+        const merged = await loadDeletedIds();
+        remote.deletedIds.forEach(id => merged.add(id));
+        await saveDeletedIds(merged);
+      }
+      if (remote.householdDir) {
+        const localProfiles = await getProfiles();
+        let changed = false;
+        Object.entries(remote.householdDir).forEach(([key, meta]) => {
+          if (!localProfiles[key]) {
+            localProfiles[key] = { name: meta.name, colour: meta.colour, items: [], settings: {}, reminders: [], groceries: [], departments: [] };
+            changed = true;
+          } else {
+            if (meta.name && localProfiles[key].name !== meta.name) { localProfiles[key].name = meta.name; changed = true; }
+            if (meta.colour && localProfiles[key].colour !== meta.colour) { localProfiles[key].colour = meta.colour; changed = true; }
+          }
+        });
+        if (changed) { await saveProfiles(localProfiles); renderSettingsHouseholdList(); }
+      }
+      // shareTargets are authoritative from /share/list, not the data blob — skip blob restore
+      // loadShareTargets() is called separately on login and after mutations
+      scheduleRender(...RENDER_REGIONS);
+    }
+    settings.lastSynced = new Date().toISOString();
+    await _saveSettings();
+    const tombstones = await loadDeletedIds();
+    await saveDeletedIds(tombstones);
+    // Only push if we have local data worth pushing
+    if (kvConnected && !_shareState && items.length > 0) {
+      await kvPush();
+    } else if (kvConnected && !_shareState) {
+      // Nothing local to push — pull was enough
+    }
+    if (!_wasSilent) updateSyncPill('synced'); else updateSyncPill('connected');
+  } catch(err) {
+    console.error('KV sync error:', err);
+    if (err instanceof KvDecryptError) {
+      // Key mismatch — wipe ALL cached key material including IDB trusted device,
+      // so the bad key cannot be reloaded on next page refresh.
+      _kvKey = null;
+      try { localStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
+      try { localStorage.removeItem('stockroom_kv_key_fallback'); } catch(e) {}
+      try { localStorage.removeItem('stockroom_device_secret'); } catch(e) {}
+      try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
+      try { await removeWrappedKey(getOrCreateDeviceId()); } catch(e) {}
+      updateSyncPill('error');
+      showDecryptErrorBanner();
+      return;
+    }
+    if (!_wasSilent) updateSyncPill('error');
+    if (!_wasSilent) toast('Sync failed — ' + err.message);
+  }
+}
+
+async function kvDeleteAccount() {
+  requireReauth('Re-enter your passphrase to delete your account.', _doDeleteAccount, { passkeyAllowed: true });
+}
+
+async function _doDeleteAccount() {
+  if (!confirm(`Delete your account?\n\nThis permanently removes all your data, households, reminders and share targets from the server. This cannot be undone.\n\nYour local data on this device will also be cleared.`)) return;
+  if (!confirm('Are you absolutely sure? This cannot be undone.')) return;
+  try {
+    const res = await fetchKV(`${WORKER_URL}/user/delete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash: _kvEmailHash, verifier: _kvVerifier }),
+    });
+    if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || 'Delete failed'); }
+    // Clear all local state
+    const deviceId = getOrCreateDeviceId();
+    await removeWrappedKey(deviceId);
+    localStorage.removeItem('stockroom_device_secret');
+    localStorage.removeItem('stockroom_kv_session');
+    localStorage.removeItem('stockroom_seen');
+    localStorage.removeItem('stockroom_country_set');
+    localStorage.removeItem('stockroom_protect_seen');
+    try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
+    kvConnected  = false;
+    _kvEmail     = '';
+    _kvEmailHash = '';
+    _kvVerifier  = '';
+    _kvKey       = null;
+    items        = [];
+    await saveData();
+    toast('Account deleted');
+    // Reload to show registration screen
+    setTimeout(() => location.reload(), 1500);
+  } catch(err) {
+    toast('Could not delete account: ' + err.message);
+  }
+}
+
+async function kvSignOut() {
+  if (!confirm('Sign out?\n\nYour encrypted data stays safely on the server. Sign back in with your email and passphrase to access it.')) return;
+  // Clear device trust
+  const deviceId = getOrCreateDeviceId();
+  await removeWrappedKey(deviceId);
+  localStorage.removeItem('stockroom_device_secret');
+  localStorage.removeItem('stockroom_kv_key_fallback');
+  localStorage.removeItem('stockroom_kv_session_key');
+  try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
+  // Clear session credentials
+  localStorage.removeItem('stockroom_kv_session');
+  localStorage.removeItem('stockroom_seen');
+  localStorage.removeItem('stockroom_country_set');
+  localStorage.removeItem('stockroom_protect_seen');
+  // Clear local app data (encrypted copy stays on server)
+  items    = [];
+  settings = {};
+  groceryItems = [];
+  groceryDepts = [];
+  reminders    = [];
+  await saveData();
+  await _saveSettings();
+  // Reset in-memory state
+  kvConnected  = false;
+  _kvEmail     = '';
+  _kvEmailHash = '';
+  _kvVerifier  = '';
+  _kvKey       = null;
+  _shareState  = null;
+  // Show login screen
+  document.body.classList.add('wizard-active'); document.getElementById('wizard').style.display = 'flex';
+  document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+  document.getElementById('wizard-step-1b').classList.add('active');
+  updateSyncUI();
+  toast('Signed out');
+}
+
+function openChangePassphrase() {
+  const oldPass = prompt('Enter your current passphrase:');
+  if (!oldPass) return;
+  const newPass = prompt('Enter your new passphrase (min 8 characters):');
+  if (!newPass || newPass.length < 8) { toast('New passphrase too short'); return; }
+  const confirm_ = prompt('Confirm new passphrase:');
+  if (newPass !== confirm_) { toast('Passphrases do not match'); return; }
+  kvChangePassphrase(oldPass, newPass);
+}
+
+async function kvChangePassphrase(oldPass, newPass) {
+  try {
+    // Verify old passphrase
+    const oldVerifier = await kvMakeVerifier(oldPass, _kvEmailHash);
+    if (oldVerifier !== _kvVerifier) { toast('Current passphrase incorrect'); return; }
+    // Decrypt with old key, re-encrypt with new key
+    const oldKey    = await kvDeriveKey(_kvEmail, oldPass);
+    const newKey    = await kvDeriveKey(_kvEmail, newPass);
+    const newVerifier = await kvMakeVerifier(newPass, _kvEmailHash);
+    // Pull current ciphertext
+    const res = await fetchKV(`${WORKER_URL}/data/pull`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash: _kvEmailHash, verifier: _kvVerifier, household: activeProfile }),
+    });
+    if (!res.ok) throw new Error('Could not fetch current data');
+    const { ciphertext } = await res.json();
+    if (ciphertext) {
+      const plain      = await kvDecrypt(oldKey, ciphertext);
+      const newCipher  = await kvEncrypt(newKey, plain);
+      // Push re-encrypted data with new verifier
+      await fetchKV(`${WORKER_URL}/data/push`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash: _kvEmailHash, verifier: newVerifier, household: activeProfile, ciphertext: newCipher }),
+      });
+    }
+    // Update session
+    _kvKey      = newKey;
+    _kvVerifier = newVerifier;
+    try { localStorage.setItem('stockroom_kv_session', JSON.stringify({ email: _kvEmail, emailHash: _kvEmailHash, verifier: newVerifier })); } catch(e) {}
+    toast('Passphrase changed ✓');
+  } catch(err) { toast('Could not change passphrase: ' + err.message); }
+}
+
+// ═══════════════════════════════════════════
+//  DROPBOX SYNC (kept for reference, disabled in KV build)
+// ═══════════════════════════════════════════
+function connectDropbox() {
+  try { sessionStorage.setItem('stockroom_pre_auth_view', 'settings'); } catch(e){}
+  try { sessionStorage.setItem('stockroom_auth_provider', 'dropbox'); } catch(e){}
+
+  // Generate PKCE code verifier and challenge
+  const verifier = generateCodeVerifier();
+  sessionStorage.setItem('dropbox_pkce_verifier', verifier);
+
+  generateCodeChallenge(verifier).then(challenge => {
+    const redirectUri = `${WORKER_URL}/auth/dropbox`;
+    const authUrl = `https://www.dropbox.com/oauth2/authorize`
+      + `?client_id=${DROPBOX_APP_KEY}`
+      + `&redirect_uri=${encodeURIComponent(redirectUri)}`
+      + `&response_type=code`
+      + `&token_access_type=offline`
+      + `&code_challenge=${encodeURIComponent(challenge)}`
+      + `&code_challenge_method=S256`
+      + `&state=${encodeURIComponent(verifier)}`;
+    location.href = authUrl;
+  });
+}
+
+function generateCodeVerifier() {
+  const array = new Uint8Array(64);
+  crypto.getRandomValues(array);
+  return btoa(String.fromCharCode(...array))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '').slice(0, 128);
+}
+
+async function generateCodeChallenge(verifier) {
+  const encoder = new TextEncoder();
+  const data     = encoder.encode(verifier);
+  const digest   = await crypto.subtle.digest('SHA-256', data);
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+async function syncDropbox() {
+  if (!dropboxConnected || !dropboxToken) return;
+  updateSyncPill('syncing');
+  try {
+    // Try to download existing file
+    const dlRes = await fetch('https://content.dropboxapi.com/2/files/download', {
+      method: 'POST',
+      headers: {
+        'Authorization':   `Bearer ${dropboxToken}`,
+        'Dropbox-API-Arg': JSON.stringify({ path: DROPBOX_FILE }),
+      },
+    });
+
+    if (dlRes.ok) {
+      let remote = null;
+      try { remote = await dlRes.json(); } catch(e) {}
+      if (remote && Array.isArray(remote.items)) {
+        const localLastSynced  = settings.lastSynced ? new Date(settings.lastSynced).getTime() : 0;
+        const remoteLastSynced = remote.lastSynced   ? new Date(remote.lastSynced).getTime()   : 0;
+        const remoteWins       = remoteLastSynced > localLastSynced;
+
+        items = await mergeItems(items, remote.items, remoteWins);
+        await saveData();
+        if (remote.settings) {
+          const localTags    = settings.customTags;
+          settings           = { ...remote.settings, ...settings };
+          const remoteTags   = remote.settings.customTags || [];
+          const localDefined  = (localTags||[]).filter(t=>t&&t.trim()).length;
+          const remoteDefined = remoteTags.filter(t=>t&&t.trim()).length;
+          settings.customTags = localDefined >= remoteDefined ? (localTags||[]) : remoteTags;
+          await _saveSettings();
+        }
+        if (remote.groceries) {
+          const localG  = groceryItems;
+          const remoteG = remote.groceries;
+          if (remoteWins || remoteG.length > localG.length) {
+            groceryItems = remoteG;
+            await saveGrocery();
+          }
+        }
+        if (remote.departments && remote.departments.length) {
+          if (remoteWins || remote.departments.length > groceryDepts.length) {
+            groceryDepts = remote.departments;
+            await saveGroceryDepts();
+          }
+        }
+        if (remote.reminders && Array.isArray(remote.reminders)) {
+          if (remoteWins || remote.reminders.length > reminders.length) {
+            reminders = remote.reminders;
+            await saveReminders();
+          }
+        }
+        if (remote.deletedIds && Array.isArray(remote.deletedIds)) {
+          const merged = await loadDeletedIds();
+          remote.deletedIds.forEach(id => merged.add(id));
+          await saveDeletedIds(merged);
+        }
+        scheduleRender(...RENDER_REGIONS);
+      }
+    }
+
+    settings.lastSynced = new Date().toISOString();
+    await _saveSettings();
+    const uploadedIdsDb = new Set(items.map(i => i.id));
+    const remainingTombstonesDb = await loadDeletedIds();
+    remainingTombstonesDb.forEach(id => { if (uploadedIdsDb.has(id)) remainingTombstonesDb.delete(id); });
+    await saveDeletedIds(remainingTombstonesDb);
+    await uploadToDropbox(JSON.stringify({
+      items, settings, lastSynced: settings.lastSynced,
+      groceries: groceryItems, departments: groceryDepts, reminders, deletedIds: [...remainingTombstonesDb],
+    }));
+    updateSyncPill('synced', 'dropbox');
+
+  } catch(err) {
+    console.error('Dropbox sync error:', err);
+    updateSyncPill('error');
+  }
+}
+
+async function uploadToDropbox(payload) {
+  const res = await fetch('https://content.dropboxapi.com/2/files/upload', {
+    method: 'POST',
+    headers: {
+      'Authorization':   `Bearer ${dropboxToken}`,
+      'Dropbox-API-Arg': JSON.stringify({ path: DROPBOX_FILE, mode: 'overwrite', autorename: false }),
+      'Content-Type':    'application/octet-stream',
+    },
+    body: payload,
+  });
+  if (!res.ok) throw new Error('Dropbox upload failed: ' + res.status);
+}
+
+async function signOutDropbox() {
+  if (!confirm('Sign out of Dropbox?\n\nYour data on Dropbox stays complete. Your local data on this device will remain unless you choose to clear it.')) return;
+  dropboxToken     = null;
+  dropboxConnected = false;
+  try { localStorage.removeItem('stockroom_dropbox'); } catch(e){}
+  updateSyncUI();
+  toast('Signed out of Dropbox');
+  if (confirm('Clear local data on this device too?\n\nCloud data is unaffected — you can restore it by signing back in.')) {
+    items = [];
+    await saveData();
+    scheduleRender('grid', 'dashboard');
+    toast('Local data cleared');
+  }
+}
+
+// ── Sync Queue — visual feedback for pending changes ──────
+// Shows a bottom bar while changes are queued/syncing.
+// Debounces rapid saves so we don't hammer the backend.
+const _syncQueue = {
+  pending:  0,
+  syncing:  false,
+  timer:    null,
+  errorMsg: null,
+
+  // Call this whenever a change is made (save item, delete, etc.)
+  enqueue(label = 'Saving changes…') {
+    this.pending++;
+    this.errorMsg = null;
+    this._show('syncing', label);
+    // Debounce — wait 1.5s after last change before actually syncing
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this._flush(), 1500);
+  },
+
+  async _flush() {
+    if (this.syncing) return;
+    this.syncing = true;
+    const count  = this.pending;
+    this.pending = 0;
+    this._show('syncing', `Syncing ${count} change${count!==1?'s':''}…`);
+    try {
+      // silent=true: bottom bar provides feedback; pill stays Connected
+      if (kvConnected || _shareState) await kvSyncNow(true);
+      this._show('done', 'All changes saved');
+      setTimeout(() => this._hide(), 2500);
+    } catch(e) {
+      this._show('error', 'Sync failed — will retry');
+      setTimeout(() => this._hide(), 4000);
+    }
+    this.syncing = false;
+  },
+
+  _show(state, label) {
+    const bar      = document.getElementById('sync-queue-bar');
+    const spinner  = document.getElementById('sqb-spinner');
+    const done     = document.getElementById('sqb-done');
+    const err      = document.getElementById('sqb-error');
+    const lbl      = document.getElementById('sqb-label');
+    const cnt      = document.getElementById('sqb-count');
+    if (!bar) return;
+    bar.classList.add('visible');
+    spinner.style.display = state === 'syncing' ? 'block' : 'none';
+    done.style.display    = state === 'done'    ? 'block' : 'none';
+    err.style.display     = state === 'error'   ? 'block' : 'none';
+    if (lbl) lbl.textContent = label;
+    if (cnt) cnt.textContent = this.pending > 0 ? `${this.pending} pending` : '';
+  },
+
+  _hide() {
+    document.getElementById('sync-queue-bar')?.classList.remove('visible');
+  },
+};
+
+// ── syncAll with debounce to prevent rapid-fire calls ─────
+let _syncDebounceTimer = null;
+async function syncAll() {
+  if (_syncDebounceTimer) clearTimeout(_syncDebounceTimer);
+  return new Promise(resolve => {
+    _syncDebounceTimer = setTimeout(async () => {
+      _syncDebounceTimer = null;
+      if (kvConnected || _shareState) await kvSyncNow(true); // always silent — background only
+      resolve();
+    }, 1200);
+  });
+}
+
+// ── Unified UI update for both providers ────────────────
+function updateSyncUI() {
+  const pill  = document.getElementById('sync-pill');
+  const label = document.getElementById('sync-label');
+  if (!pill || !label) return;
+  if (kvConnected && settings.lastSynced) {
+    pill.className    = 'sync-pill synced';
+    label.textContent = 'Connected';
+  } else if (kvConnected) {
+    pill.className    = 'sync-pill synced';
+    label.textContent = 'Connected';
+  } else if (_shareState) {
+    pill.className    = 'sync-pill synced';
+    label.textContent = 'Connected';
+  } else {
+    pill.className    = 'sync-pill pending';
+    label.textContent = 'Not signed in';
+  }
+  // Update account email in settings
+  const el = document.getElementById('kv-account-email');
+  if (el && _kvEmail) el.textContent = _kvEmail;
+}
+
+function updateDropboxUI() {
+  const connectBtn  = document.getElementById('dropbox-connect-btn');
+  const status      = document.getElementById('dropbox-status');
+  const syncBtn     = document.getElementById('dropbox-sync-btn');
+  const signOutBtn  = document.getElementById('dropbox-signout-btn');
+  if (dropboxConnected) {
+    if (connectBtn) connectBtn.style.display = 'none';
+    if (status)     status.style.display     = 'flex';
+    if (syncBtn)    syncBtn.style.display    = 'inline-flex';
+    if (signOutBtn) signOutBtn.style.display = 'inline-flex';
+  } else {
+    if (connectBtn) connectBtn.style.display = 'inline-flex';
+    if (status)     status.style.display     = 'none';
+    if (syncBtn)    syncBtn.style.display    = 'none';
+    if (signOutBtn) signOutBtn.style.display = 'none';
+  }
+}
+
+async function signOutDrive() {
+  if (!confirm('Sign out of Google Drive?\n\nYour data on Drive stays complete. Your local data on this device will remain unless you choose to clear it.')) return;
+  driveConnected = false;
+  try { localStorage.removeItem('stockroom_drive'); } catch(e) {}
+  updateSyncUI();
+  toast('Signed out of Google Drive');
+  if (confirm('Clear local data on this device too?\n\nCloud data is unaffected — you can restore it by signing back in.')) {
+    items = [];
+    await saveData();
+    scheduleRender('grid', 'dashboard');
+    toast('Local data cleared');
+  }
+}
+
+function renderSettingsForUser() {
+  const settingsView = document.getElementById('view-settings');
+  if (!settingsView) return;
+
+  if (!isOwner()) {
+    // Shared user — show banner and hide owner-only cards
+    if (!document.getElementById('shared-user-settings-banner')) {
+      const banner = document.createElement('div');
+      banner.id    = 'shared-user-settings-banner';
+      banner.style.cssText = 'background:rgba(91,141,238,0.08);border:1px solid rgba(91,141,238,0.2);border-radius:12px;padding:14px 16px;margin-bottom:16px;font-size:13px;line-height:1.6';
+      const userName  = esc(_shareState?.name || '');
+      const ownerName = esc(_shareState?.ownerName || 'the owner');
+      const type      = _shareState?.type || 'guest';
+      const roleLabel = type === 'family' ? ' as a <strong>family member</strong>' : type === 'cleaner' ? ' as a <strong>cleaner</strong>' : ' as a <strong>guest</strong>';
+      const greeting  = userName ? `Hi <strong>${userName}</strong>, you` : 'You';
+      banner.innerHTML = `
+        <div style="font-size:14px;margin-bottom:6px">${greeting} have joined <strong>${ownerName}</strong>'s household${roleLabel}.</div>
+        <span style="color:var(--muted);font-size:12px">Some settings are managed by the owner.</span>
+        ${!kvConnected ? `<br><button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="showKvRegister();document.getElementById('wizard').style.display='flex'">☁️ Create your own account</button>` : ''}
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px;color:var(--danger);border-color:var(--danger)" onclick="leaveShare()">Leave shared household</button>
+      `;
+      settingsView.insertBefore(banner, settingsView.firstChild);
+    }
+    const ownerOnlyHeadings = ['Alerts', 'Reminder Schedules', 'Preferences', 'Data'];
+    document.querySelectorAll('#view-settings .settings-card h3').forEach(h3 => {
+      if (ownerOnlyHeadings.some(s => h3.textContent.includes(s)))
+        h3.closest('.settings-card').style.display = 'none';
+    });
+    return;
+  }
+
+  // Owner — show/hide cards based on sign-in state
+  const signedIn = kvConnected;
+  document.querySelectorAll('#view-settings .settings-card h3').forEach(h3 => {
+    const text = h3.textContent;
+    const card = h3.closest('.settings-card');
+    // These cards require being signed in
+    const needsAuth = ['Alerts', 'Reminder Schedules', 'Preferences', 'Data', 'Households'];
+    if (needsAuth.some(s => text.includes(s))) {
+      card.style.display = signedIn ? '' : 'none';
+    }
+  });
+}
+
+function updateDriveUI() {
+  const driveBtn   = document.getElementById('drive-connect-btn');
+  const driveStatus = document.getElementById('drive-status');
+  const syncBtn    = document.getElementById('drive-sync-btn');
+  const signOutBtn = document.getElementById('drive-signout-btn');
+  if (driveConnected) {
+    if (driveBtn)   driveBtn.style.display   = 'none';
+    if (driveStatus) driveStatus.style.display = 'flex';
+    if (syncBtn)    syncBtn.style.display    = 'inline-flex';
+    if (signOutBtn) signOutBtn.style.display = 'inline-flex';
+  } else {
+    if (driveBtn)   driveBtn.style.display   = 'inline-flex';
+    if (driveStatus) driveStatus.style.display = 'none';
+    if (syncBtn)    syncBtn.style.display    = 'none';
+    if (signOutBtn) signOutBtn.style.display = 'none';
+  }
+}
+
+function updateSyncPill(state, provider) {
+  const pill  = document.getElementById('sync-pill');
+  const label = document.getElementById('sync-label');
+  if (!pill || !label) return;
+  if (state === 'syncing') { pill.className = 'sync-pill pending'; label.textContent = 'Syncing…'; }
+  if (state === 'synced')  { pill.className = 'sync-pill synced';  label.textContent = 'Synced';
+    // Return to Connected after 3s so pill doesn't linger on Synced
+    clearTimeout(pill._connectedTimer);
+    pill._connectedTimer = setTimeout(() => {
+      if (pill.className === 'sync-pill synced' && label.textContent === 'Synced') {
+        label.textContent = 'Connected';
+      }
+    }, 3000);
+  }
+  if (state === 'connected') { pill.className = 'sync-pill synced'; label.textContent = 'Connected'; }
+  if (state === 'error')   { pill.className = 'sync-pill error';   label.textContent = 'Sync error'; }
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  ADAPTIVE DARK MODE 2.0 — Time-of-day colour temperature
+// ═══════════════════════════════════════════════════════════
+
+function applyAdaptiveColourTemp() {
+  const h = new Date().getHours();
+  let tint = 'rgba(0,0,0,0)';
+  let surfaceOpacity = '0.82';
+
+  if (h >= 22 || h < 6) {
+    // Late night / early morning: warm amber tint, more opaque surfaces
+    tint = 'rgba(60,25,0,0.08)';
+    surfaceOpacity = '0.92';
+    document.documentElement.style.setProperty('--ok',    '#3db87a');
+    document.documentElement.style.setProperty('--accent2','#4f82e0');
+  } else if (h >= 6 && h < 10) {
+    // Morning: cool blue-white, crisp
+    tint = 'rgba(10,20,60,0.04)';
+    surfaceOpacity = '0.78';
+    document.documentElement.style.setProperty('--ok',    '#4cbb8a');
+    document.documentElement.style.setProperty('--accent2','#5b8dee');
+  } else if (h >= 18 && h < 22) {
+    // Evening: subtle warm shift
+    tint = 'rgba(40,15,0,0.05)';
+    surfaceOpacity = '0.86';
+    document.documentElement.style.setProperty('--ok',    '#45b882');
+    document.documentElement.style.setProperty('--accent2','#547ee8');
+  } else {
+    // Daytime: neutral
+    tint = 'rgba(0,0,0,0)';
+    surfaceOpacity = '0.82';
+    document.documentElement.style.setProperty('--ok',    '#4cbb8a');
+    document.documentElement.style.setProperty('--accent2','#5b8dee');
+  }
+
+  document.documentElement.style.setProperty('--temp-tint', tint);
+  document.documentElement.style.setProperty('--surface-opacity', surfaceOpacity);
+}
+
+applyAdaptiveColourTemp();
+// Re-check every 10 minutes in case the app stays open across hour boundaries
+setInterval(applyAdaptiveColourTemp, 600000);
+
+
+// ═══════════════════════════════════════════════════════════
+//  PREDICTIVE MICRO-INTERACTIONS
+// ═══════════════════════════════════════════════════════════
+
+// Pre-warm renders on pointerdown (fires ~80ms before click on mobile)
+// and on hover (desktop). Gives the UI a "telepathic" feel.
+
+let _groceryPrewarmed = false;
+let _reportPrewarmed  = false;
+
+async function prewarmView(name) {
+  if (name === 'grocery' && !_groceryPrewarmed) {
+    _groceryPrewarmed = true;
+    // Pre-load grocery data into memory so render is instant on click
+    await loadGrocery();
+  }
+  if (name === 'report' && !_reportPrewarmed) {
+    _reportPrewarmed = true;
+    // Pre-calculate report data off the critical path
+    requestIdleCallback ? requestIdleCallback(() => renderReport()) : setTimeout(() => renderReport(), 0);
+  }
+}
+
+// Patch tab buttons with pointerdown + pointerenter pre-warming
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.tab').forEach(btn => {
+    const onclick = btn.getAttribute('onclick') || '';
+    const match   = onclick.match(/showView\('(\w+)'/);
+    if (!match) return;
+    const viewName = match[1];
+    const prewarm  = () => prewarmView(viewName);
+    btn.addEventListener('pointerenter', prewarm, {passive:true});
+    btn.addEventListener('pointerdown',  prewarm, {passive:true});
+  });
+});
+
+// Predictive button ripple — gives physical depth feedback on tap
+document.addEventListener('pointerdown', (e) => {
+  const btn = e.target.closest('.btn, .tab, .filter-chip, .grocery-cb');
+  if (!btn || btn.classList.contains('no-ripple')) return;
+
+  const ripple = document.createElement('span');
+  const rect   = btn.getBoundingClientRect();
+  const size   = Math.max(rect.width, rect.height) * 2;
+  const x      = e.clientX - rect.left - size / 2;
+  const y      = e.clientY - rect.top  - size / 2;
+
+  ripple.style.cssText = `
+    position:absolute;width:${size}px;height:${size}px;
+    left:${x}px;top:${y}px;border-radius:50%;
+    background:rgba(255,255,255,0.12);pointer-events:none;
+    transform:scale(0);animation:ripple-expand 0.45s ease-out forwards;
+    z-index:0;
+  `;
+
+  // Ensure the button has relative positioning for ripple containment
+  const pos = getComputedStyle(btn).position;
+  if (pos === 'static') btn.style.position = 'relative';
+  btn.style.overflow = 'hidden';
+  btn.appendChild(ripple);
+  setTimeout(() => ripple.remove(), 500);
+}, {passive:true});
+
+
+// ═══════════════════════════════════════════════════════════
+//  GROCERY LIST
+// ═══════════════════════════════════════════════════════════
+
+const DEFAULT_DEPTS = [
+  { id:'bakery',    name:'Bakery',       emoji:'🍞' },
+  { id:'fruit-veg', name:'Fruit & Veg',  emoji:'🥦' },
+  { id:'meat-fish', name:'Meat & Fish',  emoji:'🥩' },
+  { id:'dairy',     name:'Dairy',        emoji:'🧀' },
+  { id:'frozen',    name:'Frozen',       emoji:'🧊' },
+  { id:'drinks',    name:'Drinks',       emoji:'🥤' },
+  { id:'snacks',    name:'Snacks',       emoji:'🍿' },
+  { id:'household', name:'Household',    emoji:'🧹' },
+  { id:'baby-care', name:'Baby Care',    emoji:'🍼' },
+  { id:'other',     name:'Other',        emoji:'📦' },
+];
+
+let groceryItems = [];
+let groceryDepts = [];
+let grocerySort  = 'dept'; // 'dept' | 'alpha'
+let groceryContextTarget = null;
+let groceryConvertItem   = null;
+
+async function loadGrocery() {
+  const storedItems = await dbGet('groceries', 'items');
+  const storedDepts = await dbGet('departments', 'departments');
+  if (storedItems) {
+    groceryItems = storedItems;
+  } else {
+    // Migration from localStorage
+    try {
+      const raw = localStorage.getItem('stockroom_groceries');
+      if (raw) { groceryItems = JSON.parse(raw) || []; await dbPut('groceries', 'items', groceryItems); localStorage.removeItem('stockroom_groceries'); }
+    } catch(e) { groceryItems = []; }
+  }
+  if (storedDepts) {
+    groceryDepts = storedDepts;
+  } else {
+    try {
+      const raw = localStorage.getItem('stockroom_departments');
+      if (raw) { groceryDepts = JSON.parse(raw); await dbPut('departments', 'departments', groceryDepts); localStorage.removeItem('stockroom_departments'); }
+    } catch(e) { groceryDepts = null; }
+  }
+  if (!groceryDepts || groceryDepts.length === 0) groceryDepts = DEFAULT_DEPTS.map(d => ({...d}));
+}
+
+async function saveGrocery() {
+  await dbPut('groceries', 'items', groceryItems);
+  if (activeProfile) await saveCurrentProfile();
+  _syncQueue.enqueue();
+  bcPost({ type: 'GROCERY_CHANGED' });
+}
+
+async function saveGroceryDepts() {
+  await dbPut('departments', 'departments', groceryDepts);
+  if (activeProfile) await saveCurrentProfile();
+}
+
+function getGroceryShopInterval() {
+  try { return JSON.parse(localStorage.getItem('stockroom_grocery_interval') || '{"value":7,"unit":1}'); } catch(e) { return {value:7,unit:1}; }
+}
+
+function saveGroceryShopInterval() {
+  const v = parseInt(document.getElementById('grocery-shop-interval').value) || 7;
+  const u = parseInt(document.getElementById('grocery-shop-interval-unit').value) || 1;
+  try { localStorage.setItem('stockroom_grocery_interval', JSON.stringify({value:v,unit:u})); } catch(e) {}
+  showToast('Shop interval saved');
+}
+
+function setGrocerySort(mode, btn) {
+  grocerySort = mode;
+  document.querySelectorAll('.grocery-sort-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderGrocery();
+}
+
+function renderGrocery() {
+  const query = (document.getElementById('grocery-search')?.value || '').toLowerCase().trim();
+  const body  = document.getElementById('grocery-list-body');
+  const infoEl = document.getElementById('grocery-interval-info');
+  const checkedBar = document.getElementById('grocery-checked-bar');
+  if (!body) return;
+
+  // interval info
+  const si = getGroceryShopInterval();
+  const unitLabel = si.unit === 7 ? (si.value === 1 ? 'week' : 'weeks') : si.unit === 30 ? (si.value === 1 ? 'month' : 'months') : (si.value === 1 ? 'day' : 'days');
+  if (infoEl) infoEl.textContent = `Shopping every ${si.value} ${unitLabel} · ${groceryItems.filter(i=>!i.checked).length} item${groceryItems.filter(i=>!i.checked).length===1?'':'s'} remaining`;
+
+  // subtitle
+  const sub = document.getElementById('grocery-subtitle');
+  if (sub) sub.textContent = `${groceryItems.length} item${groceryItems.length===1?'':'s'} · tap to check off`;
+
+  let filtered = groceryItems.filter(i => !query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query));
+  const unchecked = filtered.filter(i => !i.checked);
+  const checked   = filtered.filter(i =>  i.checked);
+
+  const checkedCount = groceryItems.filter(i => i.checked).length;
+  if (checkedBar) {
+    checkedBar.style.display = checkedCount > 0 ? 'flex' : 'none';
+    const cc = document.getElementById('grocery-checked-count');
+    if (cc) cc.textContent = `${checkedCount} item${checkedCount===1?'':'s'} checked`;
+  }
+
+  if (groceryItems.length === 0) {
+    body.innerHTML = `<div class="grocery-empty"><div class="grocery-empty-icon">🛒</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">No grocery items yet</div><div style="font-size:13px;color:var(--muted)">Add items manually or convert existing stock items.</div></div>`;
+    return;
+  }
+
+  if (filtered.length === 0) {
+    body.innerHTML = `<div class="grocery-empty"><div class="grocery-empty-icon">🔍</div><div style="font-size:15px;font-weight:600">No matches</div></div>`;
+    return;
+  }
+
+  let html = '';
+
+  if (grocerySort === 'dept') {
+    // Group unchecked by dept
+    const deptMap = {};
+    unchecked.forEach(item => {
+      const dept = item.department || 'other';
+      if (!deptMap[dept]) deptMap[dept] = [];
+      deptMap[dept].push(item);
+    });
+
+    const deptOrder = groceryDepts.map(d => d.id);
+    // also catch any items with unknown dept ids
+    const extraDepts = [...new Set(unchecked.map(i => i.department || 'other'))].filter(d => !deptOrder.includes(d));
+    const orderedDepts = [...deptOrder, ...extraDepts];
+
+    orderedDepts.forEach(deptId => {
+      const deptItems = deptMap[deptId];
+      if (!deptItems || deptItems.length === 0) return;
+      const deptDef = groceryDepts.find(d => d.id === deptId) || {name: deptId, emoji:'📦'};
+      html += `<div class="grocery-dept-group">
+        <div class="grocery-dept-header">
+          <span class="grocery-dept-label">${deptDef.emoji} ${esc(deptDef.name)}</span>
+          <span class="grocery-dept-count">${deptItems.length}</span>
+        </div>
+        ${deptItems.map(item => groceryItemHTML(item)).join('')}
+      </div>`;
+    });
+  } else {
+    // Alphabetical unchecked
+    const sorted = [...unchecked].sort((a,b) => a.name.localeCompare(b.name));
+    html += sorted.map(item => groceryItemHTML(item)).join('');
+  }
+
+  // checked items (always at bottom, no grouping)
+  if (checked.length > 0) {
+    html += `<div style="margin-top:16px">
+      <div class="grocery-dept-header">
+        <span class="grocery-dept-label" style="color:var(--muted)">✓ Checked</span>
+        <span class="grocery-dept-count">${checked.length}</span>
+      </div>
+      ${checked.map(item => groceryItemHTML(item)).join('')}
+    </div>`;
+  }
+
+  body.innerHTML = html;
+}
+
+function groceryItemHTML(item) {
+  const deptDef = groceryDepts.find(d => d.id === (item.department || 'other')) || {name:'Other', emoji:'📦'};
+  const meta = [
+    grocerySort === 'alpha' ? `${deptDef.emoji} ${deptDef.name}` : null,
+    item.notes || null,
+    item.recurring ? `↻ every ${item.intervalDays||7}d` : null,
+  ].filter(Boolean).join(' · ');
+
+  return `<div class="grocery-item${item.checked?' checked':''}" id="gitem-${item.id}">
+    <input type="checkbox" class="grocery-cb" ${item.checked?'checked':''} onchange="toggleGroceryCheck('${item.id}',this)">
+    <div class="grocery-item-info">
+      <div class="grocery-item-name">${esc(item.name)}</div>
+      ${meta ? `<div class="grocery-item-meta">${esc(meta)}</div>` : ''}
+    </div>
+    <div class="grocery-item-actions">
+      <button class="grocery-icon-btn" onclick="openGroceryContext(event,'${item.id}')" title="Options">•••</button>
+    </div>
+  </div>`;
+}
+
+async function toggleGroceryCheck(id, cb) {
+  const item = groceryItems.find(i => i.id === id);
+  if (!item) return;
+  item.checked = cb.checked;
+  item.checkedAt = cb.checked ? new Date().toISOString() : null;
+  await saveGrocery();
+  renderGrocery();
+}
+
+async function clearCheckedGrocery() {
+  if (!canWrite("groceries")) { showLockBanner("groceries"); return; }
+  // For recurring items: reset check and bump addedAt; for non-recurring: remove
+  groceryItems = groceryItems.filter(item => {
+    if (!item.checked) return true;
+    if (item.recurring) {
+      item.checked   = false;
+      item.checkedAt = null;
+      item.addedAt   = new Date().toISOString();
+      return true;
+    }
+    return false;
+  });
+  await saveGrocery();
+  renderGrocery();
+}
+
+// ── Add / Edit ────────────────────────────────────────────
+
+function openAddGroceryItem(prefillName) {
+  document.getElementById('grocery-modal-title').textContent = 'Add Grocery Item';
+  document.getElementById('grocery-edit-id').value = '';
+  document.getElementById('grocery-f-name').value  = prefillName || '';
+  document.getElementById('grocery-f-notes').value = '';
+  document.getElementById('grocery-f-recurring').checked = false;
+  document.getElementById('grocery-f-interval').value = '7';
+  document.getElementById('grocery-f-interval-unit').value = '1';
+  document.getElementById('grocery-recurring-opts').style.display = 'none';
+  populateGroceryDeptSelect('');
+  openModal('grocery-item-modal');
+  setTimeout(() => document.getElementById('grocery-f-name').focus(), 100);
+}
+
+function openEditGroceryItem(id) {
+  const item = groceryItems.find(i => i.id === id);
+  if (!item) return;
+  document.getElementById('grocery-modal-title').textContent = 'Edit Item';
+  document.getElementById('grocery-edit-id').value = id;
+  document.getElementById('grocery-f-name').value  = item.name;
+  document.getElementById('grocery-f-notes').value = item.notes || '';
+  document.getElementById('grocery-f-recurring').checked = !!item.recurring;
+  const days = item.intervalDays || 7;
+  // pick best unit
+  if (days % 30 === 0 && days >= 30) {
+    document.getElementById('grocery-f-interval').value = days / 30;
+    document.getElementById('grocery-f-interval-unit').value = '30';
+  } else if (days % 7 === 0) {
+    document.getElementById('grocery-f-interval').value = days / 7;
+    document.getElementById('grocery-f-interval-unit').value = '7';
+  } else {
+    document.getElementById('grocery-f-interval').value = days;
+    document.getElementById('grocery-f-interval-unit').value = '1';
+  }
+  document.getElementById('grocery-recurring-opts').style.display = item.recurring ? 'block' : 'none';
+  populateGroceryDeptSelect(item.department || 'other');
+  openModal('grocery-item-modal');
+}
+
+function populateGroceryDeptSelect(selectedId) {
+  const sel = document.getElementById('grocery-f-dept');
+  sel.innerHTML = groceryDepts.map(d =>
+    `<option value="${d.id}" ${d.id === selectedId ? 'selected' : ''}>${d.emoji} ${d.name}</option>`
+  ).join('');
+}
+
+function toggleGroceryRecurring() {
+  const checked = document.getElementById('grocery-f-recurring').checked;
+  document.getElementById('grocery-recurring-opts').style.display = checked ? 'block' : 'none';
+}
+
+async function saveGroceryItem() {
+  if (!canWrite("groceries")) { showLockBanner("groceries"); return; }
+  const name = document.getElementById('grocery-f-name').value.trim();
+  if (!name) { showToast('Please enter an item name'); return; }
+  const id        = document.getElementById('grocery-edit-id').value;
+  const dept      = document.getElementById('grocery-f-dept').value;
+  const notes     = document.getElementById('grocery-f-notes').value.trim();
+  const recurring = document.getElementById('grocery-f-recurring').checked;
+  const intervalVal  = parseInt(document.getElementById('grocery-f-interval').value) || 7;
+  const intervalUnit = parseInt(document.getElementById('grocery-f-interval-unit').value) || 1;
+  const intervalDays = intervalVal * intervalUnit;
+
+  if (id) {
+    const item = groceryItems.find(i => i.id === id);
+    if (item) { Object.assign(item, {name, department:dept, notes, recurring, intervalDays, updatedAt:new Date().toISOString()}); }
+  } else {
+    groceryItems.push({ id: 'g_'+Date.now()+'_'+Math.random().toString(36).slice(2,6), name, department:dept, notes, recurring, intervalDays, checked:false, addedAt:new Date().toISOString(), updatedAt:new Date().toISOString() });
+  }
+  await saveGrocery();
+  closeModal('grocery-item-modal');
+  renderGrocery();
+}
+
+// ── Context menu ─────────────────────────────────────────
+
+function openGroceryContext(e, id) {
+  e.stopPropagation();
+  groceryContextTarget = id;
+  const item = groceryItems.find(i => i.id === id);
+  if (!item) return;
+  const menu = document.getElementById('grocery-context-menu');
+  menu.innerHTML = `
+    <button class="grocery-context-item" onclick="editFromContext()">✏️ Edit item</button>
+    <button class="grocery-context-item" onclick="convertFromContext()">📦 Convert to stock item</button>
+    <button class="grocery-context-item danger" onclick="deleteFromContext()">🗑 Delete</button>
+  `;
+  // Position near tap
+  const rect = e.currentTarget.getBoundingClientRect();
+  menu.style.display = 'block';
+  const menuW = 190, menuH = 140;
+  let left = rect.left - menuW + rect.width;
+  let top  = rect.bottom + 6;
+  if (left < 8) left = 8;
+  if (top + menuH > window.innerHeight) top = rect.top - menuH - 6;
+  menu.style.left = left + 'px';
+  menu.style.top  = top  + 'px';
+
+  setTimeout(() => document.addEventListener('click', dismissGroceryContext, {once:true}), 10);
+}
+
+function dismissGroceryContext() {
+  document.getElementById('grocery-context-menu').style.display = 'none';
+  groceryContextTarget = null;
+}
+
+function editFromContext() {
+  const id = groceryContextTarget;
+  dismissGroceryContext();
+  if (id) openEditGroceryItem(id);
+}
+
+async function deleteFromContext() {
+  const id = groceryContextTarget;
+  dismissGroceryContext();
+  if (!id) return;
+  groceryItems = groceryItems.filter(i => i.id !== id);
+  await saveGrocery();
+  renderGrocery();
+}
+
+function convertFromContext() {
+  const id = groceryContextTarget;
+  dismissGroceryContext();
+  if (!id) return;
+  const item = groceryItems.find(i => i.id === id);
+  if (!item) return;
+  groceryConvertItem = item;
+  const body = document.getElementById('grocery-convert-body');
+  const deptDef = groceryDepts.find(d => d.id === (item.department||'other')) || {name:'Other',emoji:'📦'};
+  body.innerHTML = `
+    <div style="background:var(--surface2);border-radius:8px;padding:14px;margin-bottom:16px;border:1px solid var(--border)">
+      <div style="font-size:15px;font-weight:700;margin-bottom:4px">${esc(item.name)}</div>
+      <div style="font-size:12px;color:var(--muted)">${deptDef.emoji} ${esc(deptDef.name)}${item.notes?' · '+esc(item.notes):''}</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Category in Stockroom</label>
+      <select class="form-input" id="convert-category">
+        <option>Food &amp; Drink</option><option>Kitchen</option><option>Bathroom</option>
+        <option>Cleaning</option><option>Health</option><option>Garden</option><option>Other</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Months of supply per purchase</label>
+      <input class="form-input" id="convert-months" type="number" min="0.25" max="24" step="0.25" value="1">
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin-top:4px">You can finish setting it up in the stock item form.</p>
+  `;
+  openModal('grocery-convert-modal');
+}
+
+function doConvertToStock() {
+  if (!groceryConvertItem) return;
+  const category = document.getElementById('convert-category').value;
+  const months   = parseFloat(document.getElementById('convert-months').value) || 1;
+  closeModal('grocery-convert-modal');
+  // Pre-fill the main item modal
+  openItemModal();
+  setTimeout(() => {
+    const nameEl = document.getElementById('f-name');
+    const catEl  = document.getElementById('f-category');
+    const monEl  = document.getElementById('f-months');
+    if (nameEl) nameEl.value = groceryConvertItem.name;
+    if (catEl)  catEl.value  = category;
+    if (monEl)  monEl.value  = months;
+    // Switch to the stock tab
+    const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stock'));
+    if (stockTab) showView('stock', stockTab);
+  }, 150);
+  groceryConvertItem = null;
+}
+
+// ── Departments modal ──────────────────────────────────────
+
+function openGroceryDepts() {
+  renderGroceryDeptsModal();
+  // populate shop interval
+  const si = getGroceryShopInterval();
+  document.getElementById('grocery-shop-interval').value = si.value;
+  document.getElementById('grocery-shop-interval-unit').value = si.unit;
+  openModal('grocery-depts-modal');
+}
+
+function renderGroceryDeptsModal() {
+  const list = document.getElementById('grocery-depts-list');
+  list.innerHTML = groceryDepts.map((d, idx) => `
+    <div class="dept-manage-row">
+      <span class="dept-manage-emoji">${d.emoji}</span>
+      <span class="dept-manage-name">${esc(d.name)}</span>
+      <div class="dept-manage-actions">
+        ${idx > 0 ? `<button class="grocery-icon-btn" onclick="moveGroceryDept(${idx},-1)" title="Move up">↑</button>` : ''}
+        ${idx < groceryDepts.length-1 ? `<button class="grocery-icon-btn" onclick="moveGroceryDept(${idx},1)" title="Move down">↓</button>` : ''}
+        <button class="grocery-icon-btn" style="color:var(--danger)" onclick="deleteGroceryDept('${d.id}')" title="Delete">✕</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function moveGroceryDept(idx, dir) {
+  const newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= groceryDepts.length) return;
+  [groceryDepts[idx], groceryDepts[newIdx]] = [groceryDepts[newIdx], groceryDepts[idx]];
+  await saveGroceryDepts();
+  renderGroceryDeptsModal();
+}
+
+async function deleteGroceryDept(id) {
+  const inUse = groceryItems.some(i => i.department === id);
+  if (inUse && !confirm('Items use this department. They\'ll move to Other. Continue?')) return;
+  if (inUse) groceryItems.forEach(i => { if (i.department === id) i.department = 'other'; });
+  groceryDepts = groceryDepts.filter(d => d.id !== id);
+  await saveGroceryDepts();
+  await saveGrocery();
+  renderGroceryDeptsModal();
+}
+
+async function addGroceryDept() {
+  const nameInput  = document.getElementById('grocery-new-dept-name');
+  const emojiInput = document.getElementById('grocery-new-dept-emoji');
+  const name  = nameInput.value.trim();
+  const emoji = emojiInput.value.trim() || '📦';
+  if (!name) { showToast('Please enter a department name'); return; }
+  const id = 'dept_' + Date.now();
+  groceryDepts.push({id, name, emoji});
+  await saveGroceryDepts();
+  nameInput.value  = '';
+  emojiInput.value = '';
+  renderGroceryDeptsModal();
+  showToast('Department added');
+}
+
+// ── Auto-restore recurring items ───────────────────────────
+async function checkGroceryRecurring() {
+  const now = Date.now();
+  let changed = false;
+  groceryItems.forEach(item => {
+    if (!item.recurring || !item.checked || !item.checkedAt) return;
+    const intervalMs = (item.intervalDays || 7) * 86400000;
+    if (now - new Date(item.checkedAt).getTime() >= intervalMs) {
+      item.checked   = false;
+      item.checkedAt = null;
+      changed = true;
+    }
+  });
+  if (changed) { saveGrocery(); renderGrocery(); }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  HOUSEHOLD PRESENCE
+// ═══════════════════════════════════════════════════════════
+
+const PRESENCE_COLOURS = [
+  '#e8a838','#5b8dee','#4cbb8a','#e85050','#b45dee',
+  '#ee8c5b','#5bdee8','#dee85b','#ee5bab','#5beeaa',
+];
+
+let _householdEnabled  = false;
+let _householdName     = '';
+let _householdColour   = PRESENCE_COLOURS[0];
+let _presenceSSE       = null;
+let _presencePingTimer = null;
+let _currentViewName   = 'stock';
+let _otherPresence     = {}; // { userId: { name, colour, view, ts } }
+
+// ── Persistence ───────────────────────────────────────────
+function loadHouseholdSettings() {
+  try {
+    const raw = localStorage.getItem('stockroom_household');
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    _householdEnabled = !!d.enabled;
+    _householdColour  = d.colour || PRESENCE_COLOURS[0];
+  } catch(e) {}
+}
+
+function saveHouseholdSettings() {
+  // Household mode auto-enables when a share target is added
+  if (!_householdEnabled) return;
+  try {
+    localStorage.setItem('stockroom_household', JSON.stringify({
+      enabled: _householdEnabled,
+      colour:  _householdColour,
+    }));
+  } catch(e) {}
+  if (_householdEnabled) connectPresence();
+}
+
+function pickHouseholdColour(colour) {
+  _householdColour = colour;
+  renderHouseholdColourPicker();
+  saveHouseholdSettings();
+  pushPresence();
+}
+
+function renderHouseholdColourPicker() {
+  const el = document.getElementById('household-colour-picker');
+  if (!el) return;
+  el.innerHTML = PRESENCE_COLOURS.map(c => `
+    <div onclick="pickHouseholdColour('${c}')"
+      style="width:28px;height:28px;border-radius:50%;background:${c};cursor:pointer;
+             border:3px solid ${c === _householdColour ? 'var(--text)' : 'transparent'};
+             transition:border-color 0.15s;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>
+  `).join('');
+}
+
+// ── Household sharing — file proxy ───────────────────────
+// ═══════════════════════════════════════════════════════════
+//  SHARE PERMISSION SYSTEM
+//  When a user joins via a share link, _shareState holds their
+//  permission set. This drives tab locking and edit enforcement.
+// ═══════════════════════════════════════════════════════════
+
+// _shareState: null = owner (full access), or { code, name, type, ownerName, households }
+let _shareState    = null;
+let _sharedFileId  = null; // kept for legacy compat
+let _shareKey      = null; // CryptoKey — the AES-GCM share key (travels in URL fragment)
+let _pendingJoinCode  = null; // join code awaiting auth
+let _pendingShareMeta = null; // share metadata awaiting auth
+let _inviteCode    = null;
+
+// Default permission sets per user type
+const SHARE_TYPE_DEFAULTS = {
+  family: {
+    stockroom: 'rw', groceries: 'rw', reminders: 'rw', savings: 'rw', report: 'r'
+  },
+  cleaner: {
+    stockroom: 'r', groceries: 'rw', reminders: 'none', savings: 'none', report: 'none'
+  },
+  guest: {
+    stockroom: 'r', groceries: 'r', reminders: 'none', savings: 'none', report: 'r'
+  },
+};
+
+const SECTION_LABELS = {
+  stockroom: '📦 Stockroom', groceries: '🛒 Groceries',
+  reminders: '🔔 Reminders', savings: '💰 Savings', report: '📋 Report',
+};
+
+// Get permission for a section in the current household
+// Returns 'rw', 'r', or 'none'. Returns 'rw' for owners.
+function getSectionPerm(section) {
+  if (!_shareState) return 'rw'; // owner
+  const hKey  = activeProfile || 'default';
+  const hPerms = _shareState.households?.[hKey];
+  if (!hPerms) return 'none'; // no access to this household
+  return hPerms[section] || 'none';
+}
+
+function canView(section)  { const p = getSectionPerm(section); return p === 'rw' || p === 'r'; }
+function canWrite(section) { return getSectionPerm(section) === 'rw'; }
+function isOwner()         { return !_shareState; }
+
+// Apply permission state to the tab bar — lock inaccessible sections
+function applyTabPermissions() {
+  if (!_shareState) return; // owner sees everything
+  const sectionToTab = {
+    stockroom: 'stock', groceries: 'grocery', reminders: 'reminders',
+    savings: 'savings', report: 'report',
+  };
+  document.querySelectorAll('.tab').forEach(tab => {
+    const text = tab.textContent.trim().toLowerCase();
+    let section = null;
+    if (text.includes('stockroom')) section = 'stockroom';
+    else if (text.includes('groceries') || text.includes('grocery')) section = 'groceries';
+    else if (text.includes('reminders')) section = 'reminders';
+    else if (text.includes('savings')) section = 'savings';
+    else if (text.includes('report')) section = 'report';
+    if (!section) return;
+    if (canView(section)) {
+      tab.disabled = false;
+      tab.style.opacity = '';
+      tab.title = '';
+    } else {
+      tab.disabled = true;
+      tab.style.opacity = '0.4';
+      tab.title = `🔒 Ask ${_shareState.ownerName || 'the owner'} for access`;
+    }
+  });
+}
+
+// Show lock banner when a user tries to access a restricted section
+function showLockBanner(section) {
+  const label = SECTION_LABELS[section] || section;
+  toast(`🔒 ${label} — ask ${_shareState?.ownerName || 'the owner'} for access`);
+}
+
+// Save/restore share state from localStorage
+async function loadShareState() {
+  try {
+    const raw = localStorage.getItem('stockroom_share_state');
+    if (!raw) return;
+    const stored = JSON.parse(raw);
+    // Don't load share state if this user is the owner of this share
+    if (stored.ownerEmailHash && _kvEmailHash && stored.ownerEmailHash === _kvEmailHash) {
+      localStorage.removeItem('stockroom_share_state');
+      return;
+    }
+    _shareState   = stored;
+    _sharedFileId = stored._sharedFileId || null;
+    // Restore share key from local cache (ECDH system — key is never stored in state)
+    try {
+      const localKeys = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+      const keyB64    = localKeys[stored.code];
+      if (keyB64) {
+        const keyBytes = Uint8Array.from(atob(keyB64), c => c.charCodeAt(0));
+        _shareKey = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+      }
+    } catch(e) { console.warn('Could not restore share key from cache:', e.message); }
+  } catch(e) {}
+}
+
+function saveShareState() {
+  try {
+    if (_shareState) {
+      localStorage.setItem('stockroom_share_state', JSON.stringify({ ..._shareState, _sharedFileId }));
+    } else {
+      localStorage.removeItem('stockroom_share_state');
+    }
+  } catch(e) {}
+}
+
+// Generate a new AES-GCM share key — used when creating a share link
+async function generateShareKey() {
+  return crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+}
+
+// Export a share key to base64 for embedding in URL fragment
+async function exportShareKey(key) {
+  const raw = await crypto.subtle.exportKey('raw', key);
+  return btoa(String.fromCharCode(...new Uint8Array(raw)));
+}
+
+// Encrypt data with a share key (for /share/data/push)
+async function encryptWithShareKey(shareKey, plaintext) {
+  const iv         = crypto.getRandomValues(new Uint8Array(12));
+  const encoded    = new TextEncoder().encode(plaintext);
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, shareKey, encoded);
+  const combined   = new Uint8Array(iv.length + ciphertext.byteLength);
+  combined.set(iv, 0);
+  combined.set(new Uint8Array(ciphertext), iv.length);
+  return btoa(String.fromCharCode(...combined));
+}
+
+// Decrypt data received from /share/data/pull
+async function decryptWithShareKey(shareKey, ciphertext) {
+  const combined = Uint8Array.from(atob(ciphertext), c => c.charCodeAt(0));
+  const iv       = combined.slice(0, 12);
+  const data     = combined.slice(12);
+  const plain    = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, shareKey, data);
+  return new TextDecoder().decode(plain);
+}
+
+// joinViaShareCode — replaced by handleShareJoinLink + completePendingJoin
+async function joinViaShareCode(code) {
+  // Legacy shim — now handled by the auth-gated flow
+  await handleShareJoinLink(code);
+}
+
+function leaveShare() {
+  if (!confirm('Leave this shared household?\n\nYou can rejoin with the same link. Your own households are unaffected.')) return;
+  const code = _shareState?.code;
+  _shareState   = null;
+  _sharedFileId = null;
+  _shareKey     = null;
+  saveShareState();
+  // Clear cached share key
+  if (code) {
+    try {
+      const stored = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+      delete stored[code];
+      localStorage.setItem('stockroom_share_keys', JSON.stringify(stored));
+    } catch(e) {}
+  }
+  applyTabPermissions();
+  toast('Left shared household');
+  // Switch to own default profile and reload own data
+  loadProfile('default');
+  kvSyncNow().catch(() => {});
+}
+
+// ── Share state: stored share (old key, migration) ────────
+function loadHouseholdShareState() {
+  // Migrated to loadShareState() — kept for backwards compat
+  loadShareState();
+  if (!_shareState) {
+    // Check old format
+    try {
+      const raw = localStorage.getItem('stockroom_household_share');
+      if (raw) {
+        const d = JSON.parse(raw);
+        if (d.fileId) { _sharedFileId = d.fileId; }
+      }
+    } catch(e) {}
+  }
+  updateHouseholdShareUI();
+}
+
+function saveHouseholdShareState() { saveShareState(); }
+
+function updateHouseholdShareUI() {
+  const joinedSection = document.getElementById('household-joined-section');
+  const joinSection   = document.getElementById('household-join-section');
+  const ownerSection  = document.getElementById('household-owner-section');
+  const statusEl      = document.getElementById('household-share-status');
+  if (!joinedSection) return;
+
+  if (_sharedFileId) {
+    joinedSection.style.display = 'block';
+    joinSection.style.display   = 'none';
+    ownerSection.style.display  = 'none';
+    if (statusEl) statusEl.textContent = 'Your data syncs to the shared household file. The owner\'s Drive is used — you don\'t need to connect your own.';
+  } else {
+    joinedSection.style.display = 'none';
+    joinSection.style.display   = 'block';
+    ownerSection.style.display  = 'block';
+    if (statusEl) statusEl.textContent = driveConnected
+      ? 'You are the file owner. Generate an invite code for others to join.'
+      : 'Connect Google Drive above, then generate an invite code for others to join.';
+  }
+}
+
+async function createInviteCode() {
+  if (!driveConnected) {
+    toast('Connect Google Drive first');
+    return;
+  }
+  const btn = document.querySelector('[onclick="createInviteCode()"]');
+  if (btn) { btn.textContent = '⏳ Generating…'; btn.disabled = true; }
+  try {
+    // Backend uses its stored drive_file_id — no need to send it from frontend
+    const res  = await fetch(`${WORKER_URL}/invite/create`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed');
+    _inviteCode = data.code;
+    document.getElementById('invite-code-value').textContent = data.code;
+    document.getElementById('invite-code-display').style.display = 'block';
+    toast('Invite code created — valid for 24 hours');
+  } catch(err) {
+    toast('Could not create invite: ' + err.message);
+  } finally {
+    if (btn) { btn.textContent = '🔗 Generate invite code'; btn.disabled = false; }
+  }
+}
+
+function copyInviteCode() {
+  const code = document.getElementById('invite-code-value')?.textContent?.trim();
+  if (!code) return;
+  navigator.clipboard?.writeText(code).then(() => toast('Code copied ✓')).catch(() => {
+    prompt('Copy this invite code:', code);
+  });
+}
+
+async function joinHousehold() {
+  const input = document.getElementById('invite-code-input');
+  const code  = (input?.value || '').trim().toUpperCase();
+  if (code.length < 4) { toast('Enter the full invite code'); return; }
+
+  const btn = document.querySelector('[onclick="joinHousehold()"]');
+  if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+
+  try {
+    const res  = await fetch(`${WORKER_URL}/invite/join`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ code }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Invalid code');
+
+    _sharedFileId = data.fileId;
+    saveHouseholdShareState();
+    updateHouseholdShareUI();
+    toast('Joined household ✓ — syncing now');
+    // Immediately sync to pull the shared file
+    await syncAll();
+  } catch(err) {
+    toast('Could not join: ' + err.message);
+  } finally {
+    if (btn) { btn.textContent = 'Join'; btn.disabled = false; }
+  }
+}
+
+function leaveHousehold() { leaveShare(); }
+
+// ── Proxy read/write used when _sharedFileId is set ──────
+async function proxyReadDrive() {
+  const code   = _shareState?.code || '';
+  const hParam = activeProfile && activeProfile !== 'default' ? `&household=${encodeURIComponent(activeProfile)}` : '';
+  const res    = await fetch(`${WORKER_URL}/sync/pull?share=${encodeURIComponent(code)}${hParam}`);
+  if (res.status === 404) return null;
+  if (res.status === 403) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error('ACCESS_DENIED: ' + (d.error || 'No access'));
+  }
+  if (res.status === 503) throw new Error('OWNER_NOT_CONNECTED');
+  if (!res.ok) throw new Error('Proxy read failed: ' + res.status);
+  return res.json();
+}
+
+async function proxyWriteDrive(payload) {
+  // Shared user — push via backend, permission validated server-side with share code
+  const code   = _shareState?.code || '';
+  const hParam = activeProfile && activeProfile !== 'default' ? `&household=${encodeURIComponent(activeProfile)}` : '';
+  const res    = await fetch(`${WORKER_URL}/sync/push?share=${encodeURIComponent(code)}${hParam}`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    payload,
+  });
+  if (res.status === 403) throw new Error('READ_ONLY');
+  if (!res.ok) throw new Error('Proxy write failed: ' + res.status);
+}
+
+async function proxyGetModifiedTime() {
+  if (!_shareState?.code || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return null;
+  try {
+    const res = await fetchKV(`${WORKER_URL}/share/data/modified`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ guestEmailHash: _kvEmailHash, guestVerifier: _kvVerifier, guestSessionToken: _kvSessionToken, code: _shareState.code, household: activeProfile }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()).modifiedTime || null;
+  } catch(e) { return null; }
+}
+
+// ── Share Target Management ───────────────────────────────
+let _shareTargets     = []; // cached from backend
+let _shareTargetType  = 'family';
+let _shareTargetPerms = {}; // { householdKey: { stockroom, groceries, reminders, savings, report } }
+let _shareTargetColour = HOUSEHOLD_COLOURS[0];
+let _shareTargetDone   = false; // true after link is generated — btn becomes Done
+
+function handleShareTargetBtn() {
+  if (_shareTargetDone) {
+    closeModal('share-target-modal');
+  } else {
+    saveShareTarget();
+  }
+}
+
+async function loadShareTargets() {
+  if (!WORKER_URL || !isOwner() || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
+  try {
+    const res  = await fetchKV(`${WORKER_URL}/share/list`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken }),
+    });
+    const data = await res.json();
+    _shareTargets = data.targets || [];
+    renderShareTargetsList();
+  } catch(e) { console.warn('Could not load share targets:', e); }
+}
+
+function renderShareTargetsList() {
+  const list = document.getElementById('share-targets-list');
+  const btn  = document.getElementById('add-share-target-btn');
+  if (!list) return;
+  if (!isOwner()) { list.closest('#share-targets-section')?.style && (list.closest('#share-targets-section').style.display = 'none'); return; }
+
+  const typeEmoji = { family: '👨‍👩‍👧', cleaner: '🧹', guest: '👤' };
+  if (!_shareTargets.length) {
+    list.innerHTML = `<p style="font-size:12px;color:var(--muted)">No one has access yet.</p>`;
+  } else {
+    list.innerHTML = _shareTargets.map(t => {
+      const colour    = t.colour || '#e8a838';
+      const members   = t.members?.length || 0;
+      const expired   = t.expiresAt && Date.now() > new Date(t.expiresAt).getTime();
+      const expiryStr = t.expiresAt ? (expired ? '⚠️ Link expired' : `Link valid until ${new Date(t.expiresAt).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`) : '';
+      return `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border:1px solid ${expired?'var(--danger)':'var(--border)'};border-radius:10px">
+        <div style="width:12px;height:12px;border-radius:50%;background:${colour};flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:700">${typeEmoji[t.type]||'👤'} ${esc(t.name)}</div>
+          <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${t.type}${members?' · '+members+' member'+(members!==1?'s':''):''}</div>
+          ${expiryStr?`<div style="font-size:10px;color:${expired?'var(--danger)':'var(--muted)'};margin-top:2px">${expiryStr}</div>`:''}
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="openEditShareTarget('${t.code}')" title="Edit">✏️</button>
+        ${expired
+          ? `<button class="btn btn-ghost btn-sm" onclick="refreshShareLink('${t.code}')" title="Refresh link (new 24h window)">🔄</button>`
+          : `<button class="btn btn-ghost btn-sm" onclick="copyShareTargetLink('${t.code}')" title="Copy invite link">🔗</button>`
+        }
+        <button class="btn btn-ghost btn-sm" onclick="resyncSharedData('${t.code}')" title="Re-sync data to guest">📤</button>
+        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteShareTarget('${t.code}')">✕</button>
+      </div>`;
+    }).join('');
+  }
+  if (btn) btn.style.display = _shareTargets.length >= 5 ? 'none' : 'inline-flex';
+  const clearBtn = document.getElementById('clear-all-shares-btn');
+  if (clearBtn) clearBtn.style.display = _shareTargets.length > 0 ? 'inline-flex' : 'none';
+}
+
+function renderShareTargetColourPicker(selectedColour) {
+  const el = document.getElementById('share-target-colours');
+  if (!el) return;
+  el.innerHTML = HOUSEHOLD_COLOURS.map(c => `
+    <div onclick="selectShareTargetColour('${c}')"
+      data-colour="${c}"
+      style="width:26px;height:26px;border-radius:50%;background:${c};cursor:pointer;
+             border:3px solid ${c === selectedColour ? 'var(--text)' : 'transparent'};
+             transition:border-color 0.15s;box-shadow:0 2px 5px rgba(0,0,0,0.3)"></div>
+  `).join('');
+}
+
+function selectShareTargetColour(colour) {
+  _shareTargetColour = colour;
+  document.querySelectorAll('#share-target-colours [data-colour]').forEach(el => {
+    el.style.borderColor = el.dataset.colour === colour ? 'var(--text)' : 'transparent';
+  });
+}
+
+function selectShareType(type, btn) {
+  _shareTargetType = type;
+  document.querySelectorAll('.share-type-btn').forEach(b => {
+    const isActive = b.dataset.type === type;
+    b.style.borderColor = isActive ? 'var(--accent)' : 'var(--border)';
+    b.style.background  = isActive ? 'rgba(232,168,56,0.1)' : 'transparent';
+    b.style.color       = isActive ? 'var(--accent)' : 'var(--muted)';
+  });
+  // Apply defaults for this type to all households
+  Object.keys(_shareTargetPerms).forEach(hKey => {
+    const defaults = SHARE_TYPE_DEFAULTS[type] || SHARE_TYPE_DEFAULTS.guest;
+    _shareTargetPerms[hKey] = { ...defaults };
+  });
+  renderShareHouseholdPerms();
+}
+
+async function renderShareHouseholdPerms() {
+  const container = document.getElementById('share-household-perms');
+  if (!container) return;
+  const profiles  = await getProfiles();
+  const sections  = ['stockroom','groceries','reminders','savings','report'];
+  const defaults  = SHARE_TYPE_DEFAULTS[_shareTargetType] || SHARE_TYPE_DEFAULTS.guest;
+
+  container.innerHTML = Object.entries(profiles).map(([key, p]) => {
+    const hName  = p.name || (key === 'default' ? 'Home' : key);
+    const colour = p.colour || '#e8a838';
+    const perms  = _shareTargetPerms[key] || { ...defaults };
+    _shareTargetPerms[key] = perms;
+
+    return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
+        <div style="width:10px;height:10px;border-radius:50%;background:${colour}"></div>
+        <strong style="font-size:13px">${esc(hName)}</strong>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${sections.map(s => {
+          const val = perms[s] || 'none';
+          return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <span style="font-size:12px;color:var(--muted)">${SECTION_LABELS[s]||s}</span>
+            <div style="display:flex;gap:4px">
+              ${['none','r','rw'].map(opt => `
+                <button onclick="setSharePerm('${key}','${s}','${opt}')"
+                  id="spm-${key}-${s}-${opt}"
+                  style="padding:3px 8px;border-radius:6px;font-size:11px;cursor:pointer;
+                         border:1px solid ${val===opt?'var(--accent)':'var(--border)'};
+                         background:${val===opt?'rgba(232,168,56,0.15)':'transparent'};
+                         color:${val===opt?'var(--accent)':'var(--muted)'};transition:all 0.15s">
+                  ${opt==='none'?'🔒 None':opt==='r'?'👁 View':'✏️ Edit'}
+                </button>`).join('')}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function setSharePerm(hKey, section, value) {
+  if (!_shareTargetPerms[hKey]) _shareTargetPerms[hKey] = {};
+  _shareTargetPerms[hKey][section] = value;
+  // Update button states
+  ['none','r','rw'].forEach(opt => {
+    const btn = document.getElementById(`spm-${hKey}-${section}-${opt}`);
+    if (!btn) return;
+    const active = opt === value;
+    btn.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+    btn.style.background  = active ? 'rgba(232,168,56,0.15)' : 'transparent';
+    btn.style.color       = active ? 'var(--accent)' : 'var(--muted)';
+  });
+}
+
+async function openAddShareTarget() {
+  if (!isOwner()) { toast('Only the household owner can manage share access'); return; }
+  if (_shareTargets.length >= 5) { toast('Maximum 5 share targets reached'); return; }
+  _shareTargetType   = 'family';
+  _shareTargetPerms  = {};
+  _shareTargetColour = HOUSEHOLD_COLOURS[_shareTargets.length % HOUSEHOLD_COLOURS.length];
+  const profiles     = await getProfiles();
+  const defaults     = SHARE_TYPE_DEFAULTS.family;
+  // Always include at least the default household
+  const profileKeys  = Object.keys(profiles).length ? Object.keys(profiles) : ['default'];
+  profileKeys.forEach(k => { _shareTargetPerms[k] = { ...defaults }; });
+
+  _shareTargetDone   = false;
+  document.getElementById('share-target-modal-title').textContent = '👤 Add Person';
+  document.getElementById('share-target-code').value = '';
+  document.getElementById('share-target-name').value = '';
+  document.getElementById('share-link-section').style.display = 'none';
+  document.getElementById('share-target-save-btn').textContent = 'Create & get link';
+  selectShareType('family', document.querySelector('.share-type-btn[data-type="family"]'));
+  renderShareTargetColourPicker(_shareTargetColour);
+  await renderShareHouseholdPerms();
+  openModal('share-target-modal');
+}
+
+async function openEditShareTarget(code) {
+  const target = _shareTargets.find(t => t.code === code);
+  if (!target) return;
+  _shareTargetType   = target.type || 'family';
+  _shareTargetPerms  = JSON.parse(JSON.stringify(target.households || {}));
+  _shareTargetColour = target.colour || HOUSEHOLD_COLOURS[0];
+
+  _shareTargetDone   = false;
+  document.getElementById('share-target-modal-title').textContent = '✏️ Edit Person';
+  document.getElementById('share-target-code').value = code;
+  document.getElementById('share-target-name').value = target.name || '';
+  document.getElementById('share-link-section').style.display = 'none';
+  document.getElementById('share-target-save-btn').textContent = 'Save changes';
+  selectShareType(_shareTargetType, document.querySelector(`.share-type-btn[data-type="${_shareTargetType}"]`));
+  renderShareTargetColourPicker(_shareTargetColour);
+  await renderShareHouseholdPerms();
+  openModal('share-target-modal');
+}
+
+async function saveShareTarget() {
+  const name = document.getElementById('share-target-name').value.trim();
+  if (!name) { toast('Enter a name for this person'); return; }
+  const code      = document.getElementById('share-target-code').value;
+  const colour    = _shareTargetColour;
+  const profiles  = await getProfiles();
+  const ownerName = settings.email?.split('@')[0] || profiles['default']?.name || 'Home';
+  const btn = document.getElementById('share-target-save-btn');
+  if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+
+  try {
+    if (code) {
+      // Update existing — re-use existing share key
+      const res = await fetchKV(`${WORKER_URL}/share/update`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code, name, type: _shareTargetType, colour, households: _shareTargetPerms }),
+      });
+      if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || 'Update failed'); }
+      await pushSharedData(code);
+      toast(`Updated ${name} ✓`);
+      if (btn) { btn.textContent = 'Save changes'; btn.disabled = false; }
+    } else {
+      // Create new — ECDH key wrapping flow
+      const guestEmail = document.getElementById('share-target-email')?.value.trim();
+      if (!guestEmail) throw new Error('Enter their email address so their share key can be encrypted for them');
+
+      // 1. Hash guest email → fetch their ECDH public key
+      const guestEmailHash = await kvHashEmail(guestEmail);
+      const pubRes = await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/get`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash: guestEmailHash }),
+      });
+      if (pubRes.status === 404) throw new Error(`${guestEmail} doesn't have a STOCKROOM account yet — they need to sign up first`);
+      if (!pubRes.ok) throw new Error('Could not fetch their encryption key — try again');
+      const { publicKeyJwk: guestPubKeyJwk } = await pubRes.json();
+
+      // 2. Load our own ECDH private key
+      const ownerPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
+      if (!ownerPrivKey) throw new Error('Your encryption key is missing — try signing out and back in');
+
+      // 3. Generate the AES-GCM share key
+      const shareKey    = await generateShareKey();
+      const shareKeyB64 = await exportShareKey(shareKey);
+
+      // 4. ECDH-wrap the share key for the guest
+      const wrappedKey = await ecdhWrapShareKey(ownerPrivKey, guestPubKeyJwk, shareKey);
+
+      // 5. Export our own public key JWK to send alongside (guest needs it to unwrap)
+      const ownerPubRes = await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/get`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash: _kvEmailHash }),
+      });
+      if (!ownerPubRes.ok) throw new Error('Could not fetch your encryption key — try again');
+      const { publicKeyJwk: ownerPubKeyJwk } = await ownerPubRes.json();
+
+      // 6. Create share on server
+      const res = await fetchKV(`${WORKER_URL}/share/create`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ownerEmailHash: _kvEmailHash,
+          ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+          name, type: _shareTargetType, colour, ownerName,
+          households: _shareTargetPerms,
+          householdNames: Object.fromEntries(
+            Object.entries(profiles).map(([k,p]) => [k, p.name||(k==='default'?'Home':k)])
+          ),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed');
+
+      // 7. Store ECDH-wrapped key on server for the guest
+      const ecdhStoreRes = await fetchKV(`${WORKER_URL}/share/ecdh-key/store`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ownerEmailHash: _kvEmailHash,
+          ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+          code: data.code,
+          guestEmailHash,
+          wrappedKey,
+          ownerPublicKeyJwk: ownerPubKeyJwk,
+        }),
+      });
+      if (!ecdhStoreRes.ok) throw new Error('Could not store encrypted share key — try again');
+
+      // 8. Cache share key locally and back it up (for owner cross-device recovery)
+      try {
+        const stored = JSON.parse(localStorage.getItem('stockroom_share_keys')||'{}');
+        stored[data.code] = shareKeyB64;
+        localStorage.setItem('stockroom_share_keys', JSON.stringify(stored));
+      } catch(e) {}
+      await backupShareKey(data.code, shareKey).catch(e => console.warn('Share key backup failed:', e.message));
+
+      // 9. Push initial shared data
+      await pushSharedData(data.code, shareKey);
+
+      // 10. Show code-only invite link (no key in URL)
+      const inviteLink = data.link || `${location.origin}${location.pathname}?join=${data.code}`;
+      document.getElementById('share-link-value').textContent = inviteLink;
+      document.getElementById('share-link-section').style.display = 'block';
+      if (btn) { btn.textContent = 'Done'; btn.disabled = false; }
+      _shareTargetDone = true;
+
+      if (!_householdEnabled) {
+        _householdEnabled = true;
+        try { localStorage.setItem('stockroom_household', JSON.stringify({ enabled: true, colour: _householdColour })); } catch(e) {}
+        connectPresence();
+      }
+    }
+    await loadShareTargets();
+    if (kvConnected) setTimeout(syncAll, 600);
+  } catch(err) {
+    console.error('saveShareTarget:', err);
+    toast('Could not save: ' + err.message);
+    if (btn) { btn.textContent = code ? 'Save changes' : 'Create & get link'; btn.disabled = false; }
+  }
+}
+
+// Encrypt the raw share key with the owner's data key and store on server.
+// This lets the owner recover the share key on any device.
+// Recover a share key using a specific data key (used during migration
+// when _kvKey has already been updated to v2 but server backup is v1-encrypted).
+async function recoverShareKeyWithOldKey(code, dataKey) {
+  // 1. Try localStorage cache first — no decryption needed
+  try {
+    const stored = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+    const keyB64 = stored[code];
+    if (keyB64) {
+      const raw = Uint8Array.from(atob(keyB64), c => c.charCodeAt(0));
+      return await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+    }
+  } catch(e) {}
+
+  // 2. Fetch server backup and decrypt with the provided (old) key
+  try {
+    const res = await fetchKV(`${WORKER_URL}/share/key/get`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, code }),
+    });
+    if (!res.ok) return null;
+    const { encryptedShareKey } = await res.json();
+    if (!encryptedShareKey) return null;
+    const keyB64 = await kvDecrypt(dataKey, encryptedShareKey);
+    const raw    = Uint8Array.from(atob(keyB64), c => c.charCodeAt(0));
+    return await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+  } catch(e) {
+    console.warn('recoverShareKeyWithOldKey failed:', e.message);
+    return null;
+  }
+}
+
+async function backupShareKey(code, shareKey) {
+  if (!_kvKey || !_kvEmailHash || !_kvVerifier) return;
+  const raw        = await crypto.subtle.exportKey('raw', shareKey);
+  const ciphertext = await kvEncrypt(_kvKey, btoa(String.fromCharCode(...new Uint8Array(raw))));
+  await fetchKV(`${WORKER_URL}/share/key/store`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, code, encryptedShareKey: ciphertext }),
+  });
+}
+
+// Recover share key from server — decrypts with owner's data key.
+// Returns a CryptoKey or null.
+async function recoverShareKey(code) {
+  if (!_kvKey || !_kvEmailHash || !_kvVerifier) return null;
+  try {
+    const res = await fetchKV(`${WORKER_URL}/share/key/get`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, code }),
+    });
+    if (!res.ok) return null;
+    const { encryptedShareKey } = await res.json();
+    if (!encryptedShareKey) return null;
+    const keyB64 = await kvDecrypt(_kvKey, encryptedShareKey);
+    const raw    = Uint8Array.from(atob(keyB64), c => c.charCodeAt(0));
+    const sk     = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+    // Cache locally so subsequent pushes don't need a round-trip
+    try {
+      const stored = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+      stored[code] = keyB64;
+      localStorage.setItem('stockroom_share_keys', JSON.stringify(stored));
+    } catch(e) {}
+    return sk;
+  } catch(e) {
+    console.warn('recoverShareKey failed:', e.message);
+    return null;
+  }
+}
+
+// Push owner's data re-encrypted with the share key for a specific share code
+async function pushSharedData(code, shareKey) {
+  if (!_kvKey) return;
+  // Get or restore share key — local cache first, then server backup
+  let sk = shareKey;
+  if (!sk) {
+    try {
+      const stored = JSON.parse(localStorage.getItem('stockroom_share_keys')||'{}');
+      const keyB64 = stored[code];
+      if (keyB64) {
+        const raw = Uint8Array.from(atob(keyB64), c => c.charCodeAt(0));
+        sk = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+      }
+    } catch(e) {}
+  }
+  // If still missing, try recovering from server
+  if (!sk) {
+    sk = await recoverShareKey(code);
+  }
+  if (!sk) {
+    console.warn('pushSharedData: no share key for', code, '— skipping');
+    return;
+  }
+
+  // Find which households this share code covers
+  const target = _shareTargets.find(t => t.code === code);
+  const households = target?.households ? Object.keys(target.households) : ['default'];
+
+  for (const hKey of households) {
+    try {
+      // Build a filtered payload for this household
+      const allProfiles = await getProfiles();
+      const hProfile    = allProfiles[hKey] || allProfiles['default'];
+      const hItems      = hKey === activeProfile ? items : (hProfile?.items || []);
+      const hSettings   = hKey === activeProfile ? settings : (hProfile?.settings || {});
+      const payload     = JSON.stringify({ items: hItems, settings: hSettings, lastSynced: new Date().toISOString() });
+      const ciphertext  = await encryptWithShareKey(sk, payload);
+      await fetchKV(`${WORKER_URL}/share/data/push`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code, household: hKey, ciphertext }),
+      });
+    } catch(e) { console.warn('pushSharedData failed for', hKey, e.message); }
+  }
+}
+
+// Push shared data for ALL active share targets (called from kvPush)
+async function pushAllSharedData() {
+  if (!_shareTargets?.length) return;
+  for (const target of _shareTargets) {
+    await pushSharedData(target.code).catch(e => console.warn('pushAllSharedData failed for', target.code, e.message));
+  }
+}
+
+async function resyncSharedData(code) {
+  toast('Syncing to guest…');
+  try {
+    await pushSharedData(code);
+    toast('Synced ✓');
+  } catch(e) {
+    toast('Sync failed: ' + e.message);
+  }
+}
+
+// ── Share diagnostic — run window.shareDiag() on owner device ──
+window.shareDiag = async function(code) {
+  const out = [];
+  out.push('=== SHARE DIAGNOSTIC ===');
+  out.push(`_kvKey:       ${_kvKey ? 'SET' : 'NULL — owner not signed in with key'}`);
+  out.push(`_kvEmailHash: ${_kvEmailHash || '(empty)'}`);
+  out.push(`_kvVerifier:  ${_kvVerifier ? _kvVerifier.slice(0,8)+'…' : '(empty)'}`);
+  out.push(`_shareTargets: ${JSON.stringify((_shareTargets||[]).map(t=>({code:t.code,households:Object.keys(t.households||{})})))}`);
+
+  const localKeys = JSON.parse(localStorage.getItem('stockroom_share_keys')||'{}');
+  out.push(`local share keys: ${Object.keys(localKeys).join(', ') || 'none'}`);
+
+  const codes = code ? [code] : (_shareTargets||[]).map(t=>t.code);
+  if (!codes.length) { out.push('No share targets found'); console.log(out.join('\n')); return out.join('\n'); }
+
+  for (const c of codes) {
+    out.push(`\n--- Code: ${c} ---`);
+    out.push(`local key present: ${!!localKeys[c]}`);
+
+    // Try server key backup
+    try {
+      const r = await fetch(`${WORKER_URL}/share/key/get`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ownerEmailHash:_kvEmailHash, verifier:_kvVerifier, code:c}),
+      });
+      out.push(`share/key/get status: ${r.status}`);
+      const d = await r.json();
+      out.push(`share/key/get body: ${JSON.stringify(d)}`);
+    } catch(e) { out.push(`share/key/get error: ${e.message}`); }
+
+    // Try share/data/push with a test payload to see if auth works
+    // (just check whether we can get a share key at all)
+    let sk = null;
+    if (localKeys[c]) {
+      try {
+        const raw = Uint8Array.from(atob(localKeys[c]), c2=>c2.charCodeAt(0));
+        sk = await crypto.subtle.importKey('raw', raw, {name:'AES-GCM',length:256}, true, ['encrypt','decrypt']);
+        out.push(`local key import: OK`);
+      } catch(e) { out.push(`local key import FAILED: ${e.message}`); }
+    }
+    if (!sk) {
+      out.push(`attempting server key recovery…`);
+      sk = await recoverShareKey(c).catch(e => { out.push(`recoverShareKey error: ${e.message}`); return null; });
+      out.push(`server key recovery: ${sk ? 'OK' : 'FAILED — no backup stored'}`);
+    }
+
+    // Check if share_data exists on server using owner credentials
+    if (_kvEmailHash && _kvVerifier) {
+      try {
+        // share/data/pull requires guest credentials — use owner as a proxy check via share/list
+        const shareRecord = _shareTargets.find(t => t.code === c);
+        out.push(`share record in _shareTargets: ${shareRecord ? 'YES' : 'NO'}`);
+        out.push(`share members: ${JSON.stringify(shareRecord?.members || [])}`);
+        out.push(`share households: ${JSON.stringify(Object.keys(shareRecord?.households || {}))}`);
+      } catch(e) { out.push(`share record check error: ${e.message}`); }
+    }
+  }
+  out.push('\nTo recover a share with no key: run window.rebuildShare("CODE") to delete and recreate it.');
+  out.push('=== END ===');
+  console.log(out.join('\n'));
+  return out.join('\n');
+};
+
+// Delete a broken share target (no key) and toast instructions to recreate
+window.clearBrokenShare = async function(code) {
+  if (!code) { console.error('Usage: clearBrokenShare("CODE")'); return; }
+  if (!confirm(`Delete share target ${code}? The guest will lose access. You'll need to send them a new link.`)) return;
+  try {
+    const res = await fetchKV(`${WORKER_URL}/share/delete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code }),
+    });
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Delete failed'); }
+    // Remove from local share keys
+    try {
+      const stored = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+      delete stored[code];
+      localStorage.setItem('stockroom_share_keys', JSON.stringify(stored));
+    } catch(e) {}
+    await loadShareTargets();
+    console.log(`Share ${code} deleted. Go to Settings → Households → Add person to create a new share.`);
+    toast('Share removed — create a new one from Settings → Households');
+  } catch(e) {
+    console.error('clearBrokenShare failed:', e.message);
+  }
+};
+
+async function refreshShareLink(code) {
+  const target = _shareTargets.find(t => t.code === code);
+  if (!target) return;
+  try {
+    const res = await fetchKV(`${WORKER_URL}/share/refresh`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code }),
+    });
+    if (!res.ok) throw new Error('Could not refresh');
+    const baseLink = `${location.origin}${location.pathname}?join=${code}`;
+    await navigator.clipboard.writeText(baseLink).catch(()=>{});
+    toast('New link copied ✓ (valid 24h)');
+    await loadShareTargets();
+  } catch(err) { toast('Could not refresh link: ' + err.message); }
+}
+
+async function deleteShareTarget(code) {
+  if (!confirm('Remove this person\'s access? They will no longer be able to sync your data.')) return;
+  try {
+    const res = await fetchKV(`${WORKER_URL}/share/delete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code }),
+    });
+    if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || 'Could not delete'); }
+    // Remove local share key
+    try {
+      const stored = JSON.parse(localStorage.getItem('stockroom_share_keys')||'{}');
+      delete stored[code];
+      localStorage.setItem('stockroom_share_keys', JSON.stringify(stored));
+    } catch(e) {}
+    toast('Access removed ✓');
+    await loadShareTargets();
+  } catch(err) { toast('Could not remove: ' + err.message); }
+}
+
+function clearAllShares() {
+  if (!_shareTargets?.length) { toast('No shares to clear'); return; }
+  if (!confirm(`Remove all ${_shareTargets.length} share link${_shareTargets.length !== 1 ? 's' : ''}? ` +
+    'Guests will immediately lose access and their local share data will be cleared on next sync.')) return;
+  requireReauth('Confirm your identity to remove all shares.', _doClearAllShares, { passkeyAllowed: true });
+}
+
+async function _doClearAllShares() {
+  let failed = 0;
+  for (const target of (_shareTargets || [])) {
+    try {
+      const res = await fetchKV(`${WORKER_URL}/share/delete`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code: target.code }),
+      });
+      if (!res.ok) failed++;
+    } catch(e) { failed++; }
+  }
+  // Clear local share key cache
+  try { localStorage.removeItem('stockroom_share_keys'); } catch(e) {}
+  await loadShareTargets();
+  toast(failed ? `Cleared with ${failed} error(s) — check console` : 'All shares removed ✓');
+}
+
+function copyShareLink() {
+  const link = document.getElementById('share-link-value')?.textContent?.trim();
+  if (!link) return;
+  navigator.clipboard?.writeText(link).then(() => toast('Link copied ✓')).catch(() => prompt('Copy this link:', link));
+}
+
+function copyShareTargetLink(code) {
+  const link = `${location.origin}${location.pathname}?join=${code}`;
+  navigator.clipboard.writeText(link).then(() => toast('Invite link copied ✓')).catch(() => prompt('Copy this link:', link));
+}
+
+function updateHouseholdShareUI() {
+  const joinedSection = document.getElementById('household-joined-section');
+  if (!joinedSection) return;
+  if (_shareState) {
+    joinedSection.style.display = 'block';
+    const statusEl = document.getElementById('joined-status-text');
+    if (statusEl) statusEl.textContent = `✓ Joined ${_shareState.ownerName || 'a household'}'s STOCKROOM as ${_shareState.type || 'guest'}`;
+  } else {
+    joinedSection.style.display = 'none';
+  }
+}
+
+async function renderSettingsHouseholdList() {
+  const list = document.getElementById('settings-household-list');
+  if (!list) return;
+  const profiles = await getProfiles();
+  list.innerHTML = Object.entries(profiles).map(([key, p]) => {
+    const isActive = key === activeProfile;
+    const colour   = p.colour || '#e8a838';
+    const count    = (p.items || []).length;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:${isActive?'rgba(232,168,56,0.08)':'var(--surface2)'};border:2px solid ${isActive?colour:'var(--border)'};border-radius:10px">
+      <div style="width:10px;height:10px;border-radius:50%;background:${colour};flex-shrink:0"></div>
+      <div style="flex:1;font-size:13px;font-weight:${isActive?'700':'400'};color:${isActive?colour:'var(--text)'}">
+        ${esc(p.name || key)}${isActive?' ✓':''}
+        <span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:6px">${count} item${count!==1?'s':''}</span>
+      </div>
+      ${!isActive ? `<button class="btn btn-ghost btn-sm" onclick="switchProfileFromSettings('${key}')">Switch</button>` : ''}
+      <button class="btn btn-ghost btn-sm" onclick="openHouseholdEdit('${key}')" title="Edit">✏️</button>
+      ${key !== 'default' ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteProfile('${key}');renderSettingsHouseholdList()">✕</button>` : ''}
+    </div>`;
+  }).join('');
+}
+
+async function switchProfileFromSettings(key) {
+  await switchProfile(key);
+  renderSettingsHouseholdList();
+}
+
+async function addProfileFromSettings() {
+  const input = document.getElementById('settings-new-household-name');
+  const name  = input?.value.trim() || '';
+  // Temporarily set the new-profile-name so addProfile can read it
+  const nameEl = document.getElementById('new-profile-name');
+  if (nameEl) nameEl.value = name;
+  await addProfile();
+  if (input) input.value = '';
+  renderSettingsHouseholdList();
+}
+
+function initHouseholdSettingsUI() {
+  loadHouseholdSettings();
+  loadShareState();
+  updateHouseholdShareUI();
+  renderHouseholdColourPicker(); // still used by presence system internally
+  if (_householdEnabled) connectPresence();
+  applyTabPermissions();
+  renderSettingsHouseholdList();
+  if (isOwner() && WORKER_URL) loadShareTargets();
+}
+
+// ── User ID ───────────────────────────────────────────────
+async function getHouseholdUserId() {
+  // Use the KV email hash if signed in — stable across devices, no raw email sent
+  if (_kvEmailHash) return 'u_' + _kvEmailHash.slice(0, 12);
+  // Fall back to settings email hash
+  const email = settings.email || '';
+  if (email) {
+    const msgBuffer  = new TextEncoder().encode(email.toLowerCase().trim());
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    return 'u_' + Array.from(new Uint8Array(hashBuffer)).slice(0, 6).map(b => b.toString(16).padStart(2,'0')).join('');
+  }
+  // No email — per-device ID
+  let id = localStorage.getItem('stockroom_user_id');
+  if (!id) {
+    id = 'u_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    localStorage.setItem('stockroom_user_id', id);
+  }
+  return id;
+}
+
+// ── SSE connection ────────────────────────────────────────
+async function connectPresence() {
+  if (!WORKER_URL || !_householdEnabled) return;
+  disconnectPresence(); // close any existing
+
+  const userId = await getHouseholdUserId();
+  const url    = `${WORKER_URL}/presence-stream?userId=${encodeURIComponent(userId)}`;
+
+  try {
+    _presenceSSE = new EventSource(url);
+
+    _presenceSSE.onmessage = async e => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.type === 'presence') {
+          _otherPresence = {};
+          const myId = await getHouseholdUserId();
+          (data.users || []).forEach(u => {
+            if (u.userId !== myId) _otherPresence[u.userId] = u;
+          });
+          renderPresenceAvatars();
+          // Update shopping list if we're on it — items may have changed
+          if (_currentViewName === 'shopping' || document.getElementById('shopping-panel')?.style.display !== 'none') {
+            scheduleRender('shopping');
+          }
+        }
+      } catch(err) { console.warn('Presence parse error', err); }
+    };
+
+    _presenceSSE.onerror = () => {
+      // SSE dropped — try to reconnect after 10s
+      disconnectPresence();
+      setTimeout(() => { if (_householdEnabled) connectPresence(); }, 10000);
+    };
+
+    // Push our own presence immediately and then every 25s
+    pushPresence();
+    _presencePingTimer = setInterval(pushPresence, 25000);
+
+    const statusEl = document.getElementById('household-status');
+    if (statusEl) statusEl.textContent = '🟢 Connected — presence active';
+  } catch(e) {
+    console.warn('Presence SSE failed:', e);
+  }
+}
+
+function disconnectPresence() {
+  if (_presenceSSE) { _presenceSSE.close(); _presenceSSE = null; }
+  clearInterval(_presencePingTimer);
+  _otherPresence = {};
+  renderPresenceAvatars();
+  const statusEl = document.getElementById('household-status');
+  if (statusEl) statusEl.textContent = '';
+}
+
+async function pushPresence() {
+  if (!WORKER_URL || !_householdEnabled) return;
+  const name   = _householdName || settings.email?.split('@')[0] || 'You';
+  const initials = name.slice(0,2).toUpperCase();
+  try {
+    await fetch(`${WORKER_URL}/presence-update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId:   await getHouseholdUserId(),
+        name,
+        initials,
+        colour:   _householdColour,
+        view:     _currentViewName,
+        ts:       new Date().toISOString(),
+      }),
+    });
+  } catch(e) { /* offline — ignore */ }
+}
+
+// ── Presence avatars ──────────────────────────────────────
+function renderPresenceAvatars() {
+  const bar = document.getElementById('presence-bar');
+  if (!bar) return;
+  const users = Object.values(_otherPresence);
+  if (!users.length) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  bar.innerHTML = users.map(u => {
+    const viewLabel = { stock:'Stockroom', grocery:'Groceries', shopping:'Shopping', reminders:'Reminders', savings:'Savings', report:'Report', settings:'Settings' }[u.view] || u.view;
+    const isShopping = u.view === 'shopping';
+    return `<div class="presence-avatar ${isShopping ? 'shopping' : ''}"
+      style="background:${u.colour};color:#111"
+      title="${u.name} — viewing ${viewLabel}">
+      ${u.initials}
+      <div class="presence-dot"></div>
+      <div class="presence-tooltip">${esc(u.name)} · ${viewLabel}</div>
+    </div>`;
+  }).join('');
+}
+
+// Hook into showView and switchTo* to push presence on navigation
+// Note: we patch _currentViewName directly rather than wrapping functions,
+// since function re-declaration with hoisting causes infinite recursion.
+
+// ── Shopping list: show who else is viewing ───────────────
+function getShoppingPresenceBar() {
+  const shoppers = Object.values(_otherPresence).filter(u => u.view === 'shopping');
+  if (!shoppers.length) return '';
+  return `<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.2);border-radius:10px;margin-bottom:14px;font-size:13px">
+    <div style="display:flex;gap:4px">${shoppers.map(u =>
+      `<div class="presence-avatar shopping" style="background:${u.colour};color:#111;width:24px;height:24px;font-size:10px">${u.initials}<div class="presence-dot"></div></div>`
+    ).join('')}</div>
+    <span style="color:var(--warn)">${shoppers.map(u=>esc(u.name)).join(', ')} ${shoppers.length===1?'is':'are'} also on the shopping list</span>
+  </div>`;
+}
+
+async function init() {
+  // Load all data from IndexedDB (migrates from localStorage on first run)
+  await loadData();
+
+  // ── Migration: stamp updatedAt on any item that doesn't have one ──
+  const now = new Date().toISOString();
+  let migrated = false;
+  items.forEach(item => {
+    if (!item.updatedAt) { item.updatedAt = now; migrated = true; }
+  });
+  if (migrated) {
+    await saveData();
+    console.log(`Stamped updatedAt on ${items.filter(i=>i.updatedAt===now).length} legacy items`);
+  }
+
+  // Restore KV session
+  const kvRestored = await kvRestoreSession();
+  if (kvRestored) {
+    // If we have a session, sync on load
+    setTimeout(() => kvSyncNow(true), 800);
+  }
+
+  // Restore Dropbox state (disabled in KV build)
+
+  // KV build: no OAuth redirect handling needed
+  // handleOAuthRedirect(); // Drive OAuth — not used in KV build
+  await loadShareState();
+
+  // Check for ?join=CODE — show loading state immediately so user doesn't see normal wizard
+  const _joinCode = new URLSearchParams(location.search).get('join');
+  if (_joinCode) {
+    const _step1 = document.getElementById('wizard-step-1');
+    if (_step1) {
+      _step1.innerHTML = '<div style="font-size:52px;margin-bottom:16px">\uD83C\uDFE0</div><h1 style="font-size:24px;font-weight:700;margin-bottom:8px">Joining household…</h1><p style="color:var(--muted);font-size:14px">Checking your invite link</p>';
+      _step1.classList.add('active');
+    }
+  }
+
+  handleURLAction(); // processes ?join= and replaces loading state with join screen
+
+  buildCountryGrid();
+  buildSettingsCountrySelect();
+  buildTagSettingsRows();
+  buildTagFilterBar();
+  wizardCountry = settings.country || 'GB';
+  selectCountry(wizardCountry);
+
+  const seen        = localStorage.getItem('stockroom_seen');
+  const wizardStep  = localStorage.getItem('stockroom_wizard_step');
+  const countrySet  = localStorage.getItem('stockroom_country_set');
+  const protectSeen = localStorage.getItem('stockroom_protect_seen');
+
+  if (_joinCode) {
+  } else if (kvConnected && !protectSeen) {
+    showProtectDataScreen([]);
+  } else if (seen || kvConnected) {
+    document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
+  } else if (wizardStep === '2') {
+    localStorage.removeItem('stockroom_wizard_step');
+    wizardNext();
+  } else if (countrySet) {
+    wizardNext();
+  } else {
+  }
+
+  updateSyncUI();
+  renderSettingsForUser();
+  initPasskeyUI();
+  loadCompactView();
+  loadFilterPanelState();
+
+  // Init profiles — migrate if needed
+  const existingProfiles = await getProfiles();
+  const profileKeys = Object.keys(existingProfiles);
+  if (!profileKeys.length) {
+    // First run — wrap current items/settings into default profile
+    const profiles = { default: { name: 'Home', items: JSON.parse(JSON.stringify(items)), settings: JSON.parse(JSON.stringify(settings)) } };
+    await saveProfiles(profiles);
+  }
+  activeProfile = localStorage.getItem('stockroom_active_profile') || 'default';
+  await loadProfile(activeProfile);
+
+  scheduleRender(...RENDER_REGIONS);
+  loadNotifSettings();
+  initHouseholdSettingsUI();
+  await loadReminders();
+  await loadGrocery();
+  await checkGroceryRecurring();
+  renderReminders(); // pre-render for badge count
+
+  setTimeout(() => { lastAutoSync = Date.now(); checkCloudAhead(); }, 1500);
+  checkPendingSWSync();
+  if (migrated) setTimeout(syncAll, 1500);
+  // Shared users need an explicit sync on load
+  if (_shareState && !migrated) setTimeout(() => kvSyncNow(true), 800);
+  setTimeout(checkExportReminder, 5000);
+  setTimeout(checkScheduledEmail, 2000);
+  setTimeout(checkLowStockNotifications, 3000);
+  setTimeout(checkReminderNotifications, 3500);
+}
+
+init();
