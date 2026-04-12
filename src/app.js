@@ -6781,11 +6781,46 @@ async function kvRegisterWithPasskey() {
     storedCreds[emailHash] = credId;
     localStorage.setItem('stockroom_passkey_creds', JSON.stringify(storedCreds));
 
-    // Set up session
-    await kvStorePasskeySession(email, emailHash, finishData.sessionToken);
+    // Generate full v2 key envelope so the account has a data key and recovery codes
+    const kdfSalt  = crypto.getRandomValues(new Uint8Array(32));
+    const dataKey  = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+    const rawKey   = await crypto.subtle.exportKey('raw', dataKey);
+    // Generate 10 recovery codes
+    const recoveryCodes = Array.from({ length: 10 }, () => {
+      const bytes = crypto.getRandomValues(new Uint8Array(8));
+      const hex   = Array.from(bytes).map(b => b.toString(16).padStart(2,'0')).join('').toUpperCase();
+      return `${hex.slice(0,4)}-${hex.slice(4,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}`;
+    });
+    // Wrap data key with each recovery code via PBKDF2
+    const recoveryEnvelopes = await Promise.all(recoveryCodes.map(async code => {
+      const codeKey  = await deriveKeyFromPassphrase(code, emailHash);
+      const iv       = crypto.getRandomValues(new Uint8Array(12));
+      const wrapped  = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, codeKey, rawKey);
+      return { iv: btoa(String.fromCharCode(...iv)), data: btoa(String.fromCharCode(...new Uint8Array(wrapped))) };
+    }));
+    // Store key envelope on server (sessionToken auth — no verifier needed for passkey accounts)
+    const kdfSaltB64 = btoa(String.fromCharCode(...kdfSalt));
+    const storeRes = await fetchKV(`${WORKER_URL}/key/store`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        emailHash,
+        sessionToken:       finishData.sessionToken,
+        passphraseEnvelope: null,
+        kdfSalt:            kdfSaltB64,
+        cryptoVersion:      'v2',
+        recoveryEnvelopes,
+      }),
+    });
+    if (!storeRes.ok) {
+      const e = await storeRes.json().catch(() => ({}));
+      throw new Error(e.error || 'Failed to store key envelope');
+    }
+
+    // Set up session with the real data key
+    await kvStorePasskeySession(email, emailHash, finishData.sessionToken, dataKey);
 
     if(errEl) errEl.style.display = 'none';
-    await postLoginWizardRoute();
+    await postLoginWizardRoute(recoveryCodes);
   } catch(err) {
     if (err.name === 'NotAllowedError') {
       if(errEl){errEl.textContent='Passkey setup was cancelled — try again or use passphrase below';errEl.style.display='block';}
@@ -6953,12 +6988,12 @@ async function reauthWithPasskey() {
 // ══════════════════════════════════════════
 
 // Shared post-login wizard routing — called by all sign-in paths
-async function postLoginWizardRoute() {
+async function postLoginWizardRoute(recoveryCodes = []) {
   const protectSeen = localStorage.getItem('stockroom_protect_seen');
   const countrySet  = localStorage.getItem('stockroom_country_set');
   if (!protectSeen) {
     // Show security checklist first
-    showProtectDataScreen([]);
+    showProtectDataScreen(recoveryCodes);
   } else if (countrySet) {
     // Everything done — go to stockroom
     document.body.classList.remove('wizard-active');
@@ -7036,12 +7071,17 @@ function copyRecoveryCodes() {
 }
 
 async function protectAddPasskey() {
-  await addPasskeyToAccount();
-  // Check if passkey was added (session token updated)
-  if (_kvAuthMethod === 'passkey' || localStorage.getItem('stockroom_passkey_creds')) {
-    document.getElementById('protect-passkey-done').style.display   = '';
-    document.getElementById('protect-passkey-buttons').style.display = 'none';
-  }
+  // On initial passkey signup there is no passphrase, so call _doAddPasskeyToAccount
+  // directly (already authenticated) rather than routing through requireReauth.
+  await _doAddPasskeyToAccount();
+  _protectPasskeyDone();
+}
+
+function _protectPasskeyDone() {
+  document.getElementById('protect-passkey-done').style.display   = '';
+  document.getElementById('protect-passkey-buttons').style.display = 'none';
+  const section = document.getElementById('protect-passkey-section');
+  if (section) { section.style.opacity = '1'; section.style.pointerEvents = ''; }
 }
 
 function protectSkipPasskey() {
@@ -8463,7 +8503,7 @@ async function kvPush() {
 // ── Sync: pull and decrypt data from KV ────
 async function kvPull() {
   if (!kvConnected && !_shareState) return null;
-  if (kvConnected && (!_kvEmailHash || !_kvVerifier)) {
+  if (kvConnected && (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken))) {
     console.warn('kvPull: missing credentials, skipping');
     return null;
   }
@@ -8533,7 +8573,7 @@ async function kvPull() {
 // ── syncNow for KV mode ────────────────────
 async function kvSyncNow(silent = false) {
   if (!kvConnected && !_shareState) return;
-  if (kvConnected && (!_kvEmailHash || !_kvVerifier)) {
+  if (kvConnected && (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken))) {
     console.warn('kvSyncNow: missing credentials, skipping');
     return;
   }
