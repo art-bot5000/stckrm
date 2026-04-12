@@ -1,16 +1,4 @@
-# ═══════════════════════════════════════════════════════════
-#  STOCKROOM — Caddyfile
-#  Fly.io terminates TLS, so Caddy runs plain HTTP on :8080.
-#  Caddy handles:
-#    - Brotli + Gzip compression on all responses
-#    - Long-lived cache headers for hashed static assets
-#    - No-cache headers for index.html (always fresh shell)
-#    - Reverse proxy of /api/* → Deno on localhost:8000
-# ═══════════════════════════════════════════════════════════
-
 :8080 {
-    # ── Compression ──────────────────────────────────────
-    # encode prefers Brotli, falls back to Gzip automatically
     encode {
         zstd
         br
@@ -18,19 +6,6 @@
         minimum_length 256
     }
 
-    # ── API — proxy to Deno backend ───────────────────────
-    # All /api/* requests forwarded; Deno handles its own routing
-    handle /api/* {
-        uri strip_prefix /api
-        reverse_proxy localhost:8000 {
-            header_up Host {host}
-            header_up X-Real-IP {remote_host}
-            header_up X-Forwarded-Proto {scheme}
-        }
-    }
-
-    # ── Backend routes (no /api prefix in main.ts) ────────
-    # Route known API paths directly to Deno
     handle /ping {
         reverse_proxy localhost:8000
     }
@@ -61,33 +36,26 @@
     handle /items/* {
         reverse_proxy localhost:8000
     }
+    handle /key/* {
+        reverse_proxy localhost:8000
+    }
 
-    # ── Static files ──────────────────────────────────────
     handle {
         root * /app/public
         file_server
 
-        # index.html: never cache — it's the lightweight shell,
-        # must always be fresh so new app.js/styles.css are picked up
         @html path *.html
         header @html Cache-Control "no-cache, no-store, must-revalidate"
-        header @html Pragma "no-cache"
-        header @html Expires "0"
 
-        # Service worker: no cache (must always be current)
         @sw path /sw.js
         header @sw Cache-Control "no-cache, no-store, must-revalidate"
 
-        # manifest.json: short cache
         @manifest path /manifest.json
         header @manifest Cache-Control "public, max-age=3600"
 
-        # JS + CSS: long cache — filenames should be versioned/hashed
-        # when you deploy a new build (or use a query string ?v=x)
         @assets path *.js *.css
         header @assets Cache-Control "public, max-age=31536000, immutable"
 
-        # Security headers
         header {
             X-Content-Type-Options "nosniff"
             X-Frame-Options "DENY"
