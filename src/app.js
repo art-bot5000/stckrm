@@ -10763,11 +10763,14 @@ async function getHouseholdUserId() {
 
 // ── SSE connection ────────────────────────────────────────
 async function connectPresence() {
+  // Guard: don't connect until auth is ready (avoids self-ghost avatars)
   if (!WORKER_URL || !_householdEnabled) return;
+  if (!kvConnected && !_shareState) return;
   disconnectPresence(); // close any existing
 
   const userId = await getHouseholdUserId();
-  const url    = `${WORKER_URL}/presence-stream?userId=${encodeURIComponent(userId)}`;
+  const scope  = _shareState?.code || _kvEmailHash || '';
+  const url    = `${WORKER_URL}/presence-stream?userId=${encodeURIComponent(userId)}&scope=${encodeURIComponent(scope)}`;
 
   try {
     _presenceSSE = new EventSource(url);
@@ -10818,14 +10821,18 @@ function disconnectPresence() {
 
 async function pushPresence() {
   if (!WORKER_URL || !_householdEnabled) return;
-  const name   = _householdName || settings.email?.split('@')[0] || 'You';
+  if (!kvConnected && !_shareState) return;
+  const name     = _householdName || settings.email?.split('@')[0] || 'You';
   const initials = name.slice(0,2).toUpperCase();
+  // Scope presence to the household: use shareCode for guests, ownerEmailHash for owners
+  const scope = _shareState?.code || _kvEmailHash || null;
   try {
     await fetch(`${WORKER_URL}/presence-update`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         userId:   await getHouseholdUserId(),
+        scope,
         name,
         initials,
         colour:   _householdColour,
