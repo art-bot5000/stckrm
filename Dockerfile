@@ -2,7 +2,7 @@
 #  STOCKROOM — Fly.io Dockerfile
 #  Multi-stage build:
 #    Stage 1 (builder): Node.js minifies src/ → public/
-#    Stage 2 (runner):  Deno + Caddy serve the app1
+#    Stage 2 (runner):  Deno + Caddy serve the app
 # ═══════════════════════════════════════════════════════════
 
 # ── Stage 1: Build (minify CSS, JS, HTML) ────────────────
