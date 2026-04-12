@@ -1420,10 +1420,15 @@ Deno.serve(async (request) => {
   if (url.pathname === '/share/create' && request.method === 'POST') {
     try {
       const body = await request.json();
-      const { ownerEmailHash, verifier, name, type, ownerName, households, householdNames, colour } = body;
-      if (!ownerEmailHash || !verifier || !name || !households) return json({ error: 'Missing required fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken, name, type, ownerName, households, householdNames, colour } = body;
+      if (!ownerEmailHash || (!verifier && !sessionToken) || !name || !households) return json({ error: 'Missing required fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const storedToken = await kvGet(['user', ownerEmailHash, 'session_token']);
+        if (!storedToken.value || storedToken.value !== sessionToken) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const code = Array.from(crypto.getRandomValues(new Uint8Array(4)))
         .map(b => b.toString(36).padStart(2,'0')).join('').toUpperCase().slice(0,6);
       const target = {
@@ -1475,10 +1480,15 @@ Deno.serve(async (request) => {
   // ── Share: list (authenticated) ──────────────────────
   if (url.pathname === '/share/list' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier } = await request.json();
-      if (!ownerEmailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken } = await request.json();
+      if (!ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const storedToken = await kvGet(['user', ownerEmailHash, 'session_token']);
+        if (!storedToken.value || storedToken.value !== sessionToken) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const targets = [];
       const entries = kv.list({ prefix: ['share'] });
       for await (const entry of entries) {
@@ -1573,10 +1583,15 @@ Deno.serve(async (request) => {
   // ── Share: update permissions ─────────────────────────
   if (url.pathname === '/share/update' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, code, name, type, colour, households } = await request.json();
-      if (!code || !ownerEmailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken, code, name, type, colour, households } = await request.json();
+      if (!code || !ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const storedToken = await kvGet(['user', ownerEmailHash, 'session_token']);
+        if (!storedToken.value || storedToken.value !== sessionToken) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const r = await kvGet(['share', code.toUpperCase()]);
       if (!r.value) return json({ error: 'Not found' }, corsHeaders, 404);
       const existing = JSON.parse(r.value);
@@ -1590,10 +1605,15 @@ Deno.serve(async (request) => {
   // ── Share: delete ─────────────────────────────────────
   if (url.pathname === '/share/delete' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, code } = await request.json();
-      if (!code || !ownerEmailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken, code } = await request.json();
+      if (!code || !ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const storedToken = await kvGet(['user', ownerEmailHash, 'session_token']);
+        if (!storedToken.value || storedToken.value !== sessionToken) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const r = await kvGet(['share', code.toUpperCase()]);
       if (r.value && JSON.parse(r.value).ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
       await kvDel(['share', code.toUpperCase()]);
@@ -1611,10 +1631,15 @@ Deno.serve(async (request) => {
   // ── Share: refresh link (new 24h window) ─────────────
   if (url.pathname === '/share/refresh' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, code } = await request.json();
-      if (!code || !ownerEmailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken, code } = await request.json();
+      if (!code || !ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const storedToken = await kvGet(['user', ownerEmailHash, 'session_token']);
+        if (!storedToken.value || storedToken.value !== sessionToken) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const r = await kvGet(['share', code.toUpperCase()]);
       if (!r.value) return json({ error: 'Not found' }, corsHeaders, 404);
       const existing = JSON.parse(r.value);
@@ -1628,9 +1653,11 @@ Deno.serve(async (request) => {
   // ── Presence: update (ephemeral, 5min TTL) ───────────
   if (url.pathname === '/presence-update' && request.method === 'POST') {
     try {
-      const { userId, name, initials, colour, view } = await request.json();
+      const { userId, scope, name, initials, colour, view } = await request.json();
       if (!userId) return json({ error: 'Missing userId' }, corsHeaders, 400);
-      await kvSet(['presence', userId], JSON.stringify({ userId, name, initials, colour, view, ts: new Date().toISOString() }), { expireIn: 5 * 60 * 1000 });
+      // scope: shareCode for guests, ownerEmailHash for owners — used to filter SSE stream
+      const scopeKey = scope || 'global';
+      await kvSet(['presence', scopeKey, userId], JSON.stringify({ userId, scope: scopeKey, name, initials, colour, view, ts: new Date().toISOString() }), { expireIn: 5 * 60 * 1000 });
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
@@ -1649,17 +1676,22 @@ Deno.serve(async (request) => {
 
   // ── Presence: SSE stream ──────────────────────────────
   if (url.pathname === '/presence-stream' && request.method === 'GET') {
+    const requestingUserId = url.searchParams.get('userId') || '';
+    const scope            = url.searchParams.get('scope') || 'global';
+    const scopeKey         = scope || 'global';
     const stream = new ReadableStream({
       start(controller) {
         const send = (data) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`));
         const interval = setInterval(async () => {
           try {
             const users = [];
-            const entries = kv.list({ prefix: ['presence'] });
+            // Only return users in the same household scope
+            const entries = kv.list({ prefix: ['presence', scopeKey] });
             for await (const entry of entries) {
-              try { users.push(JSON.parse(entry.value)); } catch(e) {}
+              try { users.push(JSON.parse(entry.value as string)); } catch(e) {}
             }
-            send({ users });
+            // Always include type:'presence' so client check works
+            send({ type: 'presence', users });
           } catch(e) {}
         }, 5000);
         setTimeout(() => { clearInterval(interval); controller.close(); }, 5 * 60 * 1000);
