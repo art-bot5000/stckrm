@@ -154,6 +154,19 @@
   </div>
 </div>
 
+<!-- ═══ COOKIE CONSENT BANNER ═══ -->
+<div id="cookie-consent-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999;background:var(--surface,#1a1d27);border-top:1px solid var(--border,#2a2d3a);padding:20px 24px;box-shadow:0 -4px 24px rgba(0,0,0,0.4)">
+  <div style="max-width:520px;margin:0 auto">
+    <div style="font-size:20px;margin-bottom:8px">🍪</div>
+    <h3 style="font-size:15px;font-weight:700;margin-bottom:6px;color:var(--text,#f0f0f0)">Remember your email?</h3>
+    <p style="font-size:13px;color:var(--muted,#888);line-height:1.6;margin-bottom:16px">STOCKROOM can save your email address in a cookie so you don't have to type it each time. We'll also remember whether you've set up Face ID / Fingerprint login to streamline your sign-in.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-primary" style="flex:1;min-width:120px" onclick="cookieConsentAccept()">✓ Yes, remember me</button>
+      <button class="btn btn-ghost" style="flex:1;min-width:120px" onclick="cookieConsentDecline()">No thanks</button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══ WIZARD ═══ -->
 <div id="wizard">
   <div class="wizard-box">
@@ -162,40 +175,18 @@
       <div class="step-dot" id="dot-2" style="width:8px"></div>
     </div>
 
-    <!-- Step 1: Welcome / Cookie consent + remembered email -->
+    <!-- Step 1: Welcome -->
     <div class="wizard-step active" id="wizard-step-1">
       <div style="font-size:52px;margin-bottom:12px">📦</div>
       <h1 style="font-size:26px;font-weight:700;margin-bottom:8px">STOCKROOM</h1>
       <p style="color:var(--muted);font-size:14px;line-height:1.6;margin-bottom:20px">Create an account to sync your data securely. Your data is encrypted on your device before being stored.</p>
-
-      <!-- Cookie consent banner — shown on first ever visit only -->
-      <div id="cookie-consent-banner" style="display:none;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px;text-align:left">
-        <p style="font-size:13px;font-weight:700;margin-bottom:6px">🍪 Remember me?</p>
-        <p style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:12px">STOCKROOM can remember your email address and sign-in method so you can log back in faster. No tracking — only your email and whether you have a passkey set up.</p>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-primary btn-sm" style="flex:1" onclick="cookieConsentAccept()">Yes, remember me</button>
-          <button class="btn btn-ghost btn-sm" style="flex:1" onclick="cookieConsentDecline()">No thanks</button>
-        </div>
-      </div>
-
-      <!-- Remembered email display (shown when cookie consent given + email stored) -->
-      <div id="remembered-email-block" style="display:none;text-align:left;margin-bottom:16px">
-        <label class="form-label">Email address</label>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
-          <div id="remembered-email-display" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--muted);font-size:14px;font-family:var(--mono)"></div>
-          <button class="btn btn-ghost btn-sm" onclick="clearRememberedEmail()" style="flex-shrink:0;font-size:12px">Change</button>
-        </div>
-      </div>
-
-      <!-- Normal email input (shown when no remembered email or after Change) -->
-      <div id="email-input-block" style="text-align:left;margin-bottom:16px">
+      <div style="text-align:left;margin-bottom:16px">
         <div class="form-group" style="margin-bottom:12px">
           <label class="form-label">Email address</label>
           <input class="form-input" id="kv-email" type="email" placeholder="you@example.com" autocomplete="email">
         </div>
       </div>
-
-      <!-- Passkey option (shown if supported AND no remembered passkey preference) -->
+      <!-- Passkey option (shown if supported) -->
       <div id="passkey-register-option">
         <button class="btn btn-primary btn-xl full" style="margin-bottom:10px" onclick="kvRegisterWithPasskey()">
           🔑 Create account with Face ID / Fingerprint
@@ -215,10 +206,7 @@
         <p style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.5">⚠️ Store this safely — it's required to recover your account if you lose access.</p>
         <button class="btn btn-ghost btn-xl full" style="margin-bottom:10px" onclick="kvRegister()">Create account with passphrase →</button>
       </div>
-      <!-- Hidden when email remembered (user already has an account) -->
-      <div id="register-new-account-btn">
-        <button class="btn btn-ghost btn-xl full" style="font-size:13px;margin-bottom:10px" onclick="showKvLogin()">Already have an account? Sign in</button>
-      </div>
+      <button class="btn btn-ghost btn-xl full" style="font-size:13px;margin-bottom:10px" onclick="showKvLogin()">Already have an account? Sign in</button>
       <p id="kv-wizard-error" style="font-size:12px;color:var(--danger);margin-top:8px;display:none"></p>
     </div>
 
@@ -228,24 +216,25 @@
       <h1 style="font-size:24px;font-weight:700;margin-bottom:8px">Sign in</h1>
       <p style="color:var(--muted);font-size:14px;margin-bottom:20px">Enter your email to sign in.</p>
 
-      <!-- Remembered email display -->
-      <div id="login-remembered-email-block" style="display:none;text-align:left;margin-bottom:16px">
-        <label class="form-label">Email address</label>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
-          <div id="login-remembered-email-display" style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--muted);font-size:14px;font-family:var(--mono)"></div>
-          <button class="btn btn-ghost btn-sm" onclick="clearRememberedEmail()" style="flex-shrink:0;font-size:12px">Change</button>
+      <!-- Remembered email display (shown when cookie consent given + email saved) -->
+      <div id="login-remembered-email" style="display:none;text-align:left;margin-bottom:16px">
+        <div class="form-group" style="margin-bottom:4px">
+          <label class="form-label">Email address</label>
+          <input class="form-input" id="kv-login-email-display" type="email" disabled
+            style="color:var(--muted);background:var(--bg-subtle,rgba(255,255,255,0.04));cursor:default">
         </div>
+        <button class="btn btn-ghost" style="font-size:12px;padding:4px 10px;margin-top:4px" onclick="loginChangeUser()">⇄ Change user</button>
       </div>
 
-      <!-- Normal email input -->
-      <div id="login-email-input-block" style="text-align:left;margin-bottom:16px">
+      <!-- Normal email input (shown when no remembered email) -->
+      <div id="login-email-input" style="text-align:left;margin-bottom:16px">
         <div class="form-group" style="margin-bottom:12px">
           <label class="form-label">Email address</label>
           <input class="form-input" id="kv-login-email" type="email" placeholder="you@example.com" autocomplete="email">
         </div>
       </div>
 
-      <!-- Passkey option (hidden if cookie says no passkey registered) -->
+      <!-- Passkey option -->
       <div id="passkey-login-option">
         <button class="btn btn-primary btn-xl full" style="margin-bottom:10px" onclick="kvLoginWithPasskey()">
           🔑 Sign in with Face ID / Fingerprint
@@ -262,10 +251,8 @@
         <input class="form-input" id="kv-login-pass" type="password" placeholder="Your passphrase" autocomplete="current-password">
       </div>
       <button class="btn btn-ghost btn-xl full" style="margin-bottom:10px" onclick="kvLogin()">Sign in with passphrase →</button>
-      <!-- Hidden when email remembered (no point creating a new account for a known user) -->
-      <div id="login-create-account-btn">
-        <button class="btn btn-ghost btn-xl full" style="font-size:13px;margin-bottom:6px" onclick="showKvRegister()">← Create an account</button>
-      </div>
+      <!-- Create account button — hidden when email is remembered (cookie consent given) -->
+      <button id="login-create-account-btn" class="btn btn-ghost btn-xl full" style="font-size:13px;margin-bottom:6px" onclick="showKvRegister()">← Create an account</button>
       <button class="btn btn-ghost btn-xl full" style="font-size:12px;color:var(--muted);margin-bottom:10px" onclick="showForgotPassphrase()">Forgot passphrase?</button>
       <p id="kv-login-error" style="font-size:12px;color:var(--danger);margin-top:8px;display:none"></p>
     </div>

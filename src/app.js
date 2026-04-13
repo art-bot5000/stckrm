@@ -2548,7 +2548,7 @@ const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').match
 const isAndroid = /android/i.test(navigator.userAgent);
 
 if ('serviceWorker' in navigator) {
-  const isDeployed = location.hostname.includes('github.io') || location.hostname.includes('artbot5000') || location.hostname.includes('fly.dev') || location.hostname.includes('stckrm');
+  const isDeployed = location.hostname.includes('github.io') || location.hostname.includes('artbot5000');
   if (isDeployed) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('./sw.js').then(reg => {
@@ -6549,14 +6549,130 @@ async function resendEmailVerification() {
   await sendEmailVerificationOtp(_emailVerifyEmail, _emailVerifyEmailHash);
 }
 
+// ═══════════════════════════════════════════════════════════
+//  COOKIE CONSENT & REMEMBERED EMAIL
+// ═══════════════════════════════════════════════════════════
+
+const COOKIE_CONSENT_KEY  = 'stockroom_cookie_consent';   // 'granted' | 'declined' | absent
+const COOKIE_EMAIL_KEY    = 'stockroom_remembered_email';
+const COOKIE_PASSKEY_KEY  = 'stockroom_remembered_passkey'; // 'true' | 'false'
+
+function getCookieConsent() {
+  try { return localStorage.getItem(COOKIE_CONSENT_KEY); } catch(e) { return null; }
+}
+
+function getRememberedEmail() {
+  if (getCookieConsent() !== 'granted') return null;
+  try { return localStorage.getItem(COOKIE_EMAIL_KEY) || null; } catch(e) { return null; }
+}
+
+function getRememberedPasskey() {
+  if (getCookieConsent() !== 'granted') return null;
+  try { return localStorage.getItem(COOKIE_PASSKEY_KEY); } catch(e) { return null; }
+}
+
+function setRememberedEmail(email) {
+  if (getCookieConsent() !== 'granted') return;
+  try { localStorage.setItem(COOKIE_EMAIL_KEY, email); } catch(e) {}
+}
+
+function setRememberedPasskey(hasPasskey) {
+  if (getCookieConsent() !== 'granted') return;
+  try { localStorage.setItem(COOKIE_PASSKEY_KEY, hasPasskey ? 'true' : 'false'); } catch(e) {}
+}
+
+function clearRememberedCookieData() {
+  try {
+    localStorage.removeItem(COOKIE_EMAIL_KEY);
+    localStorage.removeItem(COOKIE_PASSKEY_KEY);
+    localStorage.removeItem(COOKIE_CONSENT_KEY);
+  } catch(e) {}
+}
+
+function cookieConsentAccept() {
+  try { localStorage.setItem(COOKIE_CONSENT_KEY, 'granted'); } catch(e) {}
+  document.getElementById('cookie-consent-banner').style.display = 'none';
+  applyLoginScreenState();
+}
+
+function cookieConsentDecline() {
+  try { localStorage.setItem(COOKIE_CONSENT_KEY, 'declined'); } catch(e) {}
+  document.getElementById('cookie-consent-banner').style.display = 'none';
+  applyLoginScreenState();
+}
+
+/** Show cookie consent banner if consent hasn't been given yet (only on login/register screens) */
+function maybeShowCookieConsentBanner() {
+  const consent = getCookieConsent();
+  const banner  = document.getElementById('cookie-consent-banner');
+  if (!banner) return;
+  banner.style.display = (consent === null) ? 'block' : 'none';
+}
+
+/** Apply remembered-email state to the login screen (step-1b) */
+function applyLoginScreenState() {
+  const consent        = getCookieConsent();
+  const rememberedEmail = getRememberedEmail();
+  const rememberedPasskey = getRememberedPasskey(); // 'true' | 'false' | null
+
+  const rememberedEmailDiv   = document.getElementById('login-remembered-email');
+  const normalEmailDiv       = document.getElementById('login-email-input');
+  const displayInput         = document.getElementById('kv-login-email-display');
+  const realInput            = document.getElementById('kv-login-email');
+  const createAccountBtn     = document.getElementById('login-create-account-btn');
+  const passkeyLoginOption   = document.getElementById('passkey-login-option');
+
+  if (consent === 'granted' && rememberedEmail) {
+    // Show greyed-out remembered email, hide normal input
+    if (rememberedEmailDiv) rememberedEmailDiv.style.display = '';
+    if (normalEmailDiv)     normalEmailDiv.style.display     = 'none';
+    if (displayInput)       displayInput.value               = rememberedEmail;
+    // Mirror value into the real input so auth functions work
+    if (realInput)          realInput.value                  = rememberedEmail;
+    // Hide "Create an account" since they have a remembered account
+    if (createAccountBtn)   createAccountBtn.style.display   = 'none';
+    // Hide passkey option if we know they don't have one
+    if (passkeyLoginOption && rememberedPasskey === 'false') {
+      passkeyLoginOption.style.display = 'none';
+    }
+  } else {
+    // No consent or no remembered email — show normal interface
+    if (rememberedEmailDiv) rememberedEmailDiv.style.display = 'none';
+    if (normalEmailDiv)     normalEmailDiv.style.display     = '';
+    if (createAccountBtn)   createAccountBtn.style.display   = '';
+    if (passkeyLoginOption) passkeyLoginOption.style.display = '';
+  }
+}
+
+/** Called when user clicks "Change user" — clears remembered data and shows normal form */
+function loginChangeUser() {
+  clearRememberedCookieData();
+  applyLoginScreenState();
+  // Re-show consent banner so user can opt back in
+  const banner = document.getElementById('cookie-consent-banner');
+  if (banner) banner.style.display = 'block';
+}
+
+/** Call this after a successful login to persist email & passkey state */
+function persistLoginCookies(email, hasPasskey) {
+  if (getCookieConsent() !== 'granted') return;
+  setRememberedEmail(email);
+  setRememberedPasskey(hasPasskey);
+}
+
+// ═══════════════════════════════════════════════════════════
+
 function showKvRegister() {
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   document.getElementById('wizard-step-1')?.classList.add('active');
+  maybeShowCookieConsentBanner();
 }
 
 function showKvLogin() {
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   document.getElementById('wizard-step-1b')?.classList.add('active');
+  applyLoginScreenState();
+  maybeShowCookieConsentBanner();
 }
 
 async function kvRegister() {
@@ -6664,6 +6780,8 @@ async function kvLogin() {
 
     await kvStoreSession(email, emailHash, verifier, dataKey);
     if(errEl) errEl.style.display = 'none';
+    // Persist email cookie after successful login (no passkey)
+    persistLoginCookies(email, false);
     await offerTrustDevice(email, emailHash, verifier, dataKey);
 
     // Trigger v1→v2 migration if server says it's due
@@ -6834,7 +6952,9 @@ async function kvRegisterWithPasskey() {
 
 // ── Passkey Login ─────────────────────────────────────────
 async function kvLoginWithPasskey() {
-  const email  = document.getElementById('kv-login-email')?.value.trim();
+  // Support both the normal input and the remembered-email display input
+  const email  = (document.getElementById('kv-login-email')?.value.trim()) ||
+                 (document.getElementById('kv-login-email-display')?.value.trim());
   const errEl  = document.getElementById('kv-login-error');
   const btn    = document.querySelector('[onclick="kvLoginWithPasskey()"]');
   if (!email) { if(errEl){errEl.textContent='Enter your email address first';errEl.style.display='block';} return; }
@@ -6882,6 +7002,8 @@ async function kvLoginWithPasskey() {
 
     await kvStorePasskeySession(email, emailHash, finishData.sessionToken);
     if(errEl) errEl.style.display = 'none';
+    // Persist email + passkey=true in cookies after successful passkey login
+    persistLoginCookies(email, true);
     await postLoginWizardRoute();
   } catch(err) {
     if (err.name === 'NotAllowedError') {
@@ -8727,6 +8849,8 @@ async function kvSignOut() {
   document.body.classList.add('wizard-active'); document.getElementById('wizard').style.display = 'flex';
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   document.getElementById('wizard-step-1b').classList.add('active');
+  applyLoginScreenState();
+  maybeShowCookieConsentBanner();
   updateSyncUI();
   toast('Signed out');
 }
@@ -10935,6 +11059,14 @@ async function init() {
   } else if (countrySet) {
     wizardNext();
   } else {
+    // No session, no seen flag — show register/login wizard
+    // If we have a remembered email, go straight to login step
+    if (getRememberedEmail()) {
+      document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+      document.getElementById('wizard-step-1b')?.classList.add('active');
+      applyLoginScreenState();
+    }
+    maybeShowCookieConsentBanner();
   }
 
   updateSyncUI();
