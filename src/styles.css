@@ -227,14 +227,16 @@
   /* ── WIZARD FORM FIELDS — floating label style ── */
   .form-group { width: 100%; margin-bottom: 20px; }
   .fl-field { position: relative; width: 100%; }
-  .fl-field input { display: block; width: 100%; box-sizing: border-box; background: transparent; border: 1.5px solid var(--border); border-radius: 10px; padding: 18px 14px 8px; color: var(--text); font-family: var(--sans); font-size: 15px; outline: none; transition: border-color 0.18s; }
+  .fl-field input { display: block; width: 100%; box-sizing: border-box; background: transparent; border: 1.5px solid var(--border); border-radius: 10px; padding: 20px 14px 8px; color: var(--text); font-family: var(--sans); font-size: 15px; outline: none; transition: border-color 0.18s; text-align: center; }
+  .fl-field input:focus,
+  .fl-field input:not(:placeholder-shown) { text-align: left; }
   .fl-field input:focus { border-color: var(--accent); }
-  .fl-field input:disabled { color: var(--muted); cursor: default; opacity: 0.7; }
-  .fl-field label { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); font-size: 14px; color: var(--muted); pointer-events: none; transition: top 0.15s ease, font-size 0.15s ease, color 0.15s ease, transform 0.15s ease; background: var(--surface); padding: 0 4px; line-height: 1; white-space: nowrap; z-index: 1; }
+  .fl-field input:disabled { color: var(--muted); cursor: default; opacity: 0.7; text-align: left; }
+  .fl-field label { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); text-align: center; font-size: 14px; color: var(--muted); pointer-events: none; transition: top 0.15s ease, font-size 0.15s ease, color 0.15s ease, transform 0.15s ease, left 0.15s ease, text-align 0.15s ease; background: transparent; padding: 0 14px; line-height: 1; white-space: nowrap; z-index: 1; }
   .fl-field input:focus ~ label,
-  .fl-field input:not(:placeholder-shown) ~ label { top: 0; font-size: 11px; font-weight: 600; color: var(--accent); transform: translateY(-50%); }
+  .fl-field input:not(:placeholder-shown) ~ label { top: 0; left: 14px; right: auto; font-size: 11px; font-weight: 600; color: var(--accent); transform: translateY(-50%); text-align: left; background: var(--surface); padding: 0 4px; }
   .fl-field input:disabled ~ label,
-  .fl-field.has-value label { top: 0; font-size: 11px; font-weight: 600; color: var(--muted); transform: translateY(-50%); }
+  .fl-field.has-value label { top: 0; left: 14px; right: auto; font-size: 11px; font-weight: 600; color: var(--muted); transform: translateY(-50%); text-align: left; background: var(--surface); padding: 0 4px; }
   /* Legacy class compatibility */
   .form-label { display: block; font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
   .form-input { display: block; width: 100%; box-sizing: border-box; background: var(--surface2); border: 1.5px solid var(--border); border-radius: 10px; padding: 14px 14px 10px; color: var(--text); font-family: var(--sans); font-size: 15px; outline: none; transition: border-color 0.15s; }

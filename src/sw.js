@@ -1,5 +1,5 @@
 // ── INCREMENT THIS VERSION NUMBER EVERY TIME YOU DEPLOY ──────
-const CACHE_VERSION = 'stockroom-kv-v57';
+const CACHE_VERSION = 'stockroom-kv-v50';
 const CACHE_NAME    = CACHE_VERSION;
 
 const CACHE_URLS = [
@@ -87,8 +87,6 @@ self.addEventListener('fetch', event => {
     url.hostname.includes('dropbox.com')       ||
     url.hostname.includes('workers.dev')       ||
     url.hostname.includes('deno.net')          ||
-    url.hostname.includes('fly.dev')           ||
-    url.hostname.includes('stckrm')            ||
     url.hostname.includes('resend.com')        ||
     url.hostname.includes('openfoodfacts.org') ||
     url.hostname.includes('openbeautyfacts.org')
