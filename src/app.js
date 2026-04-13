@@ -6549,6 +6549,143 @@ async function resendEmailVerification() {
   await sendEmailVerificationOtp(_emailVerifyEmail, _emailVerifyEmailHash);
 }
 
+
+// ═══════════════════════════════════════════════════════════
+//  COOKIE CONSENT & REMEMBERED EMAIL
+// ═══════════════════════════════════════════════════════════
+// Cookie names
+const COOKIE_CONSENT    = 'sr_consent';      // 'yes' | 'no'
+const COOKIE_EMAIL      = 'sr_email';        // remembered email
+const COOKIE_PASSKEY    = 'sr_passkey';      // 'yes' if passkey registered
+const COOKIE_MAX_AGE    = 365 * 24 * 60 * 60; // 1 year in seconds
+
+function setCookie(name, value, maxAge = COOKIE_MAX_AGE) {
+  document.cookie = `${name}=${encodeURIComponent(value)};max-age=${maxAge};path=/;SameSite=Lax`;
+}
+
+function getCookie(name) {
+  const match = document.cookie.split(';').map(c => c.trim())
+    .find(c => c.startsWith(name + '='));
+  return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
+}
+
+function deleteCookie(name) {
+  document.cookie = `${name}=;max-age=0;path=/`;
+}
+
+function hasCookieConsent() {
+  return getCookie(COOKIE_CONSENT) === 'yes';
+}
+
+function cookieConsentDecided() {
+  return getCookie(COOKIE_CONSENT) !== null;
+}
+
+function cookieConsentAccept() {
+  setCookie(COOKIE_CONSENT, 'yes');
+  document.getElementById('cookie-consent-banner').style.display = 'none';
+  // If an email was typed before consent, remember it now
+  const emailEl = document.getElementById('kv-email');
+  if (emailEl?.value.trim()) setCookie(COOKIE_EMAIL, emailEl.value.trim());
+  applyRememberedEmailUI();
+}
+
+function cookieConsentDecline() {
+  setCookie(COOKIE_CONSENT, 'no');
+  document.getElementById('cookie-consent-banner').style.display = 'none';
+  // Show full default UI on both screens
+  applyRememberedEmailUI();
+}
+
+// Called after successful login/register to persist email + passkey status
+function rememberLoginCookies(email, hasPasskey = false) {
+  if (!hasCookieConsent()) return;
+  setCookie(COOKIE_EMAIL, email);
+  if (hasPasskey) setCookie(COOKIE_PASSKEY, 'yes');
+}
+
+// Called when user taps "Change" to clear the remembered email
+function clearRememberedEmail() {
+  deleteCookie(COOKIE_EMAIL);
+  deleteCookie(COOKIE_PASSKEY);
+  // Show the normal email input on both screens
+  _showEmailInput('register');
+  _showEmailInput('login');
+}
+
+function _showEmailInput(screen) {
+  if (screen === 'register') {
+    document.getElementById('remembered-email-block').style.display   = 'none';
+    document.getElementById('email-input-block').style.display        = '';
+    document.getElementById('passkey-register-option').style.display  = '';
+    document.getElementById('passphrase-register-option').style.display = '';
+    document.getElementById('register-new-account-btn').style.display = '';
+  } else {
+    document.getElementById('login-remembered-email-block').style.display = 'none';
+    document.getElementById('login-email-input-block').style.display       = '';
+    document.getElementById('passkey-login-option').style.display          = '';
+    document.getElementById('login-create-account-btn').style.display      = '';
+  }
+}
+
+// Main function — call on wizard load and after consent decision
+function applyRememberedEmailUI() {
+  const consent   = hasCookieConsent();
+  const email     = consent ? getCookie(COOKIE_EMAIL) : null;
+  const hasPasskey = consent && getCookie(COOKIE_PASSKEY) === 'yes';
+
+  // ── Register screen (step-1) ───────────────────────────
+  if (email) {
+    // Show greyed email + Change button; hide email input
+    document.getElementById('remembered-email-block').style.display   = '';
+    document.getElementById('remembered-email-display').textContent   = email;
+    document.getElementById('email-input-block').style.display        = 'none';
+    // Hide "Create account" button — user clearly already has one
+    document.getElementById('register-new-account-btn').style.display = 'none';
+    // Hide passkey register button (they have an account, not registering)
+    document.getElementById('passkey-register-option').style.display  = 'none';
+    document.getElementById('passphrase-register-option').style.display = 'none';
+    // Auto-navigate to login screen since we know this user
+    showKvLogin();
+  } else {
+    _showEmailInput('register');
+  }
+
+  // ── Login screen (step-1b) ─────────────────────────────
+  if (email) {
+    document.getElementById('login-remembered-email-block').style.display = '';
+    document.getElementById('login-remembered-email-display').textContent  = email;
+    document.getElementById('login-email-input-block').style.display       = 'none';
+    // Sync email to the hidden input so kvLogin()/kvLoginWithPasskey() still work
+    const loginEmailEl = document.getElementById('kv-login-email');
+    if (loginEmailEl) loginEmailEl.value = email;
+    // Hide "Create an account" — we know this user
+    document.getElementById('login-create-account-btn').style.display = 'none';
+    // Hide passkey button if cookie says no passkey registered
+    if (consent && !hasPasskey) {
+      document.getElementById('passkey-login-option').style.display = 'none';
+    } else {
+      document.getElementById('passkey-login-option').style.display = '';
+    }
+  } else {
+    _showEmailInput('login');
+    // Still hide/show passkey based on browser support if no cookie
+    if (!passkeySupported()) {
+      document.getElementById('passkey-login-option').style.display    = 'none';
+      document.getElementById('passkey-register-option').style.display = 'none';
+    }
+  }
+}
+
+// Call on wizard initialisation
+function initCookieConsent() {
+  if (!cookieConsentDecided()) {
+    // First ever visit — show consent banner on the register screen
+    document.getElementById('cookie-consent-banner').style.display = '';
+  }
+  applyRememberedEmailUI();
+}
+
 function showKvRegister() {
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   document.getElementById('wizard-step-1')?.classList.add('active');
@@ -6557,6 +6694,7 @@ function showKvRegister() {
 function showKvLogin() {
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   document.getElementById('wizard-step-1b')?.classList.add('active');
+  applyRememberedEmailUI();
 }
 
 async function kvRegister() {
@@ -6613,6 +6751,7 @@ async function kvRegister() {
 
     _kvKey = dataKey;
     await kvStoreSession(email, emailHash, verifier, dataKey);
+    rememberLoginCookies(email, false);
     if(errEl) errEl.style.display = 'none';
     // Verify email ownership before continuing to protect screen
     await showEmailVerification(email, emailHash, () => showProtectDataScreen(recoveryCodes));
@@ -6663,6 +6802,7 @@ async function kvLogin() {
     }
 
     await kvStoreSession(email, emailHash, verifier, dataKey);
+    rememberLoginCookies(email, false);
     if(errEl) errEl.style.display = 'none';
     await offerTrustDevice(email, emailHash, verifier, dataKey);
 
@@ -6820,6 +6960,7 @@ async function kvRegisterWithPasskey() {
     await kvStorePasskeySession(email, emailHash, finishData.sessionToken, dataKey);
 
     if(errEl) errEl.style.display = 'none';
+    rememberLoginCookies(email, true);
     await postLoginWizardRoute(recoveryCodes);
   } catch(err) {
     if (err.name === 'NotAllowedError') {
@@ -6881,6 +7022,7 @@ async function kvLoginWithPasskey() {
     if (!finishRes.ok) throw new Error(finishData.error || 'Sign-in failed');
 
     await kvStorePasskeySession(email, emailHash, finishData.sessionToken);
+    rememberLoginCookies(email, true);
     if(errEl) errEl.style.display = 'none';
     await postLoginWizardRoute();
   } catch(err) {
@@ -9197,6 +9339,10 @@ async function prewarmView(name) {
 
 // Patch tab buttons with pointerdown + pointerenter pre-warming
 document.addEventListener('DOMContentLoaded', () => {
+  // Initialise cookie consent + remembered email UI
+  if (document.body.classList.contains('wizard-active')) {
+    initCookieConsent();
+  }
   document.querySelectorAll('.tab').forEach(btn => {
     const onclick = btn.getAttribute('onclick') || '';
     const match   = onclick.match(/showView\('(\w+)'/);
