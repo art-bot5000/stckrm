@@ -212,49 +212,59 @@
 
     <!-- Step 1b: Login (existing users) -->
     <div class="wizard-step" id="wizard-step-1b">
-      <div style="font-size:52px;margin-bottom:12px">🔑</div>
-      <h1 style="font-size:24px;font-weight:700;margin-bottom:8px">Sign in</h1>
-      <p style="color:var(--muted);font-size:14px;margin-bottom:20px">Enter your email to sign in.</p>
-
-      <!-- Remembered email display (shown when cookie consent given + email saved) -->
-      <div id="login-remembered-email" style="display:none;text-align:left;margin-bottom:16px">
-        <div class="form-group" style="margin-bottom:4px">
-          <label class="form-label">Email address</label>
-          <input class="form-input" id="kv-login-email-display" type="email" disabled
-            style="color:var(--muted);background:var(--bg-subtle,rgba(255,255,255,0.04));cursor:default">
-        </div>
-        <button class="btn btn-ghost" style="font-size:12px;padding:4px 10px;margin-top:4px" onclick="loginChangeUser()">⇄ Change user</button>
+      <!-- Centred header block -->
+      <div style="text-align:center;margin-bottom:24px">
+        <div style="font-size:52px;margin-bottom:12px">🔑</div>
+        <h1 style="font-size:24px;font-weight:700;margin-bottom:6px">Sign in</h1>
+        <p style="color:var(--muted);font-size:14px">Enter your email to sign in.</p>
       </div>
 
-      <!-- Normal email input (shown when no remembered email) -->
-      <div id="login-email-input" style="text-align:left;margin-bottom:16px">
-        <div class="form-group" style="margin-bottom:12px">
-          <label class="form-label">Email address</label>
-          <input class="form-input" id="kv-login-email" type="email" placeholder="you@example.com" autocomplete="email">
-        </div>
-      </div>
+      <!-- Left-aligned form body -->
+      <div style="text-align:left">
 
-      <!-- Passkey option -->
-      <div id="passkey-login-option">
-        <button class="btn btn-primary btn-xl full" style="margin-bottom:10px" onclick="kvLoginWithPasskey()">
-          🔑 Sign in with Face ID / Fingerprint
-        </button>
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-          <div style="flex:1;height:1px;background:var(--border)"></div>
-          <span style="font-size:11px;color:var(--muted)">OR</span>
-          <div style="flex:1;height:1px;background:var(--border)"></div>
+        <!-- Remembered email display (shown when cookie consent given + email saved) -->
+        <div id="login-remembered-email" style="display:none;margin-bottom:16px">
+          <div class="form-group" style="margin-bottom:6px">
+            <label class="form-label">Email address</label>
+            <input class="form-input" id="kv-login-email-display" type="email" disabled
+              style="color:var(--muted);background:var(--bg-subtle,rgba(255,255,255,0.04));cursor:default">
+          </div>
+          <button class="btn btn-ghost" style="font-size:12px;padding:4px 10px" onclick="loginChangeUser()">⇄ Change user</button>
         </div>
+
+        <!-- Normal email input (shown when no remembered email) -->
+        <div id="login-email-input" style="margin-bottom:16px">
+          <div class="form-group">
+            <label class="form-label">Email address</label>
+            <input class="form-input" id="kv-login-email" type="email" placeholder="you@example.com" autocomplete="email">
+          </div>
+        </div>
+
+        <!-- Passkey option -->
+        <div id="passkey-login-option" style="margin-bottom:4px">
+          <button class="btn btn-primary btn-xl full" style="margin-bottom:12px" onclick="kvLoginWithPasskey()">
+            🔑 Sign in with Face ID / Fingerprint
+          </button>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+            <div style="flex:1;height:1px;background:var(--border)"></div>
+            <span style="font-size:11px;color:var(--muted)">OR</span>
+            <div style="flex:1;height:1px;background:var(--border)"></div>
+          </div>
+        </div>
+
+        <!-- Passphrase fallback -->
+        <div class="form-group" style="margin-bottom:16px">
+          <label class="form-label">Passphrase <span style="color:var(--muted);font-weight:400">(fallback)</span></label>
+          <input class="form-input" id="kv-login-pass" type="password" placeholder="Your passphrase" autocomplete="current-password">
+        </div>
+
+        <button class="btn btn-ghost btn-xl full" style="margin-bottom:8px" onclick="kvLogin()">Sign in with passphrase →</button>
+        <!-- Create account button — hidden when email is remembered (cookie consent given) -->
+        <button id="login-create-account-btn" class="btn btn-ghost btn-xl full" style="font-size:13px;margin-bottom:6px" onclick="showKvRegister()">← Create an account</button>
+        <button class="btn btn-ghost btn-xl full" style="font-size:12px;color:var(--muted)" onclick="showForgotPassphrase()">Forgot passphrase?</button>
+        <p id="kv-login-error" style="font-size:12px;color:var(--danger);margin-top:10px;display:none"></p>
+
       </div>
-      <!-- Passphrase fallback -->
-      <div class="form-group" style="margin-bottom:12px">
-        <label class="form-label">Passphrase <span style="color:var(--muted);font-weight:400">(fallback)</span></label>
-        <input class="form-input" id="kv-login-pass" type="password" placeholder="Your passphrase" autocomplete="current-password">
-      </div>
-      <button class="btn btn-ghost btn-xl full" style="margin-bottom:10px" onclick="kvLogin()">Sign in with passphrase →</button>
-      <!-- Create account button — hidden when email is remembered (cookie consent given) -->
-      <button id="login-create-account-btn" class="btn btn-ghost btn-xl full" style="font-size:13px;margin-bottom:6px" onclick="showKvRegister()">← Create an account</button>
-      <button class="btn btn-ghost btn-xl full" style="font-size:12px;color:var(--muted);margin-bottom:10px" onclick="showForgotPassphrase()">Forgot passphrase?</button>
-      <p id="kv-login-error" style="font-size:12px;color:var(--danger);margin-top:8px;display:none"></p>
     </div>
 
     <!-- Step 1c: Account recovery via recovery codes -->
