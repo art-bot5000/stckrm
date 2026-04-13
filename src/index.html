@@ -232,26 +232,30 @@
       </div>
 
       <div style="text-align:left">
-        <!-- Email field — no margin-bottom so Remember me sits snug under it -->
-        <div style="margin-bottom:0">
-          <div class="fl-field">
-            <input id="kv-login-email" type="email" placeholder=" " autocomplete="email"
-              onkeydown="if(event.key==='Enter'){event.preventDefault();loginContinue();}">
-            <label for="kv-login-email">Email address</label>
-          </div>
+        <!-- Email field with inline floating label -->
+        <div style="position:relative;width:100%;margin-bottom:12px">
+          <input id="kv-login-email" type="email" placeholder=" " autocomplete="email"
+            style="display:block;width:100%;box-sizing:border-box;background:transparent;border:1.5px solid var(--border);border-radius:10px;padding:20px 14px 8px;color:var(--text);font-family:var(--sans);font-size:15px;outline:none;"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();loginContinue();}"
+            onfocus="this.style.borderColor='var(--accent)'"
+            onblur="this.style.borderColor='var(--border)'">
+          <label for="kv-login-email"
+            style="position:absolute;left:14px;top:0;transform:translateY(-50%);font-size:11px;font-weight:600;color:var(--accent);background:var(--surface);padding:0 4px;pointer-events:none;line-height:1;white-space:nowrap">Email address</label>
         </div>
 
-        <!-- Remember me — below email, above button -->
-        <div id="login-remember-me" style="display:flex;align-items:center;gap:10px;margin-top:12px;margin-bottom:20px;padding-left:2px">
-          <input type="checkbox" id="remember-me-checkbox" style="width:17px;height:17px;cursor:pointer;accent-color:var(--accent,#e8a838);margin:0;flex-shrink:0">
+        <!-- Remember me -->
+        <div id="login-remember-me" style="display:flex;align-items:center;gap:10px;margin-bottom:20px;padding-left:2px">
+          <input type="checkbox" id="remember-me-checkbox" style="width:17px;height:17px;cursor:pointer;accent-color:#e8a838;margin:0;flex-shrink:0">
           <label for="remember-me-checkbox" style="font-size:13px;color:var(--muted);cursor:pointer;line-height:1">Remember me</label>
         </div>
 
-        <button type="button" class="btn btn-primary btn-xl full" onclick="loginContinue()">Continue →</button>
+        <button type="button" class="btn btn-primary btn-xl full" id="login-continue-btn"
+          style="width:100%;margin-bottom:0"
+          onclick="loginContinue()">Continue →</button>
         <p id="kv-login-email-error" style="font-size:12px;color:var(--danger);margin-top:10px;display:none"></p>
       </div>
 
-      <!-- Persistent bottom link -->
+      <!-- Bottom link -->
       <div style="border-top:1px solid var(--border);margin-top:24px;padding-top:16px;text-align:center">
         <span style="font-size:13px;color:var(--muted)">New to Stockroom?</span>
         <button type="button" class="btn btn-ghost" style="font-size:14px;font-weight:700;color:var(--accent);padding:4px 8px" onclick="showKvRegister()">Create Account</button>
@@ -267,47 +271,48 @@
 
       <div style="text-align:left">
         <!-- Greyed email display -->
-        <div class="form-group">
-          <div class="fl-field has-value">
-            <input id="kv-login-email-display" type="email" placeholder=" " disabled>
-            <label>Email address</label>
-          </div>
-          <div style="margin-top:6px">
-            <button class="btn btn-ghost" style="font-size:12px;padding:3px 10px" onclick="loginBackToEmail()">⇄ Not you?</button>
-          </div>
+        <div style="position:relative;width:100%;margin-bottom:6px">
+          <input id="kv-login-email-display" type="email" placeholder=" " disabled
+            style="display:block;width:100%;box-sizing:border-box;background:transparent;border:1.5px solid var(--border);border-radius:10px;padding:20px 14px 8px;color:var(--muted);font-family:var(--sans);font-size:15px;outline:none;opacity:0.8">
+          <label style="position:absolute;left:14px;top:0;transform:translateY(-50%);font-size:11px;font-weight:600;color:var(--muted);background:var(--surface);padding:0 4px;pointer-events:none;line-height:1">Email address</label>
+        </div>
+        <div style="margin-bottom:20px">
+          <button type="button" class="btn btn-ghost" style="font-size:12px;padding:3px 10px" onclick="loginBackToEmail()">⇄ Not you?</button>
         </div>
 
-        <!-- Passkey path (shown when last method = passkey) -->
+        <!-- Passkey path -->
         <div id="auth-passkey-section" style="display:none">
-          <button class="btn btn-primary btn-xl full" style="margin-bottom:16px" onclick="kvLoginWithPasskey()">
+          <button type="button" class="btn btn-primary btn-xl full" style="margin-bottom:16px" onclick="kvLoginWithPasskey()">
             🔑 Sign in with Face ID / Fingerprint
           </button>
-          <div style="text-align:center;margin-bottom:8px">
-            <button class="btn btn-ghost" style="font-size:13px" onclick="showAuthPassphrase()">Use passphrase instead</button>
+          <div style="text-align:center;margin-bottom:16px">
+            <button type="button" class="btn btn-ghost" style="font-size:13px" onclick="showAuthPassphrase()">Use passphrase instead</button>
           </div>
         </div>
 
-        <!-- Passphrase path (shown when last method = passphrase, or switched) -->
+        <!-- Passphrase path -->
         <div id="auth-passphrase-section">
-          <div class="form-group">
-            <div class="fl-field">
-              <input id="kv-login-pass" type="password" placeholder=" " autocomplete="current-password">
-              <label for="kv-login-pass">Passphrase</label>
-            </div>
+          <div style="position:relative;width:100%;margin-bottom:20px">
+            <input id="kv-login-pass" type="password" placeholder=" " autocomplete="current-password"
+              style="display:block;width:100%;box-sizing:border-box;background:transparent;border:1.5px solid var(--border);border-radius:10px;padding:20px 14px 8px;color:var(--text);font-family:var(--sans);font-size:15px;outline:none;"
+              onfocus="this.style.borderColor='var(--accent)'"
+              onblur="this.style.borderColor='var(--border)'"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();kvLogin();}">
+            <label style="position:absolute;left:14px;top:0;transform:translateY(-50%);font-size:11px;font-weight:600;color:var(--accent);background:var(--surface);padding:0 4px;pointer-events:none;line-height:1">Passphrase</label>
           </div>
-          <button class="btn btn-primary btn-xl full" style="margin-bottom:12px" onclick="kvLogin()">Sign in →</button>
+          <button type="button" class="btn btn-primary btn-xl full" style="margin-bottom:12px" onclick="kvLogin()">Sign in →</button>
           <div style="text-align:center">
-            <button class="btn btn-ghost" style="font-size:13px;color:var(--muted)" onclick="showForgotPassphrase()">Forgot passphrase?</button>
+            <button type="button" class="btn btn-ghost" style="font-size:13px;color:var(--muted)" onclick="showForgotPassphrase()">Forgot passphrase?</button>
           </div>
         </div>
 
         <p id="kv-login-error" style="font-size:12px;color:var(--danger);margin-top:10px;display:none"></p>
       </div>
 
-      <!-- Persistent bottom link -->
+      <!-- Bottom link -->
       <div style="border-top:1px solid var(--border);margin-top:24px;padding-top:16px;text-align:center">
         <span style="font-size:13px;color:var(--muted)">New to Stockroom?</span>
-        <button class="btn btn-ghost" style="font-size:14px;font-weight:700;color:var(--accent);padding:4px 8px" onclick="showKvRegister()">Create Account</button>
+        <button type="button" class="btn btn-ghost" style="font-size:14px;font-weight:700;color:var(--accent);padding:4px 8px" onclick="showKvRegister()">Create Account</button>
       </div>
     </div>
 

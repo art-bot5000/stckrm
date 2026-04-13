@@ -6650,13 +6650,31 @@ function showKvLogin() {
 function loginContinue() {
   const emailEl = document.getElementById('kv-login-email');
   const errEl   = document.getElementById('kv-login-email-error');
-  const email   = emailEl?.value.trim();
-  if (!email || !email.includes('@')) {
-    if (errEl) { errEl.textContent = 'Enter a valid email address'; errEl.style.display = 'block'; }
+
+  if (!emailEl) {
+    if (errEl) { errEl.textContent = 'Error: email field not found'; errEl.style.display = 'block'; }
     return;
   }
+
+  const email = emailEl.value.trim();
+
+  if (!email) {
+    if (errEl) { errEl.textContent = 'Please enter your email address'; errEl.style.display = 'block'; }
+    emailEl.focus();
+    return;
+  }
+
+  if (!email.includes('@') || !email.includes('.')) {
+    if (errEl) { errEl.textContent = 'Please enter a valid email address'; errEl.style.display = 'block'; }
+    emailEl.focus();
+    return;
+  }
+
   if (errEl) errEl.style.display = 'none';
-  showAuthScreen(email, false);
+
+  // Check if remembered passkey preference exists
+  const usePasskey = getRememberedPasskey() === 'true';
+  showAuthScreen(email, usePasskey);
 }
 
 /** Show the auth screen (passphrase or passkey) for a given email */
