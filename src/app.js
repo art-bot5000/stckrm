@@ -11066,10 +11066,11 @@ async function init() {
   // Check for ?join=CODE — show loading state immediately so user doesn't see normal wizard
   const _joinCode = new URLSearchParams(location.search).get('join');
   if (_joinCode) {
-    const _step1 = document.getElementById('wizard-step-1');
-    if (_step1) {
-      _step1.innerHTML = '<div style="font-size:52px;margin-bottom:16px">\uD83C\uDFE0</div><h1 style="font-size:24px;font-weight:700;margin-bottom:8px">Joining household…</h1><p style="color:var(--muted);font-size:14px">Checking your invite link</p>';
-      _step1.classList.add('active');
+    const _step1b = document.getElementById('wizard-step-1b');
+    if (_step1b) {
+      document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+      _step1b.innerHTML = '<div style="font-size:52px;margin-bottom:16px">\uD83C\uDFE0</div><h1 style="font-size:24px;font-weight:700;margin-bottom:8px">Joining household…</h1><p style="color:var(--muted);font-size:14px">Checking your invite link</p>';
+      _step1b.classList.add('active');
     }
   }
 

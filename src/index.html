@@ -183,7 +183,7 @@
     </div>
 
     <!-- ══ CREATE ACCOUNT ══ -->
-    <div class="wizard-step active" id="wizard-step-1">
+    <div class="wizard-step" id="wizard-step-1">
       <div style="text-align:center;margin-bottom:28px">
         <div style="font-size:48px;margin-bottom:10px">📦</div>
         <h1 style="font-size:24px;font-weight:700;margin-bottom:6px">Create account</h1>
@@ -208,32 +208,23 @@
             </div>
           </div>
           <p style="font-size:11px;color:var(--muted);margin-bottom:16px;line-height:1.5">⚠️ Store this safely — required to recover your account.</p>
-          <button class="btn btn-ghost btn-xl full" style="margin-bottom:10px" onclick="kvRegister()">Create account →</button>
+          <button class="btn btn-primary btn-xl full" style="margin-bottom:10px" onclick="kvRegister()">Create account →</button>
         </div>
 
-        <!-- Passkey option -->
-        <div id="passkey-register-option">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-            <div style="flex:1;height:1px;background:var(--border)"></div>
-            <span style="font-size:11px;color:var(--muted)">OR</span>
-            <div style="flex:1;height:1px;background:var(--border)"></div>
-          </div>
-          <button class="btn btn-primary btn-xl full" style="margin-bottom:4px" onclick="kvRegisterWithPasskey()">
-            🔑 Create with Face ID / Fingerprint
-          </button>
-        </div>
+        <!-- Passkey option hidden here — managed post-login -->
+        <div id="passkey-register-option" style="display:none"></div>
       </div>
 
       <p id="kv-wizard-error" style="font-size:12px;color:var(--danger);margin-top:12px;display:none"></p>
 
       <!-- Persistent bottom link -->
       <div style="border-top:1px solid var(--border);margin-top:24px;padding-top:16px;text-align:center">
-        <button class="btn btn-ghost" style="font-size:15px;font-weight:600;width:100%" onclick="showKvLogin()">Already have an account? Log in</button>
+        <button class="btn btn-ghost" style="font-size:14px;font-weight:600;width:100%" onclick="showKvLogin()">Already have an account? Log in</button>
       </div>
     </div>
 
     <!-- ══ LOGIN — STEP 1: Email entry ══ -->
-    <div class="wizard-step" id="wizard-step-1b">
+    <div class="wizard-step active" id="wizard-step-1b">
       <div style="text-align:center;margin-bottom:28px">
         <div style="font-size:48px;margin-bottom:10px">🔑</div>
         <h1 style="font-size:24px;font-weight:700;margin-bottom:6px">Log in</h1>
@@ -248,10 +239,10 @@
           </div>
         </div>
 
-        <!-- Remember me — shown only here -->
-        <div id="login-remember-me" style="display:flex;align-items:center;gap:10px;margin-top:-10px;margin-bottom:20px">
-          <input type="checkbox" id="remember-me-checkbox" style="width:18px;height:18px;cursor:pointer;accent-color:var(--accent,#7c6af7);margin:0;flex-shrink:0;border-radius:4px">
-          <label for="remember-me-checkbox" style="font-size:14px;color:var(--muted);cursor:pointer">Remember me</label>
+        <!-- Remember me — sits below the email field, clear of the input -->
+        <div id="login-remember-me" style="display:flex;align-items:center;gap:10px;margin-top:-12px;margin-bottom:24px;padding-left:2px">
+          <input type="checkbox" id="remember-me-checkbox" style="width:17px;height:17px;cursor:pointer;accent-color:var(--accent,#e8a838);margin:0;flex-shrink:0">
+          <label for="remember-me-checkbox" style="font-size:13px;color:var(--muted);cursor:pointer;line-height:1">Remember me</label>
         </div>
 
         <button class="btn btn-primary btn-xl full" onclick="loginContinue()">Continue →</button>
@@ -260,7 +251,8 @@
 
       <!-- Persistent bottom link -->
       <div style="border-top:1px solid var(--border);margin-top:24px;padding-top:16px;text-align:center">
-        <button class="btn btn-ghost" style="font-size:15px;font-weight:600;width:100%" onclick="showKvRegister()">Create account</button>
+        <span style="font-size:13px;color:var(--muted)">New to Stockroom?</span>
+        <button class="btn btn-ghost" style="font-size:14px;font-weight:700;color:var(--accent);padding:4px 8px" onclick="showKvRegister()">Create Account</button>
       </div>
     </div>
 
@@ -312,7 +304,8 @@
 
       <!-- Persistent bottom link -->
       <div style="border-top:1px solid var(--border);margin-top:24px;padding-top:16px;text-align:center">
-        <button class="btn btn-ghost" style="font-size:15px;font-weight:600;width:100%" onclick="showKvRegister()">Create account</button>
+        <span style="font-size:13px;color:var(--muted)">New to Stockroom?</span>
+        <button class="btn btn-ghost" style="font-size:14px;font-weight:700;color:var(--accent);padding:4px 8px" onclick="showKvRegister()">Create Account</button>
       </div>
     </div>
 
