@@ -154,25 +154,8 @@
   </div>
 </div>
 
-<!-- ═══ COOKIE CONSENT BANNER ═══ -->
-<div id="cookie-consent-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999;background:var(--surface,#1a1d27);border-top:1px solid var(--border,#2a2d3a);padding:18px 24px 20px;box-shadow:0 -4px 24px rgba(0,0,0,0.4)">
-  <div style="max-width:520px;margin:0 auto">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-      <span style="font-size:18px">🍪</span>
-      <h3 style="font-size:14px;font-weight:700;color:var(--text,#f0f0f0);flex:1">Allow use of cookies</h3>
-      <button onclick="document.getElementById('cookie-details').style.display=document.getElementById('cookie-details').style.display==='none'?'block':'none'" style="background:none;border:none;color:var(--muted,#888);font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;white-space:nowrap">Details ▾</button>
-    </div>
-    <div id="cookie-details" style="display:none;font-size:12px;color:var(--muted,#888);line-height:1.6;margin-bottom:10px;padding:10px 12px;background:rgba(255,255,255,0.04);border-radius:8px;border:1px solid var(--border,#2a2d3a)">
-      <strong style="color:var(--text,#f0f0f0);display:block;margin-bottom:4px">How we use cookies</strong>
-      Remembering your email address so you don't have to type it each time you sign in. We also store whether you've set up biometric login (Face ID / Fingerprint) so we can show you the right sign-in options.
-    </div>
-    <p style="font-size:12px;color:var(--muted,#888);line-height:1.5;margin-bottom:14px">This site uses cookies to improve your sign-in experience.</p>
-    <div style="display:flex;gap:10px">
-      <button class="btn btn-primary" style="flex:1" onclick="cookieConsentAccept()">Allow</button>
-      <button class="btn btn-ghost" style="flex:1" onclick="cookieConsentDecline()">Decline</button>
-    </div>
-  </div>
-</div>
+<!-- ═══ COOKIE CONSENT BANNER (fixed overlay — kept for non-wizard contexts) ═══ -->
+<div id="cookie-consent-banner" style="display:none"></div>
 
 <!-- ═══ WIZARD ═══ -->
 <div id="wizard">
@@ -232,44 +215,44 @@
       </div>
 
       <div style="text-align:left">
-        <!-- Email field with inline floating label -->
+        <!-- Email field -->
         <div style="position:relative;width:100%;margin-bottom:12px">
           <input id="kv-login-email" type="email" placeholder=" " autocomplete="email"
             style="display:block;width:100%;box-sizing:border-box;background:transparent;border:1.5px solid var(--border);border-radius:10px;padding:20px 14px 8px;color:var(--text);font-family:var(--sans);font-size:15px;outline:none;"
-            onkeydown="if(event.key==='Enter'){event.preventDefault();loginContinue();}"
             onfocus="this.style.borderColor='var(--accent)'"
-            onblur="this.style.borderColor='var(--border)'">
+            onblur="this.style.borderColor='var(--border)'"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();doLoginContinue();}">
           <label for="kv-login-email"
             style="position:absolute;left:14px;top:0;transform:translateY(-50%);font-size:11px;font-weight:600;color:var(--accent);background:var(--surface);padding:0 4px;pointer-events:none;line-height:1;white-space:nowrap">Email address</label>
         </div>
 
         <!-- Remember me -->
-        <div id="login-remember-me" style="display:flex;align-items:center;gap:10px;margin-bottom:20px;padding-left:2px">
-          <input type="checkbox" id="remember-me-checkbox" style="width:17px;height:17px;cursor:pointer;accent-color:#e8a838;margin:0;flex-shrink:0">
-          <label for="remember-me-checkbox" style="font-size:13px;color:var(--muted);cursor:pointer;line-height:1">Remember me</label>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding-left:2px">
+          <input type="checkbox" id="remember-me-checkbox" style="width:17px;height:17px;cursor:pointer;accent-color:#e8a838;margin:0;flex-shrink:0"
+            onchange="document.getElementById('cookie-inline-panel').style.display=this.checked&&localStorage.getItem('stockroom_cookie_consent')===null?'block':'none'">
+          <label for="remember-me-checkbox" style="font-size:13px;color:var(--muted);cursor:pointer;line-height:1">Remember me on this device</label>
         </div>
 
-        <button type="button" class="btn btn-primary btn-xl full" id="login-continue-btn"
-          style="width:100%;margin-bottom:0"
-          onclick="(function(){
-            var e=document.getElementById('kv-login-email');
-            var err=document.getElementById('kv-login-email-error');
-            if(!e){if(err){err.textContent='Field missing';err.style.display='block';}return;}
-            var v=e.value.trim();
-            if(!v||!v.includes('@')){if(err){err.textContent='Enter a valid email';err.style.display='block';}return;}
-            if(err)err.style.display='none';
-            var w=document.getElementById('wizard');
-            if(w)w.style.display='flex';
-            document.querySelectorAll('.wizard-step').forEach(function(s){s.classList.remove('active');});
-            var a=document.getElementById('wizard-step-1b-auth');
-            if(a)a.classList.add('active');
-            var d=document.getElementById('kv-login-email-display');
-            if(d)d.value=v;
-            var pk=document.getElementById('auth-passkey-section');
-            var pp=document.getElementById('auth-passphrase-section');
-            if(pk)pk.style.display='none';
-            if(pp)pp.style.display='block';
-          })()">Continue →</button>
+        <!-- Inline cookie consent — shown when Remember me ticked and no consent yet -->
+        <div id="cookie-inline-panel" style="display:none;background:rgba(232,168,56,0.07);border:1px solid rgba(232,168,56,0.25);border-radius:10px;padding:14px;margin-bottom:16px">
+          <p style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:10px">
+            <strong style="color:var(--text)">Allow cookies?</strong> We'll save your email and preferred sign-in method so you don't have to type them each visit.
+            <button type="button" onclick="document.getElementById('cookie-inline-detail').style.display=document.getElementById('cookie-inline-detail').style.display==='none'?'block':'none'"
+              style="background:none;border:none;color:var(--accent);font-size:11px;cursor:pointer;padding:0;margin-left:4px">Details ▾</button>
+          </p>
+          <div id="cookie-inline-detail" style="display:none;font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:10px;padding:8px;background:rgba(0,0,0,0.2);border-radius:6px">
+            Stored: email address, sign-in method (passphrase or passkey). Not stored: your passphrase, passkey, or any personal data.
+          </div>
+          <div style="display:flex;gap:8px">
+            <button type="button" class="btn btn-primary" style="flex:1;font-size:13px;padding:8px"
+              onclick="localStorage.setItem('stockroom_cookie_consent','granted');document.getElementById('cookie-inline-panel').style.display='none'">Allow</button>
+            <button type="button" class="btn btn-ghost" style="flex:1;font-size:13px;padding:8px"
+              onclick="localStorage.setItem('stockroom_cookie_consent','declined');document.getElementById('cookie-inline-panel').style.display='none';document.getElementById('remember-me-checkbox').checked=false">Decline</button>
+          </div>
+        </div>
+
+        <button type="button" class="btn btn-primary btn-xl full" style="width:100%;margin-bottom:0"
+          onclick="doLoginContinue()">Continue →</button>
         <p id="kv-login-email-error" style="font-size:12px;color:var(--danger);margin-top:10px;display:none"></p>
       </div>
 
@@ -282,25 +265,25 @@
 
     <!-- ══ LOGIN — STEP 2: Auth (passphrase or passkey) ══ -->
     <div class="wizard-step" id="wizard-step-1b-auth">
-      <div style="text-align:center;margin-bottom:28px">
+      <div style="text-align:center;margin-bottom:24px">
         <div style="font-size:48px;margin-bottom:10px">🔑</div>
         <h1 style="font-size:24px;font-weight:700;margin-bottom:6px">Welcome back</h1>
       </div>
 
       <div style="text-align:left">
-        <!-- Greyed email display -->
-        <div style="position:relative;width:100%;margin-bottom:6px">
+        <!-- Greyed email display — always shown, populated by JS -->
+        <div style="position:relative;width:100%;margin-bottom:4px">
           <input id="kv-login-email-display" type="email" placeholder=" " disabled
-            style="display:block;width:100%;box-sizing:border-box;background:transparent;border:1.5px solid var(--border);border-radius:10px;padding:20px 14px 8px;color:var(--muted);font-family:var(--sans);font-size:15px;outline:none;opacity:0.8">
+            style="display:block;width:100%;box-sizing:border-box;background:rgba(255,255,255,0.03);border:1.5px solid var(--border);border-radius:10px;padding:20px 14px 8px;color:var(--muted);font-family:var(--sans);font-size:15px;outline:none;">
           <label style="position:absolute;left:14px;top:0;transform:translateY(-50%);font-size:11px;font-weight:600;color:var(--muted);background:var(--surface);padding:0 4px;pointer-events:none;line-height:1">Email address</label>
         </div>
-        <div style="margin-bottom:20px">
+        <div style="margin-bottom:24px">
           <button type="button" class="btn btn-ghost" style="font-size:12px;padding:3px 10px" onclick="loginBackToEmail()">⇄ Not you?</button>
         </div>
 
         <!-- Passkey path -->
         <div id="auth-passkey-section" style="display:none">
-          <button type="button" class="btn btn-primary btn-xl full" style="margin-bottom:16px" onclick="kvLoginWithPasskey()">
+          <button type="button" class="btn btn-primary btn-xl full" style="margin-bottom:14px" onclick="kvLoginWithPasskey()">
             🔑 Sign in with Face ID / Fingerprint
           </button>
           <div style="text-align:center;margin-bottom:16px">

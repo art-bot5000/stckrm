@@ -6550,37 +6550,30 @@ async function resendEmailVerification() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  COOKIE CONSENT & REMEMBERED EMAIL
+//  COOKIE CONSENT & REMEMBERED LOGIN
 // ═══════════════════════════════════════════════════════════
 
-const COOKIE_CONSENT_KEY  = 'stockroom_cookie_consent';   // 'granted' | 'declined' | absent
+const COOKIE_CONSENT_KEY  = 'stockroom_cookie_consent';   // 'granted' | 'declined'
 const COOKIE_EMAIL_KEY    = 'stockroom_remembered_email';
 const COOKIE_PASSKEY_KEY  = 'stockroom_remembered_passkey'; // 'true' | 'false'
 
 function getCookieConsent() {
   try { return localStorage.getItem(COOKIE_CONSENT_KEY); } catch(e) { return null; }
 }
-
 function getRememberedEmail() {
   if (getCookieConsent() !== 'granted') return null;
   try { return localStorage.getItem(COOKIE_EMAIL_KEY) || null; } catch(e) { return null; }
 }
-
 function getRememberedPasskey() {
   if (getCookieConsent() !== 'granted') return null;
   try { return localStorage.getItem(COOKIE_PASSKEY_KEY); } catch(e) { return null; }
 }
-
 function setRememberedEmail(email) {
-  if (getCookieConsent() !== 'granted') return;
   try { localStorage.setItem(COOKIE_EMAIL_KEY, email); } catch(e) {}
 }
-
 function setRememberedPasskey(hasPasskey) {
-  if (getCookieConsent() !== 'granted') return;
   try { localStorage.setItem(COOKIE_PASSKEY_KEY, hasPasskey ? 'true' : 'false'); } catch(e) {}
 }
-
 function clearRememberedCookieData() {
   try {
     localStorage.removeItem(COOKIE_EMAIL_KEY);
@@ -6589,152 +6582,134 @@ function clearRememberedCookieData() {
   } catch(e) {}
 }
 
-function cookieConsentAccept() {
-  try { localStorage.setItem(COOKIE_CONSENT_KEY, 'granted'); } catch(e) {}
-  document.getElementById('cookie-consent-banner').style.display = 'none';
-}
-
-function cookieConsentDecline() {
-  try { localStorage.setItem(COOKIE_CONSENT_KEY, 'declined'); } catch(e) {}
-  document.getElementById('cookie-consent-banner').style.display = 'none';
-}
-
-function maybeShowCookieConsentBanner() {
-  const consent = getCookieConsent();
-  const banner  = document.getElementById('cookie-consent-banner');
-  if (!banner) return;
-  banner.style.display = (consent === null) ? 'block' : 'none';
-}
-
-/** After successful login: persist email + last auth method if "Remember me" was ticked */
+// Called after successful login — persists email + method if consent granted
 function persistLoginCookies(email, hasPasskey) {
-  // If "Remember me" is ticked and no consent yet, grant consent now
-  const cb = document.getElementById('remember-me-checkbox');
-  if (cb && cb.checked && getCookieConsent() === null) {
-    try { localStorage.setItem(COOKIE_CONSENT_KEY, 'granted'); } catch(e) {}
-    const banner = document.getElementById('cookie-consent-banner');
-    if (banner) banner.style.display = 'none';
-  }
   if (getCookieConsent() !== 'granted') return;
   setRememberedEmail(email);
   setRememberedPasskey(hasPasskey);
 }
 
-// ═══════════════════════════════════════════════════════════
-//  LOGIN FLOW
-// ═══════════════════════════════════════════════════════════
+// ── Navigation ───────────────────────────────────────────────
 
-/** Go to: Create account screen */
 function showKvRegister() {
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   document.getElementById('wizard-step-1')?.classList.add('active');
-  maybeShowCookieConsentBanner();
 }
 
-/** Go to: Login email entry screen.
- *  If "Remember me" was previously granted + email stored → skip straight to auth screen. */
 function showKvLogin() {
-  const rememberedEmail  = getRememberedEmail();
+  const rememberedEmail   = getRememberedEmail();
   const rememberedPasskey = getRememberedPasskey();
   if (rememberedEmail) {
-    // Skip email entry — go straight to auth
-    showAuthScreen(rememberedEmail, rememberedPasskey === 'true');
+    // Skip email screen — go straight to auth with remembered details
+    _showAuthStep(rememberedEmail, rememberedPasskey === 'true');
   } else {
     document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
     document.getElementById('wizard-step-1b')?.classList.add('active');
-    maybeShowCookieConsentBanner();
+    // Reset remember-me checkbox and cookie panel
+    const cb = document.getElementById('remember-me-checkbox');
+    if (cb) cb.checked = false;
+    const panel = document.getElementById('cookie-inline-panel');
+    if (panel) panel.style.display = 'none';
   }
 }
 
-/** Called when user clicks "Continue" on the email entry screen */
-function loginContinue() {
+// The main Continue action — called from inline onclick and Enter key
+function doLoginContinue() {
   const emailEl = document.getElementById('kv-login-email');
   const errEl   = document.getElementById('kv-login-email-error');
-
-  if (!emailEl) {
-    if (errEl) { errEl.textContent = 'Error: email field not found'; errEl.style.display = 'block'; }
-    return;
-  }
-
+  if (!emailEl) { if(errEl){errEl.textContent='Field missing';errEl.style.display='block';} return; }
   const email = emailEl.value.trim();
+  if (!email || !email.includes('@')) {
+    if(errEl){errEl.textContent='Enter a valid email address';errEl.style.display='block';}
+    emailEl.focus(); return;
+  }
+  if(errEl) errEl.style.display='none';
 
-  if (!email) {
-    if (errEl) { errEl.textContent = 'Please enter your email address'; errEl.style.display = 'block'; }
-    emailEl.focus();
-    return;
+  // If "Remember me" is ticked and consent was just granted inline, save now
+  const cb = document.getElementById('remember-me-checkbox');
+  if (cb && cb.checked && getCookieConsent() === 'granted') {
+    setRememberedEmail(email);
+    // passkey preference saved after successful login
   }
 
-  if (!email.includes('@') || !email.includes('.')) {
-    if (errEl) { errEl.textContent = 'Please enter a valid email address'; errEl.style.display = 'block'; }
-    emailEl.focus();
-    return;
-  }
-
-  if (errEl) errEl.style.display = 'none';
-
-  // Check if remembered passkey preference exists
+  // Navigate to auth step
   const usePasskey = getRememberedPasskey() === 'true';
-  showAuthScreen(email, usePasskey);
+  _showAuthStep(email, usePasskey);
 }
 
-/** Show the auth screen (passphrase or passkey) for a given email */
-function showAuthScreen(email, usePasskey) {
-  // Ensure wizard is visible
+// Keep loginContinue as alias so any cached references still work
+function loginContinue() { doLoginContinue(); }
+
+// Internal: switch to the auth step and configure it
+function _showAuthStep(email, usePasskey) {
   const wizard = document.getElementById('wizard');
   if (wizard) { wizard.style.display = 'flex'; document.body.classList.add('wizard-active'); }
-
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   const authStep = document.getElementById('wizard-step-1b-auth');
   if (authStep) authStep.classList.add('active');
 
-  // Populate greyed email display
+  // Populate email display
   const display = document.getElementById('kv-login-email-display');
-  if (display) { display.value = email; }
-  // Also mirror into the real input so kvLogin() / kvLoginWithPasskey() can read it
+  if (display) display.value = email;
+  // Mirror into real input for kvLogin/kvLoginWithPasskey
   const real = document.getElementById('kv-login-email');
   if (real) real.value = email;
 
+  const pk = document.getElementById('auth-passkey-section');
+  const pp = document.getElementById('auth-passphrase-section');
   if (usePasskey) {
-    showAuthPasskey();
+    if (pk) pk.style.display = 'block';
+    if (pp) pp.style.display = 'none';
   } else {
-    showAuthPassphrase();
+    if (pk) pk.style.display = 'none';
+    if (pp) pp.style.display = 'block';
+    // Focus passphrase field
+    setTimeout(() => { document.getElementById('kv-login-pass')?.focus(); }, 100);
   }
-}
-
-/** Show passkey section on auth screen */
-function showAuthPasskey() {
-  const pk = document.getElementById('auth-passkey-section');
-  const pp = document.getElementById('auth-passphrase-section');
-  if (pk) pk.style.display = '';
-  if (pp) pp.style.display = 'none';
-}
-
-/** Show passphrase section on auth screen (also called from "Use passphrase instead") */
-function showAuthPassphrase() {
-  const pk = document.getElementById('auth-passkey-section');
-  const pp = document.getElementById('auth-passphrase-section');
-  if (pk) pk.style.display = 'none';
-  if (pp) pp.style.display = '';
-  // Clear any stale errors
+  // Clear stale errors
   const errEl = document.getElementById('kv-login-error');
   if (errEl) errEl.style.display = 'none';
 }
 
-/** "Not you?" — go back to email entry screen */
-function loginBackToEmail() {
-  document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
-  document.getElementById('wizard-step-1b')?.classList.add('active');
-  // Clear the email field
-  const emailEl = document.getElementById('kv-login-email');
-  if (emailEl) emailEl.value = '';
-  maybeShowCookieConsentBanner();
+// Show passphrase section within auth step
+function showAuthPassphrase() {
+  const pk = document.getElementById('auth-passkey-section');
+  const pp = document.getElementById('auth-passphrase-section');
+  if (pk) pk.style.display = 'none';
+  if (pp) pp.style.display = 'block';
+  const errEl = document.getElementById('kv-login-error');
+  if (errEl) errEl.style.display = 'none';
+  setTimeout(() => { document.getElementById('kv-login-pass')?.focus(); }, 100);
 }
 
-/** Legacy: "Change user" wipes remembered data then goes to email entry */
-function loginChangeUser() {
-  clearRememberedCookieData();
-  loginBackToEmail();
+// Show passkey section within auth step
+function showAuthPasskey() {
+  const pk = document.getElementById('auth-passkey-section');
+  const pp = document.getElementById('auth-passphrase-section');
+  if (pk) pk.style.display = 'block';
+  if (pp) pp.style.display = 'none';
 }
+
+// "Not you?" — back to email screen, clears remembered data
+function loginBackToEmail() {
+  clearRememberedCookieData();
+  document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+  document.getElementById('wizard-step-1b')?.classList.add('active');
+  const emailEl = document.getElementById('kv-login-email');
+  if (emailEl) { emailEl.value = ''; }
+  const cb = document.getElementById('remember-me-checkbox');
+  if (cb) cb.checked = false;
+  const panel = document.getElementById('cookie-inline-panel');
+  if (panel) panel.style.display = 'none';
+}
+
+// Legacy aliases
+function loginChangeUser() { loginBackToEmail(); }
+function showAuthScreen(email, usePasskey) { _showAuthStep(email, usePasskey); }
+function cookieConsentAccept() { try{localStorage.setItem(COOKIE_CONSENT_KEY,'granted');}catch(e){} }
+function cookieConsentDecline() { try{localStorage.setItem(COOKIE_CONSENT_KEY,'declined');}catch(e){} }
+function maybeShowCookieConsentBanner() { /* now handled inline on login screen */ }
+function applyLoginScreenState() { showKvLogin(); }
 
 // ═══════════════════════════════════════════════════════════
 
