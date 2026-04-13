@@ -251,7 +251,25 @@
 
         <button type="button" class="btn btn-primary btn-xl full" id="login-continue-btn"
           style="width:100%;margin-bottom:0"
-          onclick="loginContinue()">Continue →</button>
+          onclick="(function(){
+            var e=document.getElementById('kv-login-email');
+            var err=document.getElementById('kv-login-email-error');
+            if(!e){if(err){err.textContent='Field missing';err.style.display='block';}return;}
+            var v=e.value.trim();
+            if(!v||!v.includes('@')){if(err){err.textContent='Enter a valid email';err.style.display='block';}return;}
+            if(err)err.style.display='none';
+            var w=document.getElementById('wizard');
+            if(w)w.style.display='flex';
+            document.querySelectorAll('.wizard-step').forEach(function(s){s.classList.remove('active');});
+            var a=document.getElementById('wizard-step-1b-auth');
+            if(a)a.classList.add('active');
+            var d=document.getElementById('kv-login-email-display');
+            if(d)d.value=v;
+            var pk=document.getElementById('auth-passkey-section');
+            var pp=document.getElementById('auth-passphrase-section');
+            if(pk)pk.style.display='none';
+            if(pp)pp.style.display='block';
+          })()">Continue →</button>
         <p id="kv-login-email-error" style="font-size:12px;color:var(--danger);margin-top:10px;display:none"></p>
       </div>
 
