@@ -6656,18 +6656,22 @@ function loginContinue() {
     return;
   }
   if (errEl) errEl.style.display = 'none';
-  // We don't know last method yet for new sessions — default to passphrase
   showAuthScreen(email, false);
 }
 
 /** Show the auth screen (passphrase or passkey) for a given email */
 function showAuthScreen(email, usePasskey) {
+  // Ensure wizard is visible
+  const wizard = document.getElementById('wizard');
+  if (wizard) { wizard.style.display = 'flex'; document.body.classList.add('wizard-active'); }
+
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
-  document.getElementById('wizard-step-1b-auth')?.classList.add('active');
+  const authStep = document.getElementById('wizard-step-1b-auth');
+  if (authStep) authStep.classList.add('active');
 
   // Populate greyed email display
   const display = document.getElementById('kv-login-email-display');
-  if (display) { display.value = email; display.setAttribute('data-has-value', '1'); }
+  if (display) { display.value = email; }
   // Also mirror into the real input so kvLogin() / kvLoginWithPasskey() can read it
   const real = document.getElementById('kv-login-email');
   if (real) real.value = email;
