@@ -155,14 +155,21 @@
 </div>
 
 <!-- ═══ COOKIE CONSENT BANNER ═══ -->
-<div id="cookie-consent-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999;background:var(--surface,#1a1d27);border-top:1px solid var(--border,#2a2d3a);padding:20px 24px;box-shadow:0 -4px 24px rgba(0,0,0,0.4)">
+<div id="cookie-consent-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999;background:var(--surface,#1a1d27);border-top:1px solid var(--border,#2a2d3a);padding:18px 24px 20px;box-shadow:0 -4px 24px rgba(0,0,0,0.4)">
   <div style="max-width:520px;margin:0 auto">
-    <div style="font-size:20px;margin-bottom:8px">🍪</div>
-    <h3 style="font-size:15px;font-weight:700;margin-bottom:6px;color:var(--text,#f0f0f0)">Remember your email?</h3>
-    <p style="font-size:13px;color:var(--muted,#888);line-height:1.6;margin-bottom:16px">STOCKROOM can save your email address in a cookie so you don't have to type it each time. We'll also remember whether you've set up Face ID / Fingerprint login to streamline your sign-in.</p>
-    <div style="display:flex;gap:10px;flex-wrap:wrap">
-      <button class="btn btn-primary" style="flex:1;min-width:120px" onclick="cookieConsentAccept()">✓ Yes, remember me</button>
-      <button class="btn btn-ghost" style="flex:1;min-width:120px" onclick="cookieConsentDecline()">No thanks</button>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <span style="font-size:18px">🍪</span>
+      <h3 style="font-size:14px;font-weight:700;color:var(--text,#f0f0f0);flex:1">Allow use of cookies</h3>
+      <button onclick="document.getElementById('cookie-details').style.display=document.getElementById('cookie-details').style.display==='none'?'block':'none'" style="background:none;border:none;color:var(--muted,#888);font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;white-space:nowrap">Details ▾</button>
+    </div>
+    <div id="cookie-details" style="display:none;font-size:12px;color:var(--muted,#888);line-height:1.6;margin-bottom:10px;padding:10px 12px;background:rgba(255,255,255,0.04);border-radius:8px;border:1px solid var(--border,#2a2d3a)">
+      <strong style="color:var(--text,#f0f0f0);display:block;margin-bottom:4px">How we use cookies</strong>
+      Remembering your email address so you don't have to type it each time you sign in. We also store whether you've set up biometric login (Face ID / Fingerprint) so we can show you the right sign-in options.
+    </div>
+    <p style="font-size:12px;color:var(--muted,#888);line-height:1.5;margin-bottom:14px">This site uses cookies to improve your sign-in experience.</p>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-primary" style="flex:1" onclick="cookieConsentAccept()">Allow</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="cookieConsentDecline()">Decline</button>
     </div>
   </div>
 </div>
@@ -200,7 +207,7 @@
       <!-- Passphrase option (always available) -->
       <div id="passphrase-register-option">
         <div class="form-group" style="margin-bottom:8px">
-          <label class="form-label">Passphrase <span style="color:var(--muted);font-weight:400">(fallback / recovery)</span></label>
+          <label class="form-label">Passphrase</label>
           <input class="form-input" id="kv-pass" type="password" placeholder="Choose a strong passphrase" autocomplete="new-password">
         </div>
         <p style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.5">⚠️ Store this safely — it's required to recover your account if you lose access.</p>
@@ -227,17 +234,23 @@
           <div class="form-group" style="margin-bottom:6px">
             <label class="form-label">Email address</label>
             <input class="form-input" id="kv-login-email-display" type="email" disabled
-              style="color:var(--muted);background:var(--bg-subtle,rgba(255,255,255,0.04));cursor:default">
+              style="color:var(--muted);background:var(--bg-subtle,rgba(255,255,255,0.04));cursor:default;text-align:right">
           </div>
           <button class="btn btn-ghost" style="font-size:12px;padding:4px 10px" onclick="loginChangeUser()">⇄ Change user</button>
         </div>
 
         <!-- Normal email input (shown when no remembered email) -->
-        <div id="login-email-input" style="margin-bottom:16px">
+        <div id="login-email-input" style="margin-bottom:4px">
           <div class="form-group">
             <label class="form-label">Email address</label>
-            <input class="form-input" id="kv-login-email" type="email" placeholder="you@example.com" autocomplete="email">
+            <input class="form-input" id="kv-login-email" type="email" placeholder="you@example.com" autocomplete="email" style="text-align:right">
           </div>
+        </div>
+
+        <!-- Remember me checkbox (only shown when no remembered email and consent not yet decided) -->
+        <div id="login-remember-me" style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:16px;margin-top:8px">
+          <label for="remember-me-checkbox" style="font-size:12px;color:var(--muted);cursor:pointer">Remember me</label>
+          <input type="checkbox" id="remember-me-checkbox" style="width:16px;height:16px;cursor:pointer;accent-color:var(--accent,#7c6af7)">
         </div>
 
         <!-- Passkey option -->
@@ -252,10 +265,10 @@
           </div>
         </div>
 
-        <!-- Passphrase fallback -->
+        <!-- Passphrase -->
         <div class="form-group" style="margin-bottom:16px">
-          <label class="form-label">Passphrase <span style="color:var(--muted);font-weight:400">(fallback)</span></label>
-          <input class="form-input" id="kv-login-pass" type="password" placeholder="Your passphrase" autocomplete="current-password">
+          <label class="form-label">Passphrase</label>
+          <input class="form-input" id="kv-login-pass" type="password" placeholder="Your passphrase" autocomplete="current-password" style="text-align:right">
         </div>
 
         <button class="btn btn-ghost btn-xl full" style="margin-bottom:8px" onclick="kvLogin()">Sign in with passphrase →</button>

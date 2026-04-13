@@ -6611,21 +6611,23 @@ function maybeShowCookieConsentBanner() {
 
 /** Apply remembered-email state to the login screen (step-1b) */
 function applyLoginScreenState() {
-  const consent        = getCookieConsent();
-  const rememberedEmail = getRememberedEmail();
+  const consent           = getCookieConsent();
+  const rememberedEmail   = getRememberedEmail();
   const rememberedPasskey = getRememberedPasskey(); // 'true' | 'false' | null
 
-  const rememberedEmailDiv   = document.getElementById('login-remembered-email');
-  const normalEmailDiv       = document.getElementById('login-email-input');
-  const displayInput         = document.getElementById('kv-login-email-display');
-  const realInput            = document.getElementById('kv-login-email');
-  const createAccountBtn     = document.getElementById('login-create-account-btn');
-  const passkeyLoginOption   = document.getElementById('passkey-login-option');
+  const rememberedEmailDiv = document.getElementById('login-remembered-email');
+  const normalEmailDiv     = document.getElementById('login-email-input');
+  const rememberMeRow      = document.getElementById('login-remember-me');
+  const displayInput       = document.getElementById('kv-login-email-display');
+  const realInput          = document.getElementById('kv-login-email');
+  const createAccountBtn   = document.getElementById('login-create-account-btn');
+  const passkeyLoginOption = document.getElementById('passkey-login-option');
 
   if (consent === 'granted' && rememberedEmail) {
-    // Show greyed-out remembered email, hide normal input
+    // Show greyed-out remembered email, hide normal input + checkbox
     if (rememberedEmailDiv) rememberedEmailDiv.style.display = '';
     if (normalEmailDiv)     normalEmailDiv.style.display     = 'none';
+    if (rememberMeRow)      rememberMeRow.style.display      = 'none';
     if (displayInput)       displayInput.value               = rememberedEmail;
     // Mirror value into the real input so auth functions work
     if (realInput)          realInput.value                  = rememberedEmail;
@@ -6641,6 +6643,11 @@ function applyLoginScreenState() {
     if (normalEmailDiv)     normalEmailDiv.style.display     = '';
     if (createAccountBtn)   createAccountBtn.style.display   = '';
     if (passkeyLoginOption) passkeyLoginOption.style.display = '';
+    // Show "Remember me" checkbox only if consent hasn't been decided yet
+    if (rememberMeRow) rememberMeRow.style.display = (consent === null) ? '' : 'none';
+    // Reset checkbox state
+    const cb = document.getElementById('remember-me-checkbox');
+    if (cb) cb.checked = false;
   }
 }
 
@@ -6655,6 +6662,13 @@ function loginChangeUser() {
 
 /** Call this after a successful login to persist email & passkey state */
 function persistLoginCookies(email, hasPasskey) {
+  // If "Remember me" was ticked, treat that as granting consent
+  const cb = document.getElementById('remember-me-checkbox');
+  if (cb && cb.checked && getCookieConsent() === null) {
+    try { localStorage.setItem(COOKIE_CONSENT_KEY, 'granted'); } catch(e) {}
+    const banner = document.getElementById('cookie-consent-banner');
+    if (banner) banner.style.display = 'none';
+  }
   if (getCookieConsent() !== 'granted') return;
   setRememberedEmail(email);
   setRememberedPasskey(hasPasskey);
