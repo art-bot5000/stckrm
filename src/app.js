@@ -6592,16 +6592,13 @@ function clearRememberedCookieData() {
 function cookieConsentAccept() {
   try { localStorage.setItem(COOKIE_CONSENT_KEY, 'granted'); } catch(e) {}
   document.getElementById('cookie-consent-banner').style.display = 'none';
-  applyLoginScreenState();
 }
 
 function cookieConsentDecline() {
   try { localStorage.setItem(COOKIE_CONSENT_KEY, 'declined'); } catch(e) {}
   document.getElementById('cookie-consent-banner').style.display = 'none';
-  applyLoginScreenState();
 }
 
-/** Show cookie consent banner if consent hasn't been given yet (only on login/register screens) */
 function maybeShowCookieConsentBanner() {
   const consent = getCookieConsent();
   const banner  = document.getElementById('cookie-consent-banner');
@@ -6609,60 +6606,9 @@ function maybeShowCookieConsentBanner() {
   banner.style.display = (consent === null) ? 'block' : 'none';
 }
 
-/** Apply remembered-email state to the login screen (step-1b) */
-function applyLoginScreenState() {
-  const consent           = getCookieConsent();
-  const rememberedEmail   = getRememberedEmail();
-  const rememberedPasskey = getRememberedPasskey(); // 'true' | 'false' | null
-
-  const rememberedEmailDiv = document.getElementById('login-remembered-email');
-  const normalEmailDiv     = document.getElementById('login-email-input');
-  const rememberMeRow      = document.getElementById('login-remember-me');
-  const displayInput       = document.getElementById('kv-login-email-display');
-  const realInput          = document.getElementById('kv-login-email');
-  const createAccountBtn   = document.getElementById('login-create-account-btn');
-  const passkeyLoginOption = document.getElementById('passkey-login-option');
-
-  if (consent === 'granted' && rememberedEmail) {
-    // Show greyed-out remembered email, hide normal input + checkbox
-    if (rememberedEmailDiv) rememberedEmailDiv.style.display = '';
-    if (normalEmailDiv)     normalEmailDiv.style.display     = 'none';
-    if (rememberMeRow)      rememberMeRow.style.display      = 'none';
-    if (displayInput)       displayInput.value               = rememberedEmail;
-    // Mirror value into the real input so auth functions work
-    if (realInput)          realInput.value                  = rememberedEmail;
-    // Hide "Create an account" since they have a remembered account
-    if (createAccountBtn)   createAccountBtn.style.display   = 'none';
-    // Hide passkey option if we know they don't have one
-    if (passkeyLoginOption && rememberedPasskey === 'false') {
-      passkeyLoginOption.style.display = 'none';
-    }
-  } else {
-    // No consent or no remembered email — show normal interface
-    if (rememberedEmailDiv) rememberedEmailDiv.style.display = 'none';
-    if (normalEmailDiv)     normalEmailDiv.style.display     = '';
-    if (createAccountBtn)   createAccountBtn.style.display   = '';
-    if (passkeyLoginOption) passkeyLoginOption.style.display = '';
-    // Show "Remember me" checkbox only if consent hasn't been decided yet
-    if (rememberMeRow) rememberMeRow.style.display = (consent === null) ? '' : 'none';
-    // Reset checkbox state
-    const cb = document.getElementById('remember-me-checkbox');
-    if (cb) cb.checked = false;
-  }
-}
-
-/** Called when user clicks "Change user" — clears remembered data and shows normal form */
-function loginChangeUser() {
-  clearRememberedCookieData();
-  applyLoginScreenState();
-  // Re-show consent banner so user can opt back in
-  const banner = document.getElementById('cookie-consent-banner');
-  if (banner) banner.style.display = 'block';
-}
-
-/** Call this after a successful login to persist email & passkey state */
+/** After successful login: persist email + last auth method if "Remember me" was ticked */
 function persistLoginCookies(email, hasPasskey) {
-  // If "Remember me" was ticked, treat that as granting consent
+  // If "Remember me" is ticked and no consent yet, grant consent now
   const cb = document.getElementById('remember-me-checkbox');
   if (cb && cb.checked && getCookieConsent() === null) {
     try { localStorage.setItem(COOKIE_CONSENT_KEY, 'granted'); } catch(e) {}
@@ -6675,19 +6621,100 @@ function persistLoginCookies(email, hasPasskey) {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  LOGIN FLOW
+// ═══════════════════════════════════════════════════════════
 
+/** Go to: Create account screen */
 function showKvRegister() {
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   document.getElementById('wizard-step-1')?.classList.add('active');
   maybeShowCookieConsentBanner();
 }
 
+/** Go to: Login email entry screen.
+ *  If "Remember me" was previously granted + email stored → skip straight to auth screen. */
 function showKvLogin() {
+  const rememberedEmail  = getRememberedEmail();
+  const rememberedPasskey = getRememberedPasskey();
+  if (rememberedEmail) {
+    // Skip email entry — go straight to auth
+    showAuthScreen(rememberedEmail, rememberedPasskey === 'true');
+  } else {
+    document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+    document.getElementById('wizard-step-1b')?.classList.add('active');
+    maybeShowCookieConsentBanner();
+  }
+}
+
+/** Called when user clicks "Continue" on the email entry screen */
+function loginContinue() {
+  const emailEl = document.getElementById('kv-login-email');
+  const errEl   = document.getElementById('kv-login-email-error');
+  const email   = emailEl?.value.trim();
+  if (!email || !email.includes('@')) {
+    if (errEl) { errEl.textContent = 'Enter a valid email address'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (errEl) errEl.style.display = 'none';
+  // We don't know last method yet for new sessions — default to passphrase
+  showAuthScreen(email, false);
+}
+
+/** Show the auth screen (passphrase or passkey) for a given email */
+function showAuthScreen(email, usePasskey) {
+  document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+  document.getElementById('wizard-step-1b-auth')?.classList.add('active');
+
+  // Populate greyed email display
+  const display = document.getElementById('kv-login-email-display');
+  if (display) { display.value = email; display.setAttribute('data-has-value', '1'); }
+  // Also mirror into the real input so kvLogin() / kvLoginWithPasskey() can read it
+  const real = document.getElementById('kv-login-email');
+  if (real) real.value = email;
+
+  if (usePasskey) {
+    showAuthPasskey();
+  } else {
+    showAuthPassphrase();
+  }
+}
+
+/** Show passkey section on auth screen */
+function showAuthPasskey() {
+  const pk = document.getElementById('auth-passkey-section');
+  const pp = document.getElementById('auth-passphrase-section');
+  if (pk) pk.style.display = '';
+  if (pp) pp.style.display = 'none';
+}
+
+/** Show passphrase section on auth screen (also called from "Use passphrase instead") */
+function showAuthPassphrase() {
+  const pk = document.getElementById('auth-passkey-section');
+  const pp = document.getElementById('auth-passphrase-section');
+  if (pk) pk.style.display = 'none';
+  if (pp) pp.style.display = '';
+  // Clear any stale errors
+  const errEl = document.getElementById('kv-login-error');
+  if (errEl) errEl.style.display = 'none';
+}
+
+/** "Not you?" — go back to email entry screen */
+function loginBackToEmail() {
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   document.getElementById('wizard-step-1b')?.classList.add('active');
-  applyLoginScreenState();
+  // Clear the email field
+  const emailEl = document.getElementById('kv-login-email');
+  if (emailEl) emailEl.value = '';
   maybeShowCookieConsentBanner();
 }
+
+/** Legacy: "Change user" wipes remembered data then goes to email entry */
+function loginChangeUser() {
+  clearRememberedCookieData();
+  loginBackToEmail();
+}
+
+// ═══════════════════════════════════════════════════════════
 
 async function kvRegister() {
   const email      = document.getElementById('kv-email')?.value.trim();
@@ -7143,8 +7170,8 @@ async function postLoginWizardRoute(recoveryCodes = []) {
     // Need country selection
     document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
     document.getElementById('wizard-step-2').classList.add('active');
-    // Ensure country grid is populated
-    if (!document.getElementById('country-grid').children.length) buildCountryGrid();
+    // Always rebuild country grid to ensure correct selection state is shown
+    buildCountryGrid();
   }
 }
 
@@ -8862,9 +8889,7 @@ async function kvSignOut() {
   // Show login screen
   document.body.classList.add('wizard-active'); document.getElementById('wizard').style.display = 'flex';
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
-  document.getElementById('wizard-step-1b').classList.add('active');
-  applyLoginScreenState();
-  maybeShowCookieConsentBanner();
+  showKvLogin();
   updateSyncUI();
   toast('Signed out');
 }
@@ -11073,14 +11098,8 @@ async function init() {
   } else if (countrySet) {
     wizardNext();
   } else {
-    // No session, no seen flag — show register/login wizard
-    // If we have a remembered email, go straight to login step
-    if (getRememberedEmail()) {
-      document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
-      document.getElementById('wizard-step-1b')?.classList.add('active');
-      applyLoginScreenState();
-    }
-    maybeShowCookieConsentBanner();
+    // No session, no seen flag — show login (will auto-skip to auth if remembered)
+    showKvLogin();
   }
 
   updateSyncUI();
