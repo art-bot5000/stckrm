@@ -8,9 +8,9 @@ RUN mkdir -p public && \
     npx terser src/scanner.js --compress --mangle --comments false -o public/scanner.js && \
     npx cleancss -o public/styles.css src/styles.css && \
     npx html-minifier-terser src/index.html \
-      --collapse-whitespace --remove-comments --remove-optional-tags \
+      --collapse-whitespace --remove-comments \
       --remove-redundant-attributes --remove-script-type-attributes \
-      --remove-tag-whitespace --minify-css true --minify-js true \
+      --minify-css true \
       -o public/index.html && \
     cp src/sw.js public/sw.js && \
     cp src/manifest.json public/manifest.json && \
