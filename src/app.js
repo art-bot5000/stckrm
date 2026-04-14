@@ -183,7 +183,7 @@ async function migrateFromLocalStorage(lsKey, dbStore, dbKey, transform) {
 const CLIENT_ID       = '589308993147-rfj3kbaave6uhf3k1ojes3ph2l1pkd1m.apps.googleusercontent.com';
 const SCOPES          = 'https://www.googleapis.com/auth/drive.file';
 // KV-native: no Drive file
-const WORKER_URL      = 'https://stockroom2.art-bot5000.deno.net';
+const WORKER_URL      = 'https://stckrm.fly.dev';
 // KV-native: no Dropbox
 const DROPBOX_FILE    = '/stockroom_data.json';  // stored in app folder
 
@@ -499,6 +499,7 @@ async function mergeItems(local, remote, remoteWins = false) {
 // ═══════════════════════════════════════════
 function buildCountryGrid() {
   const grid = document.getElementById('country-grid');
+  if (!grid) return;
   grid.innerHTML = COUNTRIES.map(c => `
     <button class="country-btn${c.code===wizardCountry?' selected':''}" id="cbtn-${c.code}" onclick="selectCountry('${c.code}')">
       <span style="font-size:22px">${c.flag}</span>
@@ -6550,7 +6551,34 @@ async function resendEmailVerification() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  COOKIE CONSENT & REMEMBERED LOGIN
+//  DATA LOADING OVERLAY
+// ═══════════════════════════════════════════════════════════
+
+function showDataLoadingOverlay(statusText) {
+  const overlay = document.getElementById('data-loading-overlay');
+  const status  = document.getElementById('data-loading-status');
+  if (!overlay) return;
+  if (status && statusText) status.textContent = statusText;
+  overlay.style.display = 'flex';
+  // Safety net — always dismiss after 8s even if sync hangs
+  clearTimeout(window._loadingOverlayTimeout);
+  window._loadingOverlayTimeout = setTimeout(hideDataLoadingOverlay, 8000);
+}
+
+function hideDataLoadingOverlay() {
+  clearTimeout(window._loadingOverlayTimeout);
+  const overlay = document.getElementById('data-loading-overlay');
+  if (!overlay || overlay.style.display === 'none') return;
+  // Fade out smoothly
+  overlay.style.transition = 'opacity 0.4s ease';
+  overlay.style.opacity = '0';
+  setTimeout(() => {
+    overlay.style.display = 'none';
+    overlay.style.opacity = '1';
+    overlay.style.transition = '';
+  }, 400);
+}
+
 // ═══════════════════════════════════════════════════════════
 
 const COOKIE_CONSENT_KEY  = 'stockroom_cookie_consent';   // 'granted' | 'declined'
@@ -7156,13 +7184,18 @@ async function postLoginWizardRoute(recoveryCodes = []) {
     showProtectDataScreen(recoveryCodes);
   } else if (countrySet) {
     // Everything done — go to stockroom
+    showDataLoadingOverlay('Syncing your data…');
     document.body.classList.remove('wizard-active');
     document.getElementById('wizard').style.display = 'none';
     localStorage.setItem('stockroom_seen', '1');
-    await kvSyncNow(true);
-    scheduleRender(...RENDER_REGIONS);
     const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
     if (stockTab) showView('stock', stockTab);
+    scheduleRender(...RENDER_REGIONS);
+    try {
+      await kvSyncNow(true);
+    } finally {
+      hideDataLoadingOverlay();
+    }
   } else {
     // Need country selection
     document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
@@ -7233,8 +7266,27 @@ function copyRecoveryCodes() {
 async function protectAddPasskey() {
   // On initial passkey signup there is no passphrase, so call _doAddPasskeyToAccount
   // directly (already authenticated) rather than routing through requireReauth.
-  await _doAddPasskeyToAccount();
-  _protectPasskeyDone();
+  try {
+    await _doAddPasskeyToAccount();
+    _protectPasskeyDone();
+  } catch(err) {
+    // Show error persistently in the protect screen rather than just a toast
+    const btn = document.querySelector('#protect-passkey-buttons .btn-primary');
+    if (btn) btn.textContent = 'Add passkey';
+    // Find or create an error element in the passkey section
+    let errEl = document.getElementById('protect-passkey-error');
+    if (!errEl) {
+      errEl = document.createElement('p');
+      errEl.id = 'protect-passkey-error';
+      errEl.style.cssText = 'font-size:12px;color:var(--danger);margin-top:8px;line-height:1.5';
+      document.getElementById('protect-passkey-section')?.appendChild(errEl);
+    }
+    if (err.name === 'NotAllowedError') {
+      errEl.textContent = 'Passkey setup was cancelled — try again';
+    } else {
+      errEl.textContent = 'Could not add passkey: ' + err.message;
+    }
+  }
 }
 
 function _protectPasskeyDone() {
@@ -7848,10 +7900,18 @@ async function kvRestorePasskeySession(session) {
 async function addPasskeyToAccount() {
   if (!passkeySupported()) { toast('Passkeys not supported on this device'); return; }
   if (!kvConnected) { toast('Sign in first'); return; }
-  requireReauth('Re-enter your passphrase to add a passkey.', _doAddPasskeyToAccount, { passkeyAllowed: false });
+  requireReauth('Re-enter your passphrase to add a passkey.', async () => {
+    try {
+      await _doAddPasskeyToAccount();
+    } catch(err) {
+      if (err.name === 'NotAllowedError') { toast('Setup cancelled'); }
+      else { toast('Could not add passkey: ' + err.message); }
+    }
+  }, { passkeyAllowed: false });
 }
 
 async function _doAddPasskeyToAccount() {
+  console.log('[passkey] _doAddPasskeyToAccount called — email:', _kvEmail, 'emailHash:', _kvEmailHash ? _kvEmailHash.slice(0,8)+'…' : 'EMPTY', 'sessionToken:', _kvSessionToken ? 'SET' : 'null', 'verifier:', _kvVerifier ? 'SET' : 'EMPTY');
   try {
     const beginRes = await fetchKV(`${WORKER_URL}/passkey/register/begin`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -7916,8 +7976,11 @@ async function _doAddPasskeyToAccount() {
     toast('Passkey added ✓ — you can now sign in with Face ID / Fingerprint');
     loadPasskeys();
   } catch(err) {
-    if (err.name === 'NotAllowedError') { toast('Setup cancelled'); }
-    else { toast('Could not add passkey: ' + err.message); }
+    // Toast for settings context, but also rethrow so protect screen can show persistent error
+    if (err.name !== 'NotAllowedError') {
+      toast('Could not add passkey: ' + err.message);
+    }
+    throw err; // rethrow so protectAddPasskey can catch and display persistently
   }
 }
 
@@ -8797,7 +8860,9 @@ async function kvSyncNow(silent = false) {
       // Nothing local to push — pull was enough
     }
     if (!_wasSilent) updateSyncPill('synced'); else updateSyncPill('connected');
+    hideDataLoadingOverlay();
   } catch(err) {
+    hideDataLoadingOverlay();
     console.error('KV sync error:', err);
     if (err instanceof KvDecryptError) {
       // Key mismatch — wipe ALL cached key material including IDB trusted device,
@@ -11090,6 +11155,10 @@ async function init() {
     showProtectDataScreen([]);
   } else if (seen || kvConnected) {
     document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
+    // Show loading overlay while first sync runs for returning users
+    if (kvConnected) {
+      showDataLoadingOverlay('Loading your Stockroom…');
+    }
   } else if (wizardStep === '2') {
     localStorage.removeItem('stockroom_wizard_step');
     wizardNext();

@@ -1839,6 +1839,18 @@ window.quickAddBarcodeScan = async function() {
 };
 </script>
 
+<!-- ═══ DATA LOADING OVERLAY ═══ -->
+<div id="data-loading-overlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:200;flex-direction:column;align-items:center;justify-content:center;gap:20px">
+  <div style="font-size:48px;animation:spin-pulse 1.8s ease-in-out infinite">📦</div>
+  <div style="text-align:center">
+    <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:6px">Loading your Stockroom…</div>
+    <div id="data-loading-status" style="font-size:13px;color:var(--muted)">Syncing your data</div>
+  </div>
+  <div style="width:200px;height:3px;background:var(--border);border-radius:99px;overflow:hidden">
+    <div id="data-loading-bar" style="height:100%;width:30%;background:var(--accent);border-radius:99px;animation:loading-slide 1.4s ease-in-out infinite"></div>
+  </div>
+</div>
+
 <!-- Sync queue bar — shows when changes are pending or syncing -->
 <div id="sync-queue-bar">
   <div class="sqb-spinner" id="sqb-spinner"></div>
