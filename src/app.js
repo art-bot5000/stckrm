@@ -214,12 +214,13 @@ let dropboxConnected = false;
 //  MODAL HELPERS (defined early — used everywhere)
 // ═══════════════════════════════════════════
 function openModal(id) {
+  const el = document.getElementById(id);
+  if (!el) { console.error('openModal: element not found:', id); return; }
   if (_vtSupported() && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    const el = document.getElementById(id);
     el.style.viewTransitionName = 'modal-layer';
     document.startViewTransition(() => { el.classList.add('open'); });
   } else {
-    document.getElementById(id).classList.add('open');
+    el.classList.add('open');
   }
 }
 function closeModal(id) {
@@ -739,15 +740,18 @@ async function checkKVStatus() {
   try {
     const res  = await fetch(`${WORKER_URL}/debug-schedule`);
     const data = await res.json();
-    const allOk = data.email?.startsWith('✓') &&
-                  data.schedule && data.schedule !== '✗ missing' &&
-                  data.driveRefresh?.startsWith('✓');
+    // Deno KV backend: no Drive token needed — check schedule + kvSnapshot
+    const hasSchedule = data.schedule && data.schedule !== '✗ missing';
+    const hasItems    = data.kvSnapshot === '✓';
+    const allOk       = hasSchedule && hasItems && !!settings.email;
+    const scheduleLabel = typeof data.schedule === 'object' && data.schedule ? '✓ set' : (data.schedule || '✗ missing');
     const lines = [
-      `email: ${data.email}`,
-      `schedule: ${typeof data.schedule === 'object' && data.schedule ? '✓ set' : data.schedule}`,
-      `driveRefresh: ${data.driveRefresh}`,
-      `lastSent: ${data.lastSent}`,
-      data.nextSend ? `nextSend: ${data.nextSend}` : '',
+      settings.email ? `email: ✓ ${settings.email}` : `email: ✗ not set`,
+      `schedule: ${scheduleLabel}`,
+      `storage: ${data.storage || 'Deno KV'}`,
+      `items snapshot: ${data.kvSnapshot || '✗ none'}`,
+      `last sent: ${data.lastSent || 'never'}`,
+      data.nextSend ? `next send: ${data.nextSend}` : '',
     ].filter(Boolean);
     if (status) {
       status.style.color = allOk ? 'var(--ok)' : 'var(--warn)';
@@ -758,9 +762,7 @@ async function checkKVStatus() {
         return `<span style="color:${color}">${l}</span>`;
       }).join(' · ');
     }
-    if (!data.driveRefresh?.startsWith('✓')) {
-      toast('⚠️ Drive refresh token missing — reconnect Google Drive in Settings');
-    } else if (!allOk) {
+    if (!allOk) {
       toast('⚠️ Some server settings missing — tap Re-push');
     }
   } catch(err) {
@@ -775,17 +777,6 @@ async function repushToServer() {
   const status = document.getElementById('kv-status-text');
   if (!WORKER_URL) { toast('No backend URL configured'); return; }
   if (!settings.email) { toast('Set your email address first'); return; }
-
-  // Check if driveRefresh is missing first — repush can't fix that
-  try {
-    const check = await fetch(`${WORKER_URL}/debug-schedule`);
-    const data  = await check.json();
-    if (!data.driveRefresh?.startsWith('✓')) {
-      toast('⚠️ Drive refresh token missing — reconnect Google Drive first, then Re-push');
-      if (status) { status.style.color = 'var(--danger)'; status.textContent = '✗ Reconnect Google Drive first (Settings → Cloud Sync)'; }
-      return;
-    }
-  } catch(e) {}
 
   if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
   try {
@@ -982,7 +973,7 @@ async function sendReminderEmail(manual = true) {
     const res = await fetch(`${WORKER_URL}/send-reminder`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: email, urgent, upcoming, sns: snsPayload, manual }),
+      body: JSON.stringify({ email, urgent, upcoming, sns: snsPayload, manual }),
     });
     const data = await res.json();
     if (res.ok) {
@@ -3098,8 +3089,8 @@ function toggleFilters() {
   filtersOpen = !filtersOpen;
   const panel = document.getElementById('filter-panel');
   const icon  = document.getElementById('filter-toggle-icon');
-  panel.style.display = filtersOpen ? 'flex' : 'none';
-  icon.textContent = filtersOpen ? '▾' : '▸';
+  if (panel) panel.style.display = filtersOpen ? 'flex' : 'none';
+  if (icon)  icon.textContent    = filtersOpen ? '▾' : '▸';
   // State is in-memory only — always resets to closed on page load
 }
 
@@ -3285,7 +3276,9 @@ function _flushRender() {
       const sd = document.getElementById('setting-email-start');
       const st = document.getElementById('setting-email-start-time');
       if (t)  t.value  = settings.threshold;
-      if (c)  c.value  = settings.country;
+      // Re-populate country options if empty (e.g. first render after sign-in)
+      if (c && c.options.length === 0) buildSettingsCountrySelect();
+      if (c)  c.value  = settings.country || 'GB';
       if (e)  e.value  = settings.email || '';
       if (iv) iv.value = settings.emailInterval ?? 30;
       if (sd) sd.value = settings.emailStartDate || '';
@@ -3416,7 +3409,7 @@ function cardHTML(item, threshold) {
         <button class="btn-icon" title="Usage analytics" onclick="openAnalyticsModal('${item.id}')">📊</button>
         <button class="btn-icon" title="Price history" onclick="openPriceHistoryModal('${item.id}')" ${getPriceHistory(item).length < 2 ? 'style="opacity:0.35;cursor:default"' : ''}>💰</button>
         <button class="btn-icon" title="Share item" onclick="shareItem('${item.id}')">↗️</button>
-        <button class="btn-icon" title="Edit" onclick="openEditModal('${item.id}')">✏️</button>
+        <button class="btn-icon" title="Edit" onclick="openEditModal('${item.id}');enableItemEdit()">✏️</button>
         <button class="btn-icon" title="Delete" onclick="deleteItem('${item.id}')">🗑️</button>
       </div>
     </div>
@@ -4467,13 +4460,16 @@ function openStockCountModal(id) {
     `Enter how many you have now — the app will calculate your actual consumption rate and project when you'll run out.`;
   document.getElementById('sc-remaining').value = item.stockCount != null ? item.stockCount : '';
   document.getElementById('sc-date').value = today();
+  document.getElementById('sc-months').value = item.months || 1;
   document.getElementById('sc-preview').style.display = 'none';
 
   const remaining = document.getElementById('sc-remaining');
   const dateEl = document.getElementById('sc-date');
+  const monthsEl = document.getElementById('sc-months');
   const preview = () => updateStockCountPreview(item);
   remaining.oninput = preview;
   dateEl.onchange = preview;
+  monthsEl.oninput = preview;
 
   if (item.stockCount != null) updateStockCountPreview(item);
   openModal('stock-count-modal');
@@ -4482,6 +4478,7 @@ function openStockCountModal(id) {
 function updateStockCountPreview(item) {
   const remaining = parseFloat(document.getElementById('sc-remaining').value);
   const countDate = document.getElementById('sc-date').value;
+  const monthsVal = parseFloat(document.getElementById('sc-months').value) || item.months || 1;
   const preview = document.getElementById('sc-preview');
   const previewText = document.getElementById('sc-preview-text');
 
@@ -4494,7 +4491,7 @@ function updateStockCountPreview(item) {
 
   let daysLeft;
   if (used <= 0 || daysSincePurchase <= 0) {
-    const totalDays = (item.months||1) * 30.5 * totalPurchased;
+    const totalDays = monthsVal * 30.5 * totalPurchased;
     daysLeft = Math.round(Math.max(0, totalDays - daysSincePurchase));
   } else {
     const ratePerDay = used / daysSincePurchase;
@@ -4513,7 +4510,7 @@ function updateStockCountPreview(item) {
           `(${ratePerDay.toFixed(2)}/day). ` +
           `${remaining} left → runs out ~${runOutDate} (${daysLeft ?? '?'} days, ${pct}% remaining).`;
   } else {
-    msg = `${remaining} of ${totalPurchased} units remaining (${pct}%) → runs out ~${runOutDate}.`;
+    msg = `${remaining} of ${totalPurchased} units remaining (${pct}%) → estimated ${daysLeft ?? '?'} days left (${monthsVal} month${monthsVal!==1?'s':''}/unit).`;
   }
 
   previewText.textContent = msg;
@@ -4527,6 +4524,12 @@ async function saveStockCount() {
   if (!item) return;
   const val = document.getElementById('sc-remaining').value.trim();
   const countDate = document.getElementById('sc-date').value;
+  const monthsVal = parseFloat(document.getElementById('sc-months').value);
+
+  // Save months-per-unit if changed
+  if (!isNaN(monthsVal) && monthsVal > 0 && monthsVal !== item.months) {
+    item.months = monthsVal;
+  }
 
   if (val === '') {
     item.stockCount = null;
@@ -4536,6 +4539,7 @@ async function saveStockCount() {
     item.stockCountDate = countDate || today();
   }
 
+  touchItem(item);
   await saveData();
   closeModal('stock-count-modal');
   scheduleRender('grid', 'dashboard');
@@ -4807,11 +4811,14 @@ function _doTransition(direction, fn) {
 }
 
 function setStockOnlyUI(visible) {
-  const ids = ['health-dashboard', 'filter-toggle-btn', 'sort-select', 'compact-toggle-btn', 'filter-panel', 'tag-filter-bar', 'sns-banner', 'pending-deliveries-section', 'incomplete-section'];
+  const ids = ['health-dashboard', 'filter-toggle-btn', 'sort-select', 'compact-toggle-btn', 'tag-filter-bar', 'sns-banner', 'pending-deliveries-section', 'incomplete-section'];
   ids.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = visible ? '' : 'none';
   });
+  // filter-panel visibility must respect filtersOpen state, not just show/hide blindly
+  const filterPanel = document.getElementById('filter-panel');
+  if (filterPanel) filterPanel.style.display = visible && filtersOpen ? 'flex' : 'none';
   const filterWrap = document.querySelector('#view-stock > div:nth-child(5)');
   if (filterWrap) filterWrap.style.display = visible ? '' : 'none';
 }
@@ -4877,7 +4884,12 @@ function showView(name, btn) {
     document.getElementById('items-grid').style.display = '';
     document.getElementById('shopping-panel').style.display = 'none';
   }
-  if (name === 'settings') { renderSettingsForUser(); if (kvConnected) { loadTrustedDevices(); loadPasskeys(); } }
+  if (name === 'settings') {
+    renderSettingsForUser();
+    // Rebuild country dropdown (populates options, restores saved value)
+    buildSettingsCountrySelect();
+    if (kvConnected) { loadTrustedDevices(); loadPasskeys(); }
+  }
   _currentView = name;
   if (_householdEnabled) pushPresence();
 }
@@ -5663,7 +5675,10 @@ document.querySelectorAll('.modal-backdrop').forEach(b => {
 // ═══════════════════════════════════════════
 function buildSettingsCountrySelect() {
   const sel = document.getElementById('setting-country');
+  if (!sel) return;
   sel.innerHTML = COUNTRIES.map(c => `<option value="${c.code}">${c.flag} ${c.name}</option>`).join('');
+  // Restore saved country — default to GB if not set
+  sel.value = settings.country || 'GB';
 }
 
 // ═══════════════════════════════════════════
@@ -6588,11 +6603,25 @@ const COOKIE_PASSKEY_KEY  = 'stockroom_remembered_passkey'; // 'true' | 'false'
 function getCookieConsent() {
   try { return localStorage.getItem(COOKIE_CONSENT_KEY); } catch(e) { return null; }
 }
+// Passkey registration is device-specific and stored without requiring cookie consent
+// (it's functional data, not tracking data — tells us this device has a passkey registered)
+const DEVICE_PASSKEY_KEY = 'stockroom_device_has_passkey';
+
+function getDeviceHasPasskey() {
+  try { return localStorage.getItem(DEVICE_PASSKEY_KEY) === 'true'; } catch(e) { return false; }
+}
+function setDeviceHasPasskey(val) {
+  try { localStorage.setItem(DEVICE_PASSKEY_KEY, val ? 'true' : 'false'); } catch(e) {}
+}
+
 function getRememberedEmail() {
   if (getCookieConsent() !== 'granted') return null;
   try { return localStorage.getItem(COOKIE_EMAIL_KEY) || null; } catch(e) { return null; }
 }
 function getRememberedPasskey() {
+  // First check the device-level flag (no cookie consent required)
+  if (getDeviceHasPasskey()) return 'true';
+  // Fall back to cookie-consent-gated preference
   if (getCookieConsent() !== 'granted') return null;
   try { return localStorage.getItem(COOKIE_PASSKEY_KEY); } catch(e) { return null; }
 }
@@ -6600,6 +6629,8 @@ function setRememberedEmail(email) {
   try { localStorage.setItem(COOKIE_EMAIL_KEY, email); } catch(e) {}
 }
 function setRememberedPasskey(hasPasskey) {
+  // Store in both places so it works with or without cookie consent
+  setDeviceHasPasskey(hasPasskey);
   try { localStorage.setItem(COOKIE_PASSKEY_KEY, hasPasskey ? 'true' : 'false'); } catch(e) {}
 }
 function clearRememberedCookieData() {
@@ -6607,11 +6638,14 @@ function clearRememberedCookieData() {
     localStorage.removeItem(COOKIE_EMAIL_KEY);
     localStorage.removeItem(COOKIE_PASSKEY_KEY);
     localStorage.removeItem(COOKIE_CONSENT_KEY);
+    // Note: deliberately keep DEVICE_PASSKEY_KEY — it's device state, not a tracking cookie
   } catch(e) {}
 }
 
 // Called after successful login — persists email + method if consent granted
 function persistLoginCookies(email, hasPasskey) {
+  // Always store passkey registration (functional, not tracking)
+  if (hasPasskey) setDeviceHasPasskey(true);
   if (getCookieConsent() !== 'granted') return;
   setRememberedEmail(email);
   setRememberedPasskey(hasPasskey);
@@ -6679,22 +6713,38 @@ function _showAuthStep(email, usePasskey) {
   // Populate email display
   const display = document.getElementById('kv-login-email-display');
   if (display) display.value = email;
-  // Mirror into real input for kvLogin/kvLoginWithPasskey
   const real = document.getElementById('kv-login-email');
   if (real) real.value = email;
 
-  const pk = document.getElementById('auth-passkey-section');
-  const pp = document.getElementById('auth-passphrase-section');
-  if (usePasskey) {
+  const pk        = document.getElementById('auth-passkey-section');
+  const pp        = document.getElementById('auth-passphrase-section');
+  const pkOrDiv   = document.getElementById('auth-passkey-or-divider');
+  const pkLink    = document.getElementById('auth-use-passkey-link');
+  const cookieConsent  = getCookieConsent();
+  const pkSupported    = passkeySupported();
+  const devicePasskey  = getDeviceHasPasskey();
+
+  if ((usePasskey || devicePasskey) && pkSupported) {
+    // Device has passkey registered — show passkey first, passphrase toggle below
     if (pk) pk.style.display = 'block';
     if (pp) pp.style.display = 'none';
+    if (pkOrDiv) pkOrDiv.style.display = 'none';
+    if (pkLink) pkLink.style.display = 'none';
+  } else if ((cookieConsent === 'declined' || cookieConsent === null) && pkSupported) {
+    // No cookie consent — show both options stacked
+    if (pk) pk.style.display = 'block';
+    if (pp) pp.style.display = 'block';
+    if (pkOrDiv) pkOrDiv.style.display = 'flex';
+    if (pkLink) pkLink.style.display = 'none';
   } else {
+    // Consent granted, passkey not remembered — show passphrase with passkey link below
     if (pk) pk.style.display = 'none';
     if (pp) pp.style.display = 'block';
-    // Focus passphrase field
+    if (pkOrDiv) pkOrDiv.style.display = 'none';
+    // Show "Use passkey instead" link if passkeys are supported on this device
+    if (pkLink) pkLink.style.display = pkSupported ? 'inline-flex' : 'none';
     setTimeout(() => { document.getElementById('kv-login-pass')?.focus(); }, 100);
   }
-  // Clear stale errors
   const errEl = document.getElementById('kv-login-error');
   if (errEl) errEl.style.display = 'none';
 }
@@ -7241,9 +7291,20 @@ function showProtectDataScreen(recoveryCodes, isMigration = false) {
     document.getElementById('protect-continue-btn').disabled  = false;
     document.getElementById('protect-continue-btn').style.opacity = '1';
   }
-  // Hide passkey option if not supported
+  // Hide passkey option if not supported; grey it out if already registered on this device
   passkeyPlatformSupported().then(supported => {
-    if (!supported) document.getElementById('protect-passkey-section').style.display = 'none';
+    const section = document.getElementById('protect-passkey-section');
+    if (!supported) {
+      if (section) section.style.display = 'none';
+      return;
+    }
+    // If this device already has a passkey, show as already done
+    if (getDeviceHasPasskey()) {
+      document.getElementById('protect-passkey-done').style.display   = '';
+      document.getElementById('protect-passkey-buttons').style.display = 'none';
+      const doneEl = document.getElementById('protect-passkey-done');
+      if (doneEl) doneEl.textContent = '✓ Passkey already registered on this device';
+    }
   });
 }
 
@@ -7963,6 +8024,8 @@ async function _doAddPasskeyToAccount() {
     // Update session token
     _kvSessionToken = finishData.sessionToken;
     _kvAuthMethod   = 'passkey';
+    // Mark this device as having a passkey (used on protect screen and login screen)
+    setDeviceHasPasskey(true);
     try {
       const s = JSON.parse(localStorage.getItem('stockroom_kv_session') || '{}');
       s.sessionToken = finishData.sessionToken;
@@ -8921,6 +8984,8 @@ async function _doDeleteAccount() {
 
 async function kvSignOut() {
   if (!confirm('Sign out?\n\nYour encrypted data stays safely on the server. Sign back in with your email and passphrase to access it.')) return;
+  // Dismiss any decrypt error banner — no need to show it after an intentional sign-out
+  document.getElementById('kv-decrypt-error-banner')?.remove();
   // Clear device trust
   const deviceId = getOrCreateDeviceId();
   await removeWrappedKey(deviceId);
@@ -9167,6 +9232,8 @@ const _syncQueue = {
 
   async _flush() {
     if (this.syncing) return;
+    // If no user-initiated changes are pending, don't show the bar at all
+    if (this.pending === 0) return;
     this.syncing = true;
     const count  = this.pending;
     this.pending = 0;

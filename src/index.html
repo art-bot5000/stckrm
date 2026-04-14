@@ -314,8 +314,10 @@
           <button type="button" class="btn btn-primary btn-xl full" style="margin-bottom:14px" onclick="kvLoginWithPasskey()">
             🔑 Sign in with Face ID / Fingerprint
           </button>
-          <div style="text-align:center;margin-bottom:16px">
-            <button type="button" class="btn btn-ghost" style="font-size:13px" onclick="showAuthPassphrase()">Use passphrase instead</button>
+          <div id="auth-passkey-or-divider" style="text-align:center;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+            <div style="flex:1;height:1px;background:var(--border)"></div>
+            <span style="font-size:12px;color:var(--muted)">or</span>
+            <div style="flex:1;height:1px;background:var(--border)"></div>
           </div>
         </div>
 
@@ -330,8 +332,9 @@
             <label style="position:absolute;left:14px;top:0;transform:translateY(-50%);font-size:11px;font-weight:600;color:var(--accent);background:var(--surface);padding:0 4px;pointer-events:none;line-height:1">Passphrase</label>
           </div>
           <button type="button" class="btn btn-primary btn-xl full" style="margin-bottom:12px" onclick="kvLogin()">Sign in →</button>
-          <div style="text-align:center">
+          <div style="text-align:center;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
             <button type="button" class="btn btn-ghost" style="font-size:13px;color:var(--muted)" onclick="showForgotPassphrase()">Forgot passphrase?</button>
+            <button type="button" id="auth-use-passkey-link" class="btn btn-ghost" style="font-size:13px;color:var(--muted);display:none" onclick="showAuthPasskey()">Use passkey instead</button>
           </div>
         </div>
 
@@ -1348,6 +1351,14 @@
         <input type="date" id="sc-date">
       </div>
     </div>
+    <div style="margin-top:12px">
+      <label style="font-size:12px;font-weight:600;color:var(--muted);display:block;margin-bottom:6px">How long does 1 unit last?</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="number" id="sc-months" min="0.25" max="60" step="0.25" placeholder="e.g. 1"
+          style="width:90px;background:var(--surface2);border:1.5px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:14px;font-family:var(--sans)">
+        <span style="font-size:13px;color:var(--muted)">months &nbsp;(used to estimate time remaining)</span>
+      </div>
+    </div>
     <div id="sc-preview" style="margin-top:14px;padding:12px;background:var(--surface2);border-radius:8px;font-size:13px;display:none">
       <span id="sc-preview-text" style="color:var(--muted)"></span>
     </div>
@@ -1836,6 +1847,26 @@ window.openBarcodeScanner = async function() {
 window.quickAddBarcodeScan = async function() {
   await window._loadScanner();
   window.quickAddBarcodeScan();
+};
+window.shareItem = async function(id) {
+  await window._loadScanner();
+  window.shareItem(id);
+};
+window.doShareImage = async function() {
+  await window._loadScanner();
+  window.doShareImage();
+};
+window.doShareItemLink = async function() {
+  await window._loadScanner();
+  window.doShareItemLink();
+};
+window.doShareLink = async function() {
+  await window._loadScanner();
+  window.doShareLink();
+};
+window.doShareText = async function() {
+  await window._loadScanner();
+  window.doShareText();
 };
 </script>
 
