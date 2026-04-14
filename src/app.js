@@ -11092,53 +11092,49 @@ async function init() {
 }
 
 // ── URL action handler ─────────────────────────────────────
-// Defined here so it's always available regardless of scanner.js load state.
-// scanner.js redefines this with additional share-target handling if loaded.
-if (typeof handleURLAction === 'undefined') {
-  window.handleURLAction = function handleURLAction() {
-    // ── Share join link: ?join=CODE ──────────────────────────
-    const joinParams = new URLSearchParams(location.search);
-    const joinCode   = joinParams.get('join');
-    if (joinCode) {
-      history.replaceState(null, '', location.pathname);
-      if (typeof handleShareJoinLink === 'function') handleShareJoinLink(joinCode.toUpperCase());
-      return;
-    }
-
-    // Check for incoming shared item (defined in scanner.js)
-    if (typeof checkIncomingItem === 'function' && checkIncomingItem()) return;
-
-    const params = new URLSearchParams(location.search);
-    const action = params.get('action');
-    if (!action) return;
-
+// Always defined here as a safe fallback. scanner.js overwrites this
+// with a richer version (share-target handling) once it lazy-loads.
+function handleURLAction() {
+  // ── Share join link: ?join=CODE ──────────────────────────
+  const joinParams = new URLSearchParams(location.search);
+  const joinCode   = joinParams.get('join');
+  if (joinCode) {
     history.replaceState(null, '', location.pathname);
+    if (typeof handleShareJoinLink === 'function') handleShareJoinLink(joinCode.toUpperCase());
+    return;
+  }
 
-    setTimeout(() => {
-      if (action === 'quick-add') {
-        if (typeof openQuickAdd === 'function') openQuickAdd();
-      } else if (action === 'log-purchase') {
-        if (typeof openLogPicker === 'function') openLogPicker();
-      } else if (action === 'shopping') {
-        showShoppingListInline();
-      } else if (action === 'scan') {
-        sessionStorage.setItem('barcode_target', 'scan-chooser');
-        openBarcodeScanner();
-      } else if (action === 'reminder-sync') {
-        const id    = params.get('id')    || '';
-        const date  = params.get('date')  || today();
-        const token = params.get('token') || '';
-        if (id && token && typeof applyReminderReplaced === 'function') applyReminderReplaced(id, date, token);
-      } else if (action === 'unsubscribe') {
-        if (typeof handleUnsubscribe === 'function') handleUnsubscribe();
-      } else if (action === 'share') {
-        // Share target — lazy-load scanner.js to handle
-        window._loadScanner().then(() => {
-          if (typeof handleURLAction === 'function') handleURLAction();
-        }).catch(() => {});
-      }
-    }, 600);
-  };
+  // Check for incoming shared item (defined in scanner.js)
+  if (typeof checkIncomingItem === 'function' && checkIncomingItem()) return;
+
+  const params = new URLSearchParams(location.search);
+  const action = params.get('action');
+  if (!action) return;
+
+  history.replaceState(null, '', location.pathname);
+
+  setTimeout(() => {
+    if (action === 'quick-add') {
+      if (typeof openQuickAdd === 'function') openQuickAdd();
+    } else if (action === 'log-purchase') {
+      if (typeof openLogPicker === 'function') openLogPicker();
+    } else if (action === 'shopping') {
+      showShoppingListInline();
+    } else if (action === 'scan') {
+      sessionStorage.setItem('barcode_target', 'scan-chooser');
+      openBarcodeScanner();
+    } else if (action === 'reminder-sync') {
+      const id    = params.get('id')    || '';
+      const date  = params.get('date')  || today();
+      const token = params.get('token') || '';
+      if (id && token && typeof applyReminderReplaced === 'function') applyReminderReplaced(id, date, token);
+    } else if (action === 'unsubscribe') {
+      if (typeof handleUnsubscribe === 'function') handleUnsubscribe();
+    } else if (action === 'share') {
+      // Share target — lazy-load scanner.js which has full handling
+      window._loadScanner().then(() => handleURLAction()).catch(() => {});
+    }
+  }, 600);
 }
 
 init();
