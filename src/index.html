@@ -1747,6 +1747,14 @@
 
 <script src="app.js" defer></script>
 <script>
+// Early stubs — ensure critical functions are defined before defer app.js loads.
+// app.js overwrites these with full implementations once it loads.
+if (typeof doLoginContinue === 'undefined') {
+  window.doLoginContinue = function() {
+    // app.js hasn't loaded yet — wait and retry
+    setTimeout(function() { if (typeof doLoginContinue === 'function') doLoginContinue(); }, 200);
+  };
+}
 // Lazy-load scanner.js only when camera button is tapped
 window._scannerLoaded = false;
 window._loadScanner = function() {
