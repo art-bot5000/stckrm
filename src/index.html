@@ -98,62 +98,6 @@
   </div>
 </div>
 
-<!-- ═══ DRIVE PERMISSION EXPLANATION MODAL ═══ -->
-<div class="modal-backdrop" id="drive-permission-modal" style="z-index:310">
-  <div class="modal" style="max-width:440px">
-    <div style="text-align:center;margin-bottom:20px">
-      <div style="font-size:48px;margin-bottom:8px">☁️</div>
-      <h2 style="font-size:20px;margin-bottom:6px">Connect Google Drive</h2>
-      <p style="font-size:13px;color:var(--muted);line-height:1.6">STOCKROOM uses Google Drive to keep your data safe and in sync across devices. Here's exactly what access is needed and why.</p>
-    </div>
-
-    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
-
-      <div style="display:flex;gap:14px;align-items:flex-start;padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">
-        <div style="font-size:24px;flex-shrink:0">📄</div>
-        <div>
-          <div style="font-size:13px;font-weight:700;margin-bottom:3px">Create and edit one file</div>
-          <div style="font-size:12px;color:var(--muted);line-height:1.5">STOCKROOM creates a single file called <code style="font-family:var(--mono);font-size:11px;background:var(--bg);padding:1px 5px;border-radius:3px">stockroom_data.json</code> in your Drive. It can only see files it created — not your other Drive contents.</div>
-        </div>
-      </div>
-
-      <div style="display:flex;gap:14px;align-items:flex-start;padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">
-        <div style="font-size:24px;flex-shrink:0">🔒</div>
-        <div>
-          <div style="font-size:13px;font-weight:700;margin-bottom:3px">No access to your other files</div>
-          <div style="font-size:12px;color:var(--muted);line-height:1.5">The permission requested is <code style="font-family:var(--mono);font-size:11px;background:var(--bg);padding:1px 5px;border-radius:3px">drive.file</code> — the most restricted Drive scope. Google only allows access to files this app created itself.</div>
-        </div>
-      </div>
-
-      <div style="display:flex;gap:14px;align-items:flex-start;padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">
-        <div style="font-size:24px;flex-shrink:0">📧</div>
-        <div>
-          <div style="font-size:13px;font-weight:700;margin-bottom:3px">Why it says "art-bot5000.deno.net"</div>
-          <div style="font-size:12px;color:var(--muted);line-height:1.5">Google shows the server that handles the secure sign-in step. This is the STOCKROOM backend service — it exchanges your sign-in for a token and immediately sends you back to the app. It does not store your Google password or personal details.</div>
-        </div>
-      </div>
-
-      <div style="display:flex;gap:14px;align-items:flex-start;padding:14px;background:rgba(76,187,138,0.06);border-radius:10px;border:1px solid rgba(76,187,138,0.2)">
-        <div style="font-size:24px;flex-shrink:0">🗑️</div>
-        <div>
-          <div style="font-size:13px;font-weight:700;color:var(--ok);margin-bottom:3px">You can revoke access any time</div>
-          <div style="font-size:12px;color:var(--muted);line-height:1.5">Go to <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener" style="color:var(--accent2)">myaccount.google.com/permissions</a> to remove STOCKROOM's access at any time. Your Drive file stays — only the permission is revoked.</div>
-        </div>
-      </div>
-
-    </div>
-
-    <div style="background:rgba(232,168,56,0.06);border:1px solid rgba(232,168,56,0.2);border-radius:8px;padding:10px 14px;margin-bottom:20px;font-size:12px;color:var(--muted);line-height:1.5">
-      <strong style="color:var(--accent)">Your data stays yours.</strong> STOCKROOM is open source, stores your items in your own Drive account, and does not sell or share your data.
-    </div>
-
-    <div class="modal-footer" style="flex-direction:column;gap:8px">
-      <button class="btn btn-blue btn-xl full" onclick="proceedConnectDrive()">Continue to Google Sign-in →</button>
-      <button class="btn btn-ghost btn-sm" style="text-align:center" onclick="closeModal('drive-permission-modal')">Cancel</button>
-    </div>
-  </div>
-</div>
-
 <!-- ═══ COOKIE CONSENT BANNER (fixed overlay — kept for non-wizard contexts) ═══ -->
 <div id="cookie-consent-banner" style="display:none"></div>
 
@@ -251,36 +195,13 @@
           </div>
         </div>
 
+        <!-- Passkey hint — shown when this device has a registered passkey -->
+        <div id="login-passkey-hint" style="display:none;background:rgba(91,141,238,0.08);border:1px solid rgba(91,141,238,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--muted)">
+          🔑 This device has a passkey — you'll be prompted to use Face ID / Fingerprint after entering your email.
+        </div>
+
         <button type="button" class="btn btn-primary btn-xl full" style="width:100%;margin-bottom:0"
-          onclick="(function(){
-            var e=document.getElementById('kv-login-email');
-            var err=document.getElementById('kv-login-email-error');
-            if(!e){if(err){err.textContent='Field missing';err.style.display='block';}return;}
-            var v=e.value.trim();
-            if(!v||!v.includes('@')){if(err){err.textContent='Enter a valid email address';err.style.display='block';}e.focus();return;}
-            if(err)err.style.display='none';
-            var consent=null;try{consent=localStorage.getItem('stockroom_cookie_consent');}catch(ex){}
-            var cb=document.getElementById('remember-me-checkbox');
-            if(cb&&cb.checked&&consent==='granted'){try{localStorage.setItem('stockroom_remembered_email',v);}catch(ex){}}
-            var usePasskey=false;
-            try{var rp=localStorage.getItem('stockroom_remembered_passkey');usePasskey=(rp==='true');}catch(ex){}
-            var w=document.getElementById('wizard');
-            if(w)w.style.display='flex';
-            document.body.classList.add('wizard-active');
-            document.querySelectorAll('.wizard-step').forEach(function(s){s.classList.remove('active');});
-            var a=document.getElementById('wizard-step-1b-auth');
-            if(a)a.classList.add('active');
-            var d=document.getElementById('kv-login-email-display');
-            if(d)d.value=v;
-            var real=document.getElementById('kv-login-email');
-            if(real)real.value=v;
-            var pk=document.getElementById('auth-passkey-section');
-            var pp=document.getElementById('auth-passphrase-section');
-            if(usePasskey){if(pk)pk.style.display='block';if(pp)pp.style.display='none';}
-            else{if(pk)pk.style.display='none';if(pp)pp.style.display='block';setTimeout(function(){var p=document.getElementById('kv-login-pass');if(p)p.focus();},100);}
-            var perr=document.getElementById('kv-login-error');
-            if(perr)perr.style.display='none';
-          })()">Continue →</button>
+          onclick="doLoginContinue()">Continue →</button>
         <p id="kv-login-email-error" style="font-size:12px;color:var(--danger);margin-top:10px;display:none"></p>
       </div>
 
@@ -987,7 +908,7 @@
         <p style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6">The email service requires a backend URL to be configured. Contact the app owner for setup details.</p>
       </div>
       <div id="email-not-registered" style="display:none">
-        <p style="font-size:13px;color:var(--muted);margin-bottom:14px">Receive a stock report by email on a schedule you choose. Your data stays in your own Google Drive.</p>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:14px">Receive a stock report by email on a schedule you choose.</p>
         <div class="form-grid" style="margin-bottom:14px">
           <div class="field">
             <label>Your email address</label>

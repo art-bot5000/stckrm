@@ -120,6 +120,8 @@
 
   /* ── FILTER BAR ── */
   #filter-bar { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  /* Filter panel: hidden by default — JS sets display:flex when opened via toggleFilters() */
+  #filter-panel { display: none; }
   .filter-chip { font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 99px; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; transition: all 0.15s; }
   .filter-chip.active { background: var(--surface2); color: var(--text); border-color: var(--muted); }
 

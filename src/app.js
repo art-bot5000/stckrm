@@ -184,8 +184,8 @@ const CLIENT_ID       = '589308993147-rfj3kbaave6uhf3k1ojes3ph2l1pkd1m.apps.goog
 const SCOPES          = 'https://www.googleapis.com/auth/drive.file';
 // KV-native: no Drive file
 const WORKER_URL      = 'https://stckrm.fly.dev';
-// KV-native: no Dropbox
-const DROPBOX_FILE    = '/stockroom_data.json';  // stored in app folder
+// Legacy constants kept to prevent reference errors in dead code paths
+const DROPBOX_FILE    = '';
 
 // ═══════════════════════════════════════════
 //  STATE
@@ -203,10 +203,8 @@ let wizardCountry = 'GB';
 let compactView = false;
 let activeProfile = 'default'; // household profile key
 
-// Drive state
-let driveConnected = false; // true after one-time OAuth setup
-
-// Dropbox state
+// Drive / Dropbox — disabled in KV build (kept as no-op vars to avoid reference errors)
+let driveConnected   = false;
 let dropboxToken     = null;
 let dropboxConnected = false;
 
@@ -531,33 +529,11 @@ function enableItemEdit() {
 }
 
 // ═══════════════════════════════════════════
-//  DRIVE PERMISSION EXPLANATION
-// ═══════════════════════════════════════════
-let _driveConnectContext = 'settings'; // 'wizard' or 'settings'
-
-function openDrivePermissionModal(context) {
-  _driveConnectContext = context || 'settings';
-  openModal('drive-permission-modal');
-}
-
-function proceedConnectDrive() {
-  closeModal('drive-permission-modal');
-  if (_driveConnectContext === 'wizard') {
-    wizardConnectDrive();
-  } else {
-    connectDrive();
-  }
-}
-
-function wizardConnectDrive() {
-  localStorage.setItem('stockroom_wizard_step', '2');
-  connectDrive();
-}
-
-function wizardConnectDropbox() {
-  localStorage.setItem('stockroom_wizard_step', '2');
-  connectDropbox(); // redirects in same tab, returns with token, then advances wizard
-}
+// Drive / Dropbox functions — stubbed as no-ops in KV build
+function openDrivePermissionModal() { /* Drive removed — KV build */ }
+function proceedConnectDrive()      { /* Drive removed — KV build */ }
+function wizardConnectDrive()       { /* Drive removed — KV build */ }
+function wizardConnectDropbox()     { /* Drive removed — KV build */ }
 
 function wizardNext() {
   localStorage.setItem('stockroom_country_set', '1');
@@ -5684,21 +5660,8 @@ function buildSettingsCountrySelect() {
 // ═══════════════════════════════════════════
 //  GOOGLE DRIVE SYNC
 // ═══════════════════════════════════════════
-function connectDrive() {
-  try { sessionStorage.setItem('stockroom_pre_auth_view', 'settings'); } catch(e){}
-  try { sessionStorage.setItem('stockroom_auth_provider', 'drive'); } catch(e){}
-
-  // Use code flow (not implicit) so Worker can get a refresh token for cron
-  const redirectUri = `${WORKER_URL}/auth/google`;
-  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth`
-    + `?client_id=${CLIENT_ID}`
-    + `&redirect_uri=${encodeURIComponent(redirectUri)}`
-    + `&response_type=code`
-    + `&scope=${encodeURIComponent(SCOPES)}`
-    + `&access_type=offline`
-    + `&prompt=consent`;
-  location.href = authUrl;
-}
+// connectDrive — removed in KV build
+function connectDrive() { /* Drive removed — KV build uses email/passphrase auth */ }
 
 // ═══════════════════════════════════════════
 //  EMAIL REPORTS (Part C)
@@ -6091,14 +6054,14 @@ async function syncNow() {
     if (err.message === 'NOT_CONNECTED') {
       updateSyncPill('error');
       const label = document.getElementById('sync-label');
-      if (label) label.textContent = 'Connect Drive';
+      if (label) label.textContent = 'Not connected';
       if (!sessionStorage.getItem('connect_drive_prompted')) {
         sessionStorage.setItem('connect_drive_prompted', '1');
-        toast('Connect Google Drive in Settings to enable sync');
+        toast('Sign in to enable sync');
       }
     } else if (err.message === 'OWNER_NOT_CONNECTED') {
       updateSyncPill('error');
-      toast('The household owner needs to reconnect Google Drive');
+      toast('The household owner needs to reconnect their account');
     } else if (err.message?.startsWith('ACCESS_DENIED')) {
       updateSyncPill('error');
       toast('Access denied — your invite link may have been revoked');
@@ -6672,6 +6635,11 @@ function showKvLogin() {
     if (cb) cb.checked = false;
     const panel = document.getElementById('cookie-inline-panel');
     if (panel) panel.style.display = 'none';
+    // If this device has a passkey, pre-tick the device passkey indicator
+    // so users know they can use it after entering their email
+    const deviceHasPK = getDeviceHasPasskey();
+    const pkHint = document.getElementById('login-passkey-hint');
+    if (pkHint) pkHint.style.display = deviceHasPK ? 'block' : 'none';
   }
 }
 
@@ -7248,10 +7216,14 @@ async function postLoginWizardRoute(recoveryCodes = []) {
     }
   } else {
     // Need country selection
+    document.body.classList.add('wizard-active');
+    document.getElementById('wizard').style.display = 'flex';
     document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
     document.getElementById('wizard-step-2').classList.add('active');
-    // Always rebuild country grid to ensure correct selection state is shown
+    // Rebuild grid and ensure correct country is selected
+    wizardCountry = settings.country || 'GB';
     buildCountryGrid();
+    selectCountry(wizardCountry);
   }
 }
 
@@ -7276,7 +7248,16 @@ function showProtectDataScreen(recoveryCodes, isMigration = false) {
     }
   }
   document.body.classList.add('wizard-active'); document.getElementById('wizard').style.display = 'flex';
-  // Reset state
+  // Reset state — including any greying from previous visits
+  const passkeySection = document.getElementById('protect-passkey-section');
+  if (passkeySection) {
+    passkeySection.style.opacity       = '';
+    passkeySection.style.pointerEvents = '';
+    passkeySection.style.borderColor   = '';
+    passkeySection.style.background    = '';
+    passkeySection.style.display       = '';
+    passkeySection.querySelectorAll('.protect-skip-msg').forEach(el => el.remove());
+  }
   document.getElementById('protect-passkey-done').style.display    = 'none';
   document.getElementById('protect-passkey-buttons').style.display  = 'flex';
   document.getElementById('protect-codes-grid').style.display       = 'none';
@@ -7291,17 +7272,16 @@ function showProtectDataScreen(recoveryCodes, isMigration = false) {
     document.getElementById('protect-continue-btn').disabled  = false;
     document.getElementById('protect-continue-btn').style.opacity = '1';
   }
-  // Hide passkey option if not supported; grey it out if already registered on this device
+  // Hide passkey option if not supported; show as done if already registered on this device
   passkeyPlatformSupported().then(supported => {
     const section = document.getElementById('protect-passkey-section');
     if (!supported) {
       if (section) section.style.display = 'none';
       return;
     }
-    // If this device already has a passkey, show as already done
+    // If this device already has a passkey registered, show it as already done
     if (getDeviceHasPasskey()) {
-      document.getElementById('protect-passkey-done').style.display   = '';
-      document.getElementById('protect-passkey-buttons').style.display = 'none';
+      _protectPasskeyDone();
       const doneEl = document.getElementById('protect-passkey-done');
       if (doneEl) doneEl.textContent = '✓ Passkey already registered on this device';
     }
@@ -7351,20 +7331,31 @@ async function protectAddPasskey() {
 }
 
 function _protectPasskeyDone() {
-  document.getElementById('protect-passkey-done').style.display   = '';
-  document.getElementById('protect-passkey-buttons').style.display = 'none';
+  const doneEl  = document.getElementById('protect-passkey-done');
+  const buttons = document.getElementById('protect-passkey-buttons');
   const section = document.getElementById('protect-passkey-section');
-  if (section) { section.style.opacity = '1'; section.style.pointerEvents = ''; }
+  if (doneEl)  { doneEl.style.display  = ''; doneEl.textContent = '✓ Passkey added — you can sign in with Face ID / Fingerprint'; }
+  if (buttons) buttons.style.display = 'none';
+  // Grey the section like skip does, so it's visually "done and locked"
+  if (section) {
+    section.style.opacity      = '0.6';
+    section.style.pointerEvents = 'none';
+    section.style.borderColor  = 'rgba(76,187,138,0.4)';
+    section.style.background   = 'rgba(76,187,138,0.04)';
+  }
 }
 
 function protectSkipPasskey() {
   const section = document.getElementById('protect-passkey-section');
   if (section) {
-    section.style.opacity = '0.4';
+    section.style.opacity      = '0.4';
     section.style.pointerEvents = 'none';
     document.getElementById('protect-passkey-buttons').style.display = 'none';
+    // Remove any previous skip message to avoid duplicates
+    section.querySelectorAll('.protect-skip-msg').forEach(el => el.remove());
     const skip = document.createElement('div');
-    skip.style.cssText = 'font-size:12px;color:var(--muted)';
+    skip.className    = 'protect-skip-msg';
+    skip.style.cssText = 'font-size:12px;color:var(--muted);margin-top:4px';
     skip.textContent   = 'Skipped — you can add a passkey later in Settings';
     section.appendChild(skip);
   }
@@ -7951,6 +7942,8 @@ async function kvRestorePasskeySession(session) {
   _kvVerifier     = '';
   _kvAuthMethod   = 'passkey';
   kvConnected     = true;
+  // Ensure device flag is set so login screen shows passkey option next time
+  setDeviceHasPasskey(true);
   const el = document.getElementById('kv-account-email');
   if (el) el.textContent = email;
   updateSyncUI();
@@ -8515,8 +8508,16 @@ async function kvRestoreSession() {
     const { email, emailHash, verifier, sessionToken, authMethod } = JSON.parse(raw);
     if (!email || !emailHash) return false;
 
+    // Back-fill device passkey flag from stored credential map (for users pre-dating this flag)
+    try {
+      const storedCreds = JSON.parse(localStorage.getItem('stockroom_passkey_creds') || '{}');
+      if (storedCreds[emailHash]) setDeviceHasPasskey(true);
+    } catch(e) {}
+
     // Passkey session restore
     if (authMethod === 'passkey' && sessionToken) {
+      // Ensure device flag is set — handles users who had passkeys before this flag existed
+      setDeviceHasPasskey(true);
       return await kvRestorePasskeySession({ email, emailHash, sessionToken });
     }
 
@@ -9067,150 +9068,13 @@ async function kvChangePassphrase(oldPass, newPass) {
 // ═══════════════════════════════════════════
 //  DROPBOX SYNC (kept for reference, disabled in KV build)
 // ═══════════════════════════════════════════
-function connectDropbox() {
-  try { sessionStorage.setItem('stockroom_pre_auth_view', 'settings'); } catch(e){}
-  try { sessionStorage.setItem('stockroom_auth_provider', 'dropbox'); } catch(e){}
-
-  // Generate PKCE code verifier and challenge
-  const verifier = generateCodeVerifier();
-  sessionStorage.setItem('dropbox_pkce_verifier', verifier);
-
-  generateCodeChallenge(verifier).then(challenge => {
-    const redirectUri = `${WORKER_URL}/auth/dropbox`;
-    const authUrl = `https://www.dropbox.com/oauth2/authorize`
-      + `?client_id=${DROPBOX_APP_KEY}`
-      + `&redirect_uri=${encodeURIComponent(redirectUri)}`
-      + `&response_type=code`
-      + `&token_access_type=offline`
-      + `&code_challenge=${encodeURIComponent(challenge)}`
-      + `&code_challenge_method=S256`
-      + `&state=${encodeURIComponent(verifier)}`;
-    location.href = authUrl;
-  });
-}
-
-function generateCodeVerifier() {
-  const array = new Uint8Array(64);
-  crypto.getRandomValues(array);
-  return btoa(String.fromCharCode(...array))
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '').slice(0, 128);
-}
-
-async function generateCodeChallenge(verifier) {
-  const encoder = new TextEncoder();
-  const data     = encoder.encode(verifier);
-  const digest   = await crypto.subtle.digest('SHA-256', data);
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-
-async function syncDropbox() {
-  if (!dropboxConnected || !dropboxToken) return;
-  updateSyncPill('syncing');
-  try {
-    // Try to download existing file
-    const dlRes = await fetch('https://content.dropboxapi.com/2/files/download', {
-      method: 'POST',
-      headers: {
-        'Authorization':   `Bearer ${dropboxToken}`,
-        'Dropbox-API-Arg': JSON.stringify({ path: DROPBOX_FILE }),
-      },
-    });
-
-    if (dlRes.ok) {
-      let remote = null;
-      try { remote = await dlRes.json(); } catch(e) {}
-      if (remote && Array.isArray(remote.items)) {
-        const localLastSynced  = settings.lastSynced ? new Date(settings.lastSynced).getTime() : 0;
-        const remoteLastSynced = remote.lastSynced   ? new Date(remote.lastSynced).getTime()   : 0;
-        const remoteWins       = remoteLastSynced > localLastSynced;
-
-        items = await mergeItems(items, remote.items, remoteWins);
-        await saveData();
-        if (remote.settings) {
-          const localTags    = settings.customTags;
-          settings           = { ...remote.settings, ...settings };
-          const remoteTags   = remote.settings.customTags || [];
-          const localDefined  = (localTags||[]).filter(t=>t&&t.trim()).length;
-          const remoteDefined = remoteTags.filter(t=>t&&t.trim()).length;
-          settings.customTags = localDefined >= remoteDefined ? (localTags||[]) : remoteTags;
-          await _saveSettings();
-        }
-        if (remote.groceries) {
-          const localG  = groceryItems;
-          const remoteG = remote.groceries;
-          if (remoteWins || remoteG.length > localG.length) {
-            groceryItems = remoteG;
-            await saveGrocery();
-          }
-        }
-        if (remote.departments && remote.departments.length) {
-          if (remoteWins || remote.departments.length > groceryDepts.length) {
-            groceryDepts = remote.departments;
-            await saveGroceryDepts();
-          }
-        }
-        if (remote.reminders && Array.isArray(remote.reminders)) {
-          if (remoteWins || remote.reminders.length > reminders.length) {
-            reminders = remote.reminders;
-            await saveReminders();
-          }
-        }
-        if (remote.deletedIds && Array.isArray(remote.deletedIds)) {
-          const merged = await loadDeletedIds();
-          remote.deletedIds.forEach(id => merged.add(id));
-          await saveDeletedIds(merged);
-        }
-        scheduleRender(...RENDER_REGIONS);
-      }
-    }
-
-    settings.lastSynced = new Date().toISOString();
-    await _saveSettings();
-    const uploadedIdsDb = new Set(items.map(i => i.id));
-    const remainingTombstonesDb = await loadDeletedIds();
-    remainingTombstonesDb.forEach(id => { if (uploadedIdsDb.has(id)) remainingTombstonesDb.delete(id); });
-    await saveDeletedIds(remainingTombstonesDb);
-    await uploadToDropbox(JSON.stringify({
-      items, settings, lastSynced: settings.lastSynced,
-      groceries: groceryItems, departments: groceryDepts, reminders, deletedIds: [...remainingTombstonesDb],
-    }));
-    updateSyncPill('synced', 'dropbox');
-
-  } catch(err) {
-    console.error('Dropbox sync error:', err);
-    updateSyncPill('error');
-  }
-}
-
-async function uploadToDropbox(payload) {
-  const res = await fetch('https://content.dropboxapi.com/2/files/upload', {
-    method: 'POST',
-    headers: {
-      'Authorization':   `Bearer ${dropboxToken}`,
-      'Dropbox-API-Arg': JSON.stringify({ path: DROPBOX_FILE, mode: 'overwrite', autorename: false }),
-      'Content-Type':    'application/octet-stream',
-    },
-    body: payload,
-  });
-  if (!res.ok) throw new Error('Dropbox upload failed: ' + res.status);
-}
-
-async function signOutDropbox() {
-  if (!confirm('Sign out of Dropbox?\n\nYour data on Dropbox stays complete. Your local data on this device will remain unless you choose to clear it.')) return;
-  dropboxToken     = null;
-  dropboxConnected = false;
-  try { localStorage.removeItem('stockroom_dropbox'); } catch(e){}
-  updateSyncUI();
-  toast('Signed out of Dropbox');
-  if (confirm('Clear local data on this device too?\n\nCloud data is unaffected — you can restore it by signing back in.')) {
-    items = [];
-    await saveData();
-    scheduleRender('grid', 'dashboard');
-    toast('Local data cleared');
-  }
-}
-
+// ── Dropbox — removed in KV build (stubbed to prevent reference errors) ──
+function connectDropbox()           { /* Dropbox removed — KV build */ }
+function generateCodeVerifier()     { return ''; }
+async function generateCodeChallenge() { return ''; }
+async function syncDropbox()        { /* Dropbox removed */ }
+async function uploadToDropbox()    { /* Dropbox removed */ }
+async function signOutDropbox()     { /* Dropbox removed */ }
 // ── Sync Queue — visual feedback for pending changes ──────
 // Shows a bottom bar while changes are queued/syncing.
 // Debounces rapid saves so we don't hammer the backend.
@@ -9307,37 +9171,10 @@ function updateSyncUI() {
   if (el && _kvEmail) el.textContent = _kvEmail;
 }
 
-function updateDropboxUI() {
-  const connectBtn  = document.getElementById('dropbox-connect-btn');
-  const status      = document.getElementById('dropbox-status');
-  const syncBtn     = document.getElementById('dropbox-sync-btn');
-  const signOutBtn  = document.getElementById('dropbox-signout-btn');
-  if (dropboxConnected) {
-    if (connectBtn) connectBtn.style.display = 'none';
-    if (status)     status.style.display     = 'flex';
-    if (syncBtn)    syncBtn.style.display    = 'inline-flex';
-    if (signOutBtn) signOutBtn.style.display = 'inline-flex';
-  } else {
-    if (connectBtn) connectBtn.style.display = 'inline-flex';
-    if (status)     status.style.display     = 'none';
-    if (syncBtn)    syncBtn.style.display    = 'none';
-    if (signOutBtn) signOutBtn.style.display = 'none';
-  }
-}
-
-async function signOutDrive() {
-  if (!confirm('Sign out of Google Drive?\n\nYour data on Drive stays complete. Your local data on this device will remain unless you choose to clear it.')) return;
-  driveConnected = false;
-  try { localStorage.removeItem('stockroom_drive'); } catch(e) {}
-  updateSyncUI();
-  toast('Signed out of Google Drive');
-  if (confirm('Clear local data on this device too?\n\nCloud data is unaffected — you can restore it by signing back in.')) {
-    items = [];
-    await saveData();
-    scheduleRender('grid', 'dashboard');
-    toast('Local data cleared');
-  }
-}
+// Drive/Dropbox UI functions — stubbed as no-ops in KV build
+function updateDropboxUI() { /* Dropbox removed */ }
+async function signOutDrive() { /* Drive removed */ }
+function updateDriveUI()    { /* Drive removed */ }
 
 function renderSettingsForUser() {
   const settingsView = document.getElementById('view-settings');
@@ -9381,24 +9218,6 @@ function renderSettingsForUser() {
       card.style.display = signedIn ? '' : 'none';
     }
   });
-}
-
-function updateDriveUI() {
-  const driveBtn   = document.getElementById('drive-connect-btn');
-  const driveStatus = document.getElementById('drive-status');
-  const syncBtn    = document.getElementById('drive-sync-btn');
-  const signOutBtn = document.getElementById('drive-signout-btn');
-  if (driveConnected) {
-    if (driveBtn)   driveBtn.style.display   = 'none';
-    if (driveStatus) driveStatus.style.display = 'flex';
-    if (syncBtn)    syncBtn.style.display    = 'inline-flex';
-    if (signOutBtn) signOutBtn.style.display = 'inline-flex';
-  } else {
-    if (driveBtn)   driveBtn.style.display   = 'inline-flex';
-    if (driveStatus) driveStatus.style.display = 'none';
-    if (syncBtn)    syncBtn.style.display    = 'none';
-    if (signOutBtn) signOutBtn.style.display = 'none';
-  }
 }
 
 function updateSyncPill(state, provider) {
@@ -10247,20 +10066,20 @@ function updateHouseholdShareUI() {
     joinedSection.style.display = 'block';
     joinSection.style.display   = 'none';
     ownerSection.style.display  = 'none';
-    if (statusEl) statusEl.textContent = 'Your data syncs to the shared household file. The owner\'s Drive is used — you don\'t need to connect your own.';
+    if (statusEl) statusEl.textContent = 'Your data syncs to the shared household. The owner manages the connection.';
   } else {
     joinedSection.style.display = 'none';
     joinSection.style.display   = 'block';
     ownerSection.style.display  = 'block';
-    if (statusEl) statusEl.textContent = driveConnected
-      ? 'You are the file owner. Generate an invite code for others to join.'
-      : 'Connect Google Drive above, then generate an invite code for others to join.';
+    if (statusEl) statusEl.textContent = kvConnected
+      ? 'You are the household owner. Generate an invite code for others to join.'
+      : 'Sign in above, then generate an invite code for others to join.';
   }
 }
 
 async function createInviteCode() {
-  if (!driveConnected) {
-    toast('Connect Google Drive first');
+  if (!kvConnected) {
+    toast('Sign in first');
     return;
   }
   const btn = document.querySelector('[onclick="createInviteCode()"]');
