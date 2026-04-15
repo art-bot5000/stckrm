@@ -7095,26 +7095,26 @@ async function kvLoginWithPasskey() {
     const finishData = await finishRes.json();
     if (!finishRes.ok) throw new Error(finishData.error || 'Sign-in failed');
 
-    // Fetch the user's data key using the fresh session token
-    let dataKey = null;
-    try {
-      const keyRes  = await fetchKV(`${WORKER_URL}/key/get`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailHash, sessionToken: finishData.sessionToken }),
-      });
-      const keyData = await keyRes.json();
-      if (keyRes.ok && keyData.envelope) {
-        // Key is wrapped — need passphrase to unwrap. Store session, sync will prompt if needed.
-        // For passkey-only accounts the key is stored as a passkey envelope on the server.
-        dataKey = null; // will be fetched on first sync via kvEnsureKey
-      }
-    } catch(e) { /* key fetch optional — kvEnsureKey will handle it */ }
+    const sessionToken = finishData.sessionToken;
 
-    await kvStorePasskeySession(email, emailHash, finishData.sessionToken, dataKey);
+    // Try to get the data key via server-side passkey wrapping (no passphrase needed)
+    let dataKey = await _fetchPasskeyWrappedKey(emailHash, sessionToken, credId);
+
+    if (!dataKey) {
+      // First time on this device — need passphrase once to unwrap the key,
+      // then we store a passkey-wrapped copy so future logins are seamless
+      if (btn) { btn.textContent = '🔑 One moment…'; }
+      dataKey = await _getKeyViaPassphrase(emailHash, sessionToken, credId, errEl);
+      if (!dataKey) {
+        // User cancelled passphrase prompt — abort login
+        if (btn) { btn.textContent = '🔑 Sign in with Face ID / Fingerprint'; btn.disabled = false; }
+        return;
+      }
+    }
+
+    await kvStorePasskeySession(email, emailHash, sessionToken, dataKey);
     if(errEl) errEl.style.display = 'none';
-    // Persist email + passkey=true in cookies after successful passkey login
     persistLoginCookies(email, true);
-    // Returning user — mark protect screen as seen so it doesn't appear again
     localStorage.setItem('stockroom_protect_seen', '1');
     localStorage.setItem('stockroom_seen', '1');
     await postLoginWizardRoute();
@@ -7959,6 +7959,103 @@ function showForgotPassphrase() {
 }
 
 // ── Store passkey session (no encryption key — different model) ──
+// ── Passkey key helpers ────────────────────────────────────
+
+// Try to fetch the data key from the server passkey-wrap store.
+// Returns the CryptoKey if found, null if not yet stored.
+async function _fetchPasskeyWrappedKey(emailHash, sessionToken, credentialId) {
+  try {
+    const res  = await fetchKV(`${WORKER_URL}/key/passkey-unwrap`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash, sessionToken, credentialId }),
+    });
+    if (!res.ok) return null; // 404 = not stored yet, other errors = skip
+    const { rawKeyB64 } = await res.json();
+    if (!rawKeyB64) return null;
+    const rawBytes = Uint8Array.from(atob(rawKeyB64), c => c.charCodeAt(0));
+    const key = await crypto.subtle.importKey('raw', rawBytes, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+    // Cache locally for 24h so page refreshes don't hit the server
+    const keyB64 = btoa(String.fromCharCode(...rawBytes));
+    localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
+      keyData: keyB64, emailHash, expiry: Date.now() + 24 * 60 * 60 * 1000,
+    }));
+    return key;
+  } catch(e) {
+    console.warn('_fetchPasskeyWrappedKey failed:', e.message);
+    return null;
+  }
+}
+
+// Prompt the user for their passphrase once, unwrap the data key,
+// then store a passkey-wrapped copy on the server so future logins
+// don't need the passphrase.
+async function _getKeyViaPassphrase(emailHash, sessionToken, credentialId, errEl) {
+  // Show a clear one-time explanation
+  const result = await showPassphrasePrompt(
+    'One-time setup: enter your passphrase to unlock your data. ' +
+    'After this, Face ID / Fingerprint alone will be enough on this device.'
+  );
+  if (!result) return null;
+  const { passphrase } = result;
+
+  try {
+    // Fetch the passphrase-wrapped envelope
+    const keyRes  = await fetchKV(`${WORKER_URL}/key/get`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash, sessionToken }),
+    });
+    const keyData = await keyRes.json();
+    if (keyRes.status === 401) {
+      if (errEl) { errEl.textContent = 'Incorrect passphrase — try again'; errEl.style.display = 'block'; }
+      return null;
+    }
+
+    let dataKey = null;
+    if (keyRes.ok && !keyData.legacy && keyData.envelope) {
+      try {
+        if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
+          const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
+          dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+        } else {
+          const { wrapKey } = await derivePassphraseWrapKey(passphrase, emailHash, keyData.salt);
+          dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
+        }
+      } catch(e) {
+        if (errEl) { errEl.textContent = 'Incorrect passphrase — try again'; errEl.style.display = 'block'; }
+        return null;
+      }
+    } else {
+      // Legacy: derive from passphrase directly
+      dataKey = await kvDeriveKey(_kvEmail || '', passphrase);
+    }
+
+    if (!dataKey) return null;
+
+    // Store a passkey-wrapped copy so future logins don't need passphrase
+    try {
+      const exported  = await crypto.subtle.exportKey('raw', dataKey);
+      const rawKeyB64 = btoa(String.fromCharCode(...new Uint8Array(exported)));
+      await fetchKV(`${WORKER_URL}/key/passkey-wrap`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash, sessionToken, credentialId, rawKeyB64 }),
+      });
+      // Also cache locally
+      localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
+        keyData: rawKeyB64, emailHash, expiry: Date.now() + 24 * 60 * 60 * 1000,
+      }));
+      console.log('Passkey-wrapped key stored — future logins will not need passphrase ✓');
+    } catch(e) {
+      console.warn('Could not store passkey-wrapped key:', e.message);
+      // Non-fatal — key still works, just needs passphrase next time
+    }
+
+    return dataKey;
+  } catch(e) {
+    if (errEl) { errEl.textContent = e.message; errEl.style.display = 'block'; }
+    return null;
+  }
+}
+
 async function kvStorePasskeySession(email, emailHash, sessionToken, dataKey) {
   _kvEmail        = email;
   _kvEmailHash    = emailHash;
@@ -8702,29 +8799,17 @@ async function kvEnsureKey() {
     }
   } catch(e) {}
 
-  // 2b. Passkey session — fetch key from server using session token (no passphrase needed)
+  // 2b. Passkey session — fetch the server-wrapped data key (no passphrase needed after first setup)
   if (_kvSessionToken && _kvEmailHash) {
     try {
-      const keyRes  = await fetchKV(`${WORKER_URL}/key/get`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailHash: _kvEmailHash, sessionToken: _kvSessionToken }),
-      });
-      const keyData = await keyRes.json();
-      // If server returns a raw unwrapped key for passkey-only accounts
-      if (keyRes.ok && keyData.rawKey) {
-        const raw = Uint8Array.from(atob(keyData.rawKey), c => c.charCodeAt(0));
-        _kvKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
-        if (_kvKey) {
-          const exported = await crypto.subtle.exportKey('raw', _kvKey);
-          const keyB64   = btoa(String.fromCharCode(...new Uint8Array(exported)));
-          localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
-            keyData: keyB64, emailHash: _kvEmailHash,
-            expiry: Date.now() + 24 * 60 * 60 * 1000,
-          }));
-          return true;
-        }
+      // Get stored credential ID for this email hash
+      const storedCreds = JSON.parse(localStorage.getItem('stockroom_passkey_creds') || '{}');
+      const credentialId = storedCreds[_kvEmailHash];
+      if (credentialId) {
+        const key = await _fetchPasskeyWrappedKey(_kvEmailHash, _kvSessionToken, credentialId);
+        if (key) { _kvKey = key; return true; }
       }
-    } catch(e) { console.warn('kvEnsureKey: passkey session key fetch failed:', e.message); }
+    } catch(e) { console.warn('kvEnsureKey: passkey-unwrap failed:', e.message); }
   }
 
   // 3. Passphrase prompt with trust option
@@ -8787,16 +8872,18 @@ async function kvEnsureKey() {
 }
 
 // Show a passphrase prompt modal (replaces browser prompt())
-function showPassphrasePrompt() {
+function showPassphrasePrompt(subtitleOverride = null) {
   return new Promise(resolve => {
     // Remove any existing prompt
     document.getElementById('kv-passphrase-modal')?.remove();
 
     // If we're in a passkey session, explain why passphrase is needed
     const isPasskeySession = _kvAuthMethod === 'passkey';
-    const subtitle = isPasskeySession
-      ? 'Your passkey proved your identity — enter your passphrase once to unlock your encrypted data. It will be remembered for 24 hours.'
-      : `Decrypt your data for <strong style="color:var(--text)">${esc(_kvEmail)}</strong>`;
+    const subtitle = subtitleOverride
+      ? subtitleOverride
+      : isPasskeySession
+        ? 'Your passkey proved your identity — enter your passphrase once to unlock your encrypted data. It will be remembered for 24 hours.'
+        : `Decrypt your data for <strong style="color:var(--text)">${esc(_kvEmail)}</strong>`;
 
     const modal = document.createElement('div');
     modal.id    = 'kv-passphrase-modal';
