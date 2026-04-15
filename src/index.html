@@ -201,7 +201,47 @@
         </div>
 
         <button type="button" class="btn btn-primary btn-xl full" style="width:100%;margin-bottom:0"
-          onclick="if(typeof doLoginContinue==='function'){doLoginContinue();}else{(function(){var e=document.getElementById('kv-login-email');var err=document.getElementById('kv-login-email-error');if(!e){return;}var v=e.value.trim();if(!v||!v.includes('@')){if(err){err.textContent='Enter a valid email address';err.style.display='block';}e.focus();return;}if(err)err.style.display='none';var pk=false;try{pk=localStorage.getItem('stockroom_device_has_passkey')==='true'||localStorage.getItem('stockroom_remembered_passkey')==='true';}catch(ex){}var w=document.getElementById('wizard');if(w)w.style.display='flex';document.body.classList.add('wizard-active');document.querySelectorAll('.wizard-step').forEach(function(s){s.classList.remove('active');});var a=document.getElementById('wizard-step-1b-auth');if(a)a.classList.add('active');var d=document.getElementById('kv-login-email-display');if(d)d.value=v;var real=document.getElementById('kv-login-email');if(real)real.value=v;var pks=document.getElementById('auth-passkey-section');var pps=document.getElementById('auth-passphrase-section');if(pk&&window.PublicKeyCredential){if(pks)pks.style.display='block';if(pps)pps.style.display='none';}else{if(pks)pks.style.display='none';if(pps)pps.style.display='block';setTimeout(function(){var p=document.getElementById('kv-login-pass');if(p)p.focus();},100);}var perr=document.getElementById('kv-login-error');if(perr)perr.style.display='none';})();}">Continue →</button>
+          onclick="(function(){
+            var e=document.getElementById('kv-login-email');
+            var err=document.getElementById('kv-login-email-error');
+            if(!e){if(err){err.textContent='Field missing';err.style.display='block';}return;}
+            var v=e.value.trim();
+            if(!v||!v.includes('@')){if(err){err.textContent='Enter a valid email address';err.style.display='block';}e.focus();return;}
+            if(err)err.style.display='none';
+            var consent=null;try{consent=localStorage.getItem('stockroom_cookie_consent');}catch(ex){}
+            var cb=document.getElementById('remember-me-checkbox');
+            if(cb&&cb.checked&&consent==='granted'){try{localStorage.setItem('stockroom_remembered_email',v);}catch(ex){}}
+            var usePasskey=false;
+            try{
+              usePasskey=localStorage.getItem('stockroom_device_has_passkey')==='true'
+                       ||localStorage.getItem('stockroom_remembered_passkey')==='true';
+            }catch(ex){}
+            var w=document.getElementById('wizard');
+            if(w)w.style.display='flex';
+            document.body.classList.add('wizard-active');
+            document.querySelectorAll('.wizard-step').forEach(function(s){s.classList.remove('active');});
+            var a=document.getElementById('wizard-step-1b-auth');
+            if(a)a.classList.add('active');
+            var d=document.getElementById('kv-login-email-display');
+            if(d)d.value=v;
+            var real=document.getElementById('kv-login-email');
+            if(real)real.value=v;
+            var pk=document.getElementById('auth-passkey-section');
+            var pp=document.getElementById('auth-passphrase-section');
+            var pkLink=document.getElementById('auth-use-passkey-link');
+            if(usePasskey&&window.PublicKeyCredential){
+              if(pk)pk.style.display='block';
+              if(pp)pp.style.display='none';
+              if(pkLink)pkLink.style.display='none';
+            }else{
+              if(pk)pk.style.display='none';
+              if(pp)pp.style.display='block';
+              if(pkLink)pkLink.style.display=window.PublicKeyCredential?'inline-flex':'none';
+              setTimeout(function(){var p=document.getElementById('kv-login-pass');if(p)p.focus();},100);
+            }
+            var perr=document.getElementById('kv-login-error');
+            if(perr)perr.style.display='none';
+          })()">Continue →</button>
         <p id="kv-login-email-error" style="font-size:12px;color:var(--danger);margin-top:10px;display:none"></p>
       </div>
 
@@ -1747,14 +1787,17 @@
 
 <script src="app.js" defer></script>
 <script>
-// Early stubs — ensure critical functions are defined before defer app.js loads.
-// app.js overwrites these with full implementations once it loads.
-if (typeof doLoginContinue === 'undefined') {
-  window.doLoginContinue = function() {
-    // app.js hasn't loaded yet — wait and retry
-    setTimeout(function() { if (typeof doLoginContinue === 'function') doLoginContinue(); }, 200);
-  };
-}
+// Show passkey hint immediately if device has a registered passkey (before app.js loads)
+(function() {
+  try {
+    var hasPk = localStorage.getItem('stockroom_device_has_passkey') === 'true'
+             || localStorage.getItem('stockroom_remembered_passkey')  === 'true';
+    if (hasPk) {
+      var hint = document.getElementById('login-passkey-hint');
+      if (hint) hint.style.display = 'block';
+    }
+  } catch(e) {}
+})();
 // Lazy-load scanner.js only when camera button is tapped
 window._scannerLoaded = false;
 window._loadScanner = function() {
