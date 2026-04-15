@@ -7114,6 +7114,9 @@ async function kvLoginWithPasskey() {
     if(errEl) errEl.style.display = 'none';
     // Persist email + passkey=true in cookies after successful passkey login
     persistLoginCookies(email, true);
+    // Returning user — mark protect screen as seen so it doesn't appear again
+    localStorage.setItem('stockroom_protect_seen', '1');
+    localStorage.setItem('stockroom_seen', '1');
     await postLoginWizardRoute();
   } catch(err) {
     if (err.name === 'NotAllowedError') {
@@ -7675,21 +7678,38 @@ async function dismissDecryptErrorAndReauth() {
   if (!result) return;
   const { passphrase, trust } = result;
   try {
-    const verifier = await kvMakeVerifier(passphrase, _kvEmailHash);
+    // Build auth credentials — passkey sessions have no verifier, use sessionToken instead
+    const verifier = _kvVerifier || (await kvMakeVerifier(passphrase, _kvEmailHash));
     let dataKey;
     try {
+      const authBody = _kvSessionToken && !_kvVerifier
+        ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken }
+        : { emailHash: _kvEmailHash, verifier };
       const keyRes  = await fetchKV(`${WORKER_URL}/key/get`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailHash: _kvEmailHash, verifier }),
+        body: JSON.stringify(authBody),
       });
       const keyData = await keyRes.json();
       if (keyRes.status === 401) { toast('Incorrect passphrase — try again'); showDecryptErrorBanner(); return; }
       if (keyRes.ok && !keyData.legacy && keyData.envelope) {
-        const { wrapKey } = await derivePassphraseWrapKey(passphrase, _kvEmailHash, keyData.salt);
-        dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
+        // Try v2 unwrap first, fall back to v1
+        try {
+          if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
+            const wrapKey = await derivePassphraseWrapKeyV2(passphrase, _kvEmailHash, keyData.kdfSalt);
+            dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+          } else {
+            const { wrapKey } = await derivePassphraseWrapKey(passphrase, _kvEmailHash, keyData.salt);
+            dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
+          }
+        } catch(unwrapErr) {
+          console.warn('Key unwrap failed:', unwrapErr.message);
+        }
       }
-    } catch(e) {}
-    if (!dataKey) dataKey = await kvDeriveKey(_kvEmail, passphrase);
+    } catch(e) { console.warn('Key fetch failed:', e.message); }
+    if (!dataKey) {
+      // Last resort: v1 derive (legacy accounts only)
+      dataKey = await kvDeriveKey(_kvEmail, passphrase);
+    }
     _kvKey = dataKey;
     // Re-cache as fresh 4-hour session
     try {
@@ -7987,6 +8007,9 @@ async function kvRestorePasskeySession(session) {
   kvConnected     = true;
   // Ensure device flag is set so login screen shows passkey option next time
   setDeviceHasPasskey(true);
+  // Returning user — stamp protect_seen so protect screen doesn't reappear
+  localStorage.setItem('stockroom_protect_seen', '1');
+  localStorage.setItem('stockroom_seen', '1');
   const el = document.getElementById('kv-account-email');
   if (el) el.textContent = email;
   updateSyncUI();
@@ -9010,7 +9033,12 @@ async function kvSyncNow(silent = false) {
       try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
       try { await removeWrappedKey(getOrCreateDeviceId()); } catch(e) {}
       updateSyncPill('error');
-      showDecryptErrorBanner();
+      // Don't show the decrypt error banner if the wizard is active (user is in login flow)
+      // or if this was a silent background sync (would be confusing/unexpected)
+      const wizardActive = document.body.classList.contains('wizard-active');
+      if (!wizardActive && !_wasSilent) {
+        showDecryptErrorBanner();
+      }
       return;
     }
     if (!_wasSilent) updateSyncPill('error');
@@ -11073,8 +11101,18 @@ async function init() {
   // Restore KV session
   const kvRestored = await kvRestoreSession();
   if (kvRestored) {
-    // If we have a session, sync on load
-    setTimeout(() => kvSyncNow(true), 800);
+    // If we have a session, sync on load — but for passkey sessions,
+    // ensure the data key is available first (avoids decrypt error banner)
+    if (_kvAuthMethod === 'passkey' && !_kvKey) {
+      // Try to get the cached key silently; if not available, wait for user to trigger sync
+      const keyOk = await kvEnsureKey().catch(() => false);
+      if (keyOk) {
+        setTimeout(() => kvSyncNow(true), 800);
+      }
+      // If keyOk is false, the passphrase prompt was cancelled — don't auto-sync
+    } else {
+      setTimeout(() => kvSyncNow(true), 800);
+    }
   }
 
   // Restore Dropbox state (disabled in KV build)
