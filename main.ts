@@ -879,6 +879,79 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
+  // ── Passkey key wrapping ───────────────────────────────
+  // Stores a copy of the data key encrypted with a server-side secret
+  // tied to the passkey credential. This allows passkey-authenticated
+  // sessions to retrieve the data key without a passphrase.
+  //
+  // The client sends the raw data key bytes (AES-256), which the server
+  // encrypts with a per-credential secret before storing.
+  // The server-side secret is derived from the KV master secret + credentialId.
+  //
+  // POST /key/passkey-wrap
+  // Body: { emailHash, sessionToken, credentialId, rawKeyB64 }
+  // Returns: { ok: true }
+  if (url.pathname === '/key/passkey-wrap' && request.method === 'POST') {
+    try {
+      const { emailHash, sessionToken, credentialId, rawKeyB64 } = await request.json();
+      if (!emailHash || !sessionToken || !credentialId || !rawKeyB64) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      // Verify session
+      const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+      if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      // Verify the credential belongs to this user
+      const cred = await kvGet(['passkey', emailHash, credentialId]);
+      if (!cred.value) return json({ error: 'Credential not found' }, corsHeaders, 404);
+
+      // Encrypt the raw data key with AES-GCM using a server-derived secret
+      // Secret = SHA-256(KV_MASTER_SECRET + credentialId + emailHash)
+      const masterSecret = Deno.env.get('KV_MASTER_SECRET') || 'stockroom-default-secret-change-me';
+      const secretMaterial = new TextEncoder().encode(masterSecret + ':' + credentialId + ':' + emailHash);
+      const secretHash = await crypto.subtle.digest('SHA-256', secretMaterial);
+      const wrapKey = await crypto.subtle.importKey('raw', secretHash, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const rawKeyBytes = Uint8Array.from(atob(rawKeyB64), c => c.charCodeAt(0));
+      const wrapped = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, wrapKey, rawKeyBytes);
+      const ivB64      = btoa(String.fromCharCode(...iv));
+      const wrappedB64 = btoa(String.fromCharCode(...new Uint8Array(wrapped)));
+
+      await kvSet(['passkey_key', emailHash, credentialId], JSON.stringify({ iv: ivB64, wrapped: wrappedB64 }));
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // GET /key/passkey-unwrap
+  // Body: { emailHash, sessionToken, credentialId }
+  // Returns: { ok: true, rawKeyB64 }  — the raw data key bytes for this passkey
+  if (url.pathname === '/key/passkey-unwrap' && request.method === 'POST') {
+    try {
+      const { emailHash, sessionToken, credentialId } = await request.json();
+      if (!emailHash || !sessionToken || !credentialId) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      // Verify session
+      const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+      if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      // Get stored wrapped key
+      const stored = await kvGet(['passkey_key', emailHash, credentialId]);
+      if (!stored.value) return json({ error: 'No passkey key stored — passphrase required once' }, corsHeaders, 404);
+      const { iv: ivB64, wrapped: wrappedB64 } = JSON.parse(stored.value);
+
+      // Decrypt with server-derived secret
+      const masterSecret = Deno.env.get('KV_MASTER_SECRET') || 'stockroom-default-secret-change-me';
+      const secretMaterial = new TextEncoder().encode(masterSecret + ':' + credentialId + ':' + emailHash);
+      const secretHash = await crypto.subtle.digest('SHA-256', secretMaterial);
+      const wrapKey = await crypto.subtle.importKey('raw', secretHash, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+      const iv = Uint8Array.from(atob(ivB64), c => c.charCodeAt(0));
+      const wrappedBytes = Uint8Array.from(atob(wrappedB64), c => c.charCodeAt(0));
+      const rawKeyBytes = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wrapKey, wrappedBytes);
+      const rawKeyB64 = btoa(String.fromCharCode(...new Uint8Array(rawKeyBytes)));
+
+      return json({ ok: true, rawKeyB64 }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
   // ── Update passphrase envelope ─────────────────────────
   // Called when user changes passphrase — re-wraps DATA KEY
   if (url.pathname === '/key/update-passphrase' && request.method === 'POST') {
