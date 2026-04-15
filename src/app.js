@@ -215,10 +215,16 @@ let dropboxConnected = false;
 function openModal(id) {
   const el = document.getElementById(id);
   if (!el) { console.error('openModal: element not found:', id); return; }
-  if (_vtSupported() && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    el.style.viewTransitionName = 'modal-layer';
-    document.startViewTransition(() => { el.classList.add('open'); });
-  } else {
+  try {
+    if (_vtSupported() && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      el.style.viewTransitionName = 'modal-layer';
+      document.startViewTransition(() => { el.classList.add('open'); });
+    } else {
+      el.classList.add('open');
+    }
+  } catch(e) {
+    // View transition failed — open directly
+    console.warn('openModal: view transition failed, opening directly', e.message);
     el.classList.add('open');
   }
 }
@@ -11229,15 +11235,18 @@ async function init() {
   // Restore KV session
   const kvRestored = await kvRestoreSession();
   if (kvRestored) {
-    // If we have a session, sync on load — but for passkey sessions,
-    // ensure the data key is available first (avoids decrypt error banner)
-    if (_kvAuthMethod === 'passkey' && !_kvKey) {
-      // Try to get the cached key silently; if not available, wait for user to trigger sync
+    // Always ensure the data key is available before syncing.
+    // If _kvKey is already set (trusted device / 4h cache), this is instant.
+    // If not, kvEnsureKey will prompt cleanly BEFORE the stockroom shows.
+    if (!_kvKey) {
+      // Show overlay so user knows something is happening
+      showDataLoadingOverlay('Unlocking your data…');
       const keyOk = await kvEnsureKey().catch(() => false);
+      hideDataLoadingOverlay();
       if (keyOk) {
-        setTimeout(() => kvSyncNow(true), 800);
+        setTimeout(() => kvSyncNow(true), 400);
       }
-      // If keyOk is false, the passphrase prompt was cancelled — don't auto-sync
+      // If keyOk is false user cancelled — leave them on current screen with sign-in option
     } else {
       setTimeout(() => kvSyncNow(true), 800);
     }
