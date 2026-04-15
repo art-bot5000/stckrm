@@ -7084,7 +7084,22 @@ async function kvLoginWithPasskey() {
     const finishData = await finishRes.json();
     if (!finishRes.ok) throw new Error(finishData.error || 'Sign-in failed');
 
-    await kvStorePasskeySession(email, emailHash, finishData.sessionToken);
+    // Fetch the user's data key using the fresh session token
+    let dataKey = null;
+    try {
+      const keyRes  = await fetchKV(`${WORKER_URL}/key/get`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash, sessionToken: finishData.sessionToken }),
+      });
+      const keyData = await keyRes.json();
+      if (keyRes.ok && keyData.envelope) {
+        // Key is wrapped — need passphrase to unwrap. Store session, sync will prompt if needed.
+        // For passkey-only accounts the key is stored as a passkey envelope on the server.
+        dataKey = null; // will be fetched on first sync via kvEnsureKey
+      }
+    } catch(e) { /* key fetch optional — kvEnsureKey will handle it */ }
+
+    await kvStorePasskeySession(email, emailHash, finishData.sessionToken, dataKey);
     if(errEl) errEl.style.display = 'none';
     // Persist email + passkey=true in cookies after successful passkey login
     persistLoginCookies(email, true);
@@ -7904,7 +7919,7 @@ async function kvStorePasskeySession(email, emailHash, sessionToken, dataKey) {
   _kvAuthMethod   = 'passkey';
   kvConnected     = true;
   // Use provided real data key; fall back to random if none (old call sites)
-  _kvKey = dataKey || await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+  _kvKey = dataKey || null; // null = kvEnsureKey will fetch on first sync
   // Store session
   try {
     localStorage.setItem('stockroom_kv_session', JSON.stringify({ email, emailHash, sessionToken, authMethod: 'passkey' }));
@@ -8636,6 +8651,31 @@ async function kvEnsureKey() {
     }
   } catch(e) {}
 
+  // 2b. Passkey session — fetch key from server using session token (no passphrase needed)
+  if (_kvSessionToken && _kvEmailHash) {
+    try {
+      const keyRes  = await fetchKV(`${WORKER_URL}/key/get`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash: _kvEmailHash, sessionToken: _kvSessionToken }),
+      });
+      const keyData = await keyRes.json();
+      // If server returns a raw unwrapped key for passkey-only accounts
+      if (keyRes.ok && keyData.rawKey) {
+        const raw = Uint8Array.from(atob(keyData.rawKey), c => c.charCodeAt(0));
+        _kvKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+        if (_kvKey) {
+          const exported = await crypto.subtle.exportKey('raw', _kvKey);
+          const keyB64   = btoa(String.fromCharCode(...new Uint8Array(exported)));
+          localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
+            keyData: keyB64, emailHash: _kvEmailHash,
+            expiry: Date.now() + 24 * 60 * 60 * 1000,
+          }));
+          return true;
+        }
+      }
+    } catch(e) { console.warn('kvEnsureKey: passkey session key fetch failed:', e.message); }
+  }
+
   // 3. Passphrase prompt with trust option
   const result = await showPassphrasePrompt();
   if (!result) return false;
@@ -8701,21 +8741,25 @@ function showPassphrasePrompt() {
     // Remove any existing prompt
     document.getElementById('kv-passphrase-modal')?.remove();
 
+    // If we're in a passkey session, explain why passphrase is needed
+    const isPasskeySession = _kvAuthMethod === 'passkey';
+    const subtitle = isPasskeySession
+      ? 'Your passkey proved your identity — enter your passphrase once to unlock your encrypted data. It will be remembered for 24 hours.'
+      : `Decrypt your data for <strong style="color:var(--text)">${esc(_kvEmail)}</strong>`;
+
     const modal = document.createElement('div');
     modal.id    = 'kv-passphrase-modal';
     modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
     modal.innerHTML = `
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px 24px;width:100%;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,0.4)">
-        <div style="font-size:32px;margin-bottom:12px;text-align:center">🔑</div>
-        <h3 style="font-size:17px;font-weight:700;margin-bottom:6px;text-align:center">Enter passphrase</h3>
-        <p style="font-size:13px;color:var(--muted);margin-bottom:18px;text-align:center;line-height:1.5">
-          Decrypt your data for <strong style="color:var(--text)">${esc(_kvEmail)}</strong>
-        </p>
+        <div style="font-size:32px;margin-bottom:12px;text-align:center">${isPasskeySession ? '🔓' : '🔑'}</div>
+        <h3 style="font-size:17px;font-weight:700;margin-bottom:6px;text-align:center">${isPasskeySession ? 'One-time unlock needed' : 'Enter passphrase'}</h3>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:18px;text-align:center;line-height:1.5">${subtitle}</p>
         <input type="password" id="kv-pp-input" placeholder="Your passphrase"
           style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--sans);font-size:15px;outline:none;margin-bottom:8px">
         <p id="kv-pp-error" style="font-size:12px;color:var(--danger);margin-bottom:12px;display:none">Incorrect passphrase</p>
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin-bottom:18px;cursor:pointer">
-          <input type="checkbox" id="kv-pp-trust" style="width:16px;height:16px;accent-color:var(--accent)">
+          <input type="checkbox" id="kv-pp-trust" style="width:16px;height:16px;accent-color:var(--accent)" ${isPasskeySession ? 'checked' : ''}>
           Trust this device (stay signed in permanently)
         </label>
         <div style="display:flex;gap:10px">

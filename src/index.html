@@ -270,9 +270,9 @@
           <button type="button" class="btn btn-ghost" style="font-size:12px;padding:3px 10px" onclick="loginBackToEmail()">⇄ Not you?</button>
         </div>
 
-        <!-- Passkey path -->
+        <!-- Passkey path -->\
         <div id="auth-passkey-section" style="display:none">
-          <button type="button" class="btn btn-primary btn-xl full" style="margin-bottom:14px" onclick="kvLoginWithPasskey()">
+          <button type="button" class="btn btn-primary btn-xl full" style="margin-bottom:14px" onclick="if(typeof kvLoginWithPasskey==='function'){kvLoginWithPasskey();}else{var err=document.getElementById('kv-login-error');if(err){err.textContent='App still loading — please wait a moment and try again';err.style.display='block';}}">
             🔑 Sign in with Face ID / Fingerprint
           </button>
           <div id="auth-passkey-or-divider" style="text-align:center;margin-bottom:14px;display:flex;align-items:center;gap:10px">
@@ -280,6 +280,9 @@
             <span style="font-size:12px;color:var(--muted)">or</span>
             <div style="flex:1;height:1px;background:var(--border)"></div>
           </div>
+          <button type="button" class="btn btn-ghost btn-xl full" style="margin-bottom:14px;font-size:14px" onclick="(function(){var pk=document.getElementById('auth-passkey-section');var pp=document.getElementById('auth-passphrase-section');if(pk)pk.style.display='none';if(pp)pp.style.display='block';setTimeout(function(){document.getElementById('kv-login-pass')?.focus();},100);})()">
+            Use passphrase instead
+          </button>
         </div>
 
         <!-- Passphrase path -->
@@ -295,7 +298,7 @@
           <button type="button" class="btn btn-primary btn-xl full" style="margin-bottom:12px" onclick="kvLogin()">Sign in →</button>
           <div style="text-align:center;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
             <button type="button" class="btn btn-ghost" style="font-size:13px;color:var(--muted)" onclick="showForgotPassphrase()">Forgot passphrase?</button>
-            <button type="button" id="auth-use-passkey-link" class="btn btn-ghost" style="font-size:13px;color:var(--muted);display:none" onclick="showAuthPasskey()">Use passkey instead</button>
+            <button type="button" id="auth-use-passkey-link" class="btn btn-ghost" style="font-size:13px;color:var(--muted);display:none" onclick="(function(){var pk=document.getElementById('auth-passkey-section');var pp=document.getElementById('auth-passphrase-section');var lnk=document.getElementById('auth-use-passkey-link');if(pk)pk.style.display='block';if(pp)pp.style.display='none';if(lnk)lnk.style.display='none';})()">Use passkey instead</button>
           </div>
         </div>
 
