@@ -7115,7 +7115,9 @@ async function kvLoginWithPasskey() {
     await kvStorePasskeySession(email, emailHash, sessionToken, dataKey);
     if(errEl) errEl.style.display = 'none';
     persistLoginCookies(email, true);
+    // Stamp permanent setup flags — these survive sign-out
     localStorage.setItem('stockroom_protect_seen', '1');
+    localStorage.setItem('stockroom_country_set', '1');
     localStorage.setItem('stockroom_seen', '1');
     await postLoginWizardRoute();
   } catch(err) {
@@ -8104,8 +8106,9 @@ async function kvRestorePasskeySession(session) {
   kvConnected     = true;
   // Ensure device flag is set so login screen shows passkey option next time
   setDeviceHasPasskey(true);
-  // Returning user — stamp protect_seen so protect screen doesn't reappear
+  // Stamp permanent setup flags — these survive sign-out and should always be set for returning users
   localStorage.setItem('stockroom_protect_seen', '1');
+  localStorage.setItem('stockroom_country_set', '1');
   localStorage.setItem('stockroom_seen', '1');
   const el = document.getElementById('kv-account-email');
   if (el) el.textContent = email;
@@ -9181,11 +9184,12 @@ async function kvSignOut() {
   localStorage.removeItem('stockroom_kv_key_fallback');
   localStorage.removeItem('stockroom_kv_session_key');
   try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
-  // Clear session credentials
+  // Clear session credentials (but keep permanent setup flags)
   localStorage.removeItem('stockroom_kv_session');
   localStorage.removeItem('stockroom_seen');
-  localStorage.removeItem('stockroom_country_set');
-  localStorage.removeItem('stockroom_protect_seen');
+  // Note: keep stockroom_protect_seen and stockroom_country_set — they are permanent
+  // one-time setup flags, not session data. Removing them causes the protect/country
+  // screens to re-appear on every login, which is wrong.
   // Clear local app data (encrypted copy stays on server)
   items    = [];
   settings = {};
