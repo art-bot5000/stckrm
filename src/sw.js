@@ -1,5 +1,5 @@
 // ── INCREMENT THIS VERSION NUMBER EVERY TIME YOU DEPLOY ──────
-const CACHE_VERSION = 'stockroom-kv-v80';
+const CACHE_VERSION = 'stockroom-kv-v81';
 const CACHE_NAME    = CACHE_VERSION;
 
 const CACHE_URLS = [

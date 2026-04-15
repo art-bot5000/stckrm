@@ -5150,7 +5150,10 @@ function openAddModal() {
   document.getElementById('item-readonly-view').style.display = 'none';
   document.getElementById('item-edit-view').style.display = 'block';
   tempStorePrices = [];
-  renderTempStorePrices();
+  // renderTempStorePrices is in scanner.js — load it first if needed
+  if (typeof renderTempStorePrices === 'function') {
+    renderTempStorePrices();
+  }
   document.getElementById('store-prices-section').style.display = 'none';
   document.getElementById('f-name').value = '';
   document.getElementById('f-category').value = 'Kitchen';
@@ -5199,9 +5202,9 @@ function openEditModal(id) {
   // Show readonly, hide edit form
   document.getElementById('item-readonly-view').style.display = 'block';
   document.getElementById('item-edit-view').style.display = 'none';
-  // Load store prices
+  // Load store prices (renderTempStorePrices is in scanner.js)
   tempStorePrices = JSON.parse(JSON.stringify(item.storePrices || []));
-  renderTempStorePrices();
+  if (typeof renderTempStorePrices === 'function') renderTempStorePrices();
   if (tempStorePrices.length) document.getElementById('store-prices-section').style.display = 'block';
 
   // Pre-populate edit form fields (ready for when user clicks Edit)
@@ -10201,8 +10204,9 @@ async function decryptWithShareKey(shareKey, ciphertext) {
 
 // joinViaShareCode — replaced by handleShareJoinLink + completePendingJoin
 async function joinViaShareCode(code) {
-  // Legacy shim — now handled by the auth-gated flow
-  await handleShareJoinLink(code);
+  // Legacy shim — load scanner.js which defines handleShareJoinLink
+  await window._loadScanner().catch(() => {});
+  if (typeof handleShareJoinLink === 'function') await handleShareJoinLink(code);
 }
 
 function leaveShare() {
