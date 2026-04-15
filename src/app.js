@@ -5991,7 +5991,7 @@ async function syncNow() {
       if (remote.groceries) {
         const remoteG = remote.groceries;
         const localGEmpty = groceryItems.length === 0;
-        if (remoteWins || localGEmpty || remoteG.length > groceryItems.length) { groceryItems = remoteG; await saveGrocery(); }
+        if (remoteWins || localGEmpty || remoteG.length > groceryItems.length) { groceryItems = remoteG; await _saveGroceryLocal(); }
       }
       if (remote.departments?.length) {
         const localDEmpty = groceryDepts.length === 0;
@@ -6856,8 +6856,8 @@ async function kvLogin() {
       body: JSON.stringify({ emailHash, verifier }),
     });
     const data = await res.json();
-    if (res.status === 404) throw new Error('Account not found — check your email or create a new account');
-    if (res.status === 401) throw new Error('Incorrect passphrase');
+    if (res.status === 404) throw new Error('Account not found for ' + email + ' — check your email address, or create a new account');
+    if (res.status === 401) throw new Error('Incorrect passphrase — try again');
     if (!res.ok) throw new Error(data.error || 'Sign-in failed');
 
     // Fetch key envelope — response carries cryptoVersion, kdfSalt, migrationDue
@@ -7324,6 +7324,8 @@ function showProtectDataScreen(recoveryCodes, isMigration = false) {
     document.getElementById('protect-continue-btn').style.opacity     = '0.5';
   } else {
     document.getElementById('protect-codes-hidden').innerHTML = '<p style="font-size:12px;color:var(--ok);line-height:1.5">✓ Recovery codes already set up. Generate new ones in Settings → Account if needed.</p>';
+    // Tick the checkbox so updateProtectContinueBtn() doesn't re-disable the button
+    document.getElementById('protect-codes-checkbox').checked         = true;
     document.getElementById('protect-continue-btn').disabled  = false;
     document.getElementById('protect-continue-btn').style.opacity = '1';
   }
@@ -8940,8 +8942,13 @@ function showPassphrasePrompt(subtitleOverride = null) {
 
 // ── Sync: push encrypted data to KV ────────
 async function kvPush() {
-  if (!kvConnected || !_kvEmailHash || !_kvVerifier) {
-    console.warn('kvPush: missing credentials, skipping');
+  if (!kvConnected || !_kvEmailHash) {
+    console.warn('kvPush: not connected, skipping');
+    return;
+  }
+  // Require either passphrase verifier OR passkey session token
+  if (!_kvVerifier && !_kvSessionToken) {
+    console.warn('kvPush: missing credentials (no verifier or sessionToken), skipping');
     return;
   }
   if (!await kvEnsureKey()) return;
@@ -9078,7 +9085,7 @@ async function kvSyncNow(silent = false) {
         const localEmpty = groceryItems.length === 0;
         if (remoteWins || localEmpty || remote.groceries.length > groceryItems.length) {
           groceryItems = remote.groceries;
-          await saveGrocery();
+          await _saveGroceryLocal();
         }
       }
       if (remote.departments?.length) {
@@ -9607,9 +9614,15 @@ async function loadGrocery() {
   if (!groceryDepts || groceryDepts.length === 0) groceryDepts = DEFAULT_DEPTS.map(d => ({...d}));
 }
 
-async function saveGrocery() {
+// Save groceries to IDB and profile only — no sync trigger.
+// Used internally (e.g. from within a sync) to avoid re-entrant sync loops.
+async function _saveGroceryLocal() {
   await dbPut('groceries', 'items', groceryItems);
   if (activeProfile) await saveCurrentProfile();
+}
+
+async function saveGrocery() {
+  await _saveGroceryLocal();
   _syncQueue.enqueue();
   bcPost({ type: 'GROCERY_CHANGED' });
 }
