@@ -194,6 +194,7 @@ let items = [];
 let settings = { threshold: 20, country: 'GB' };
 let editingId = null;
 let loggingId = null;
+let tempStorePrices = []; // also declared in scanner.js; declared here so openAddModal works before scanner.js loads
 let activeFilter = 'all';
 let activeCadence = 'all';
 let activeStore = 'all';
@@ -5143,40 +5144,40 @@ function exportShoppingList() {
 
 
 function openAddModal() {
-  editingId = null;
-  document.getElementById('item-modal-title').textContent = 'Add Item';
-  document.getElementById('item-modal-subtitle').textContent = 'Track a new consumable in your stockroom.';
-  // Always show edit form for new items
-  document.getElementById('item-readonly-view').style.display = 'none';
-  document.getElementById('item-edit-view').style.display = 'block';
-  tempStorePrices = [];
-  // renderTempStorePrices is in scanner.js — load it first if needed
-  if (typeof renderTempStorePrices === 'function') {
-    renderTempStorePrices();
+  try {
+    editingId = null;
+    const titleEl = document.getElementById('item-modal-title');
+    const subtitleEl = document.getElementById('item-modal-subtitle');
+    const readonlyEl = document.getElementById('item-readonly-view');
+    const editEl = document.getElementById('item-edit-view');
+    if (titleEl) titleEl.textContent = 'Add Item';
+    if (subtitleEl) subtitleEl.textContent = 'Track a new consumable in your stockroom.';
+    if (readonlyEl) readonlyEl.style.display = 'none';
+    if (editEl) editEl.style.display = 'block';
+    tempStorePrices = [];
+    if (typeof renderTempStorePrices === 'function') renderTempStorePrices();
+    const spSection = document.getElementById('store-prices-section');
+    if (spSection) spSection.style.display = 'none';
+    const fields = { 'f-name':'', 'f-category':'Kitchen', 'f-cadence':'monthly',
+                     'f-qty':1, 'f-months':1, 'f-url':'', 'f-notes':'',
+                     'f-last-date':today(), 'f-last-qty':1, 'f-last-price':'', 'f-started-using':'',
+                     'price-search-input':'' };
+    Object.entries(fields).forEach(([id, val]) => {
+      const el = document.getElementById(id);
+      if (el) el.value = val;
+    });
+    pendingImageUrl = null;
+    clearProductImage();
+    const storeField = document.getElementById('f-store');
+    if (storeField) { storeField.value = ''; storeField.dataset.manual = ''; storeField.dataset.autoFilled = ''; }
+    currentRating = 0;
+    renderStars();
+    const pl = document.getElementById('price-links');
+    if (pl) pl.innerHTML = '';
+    openModal('item-modal');
+  } catch(e) {
+    console.error('openAddModal error:', e);
   }
-  document.getElementById('store-prices-section').style.display = 'none';
-  document.getElementById('f-name').value = '';
-  document.getElementById('f-category').value = 'Kitchen';
-  document.getElementById('f-cadence').value = 'monthly';
-  document.getElementById('f-qty').value = 1;
-  document.getElementById('f-months').value = 1;
-  document.getElementById('f-url').value = '';
-  pendingImageUrl = null;
-  clearProductImage();
-  const storeField = document.getElementById('f-store');
-  storeField.value = '';
-  storeField.dataset.manual = '';
-  storeField.dataset.autoFilled = '';
-  document.getElementById('f-notes').value = '';
-  currentRating = 0;
-  renderStars();
-  document.getElementById('f-last-date').value = today();
-  document.getElementById('f-last-qty').value = 1;
-  document.getElementById('f-last-price').value = '';
-  document.getElementById('f-started-using').value = '';
-  document.getElementById('price-search-input').value = '';
-  document.getElementById('price-links').innerHTML = '';
-  openModal('item-modal');
 }
 
 function openEditModal(id) {
@@ -9118,8 +9119,9 @@ async function kvSyncNow(silent = false) {
     await _saveSettings();
     const tombstones = await loadDeletedIds();
     await saveDeletedIds(tombstones);
-    // Only push if we have local data worth pushing
-    if (kvConnected && !_shareState && items.length > 0) {
+    // Push if we have any local data — items OR groceries OR reminders
+    const hasLocalData = items.length > 0 || groceryItems.length > 0 || reminders.length > 0;
+    if (kvConnected && !_shareState && hasLocalData) {
       await kvPush();
     } else if (kvConnected && !_shareState) {
       // Nothing local to push — pull was enough

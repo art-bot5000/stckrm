@@ -1832,21 +1832,6 @@ if (typeof selectCountry === 'undefined') {
   };
 }
 // Lazy-load scanner.js only when camera button is tapped
-// openAddModal stub — works before defer app.js loads
-if (typeof openAddModal === 'undefined') {
-  window.openAddModal = function() {
-    // Queue the call until app.js has loaded and defined the real function
-    var interval = setInterval(function() {
-      if (typeof openAddModal === 'function' && openAddModal !== window._openAddModalStub) {
-        clearInterval(interval);
-        openAddModal();
-      }
-    }, 50);
-    // Give up after 5s
-    setTimeout(function() { clearInterval(interval); }, 5000);
-  };
-  window._openAddModalStub = window.openAddModal;
-}
 window._scannerLoaded = false;
 window._loadScanner = function() {
   if (window._scannerLoaded) return Promise.resolve();
