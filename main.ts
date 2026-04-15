@@ -628,9 +628,12 @@ Deno.serve(async (request) => {
           atob(authenticatorData.replace(/-/g,'+').replace(/_/g,'/')), c => c.charCodeAt(0)
         );
 
-        // 2. Hash clientDataJSON (the raw base64url string from the client)
-        const clientDataRaw   = new TextEncoder().encode(clientDataJSON);
-        const clientDataHash  = new Uint8Array(await crypto.subtle.digest('SHA-256', clientDataRaw));
+        // 2. Hash clientDataJSON bytes (must decode from base64url first — the raw bytes
+        //    are what the authenticator signed, not the base64url-encoded string)
+        const clientDataBytes = Uint8Array.from(
+          atob(clientDataJSON.replace(/-/g,'+').replace(/_/g,'/').replace(/\s/g,'')), c => c.charCodeAt(0)
+        );
+        const clientDataHash  = new Uint8Array(await crypto.subtle.digest('SHA-256', clientDataBytes));
 
         // 3. Build signed data = authData || SHA256(clientDataJSON)
         const signedData = new Uint8Array(authDataBytes.length + clientDataHash.length);
