@@ -5989,13 +5989,16 @@ async function syncNow() {
       }
       if (remote.groceries) {
         const remoteG = remote.groceries;
-        if (remoteWins || remoteG.length > groceryItems.length) { groceryItems = remoteG; await saveGrocery(); }
+        const localGEmpty = groceryItems.length === 0;
+        if (remoteWins || localGEmpty || remoteG.length > groceryItems.length) { groceryItems = remoteG; await saveGrocery(); }
       }
       if (remote.departments?.length) {
-        if (remoteWins || remote.departments.length > groceryDepts.length) { groceryDepts = remote.departments; await saveGroceryDepts(); }
+        const localDEmpty = groceryDepts.length === 0;
+        if (remoteWins || localDEmpty || remote.departments.length > groceryDepts.length) { groceryDepts = remote.departments; await saveGroceryDepts(); }
       }
       if (remote.reminders && Array.isArray(remote.reminders)) {
-        if (remoteWins || remote.reminders.length > reminders.length) { reminders = remote.reminders; await saveReminders(); }
+        const localREmpty = reminders.length === 0;
+        if (remoteWins || localREmpty || remote.reminders.length > reminders.length) { reminders = remote.reminders; await saveReminders(); }
       }
       if (remote.deletedIds && Array.isArray(remote.deletedIds)) {
         const merged = await loadDeletedIds();
@@ -9070,13 +9073,23 @@ async function kvSyncNow(silent = false) {
         await _saveSettings();
       }
       if (remote.groceries) {
-        if (remoteWins || remote.groceries.length > groceryItems.length) { groceryItems = remote.groceries; await saveGrocery(); }
+        // Accept remote if: remote is newer, OR local is empty, OR remote has more items
+        const localEmpty = groceryItems.length === 0;
+        if (remoteWins || localEmpty || remote.groceries.length > groceryItems.length) {
+          groceryItems = remote.groceries;
+          await saveGrocery();
+        }
       }
       if (remote.departments?.length) {
-        if (remoteWins || remote.departments.length > groceryDepts.length) { groceryDepts = remote.departments; await saveGroceryDepts(); }
+        const localDeptsEmpty = groceryDepts.length === 0;
+        if (remoteWins || localDeptsEmpty || remote.departments.length > groceryDepts.length) {
+          groceryDepts = remote.departments;
+          await saveGroceryDepts();
+        }
       }
       if (remote.reminders && Array.isArray(remote.reminders)) {
-        if (remoteWins || remote.reminders.length > reminders.length) { reminders = remote.reminders; await saveReminders(); }
+        const localREmpty = reminders.length === 0;
+        if (remoteWins || localREmpty || remote.reminders.length > reminders.length) { reminders = remote.reminders; await saveReminders(); }
       }
       if (remote.deletedIds && Array.isArray(remote.deletedIds)) {
         const merged = await loadDeletedIds();
@@ -9194,13 +9207,18 @@ async function kvSignOut() {
   // one-time setup flags, not session data. Removing them causes the protect/country
   // screens to re-appear on every login, which is wrong.
   // Clear local app data (encrypted copy stays on server)
-  items    = [];
-  settings = {};
+  items        = [];
+  settings     = {};
   groceryItems = [];
   groceryDepts = [];
   reminders    = [];
   await saveData();
   await _saveSettings();
+  // Explicitly clear groceries and reminders from their own IDB stores
+  // (saveData only updates items/settings; grocery and reminder stores are separate)
+  await dbPut('groceries',  'items',     []);
+  await dbPut('reminders',  'reminders', []);
+  await dbPut('departments','departments', []);
   // Reset in-memory state
   kvConnected  = false;
   _kvEmail     = '';
