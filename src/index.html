@@ -270,7 +270,7 @@
           <button type="button" class="btn btn-ghost" style="font-size:12px;padding:3px 10px" onclick="loginBackToEmail()">⇄ Not you?</button>
         </div>
 
-        <!-- Passkey path -->\
+        <!-- Passkey path -->
         <div id="auth-passkey-section" style="display:none">
           <button type="button" class="btn btn-primary btn-xl full" style="margin-bottom:14px" onclick="if(typeof kvLoginWithPasskey==='function'){kvLoginWithPasskey();}else{var err=document.getElementById('kv-login-error');if(err){err.textContent='App still loading — please wait a moment and try again';err.style.display='block';}}">
             🔑 Sign in with Face ID / Fingerprint
@@ -507,7 +507,21 @@
       <div style="font-size:48px;margin-bottom:12px">🌍</div>
       <h2 style="font-size:22px;font-weight:700;margin-bottom:8px">Where are you based?</h2>
       <p style="color:var(--muted);font-size:14px;line-height:1.6;margin-bottom:24px">We'll show you the right stores for price comparison — Amazon, supermarkets, and bulk retailers for your region.</p>
-      <div class="country-grid" id="country-grid"></div>
+      <div class="country-grid" id="country-grid">
+        <button class="country-btn" id="cbtn-GB" onclick="selectCountry('GB')"><span style="font-size:22px">🇬🇧</span><span>United Kingdom</span><span class="check">✓</span></button>
+        <button class="country-btn" id="cbtn-US" onclick="selectCountry('US')"><span style="font-size:22px">🇺🇸</span><span>United States</span><span class="check">✓</span></button>
+        <button class="country-btn" id="cbtn-CA" onclick="selectCountry('CA')"><span style="font-size:22px">🇨🇦</span><span>Canada</span><span class="check">✓</span></button>
+        <button class="country-btn" id="cbtn-AU" onclick="selectCountry('AU')"><span style="font-size:22px">🇦🇺</span><span>Australia</span><span class="check">✓</span></button>
+        <button class="country-btn" id="cbtn-DE" onclick="selectCountry('DE')"><span style="font-size:22px">🇩🇪</span><span>Germany</span><span class="check">✓</span></button>
+        <button class="country-btn" id="cbtn-FR" onclick="selectCountry('FR')"><span style="font-size:22px">🇫🇷</span><span>France</span><span class="check">✓</span></button>
+        <button class="country-btn" id="cbtn-NL" onclick="selectCountry('NL')"><span style="font-size:22px">🇳🇱</span><span>Netherlands</span><span class="check">✓</span></button>
+        <button class="country-btn" id="cbtn-IE" onclick="selectCountry('IE')"><span style="font-size:22px">🇮🇪</span><span>Ireland</span><span class="check">✓</span></button>
+        <button class="country-btn" id="cbtn-ES" onclick="selectCountry('ES')"><span style="font-size:22px">🇪🇸</span><span>Spain</span><span class="check">✓</span></button>
+        <button class="country-btn" id="cbtn-IT" onclick="selectCountry('IT')"><span style="font-size:22px">🇮🇹</span><span>Italy</span><span class="check">✓</span></button>
+        <button class="country-btn" id="cbtn-SE" onclick="selectCountry('SE')"><span style="font-size:22px">🇸🇪</span><span>Sweden</span><span class="check">✓</span></button>
+        <button class="country-btn" id="cbtn-JP" onclick="selectCountry('JP')"><span style="font-size:22px">🇯🇵</span><span>Japan</span><span class="check">✓</span></button>
+        <button class="country-btn" id="cbtn-OTHER" onclick="selectCountry('OTHER')"><span style="font-size:22px">🌍</span><span>Other</span><span class="check">✓</span></button>
+      </div>
       <div class="wizard-btn-row">
         <button class="btn btn-ghost btn-xl" style="flex:1" onclick="showKvLogin()">← Back</button>
         <button class="btn btn-primary btn-xl" style="flex:2" onclick="wizardFinish()">Get Started →</button>
@@ -1801,6 +1815,22 @@
     }
   } catch(e) {}
 })();
+
+// selectCountry stub — works before app.js loads so country buttons are immediately clickable
+if (typeof selectCountry === 'undefined') {
+  window.selectCountry = function(code) {
+    document.querySelectorAll('.country-btn').forEach(function(b) { b.classList.remove('selected'); });
+    var btn = document.getElementById('cbtn-' + code);
+    if (btn) btn.classList.add('selected');
+    var confirm = document.getElementById('country-confirm');
+    var names = {GB:'🇬🇧 United Kingdom',US:'🇺🇸 United States',CA:'🇨🇦 Canada',AU:'🇦🇺 Australia',
+                 DE:'🇩🇪 Germany',FR:'🇫🇷 France',NL:'🇳🇱 Netherlands',IE:'🇮🇪 Ireland',
+                 ES:'🇪🇸 Spain',IT:'🇮🇹 Italy',SE:'🇸🇪 Sweden',JP:'🇯🇵 Japan',OTHER:'🌍 Other'};
+    if (confirm) confirm.textContent = names[code] ? '✓ Using ' + names[code] + ' stores' : '';
+    // Store selection so app.js picks it up
+    try { window._pendingCountry = code; } catch(e) {}
+  };
+}
 // Lazy-load scanner.js only when camera button is tapped
 window._scannerLoaded = false;
 window._loadScanner = function() {

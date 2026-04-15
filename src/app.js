@@ -499,6 +499,14 @@ async function mergeItems(local, remote, remoteWins = false) {
 function buildCountryGrid() {
   const grid = document.getElementById('country-grid');
   if (!grid) return;
+  // Pick up any selection made before app.js loaded (via the inline stub)
+  if (window._pendingCountry) wizardCountry = window._pendingCountry;
+  // If buttons already exist (pre-rendered in HTML), just update selected state
+  if (grid.children.length > 0) {
+    selectCountry(wizardCountry);
+    return;
+  }
+  // Fallback: build from COUNTRIES array if somehow empty
   grid.innerHTML = COUNTRIES.map(c => `
     <button class="country-btn${c.code===wizardCountry?' selected':''}" id="cbtn-${c.code}" onclick="selectCountry('${c.code}')">
       <span style="font-size:22px">${c.flag}</span>
@@ -510,6 +518,7 @@ function buildCountryGrid() {
 
 function selectCountry(code) {
   wizardCountry = code;
+  window._pendingCountry = null; // clear any pending stub selection
   document.querySelectorAll('.country-btn').forEach(b => b.classList.remove('selected'));
   document.getElementById('cbtn-'+code)?.classList.add('selected');
   updateCountryConfirm();
@@ -556,6 +565,8 @@ function wizardBack() {
 
 async function wizardFinish() {
   try {
+    // Pick up country selected before app.js loaded (via inline stub)
+    if (window._pendingCountry) wizardCountry = window._pendingCountry;
     settings.country = wizardCountry;
     await _saveSettings();
     localStorage.setItem('stockroom_seen', '1');
@@ -7212,15 +7223,30 @@ async function reauthWithPasskey() {
 async function postLoginWizardRoute(recoveryCodes = []) {
   const protectSeen = localStorage.getItem('stockroom_protect_seen');
   const countrySet  = localStorage.getItem('stockroom_country_set');
-  if (!protectSeen) {
-    // Show security checklist first
+  // If returning user (no new recovery codes to show) and they have passkey set up,
+  // skip the protect screen — they already secured their account
+  const isReturningUser = protectSeen || (recoveryCodes.length === 0 && _kvAuthMethod === 'passkey');
+  if (!isReturningUser) {
+    // Show security checklist first (new account or fresh passphrase setup)
     showProtectDataScreen(recoveryCodes);
   } else if (countrySet) {
     // Everything done — go to stockroom
+    // For passkey sessions, ensure we have the data key before showing stockroom.
+    // If not cached, kvEnsureKey will prompt passphrase once, then cache it.
+    if (_kvAuthMethod === 'passkey' && !_kvKey) {
+      showDataLoadingOverlay('Unlocking your data…');
+      const keyOk = await kvEnsureKey();
+      hideDataLoadingOverlay();
+      if (!keyOk) {
+        // User cancelled passphrase prompt — stay on login screen
+        return;
+      }
+    }
     showDataLoadingOverlay('Syncing your data…');
     document.body.classList.remove('wizard-active');
     document.getElementById('wizard').style.display = 'none';
     localStorage.setItem('stockroom_seen', '1');
+    localStorage.setItem('stockroom_protect_seen', '1'); // mark as seen so we don't show again
     const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
     if (stockTab) showView('stock', stockTab);
     scheduleRender(...RENDER_REGIONS);
@@ -7235,10 +7261,12 @@ async function postLoginWizardRoute(recoveryCodes = []) {
     document.getElementById('wizard').style.display = 'flex';
     document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
     document.getElementById('wizard-step-2').classList.add('active');
-    // Rebuild grid and ensure correct country is selected
+    // Rebuild grid after DOM has painted — ensures buttons are visible
     wizardCountry = settings.country || 'GB';
-    buildCountryGrid();
-    selectCountry(wizardCountry);
+    requestAnimationFrame(() => {
+      buildCountryGrid();
+      selectCountry(wizardCountry);
+    });
   }
 }
 
