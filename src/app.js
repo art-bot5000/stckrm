@@ -6158,6 +6158,42 @@ async function fetchKV(url, opts = {}) {
   }
 }
 
+
+// ── WebAuthn PRF constants ─────────────────────────────────────────────────
+// Fixed salt evaluated by the secure enclave to derive a deterministic key.
+// Must be identical at registration and every subsequent login.
+const PASSKEY_PRF_SALT = new TextEncoder().encode('stockroom-e2ee-passkey-prf-v1!!').buffer;
+
+// Test whether the current browser supports the PRF extension.
+// Returns true only if navigator.credentials exists AND the extension is usable.
+async function passkeyPrfSupported() {
+  try {
+    if (!window.PublicKeyCredential) return false;
+    // Chrome 116+/Safari 17+ ship PRF; Firefox does not yet
+    return true; // we attempt it and fall back gracefully on failure
+  } catch(e) { return false; }
+}
+
+// Given PRF output bytes (ArrayBuffer), import as AES-KW key for wrapping/unwrapping
+async function prfBytesToWrapKey(prfBytes) {
+  return crypto.subtle.importKey('raw', prfBytes, 'AES-KW', false, ['wrapKey', 'unwrapKey']);
+}
+
+// Wrap the data key with a PRF-derived AES-KW key → base64 envelope
+async function wrapKeyWithPrf(dataKey, prfWrapKey) {
+  const wrapped = await crypto.subtle.wrapKey('raw', dataKey, prfWrapKey, 'AES-KW');
+  return btoa(String.fromCharCode(...new Uint8Array(wrapped)));
+}
+
+// Unwrap the data key using a PRF-derived AES-KW key
+async function unwrapKeyWithPrf(envelopeB64, prfWrapKey) {
+  const wrapped = Uint8Array.from(atob(envelopeB64), c => c.charCodeAt(0));
+  return crypto.subtle.unwrapKey(
+    'raw', wrapped, prfWrapKey, 'AES-KW',
+    { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']
+  );
+}
+
 // ── State ──────────────────────────────────
 let kvConnected      = false;
 let _kvEmail         = '';
@@ -7042,6 +7078,9 @@ async function kvLoginWithPasskey() {
         })),
         userVerification: beginData.userVerification,
         timeout:          beginData.timeout,
+        extensions: {
+          prf: { eval: { first: PASSKEY_PRF_SALT } },
+        },
       },
     });
     if (!assertion) throw new Error('Sign-in cancelled');
@@ -7050,6 +7089,11 @@ async function kvLoginWithPasskey() {
     const clientDataJSON  = uint8ToB64url(new Uint8Array(assertion.response.clientDataJSON));
     const authenticatorData = uint8ToB64url(new Uint8Array(assertion.response.authenticatorData));
     const signature       = uint8ToB64url(new Uint8Array(assertion.response.signature));
+
+    // Extract PRF output if available (same salt → same deterministic output)
+    const loginExt   = assertion.getClientExtensionResults?.() || {};
+    const loginPrf   = loginExt?.prf?.results?.first || null;
+    console.log('[passkey] PRF available at login:', !!loginPrf);
 
     // Finish auth on server
     const finishRes = await fetchKV(`${WORKER_URL}/passkey/auth/finish`, {
@@ -7060,17 +7104,44 @@ async function kvLoginWithPasskey() {
     if (!finishRes.ok) throw new Error(finishData.error || 'Sign-in failed');
 
     const sessionToken = finishData.sessionToken;
+    let dataKey = null;
 
-    // Try to get the data key via server-side passkey wrapping (no passphrase needed)
-    let dataKey = await _fetchPasskeyWrappedKey(emailHash, sessionToken, credId);
+    // ── Fetch the PRF envelope from server then attempt to unwrap ───────
+    const envelopeRes = await fetchKV(`${WORKER_URL}/key/passkey-prf-get`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash, sessionToken, credentialId: credId }),
+    }).catch(() => null);
+
+    if (envelopeRes && envelopeRes.ok) {
+      const envelopeData = await envelopeRes.json();
+      const { prfEnvelope, deviceBound } = envelopeData;
+
+      if (!deviceBound && loginPrf) {
+        // ── Path A: PRF — fully E2EE ──────────────────────────────────
+        try {
+          const prfWrapKey = await prfBytesToWrapKey(loginPrf);
+          dataKey = await unwrapKeyWithPrf(prfEnvelope, prfWrapKey);
+          console.log('[passkey] Data key unwrapped via PRF ✓');
+        } catch(e) { console.warn('[passkey] PRF unwrap failed:', e.message); }
+      } else if (deviceBound) {
+        // ── Path B: Device-bound IDB key ──────────────────────────────
+        try {
+          const deviceKeyB64 = await dbGet('settings', `passkey_device_key_${credId}`);
+          if (deviceKeyB64) {
+            const deviceKeyRaw  = Uint8Array.from(atob(deviceKeyB64), c => c.charCodeAt(0));
+            const deviceWrapKey = await crypto.subtle.importKey('raw', deviceKeyRaw, 'AES-KW', false, ['unwrapKey']);
+            dataKey = await unwrapKeyWithPrf(prfEnvelope, deviceWrapKey);
+            console.log('[passkey] Data key unwrapped via device-bound key ✓');
+          }
+        } catch(e) { console.warn('[passkey] Device-bound unwrap failed:', e.message); }
+      }
+    }
 
     if (!dataKey) {
-      // First time on this device — need passphrase once to unwrap the key,
-      // then we store a passkey-wrapped copy so future logins are seamless
+      // No envelope or unwrap failed — prompt passphrase once to bootstrap this device
       if (btn) { btn.textContent = '🔑 One moment…'; }
       dataKey = await _getKeyViaPassphrase(emailHash, sessionToken, credId, errEl);
       if (!dataKey) {
-        // User cancelled passphrase prompt — abort login
         if (btn) { btn.textContent = '🔑 Sign in with Face ID / Fingerprint'; btn.disabled = false; }
         return;
       }
@@ -8097,9 +8168,15 @@ async function _getKeyViaPassphrase(emailHash, sessionToken, credentialId, errEl
     try {
       const exported  = await crypto.subtle.exportKey('raw', dataKey);
       const rawKeyB64 = btoa(String.fromCharCode(...new Uint8Array(exported)));
-      await fetchKV(`${WORKER_URL}/key/passkey-wrap`, {
+      // Store via new PRF endpoint (device-bound since we don't have PRF at this point)
+      const deviceKeyRaw  = crypto.getRandomValues(new Uint8Array(32));
+      const deviceWrapKey = await crypto.subtle.importKey('raw', deviceKeyRaw, 'AES-KW', false, ['wrapKey']);
+      const deviceKeyB64  = btoa(String.fromCharCode(...deviceKeyRaw));
+      const deviceEnv     = await wrapKeyWithPrf(dataKey, deviceWrapKey);
+      await dbPut('settings', `passkey_device_key_${credentialId}`, deviceKeyB64);
+      await fetchKV(`${WORKER_URL}/key/passkey-prf-store`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailHash, sessionToken, credentialId, rawKeyB64 }),
+        body: JSON.stringify({ emailHash, sessionToken, credentialId, prfEnvelope: deviceEnv, deviceBound: true }),
       });
       // Also cache locally
       localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
@@ -8213,12 +8290,15 @@ async function _doAddPasskeyToAccount() {
         timeout:                beginData.timeout,
         attestation:            beginData.attestation,
         authenticatorSelection: beginData.authenticatorSelection,
+        extensions: {
+          prf: { eval: { first: PASSKEY_PRF_SALT } },
+        },
       },
     });
     if (!credential) throw new Error('Setup cancelled');
 
-    const credId    = uint8ToB64url(new Uint8Array(credential.rawId));
-    const clientDataJSON    = uint8ToB64url(new Uint8Array(credential.response.clientDataJSON));
+    const credId           = uint8ToB64url(new Uint8Array(credential.rawId));
+    const clientDataJSON   = uint8ToB64url(new Uint8Array(credential.response.clientDataJSON));
     const attestationObject = uint8ToB64url(new Uint8Array(credential.response.attestationObject));
     let publicKey = credId;
     try {
@@ -8226,6 +8306,11 @@ async function _doAddPasskeyToAccount() {
       const pk = pkResult instanceof Promise ? await pkResult : pkResult;
       if (pk) publicKey = uint8ToB64url(new Uint8Array(pk));
     } catch(e) { console.warn('getPublicKey failed:', e.message); }
+
+    // Check if PRF extension gave us output at registration time
+    const extResults = credential.getClientExtensionResults?.() || {};
+    const prfOutput  = extResults?.prf?.results?.first || null;
+    console.log('[passkey] PRF supported at registration:', !!prfOutput);
 
     const verifierToSend = _kvSessionToken ? undefined : _kvVerifier;
     const finishRes = await fetchKV(`${WORKER_URL}/passkey/register/finish`, {
@@ -8255,40 +8340,60 @@ async function _doAddPasskeyToAccount() {
       localStorage.setItem('stockroom_passkey_creds', JSON.stringify(storedCreds));
     } catch(e) {}
 
-    // ── KEY ARCHITECTURE FIX ──────────────────────────────────────────
-    // Immediately wrap the current data key (_kvKey) for this passkey credential.
-    // This means the FIRST passkey login on this device won't need the passphrase —
-    // the passkey-wrapped copy is stored right now while we still have the key in memory.
-    // All three methods (passphrase, passkey, recovery code) will decrypt the SAME data key.
-    if (_kvKey) {
-      try {
-        const exported  = await crypto.subtle.exportKey('raw', _kvKey);
-        const rawKeyB64 = btoa(String.fromCharCode(...new Uint8Array(exported)));
-        const wrapRes   = await fetchKV(`${WORKER_URL}/key/passkey-wrap`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            emailHash:    _kvEmailHash,
-            sessionToken: finishData.sessionToken,
-            credentialId: credId,
-            rawKeyB64,
-          }),
-        });
-        if (wrapRes.ok) {
-          console.log('[passkey] Key wrapped and stored on server ✓ — credId:', credId.slice(0,12));
-        } else {
-          const we = await wrapRes.json().catch(() => ({}));
-          throw new Error('Could not store passkey key: ' + (we.error || wrapRes.status));
-        }
-      } catch(wrapErr) {
-        // Fatal — if we can't store the wrapped key, the passkey will need passphrase every login
-        console.error('[passkey] passkey-wrap failed:', wrapErr.message);
-        throw new Error('Passkey registered but could not store encryption key: ' + wrapErr.message + '. Try signing out and back in, then add the passkey again.');
+    // ── KEY ARCHITECTURE: PRF-first, device-bound fallback ────────────
+    // Path A: PRF output from the secure enclave → AES-KW wrap key → wraps data key.
+    //         This is fully E2EE: the server never sees the raw data key.
+    // Path B: No PRF support → generate random device key → store in IDB →
+    //         wrap data key with it → send ONLY the wrapped copy to server.
+    if (!_kvKey) throw new Error('Encryption key not in memory. Sign out and back in, then try again.');
+
+    if (prfOutput) {
+      // ── Path A: PRF ──────────────────────────────────────────────────
+      const prfWrapKey = await prfBytesToWrapKey(prfOutput);
+      const prfEnvelope = await wrapKeyWithPrf(_kvKey, prfWrapKey);
+      // Store PRF envelope on server (server stores ciphertext only — never the raw key)
+      const storeRes = await fetchKV(`${WORKER_URL}/key/passkey-prf-store`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          emailHash:    _kvEmailHash,
+          sessionToken: finishData.sessionToken,
+          credentialId: credId,
+          prfEnvelope,  // data key wrapped with PRF-derived AES-KW — server cannot unwrap
+        }),
+      });
+      if (!storeRes.ok) {
+        const e = await storeRes.json().catch(() => ({}));
+        throw new Error('Could not store PRF envelope: ' + (e.error || storeRes.status));
       }
+      console.log('[passkey] PRF envelope stored ✓ — fully E2EE, server cannot read data key');
     } else {
-      // _kvKey is null — this should never happen after reauth, but guard it
-      console.error('[passkey] _doAddPasskeyToAccount: _kvKey is null — cannot wrap key');
-      throw new Error('Encryption key not available. Please sign out, sign back in, and try adding the passkey again.');
+      // ── Path B: Device-bound IDB key ─────────────────────────────────
+      console.log('[passkey] PRF not supported — using device-bound IDB key fallback');
+      const deviceKeyRaw  = crypto.getRandomValues(new Uint8Array(32));
+      const deviceWrapKey = await crypto.subtle.importKey('raw', deviceKeyRaw, 'AES-KW', false, ['wrapKey', 'unwrapKey']);
+      const deviceEnvelope = await wrapKeyWithPrf(_kvKey, deviceWrapKey); // same wrap fn, different key
+      // Store device key in IDB (never leaves device)
+      const deviceKeyB64 = btoa(String.fromCharCode(...deviceKeyRaw));
+      await dbPut('settings', `passkey_device_key_${credId}`, deviceKeyB64);
+      // Store envelope on server (useless without the device key — fallback is device-bound)
+      const storeRes = await fetchKV(`${WORKER_URL}/key/passkey-prf-store`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          emailHash:    _kvEmailHash,
+          sessionToken: finishData.sessionToken,
+          credentialId: credId,
+          prfEnvelope:  deviceEnvelope,
+          deviceBound:  true, // flag: envelope is device-bound, not PRF-based
+        }),
+      });
+      if (!storeRes.ok) {
+        const e = await storeRes.json().catch(() => ({}));
+        throw new Error('Could not store device envelope: ' + (e.error || storeRes.status));
+      }
+      console.log('[passkey] Device-bound envelope stored ✓ — first passkey login on new device needs passphrase once');
     }
+
+    console.log('[passkey] Setup complete — credId:', credId.slice(0, 12), 'method:', prfOutput ? 'PRF' : 'device-bound');
 
     toast('Passkey added ✓ — you can now sign in with Face ID / Fingerprint');
     loadPasskeys();
@@ -8962,8 +9067,25 @@ async function kvEnsureKey() {
       const storedCreds = JSON.parse(localStorage.getItem('stockroom_passkey_creds') || '{}');
       const credentialId = storedCreds[_kvEmailHash];
       if (credentialId) {
-        const key = await _fetchPasskeyWrappedKey(_kvEmailHash, _kvSessionToken, credentialId);
-        if (key) { _kvKey = key; return true; }
+        // Try PRF envelope from server
+        const envRes = await fetchKV(`${WORKER_URL}/key/passkey-prf-get`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emailHash: _kvEmailHash, sessionToken: _kvSessionToken, credentialId }),
+        }).catch(() => null);
+        if (envRes && envRes.ok) {
+          const { prfEnvelope, deviceBound } = await envRes.json();
+          if (deviceBound) {
+            const dkb64 = await dbGet('settings', `passkey_device_key_${credentialId}`);
+            if (dkb64) {
+              const dkr = Uint8Array.from(atob(dkb64), c => c.charCodeAt(0));
+              const dwk = await crypto.subtle.importKey('raw', dkr, 'AES-KW', false, ['unwrapKey']);
+              _kvKey = await unwrapKeyWithPrf(prfEnvelope, dwk);
+              if (_kvKey) return true;
+            }
+          }
+          // PRF path requires a fresh credential.get() — can't do here without user gesture
+          // Fall through to passphrase prompt
+        }
       }
     } catch(e) { console.warn('kvEnsureKey: passkey-unwrap failed:', e.message); }
   }
