@@ -6194,6 +6194,15 @@ async function unwrapKeyWithPrf(envelopeB64, prfWrapKey) {
   );
 }
 
+
+// Debug helper: get first 8 bytes of a CryptoKey as hex for comparison across sessions
+async function _keyFingerprint(key) {
+  try {
+    const raw = await crypto.subtle.exportKey('raw', key);
+    return Array.from(new Uint8Array(raw).slice(0, 8)).map(b => b.toString(16).padStart(2,'0')).join('');
+  } catch(e) { return 'non-extractable'; }
+}
+
 // ── State ──────────────────────────────────
 let kvConnected      = false;
 let _kvEmail         = '';
@@ -8204,8 +8213,8 @@ async function kvStorePasskeySession(email, emailHash, sessionToken, dataKey) {
   _kvVerifier     = ''; // passkey users authenticate via sessionToken
   _kvAuthMethod   = 'passkey';
   kvConnected     = true;
-  // Use provided real data key; fall back to random if none (old call sites)
-  _kvKey = dataKey || null; // null = kvEnsureKey will fetch on first sync
+  _kvKey = dataKey || null;
+  _keyFingerprint(dataKey).then(fp => console.log('[key] kvStorePasskeySession — key fingerprint:', fp));
   // Store session
   try {
     localStorage.setItem('stockroom_kv_session', JSON.stringify({ email, emailHash, sessionToken, authMethod: 'passkey' }));
@@ -8906,6 +8915,7 @@ async function kvStoreSession(email, emailHash, verifier, key) {
   _kvVerifier  = verifier;
   _kvKey       = key;
   kvConnected  = true;
+  _keyFingerprint(key).then(fp => console.log('[key] kvStoreSession (passphrase) — key fingerprint:', fp));
   try {
     localStorage.setItem('stockroom_kv_session', JSON.stringify({ email, emailHash, verifier }));
   } catch(e) {}
@@ -9056,7 +9066,7 @@ async function kvEnsureKey() {
     if (cached && cached.emailHash === _kvEmailHash && Date.now() < cached.expiry) {
       const raw = Uint8Array.from(atob(cached.keyData), c => c.charCodeAt(0));
       _kvKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
-      if (_kvKey) return true;
+      if (_kvKey) { _keyFingerprint(_kvKey).then(fp => console.log('[key] kvEnsureKey: restored from 4h/24h cache — fingerprint:', fp)); return true; }
     } else if (cached) {
       localStorage.removeItem('stockroom_kv_session_key');
     }
@@ -9232,6 +9242,7 @@ async function kvPush() {
     householdDir, activeProfile,
     shareTargets: _shareTargets,
   });
+  _keyFingerprint(_kvKey).then(fp => console.log('[key] kvPush: encrypting with key fingerprint:', fp));
   const ciphertext = await kvEncrypt(_kvKey, payload);
   const res = await fetchKV(`${WORKER_URL}/data/push`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -9316,6 +9327,7 @@ async function kvPull() {
   const { ciphertext } = await res.json();
   if (!ciphertext) return null;
   try {
+    _keyFingerprint(_kvKey).then(fp => console.log('[key] kvPull: decrypting with key fingerprint:', fp));
     const plain = await kvDecrypt(_kvKey, ciphertext);
     return JSON.parse(plain);
   } catch(e) {
