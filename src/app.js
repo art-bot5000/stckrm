@@ -5580,32 +5580,74 @@ function exportData() {
 }
 
 function _doExportData() {
-  const blob = new Blob([JSON.stringify({items,settings},null,2)],{type:'application/json'});
+  const exportPayload = {
+    items,
+    settings,
+    groceries:   groceryItems,
+    reminders,
+    departments: groceryDepts,
+    exportedAt:  new Date().toISOString(),
+    version:     2,
+  };
+  const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'stockroom_backup_' + today() + '.json';
   a.click();
-  // Track export time for reminder system
   try { localStorage.setItem('stockroom_last_export', String(Date.now())); } catch(e) {}
   document.getElementById('export-reminder-banner')?.remove();
 }
 
 async function importData(e) {
-  if (!isOwner()) { toast("Settings are read-only"); return; }
+  if (!isOwner()) { toast('Settings are read-only'); return; }
   const file = e.target.files[0];
   if (!file) return;
+  // Reset the input so the same file can be re-imported if needed
+  e.target.value = '';
   const reader = new FileReader();
   reader.onload = async ev => {
     try {
-      const d = JSON.parse(ev.target.result);
-      if (d.items) items = d.items;
-      if (d.settings) settings = {...settings, ...d.settings};
+      const raw = ev.target.result;
+      let d;
+      try {
+        d = JSON.parse(raw);
+      } catch(parseErr) {
+        alert('Could not read file — it does not appear to be valid JSON.\n\nError: ' + parseErr.message);
+        return;
+      }
+      if (!d || typeof d !== 'object') {
+        alert('Invalid backup file — unexpected format.');
+        return;
+      }
+      // Restore all data types from the backup
+      if (Array.isArray(d.items))       items        = d.items;
+      if (d.settings && typeof d.settings === 'object')
+                                        settings     = { ...settings, ...d.settings };
+      if (Array.isArray(d.groceries))   groceryItems = d.groceries;
+      if (Array.isArray(d.reminders))   reminders    = d.reminders;
+      if (Array.isArray(d.departments)) groceryDepts = d.departments;
       await saveData();
       await _saveSettings();
+      if (Array.isArray(d.groceries))   await saveGrocery();
+      if (Array.isArray(d.reminders))   await saveReminders();
+      if (Array.isArray(d.departments)) await saveGroceryDepts();
       scheduleRender(...RENDER_REGIONS);
-      toast('Data imported ✓');
-    } catch(err) { alert('Could not parse file. Make sure it is a valid Stockroom JSON export.'); }
+      // Push to server so data is encrypted and saved
+      if (kvConnected) {
+        await kvSyncNow(true).catch(err => console.warn('Import sync failed:', err.message));
+      }
+      const counts = [
+        d.items?.length ? `${d.items.length} items` : '',
+        d.groceries?.length ? `${d.groceries.length} groceries` : '',
+        d.reminders?.length ? `${d.reminders.length} reminders` : '',
+      ].filter(Boolean).join(', ');
+      toast('Imported ✓' + (counts ? ` — ${counts}` : ''));
+    } catch(err) {
+      alert('Import failed: ' + err.message + '\n\nPlease try again or check the browser console for details.');
+      console.error('importData error:', err);
+    }
   };
+  reader.onerror = () => alert('Could not read the file. Please try again.');
   reader.readAsText(file);
 }
 
