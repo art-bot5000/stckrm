@@ -7135,6 +7135,40 @@ async function reauthWithPassphrase() {
     });
     if (res.status === 401) { errEl.textContent = 'Incorrect passphrase'; errEl.style.display = 'block'; return; }
     if (!res.ok) throw new Error('Verification failed');
+
+    // Also unwrap the data key so _kvKey is available for any callback that needs it
+    // (e.g. _doAddPasskeyToAccount needs _kvKey to store a passkey-wrapped copy)
+    if (!_kvKey) {
+      try {
+        const keyRes  = await fetchKV(`${WORKER_URL}/key/get`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emailHash: _kvEmailHash, verifier }),
+        });
+        const keyData = await keyRes.json();
+        if (keyRes.ok && keyData.envelope) {
+          if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
+            const wrapKey = await derivePassphraseWrapKeyV2(pass, _kvEmailHash, keyData.kdfSalt);
+            _kvKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+          } else if (keyData.salt) {
+            const { wrapKey } = await derivePassphraseWrapKey(pass, _kvEmailHash, keyData.salt);
+            _kvKey = await unwrapDataKey(keyData.envelope, wrapKey);
+          }
+          if (_kvKey) {
+            // Cache it
+            const exported = await crypto.subtle.exportKey('raw', _kvKey);
+            const keyB64   = btoa(String.fromCharCode(...new Uint8Array(exported)));
+            localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
+              keyData: keyB64, emailHash: _kvEmailHash,
+              expiry: Date.now() + 4 * 60 * 60 * 1000,
+            }));
+          }
+        }
+      } catch(keyErr) {
+        console.warn('reauthWithPassphrase: could not fetch key envelope:', keyErr.message);
+        // Non-fatal — callback still runs
+      }
+    }
+
     errEl.style.display = 'none';
     document.getElementById('reauth-modal').style.display = 'none';
     if (_reauthCallback) { _reauthCallback(); _reauthCallback = null; }
@@ -8240,15 +8274,20 @@ async function _doAddPasskeyToAccount() {
           }),
         });
         if (wrapRes.ok) {
-          console.log('Passkey-wrapped key stored during registration ✓ — future passkey logins need no passphrase');
+          console.log('[passkey] Key wrapped and stored on server ✓ — credId:', credId.slice(0,12));
         } else {
           const we = await wrapRes.json().catch(() => ({}));
-          console.warn('Could not store passkey-wrapped key during registration:', we.error);
+          throw new Error('Could not store passkey key: ' + (we.error || wrapRes.status));
         }
       } catch(wrapErr) {
-        console.warn('passkey-wrap during registration failed:', wrapErr.message);
-        // Non-fatal — first login will prompt passphrase once as fallback
+        // Fatal — if we can't store the wrapped key, the passkey will need passphrase every login
+        console.error('[passkey] passkey-wrap failed:', wrapErr.message);
+        throw new Error('Passkey registered but could not store encryption key: ' + wrapErr.message + '. Try signing out and back in, then add the passkey again.');
       }
+    } else {
+      // _kvKey is null — this should never happen after reauth, but guard it
+      console.error('[passkey] _doAddPasskeyToAccount: _kvKey is null — cannot wrap key');
+      throw new Error('Encryption key not available. Please sign out, sign back in, and try adding the passkey again.');
     }
 
     toast('Passkey added ✓ — you can now sign in with Face ID / Fingerprint');
