@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STOCKROOM Diagnostics</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, monospace; background: #0d1117; color: #e6edf3; padding: 16px; max-width: 600px; margin: 0 auto; }
+h1 { font-size: 16px; color: #e8a838; margin-bottom: 16px; }
+.test { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 8px; }
+.test-name { font-size: 12px; color: #8b949e; margin-bottom: 4px; }
+.test-result { font-size: 13px; font-family: monospace; word-break: break-all; }
+.ok   { color: #3fb950; }
+.fail { color: #f85149; }
+.warn { color: #e3b341; }
+.info { color: #58a6ff; }
+.running { color: #8b949e; }
+button { background: #238636; color: #fff; border: none; border-radius: 6px; padding: 10px 18px; font-size: 14px; cursor: pointer; margin-bottom: 16px; }
+button:disabled { opacity: 0.5; }
+.section { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #8b949e; margin: 16px 0 8px; }
+pre { font-size: 11px; color: #8b949e; white-space: pre-wrap; margin-top: 4px; }
+</style>
+</head>
+<body>
+<h1>🔬 STOCKROOM Diagnostics</h1>
+<button id="run-btn" onclick="runAll()">Run All Tests</button>
+<div id="output"></div>
+
+<script>
+const TARGETS = [
+  'https://stckrm.fly.dev',
+  window.location.origin, // wherever this page is served from
+];
+
+const out = document.getElementById('output');
+
+function section(title) {
+  const d = document.createElement('div');
+  d.className = 'section';
+  d.textContent = title;
+  out.appendChild(d);
+}
+
+function result(name, status, detail, extra) {
+  const existing = document.getElementById('t-' + name.replace(/\s/g,'_'));
+  const d = existing || document.createElement('div');
+  d.id = 't-' + name.replace(/\s/g,'_');
+  d.className = 'test';
+  d.innerHTML = `<div class="test-name">${name}</div>
+    <div class="test-result ${status}">${detail}</div>
+    ${extra ? `<pre>${extra}</pre>` : ''}`;
+  if (!existing) out.appendChild(d);
+}
+
+async function runAll() {
+  out.innerHTML = '';
+  document.getElementById('run-btn').disabled = true;
+
+  // ── 1. Page origin ────────────────────────────────────────────────
+  section('1. Where this page is being served from');
+  result('Page URL', 'info', window.location.href);
+  result('Page origin', 'info', window.location.origin);
+  result('Protocol', window.location.protocol === 'https:' ? 'ok' : 'warn',
+    window.location.protocol + (window.location.protocol !== 'https:' ? ' ⚠ needs HTTPS for passkeys' : ' ✓'));
+
+  // ── 2. App.js WORKER_URL ─────────────────────────────────────────
+  section('2. Which backend app.js is pointing at');
+  result('Fetching app.js...', 'running', 'loading...');
+  try {
+    const r = await fetch('/app.js', { cache: 'no-store' });
+    const text = await r.text();
+    const match = text.match(/WORKER_URL\s*=\s*['"]([^'"]+)['"]/);
+    const workerUrl = match ? match[1] : 'NOT FOUND';
+    const swMatch  = text.match(/stockroom-kv-v(\d+)/);
+    const swVer    = swMatch ? swMatch[0] : 'unknown';
+    const isOld    = workerUrl.includes('deno.net');
+    result('WORKER_URL in app.js', isOld ? 'fail' : 'ok',
+      workerUrl + (isOld ? ' ✗ OLD DENO URL — wrong file deployed' : ' ✓'),
+      `app.js size: ${(text.length/1024).toFixed(1)}KB | SW cache version: ${swVer}`);
+  } catch(e) {
+    result('app.js fetch', 'fail', '✗ ' + e.message);
+  }
+
+  // ── 3. sw.js cache version ───────────────────────────────────────
+  section('3. Service worker');
+  try {
+    const r = await fetch('/sw.js', { cache: 'no-store' });
+    const text = await r.text();
+    const match = text.match(/stockroom-kv-v(\d+)/);
+    result('sw.js version', 'info', match ? match[0] : 'version not found');
+    const reg = await navigator.serviceWorker.getRegistration('/');
+    if (reg) {
+      result('Active SW', 'info',
+        reg.active ? 'Active: ' + (reg.active.scriptURL || 'unknown') : 'No active SW');
+    } else {
+      result('Active SW', 'warn', 'No SW registration found');
+    }
+  } catch(e) {
+    result('sw.js', 'fail', '✗ ' + e.message);
+  }
+
+  // ── 4. Backend connectivity ───────────────────────────────────────
+  section('4. Backend connectivity');
+  const backends = [
+    'https://stckrm.fly.dev',
+    window.location.origin,
+  ];
+  const seenUrls = new Set();
+  for (const base of backends) {
+    if (seenUrls.has(base)) continue;
+    seenUrls.add(base);
+    const label = base;
+    result(label, 'running', 'testing...');
+    try {
+      const t0 = Date.now();
+      const r = await fetch(`${base}/ping`, { method: 'GET', cache: 'no-store' });
+      const ms = Date.now() - t0;
+      const text = await r.text().catch(() => '');
+      result(label, r.ok ? 'ok' : 'fail',
+        r.ok ? `✓ ${r.status} in ${ms}ms — "${text.slice(0,40)}"` : `✗ ${r.status} ${r.statusText}`);
+    } catch(e) {
+      result(label, 'fail', '✗ Failed to fetch: ' + e.message,
+        e.message.includes('fetch') ? 'Network error or CORS — server may be down or wrong URL' : '');
+    }
+  }
+
+  // ── 5. API endpoints ─────────────────────────────────────────────
+  section('5. API endpoints on stckrm.fly.dev');
+  const endpoints = [
+    ['/ping',               'GET',  null,                              'Server alive'],
+    ['/user/verify',        'POST', {emailHash:'test',verifier:'test'},'Auth endpoint'],
+    ['/passkey/auth/begin', 'POST', {emailHash:'test'},                'Passkey endpoint'],
+    ['/key/get',            'POST', {emailHash:'test',verifier:'test'},'Key endpoint'],
+    ['/data/pull',          'POST', {emailHash:'test',verifier:'test'},'Data endpoint'],
+  ];
+  for (const [path, method, body, label] of endpoints) {
+    try {
+      const opts = { method, cache: 'no-store', headers: { 'Content-Type': 'application/json' } };
+      if (body) opts.body = JSON.stringify(body);
+      const r = await fetch('https://stckrm.fly.dev' + path, opts);
+      const data = await r.json().catch(() => ({}));
+      // 400/401/404 = endpoint exists, just auth failed = GOOD
+      const exists = r.status < 500;
+      result(label + ' ' + path, exists ? 'ok' : 'fail',
+        exists ? `✓ ${r.status} (endpoint exists)` : `✗ ${r.status} — server error`,
+        data.error ? `Server says: "${data.error}"` : '');
+    } catch(e) {
+      result(label + ' ' + path, 'fail', '✗ ' + e.message);
+    }
+  }
+
+  // ── 6. LocalStorage state ────────────────────────────────────────
+  section('6. Stored session state');
+  try {
+    const session = localStorage.getItem('stockroom_kv_session');
+    if (session) {
+      const s = JSON.parse(session);
+      result('Session', 'info', `email: ${s.email || 'none'} | authMethod: ${s.authMethod || 'passphrase'}`);
+    } else {
+      result('Session', 'warn', 'No session stored — not logged in');
+    }
+
+    const keyCache = localStorage.getItem('stockroom_kv_session_key');
+    if (keyCache) {
+      const k = JSON.parse(keyCache);
+      const expired = Date.now() > k.expiry;
+      const fp = k.keyData ? k.keyData.slice(0, 8) : 'none';
+      result('Key cache', expired ? 'warn' : 'ok',
+        expired ? `⚠ EXPIRED at ${new Date(k.expiry).toLocaleTimeString()}` : `✓ Valid until ${new Date(k.expiry).toLocaleTimeString()}`,
+        `Key prefix: ${fp}... | emailHash: ${k.emailHash || 'none'}`);
+    } else {
+      result('Key cache', 'warn', 'No key cached — will need to unlock on next sync');
+    }
+
+    const passkeyCreds = localStorage.getItem('stockroom_passkey_creds');
+    if (passkeyCreds) {
+      const creds = JSON.parse(passkeyCreds);
+      const count = Object.keys(creds).length;
+      result('Passkey creds', 'info', `${count} credential(s) stored locally`);
+    } else {
+      result('Passkey creds', 'warn', 'No passkey credentials in localStorage');
+    }
+
+    const deviceId = localStorage.getItem('stockroom_device_id');
+    result('Device ID', deviceId ? 'ok' : 'warn',
+      deviceId ? `✓ ${deviceId.slice(0,8)}...` : 'No device ID — will be generated on first login');
+
+    const protectSeen = localStorage.getItem('stockroom_protect_seen');
+    const countrySeen = localStorage.getItem('stockroom_country_set');
+    result('Setup flags', 'info',
+      `protect_seen: ${protectSeen || 'not set'} | country_set: ${countrySeen || 'not set'}`);
+  } catch(e) {
+    result('LocalStorage', 'fail', '✗ ' + e.message);
+  }
+
+  // ── 7. IndexedDB check ───────────────────────────────────────────
+  section('7. IndexedDB');
+  try {
+    await new Promise((res, rej) => {
+      const req = indexedDB.open('stockroom', 1);
+      req.onsuccess = e => {
+        const db = e.target.result;
+        const stores = Array.from(db.objectStoreNames);
+        result('IDB stores', 'ok', `✓ Open — stores: ${stores.join(', ') || 'none'}`);
+        // Check for device key
+        if (stores.includes('settings')) {
+          const tx = db.transaction('settings', 'readonly');
+          const r2 = tx.objectStore('settings').getAll();
+          r2.onsuccess = e2 => {
+            const keys = tx.objectStore('settings').getAllKeys();
+            keys.onsuccess = e3 => {
+              const passkeyKeys = (e3.target.result || []).filter(k => String(k).includes('passkey_device_key'));
+              result('IDB passkey device keys', passkeyKeys.length ? 'ok' : 'warn',
+                passkeyKeys.length
+                  ? `✓ ${passkeyKeys.length} device key(s): ${passkeyKeys.map(k=>String(k).slice(0,30)).join(', ')}`
+                  : 'No device keys — passkey login will need passphrase once');
+              res();
+            };
+            keys.onerror = () => res();
+          };
+          r2.onerror = () => res();
+        } else {
+          result('IDB passkey device keys', 'warn', 'No settings store yet');
+          res();
+        }
+      };
+      req.onerror = e => { result('IDB', 'fail', '✗ ' + e.target.error); res(); };
+      req.onupgradeneeded = e => {
+        e.target.result.createObjectStore('settings');
+      };
+    });
+  } catch(e) {
+    result('IDB', 'fail', '✗ ' + e.message);
+  }
+
+  // ── 8. WebAuthn / PRF support ────────────────────────────────────
+  section('8. WebAuthn & PRF support');
+  result('PublicKeyCredential', window.PublicKeyCredential ? 'ok' : 'fail',
+    window.PublicKeyCredential ? '✓ Available' : '✗ Not available — passkeys not supported');
+
+  if (window.PublicKeyCredential) {
+    try {
+      const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+      result('Platform authenticator', available ? 'ok' : 'warn',
+        available ? '✓ Available (Face ID / fingerprint)' : '⚠ Not available on this device');
+    } catch(e) {
+      result('Platform authenticator', 'warn', '⚠ Could not check: ' + e.message);
+    }
+
+    // PRF support check
+    try {
+      const prfCheck = await PublicKeyCredential.getClientCapabilities?.();
+      if (prfCheck) {
+        result('PRF support', prfCheck.prf ? 'ok' : 'warn',
+          prfCheck.prf ? '✓ PRF extension supported (Path A)' : '⚠ PRF not supported — will use device-bound fallback (Path B)');
+      } else {
+        result('PRF support', 'warn', '⚠ getClientCapabilities not available — PRF unknown until login attempt');
+      }
+    } catch(e) {
+      result('PRF support', 'warn', '⚠ Cannot check PRF: ' + e.message);
+    }
+  }
+
+  // ── 9. Summary ───────────────────────────────────────────────────
+  section('9. Diagnosis');
+  try {
+    const appR = await fetch('/app.js', { cache: 'no-store' });
+    const appText = await appR.text();
+    const workerMatch = appText.match(/WORKER_URL\s*=\s*['"]([^'"]+)['"]/);
+    const workerUrl = workerMatch ? workerMatch[1] : '';
+    const pingR = await fetch('https://stckrm.fly.dev/ping', { cache: 'no-store' }).catch(() => null);
+
+    if (workerUrl.includes('deno.net')) {
+      result('⚠ PROBLEM', 'fail',
+        'app.js still points to old Deno URL — Dockerfile fix did not deploy',
+        'The new Dockerfile (reading from root files) has not been committed or the GitHub Actions deploy failed. Check GitHub Actions logs.');
+    } else if (!pingR || !pingR.ok) {
+      result('⚠ PROBLEM', 'fail',
+        'stckrm.fly.dev is not responding to /ping',
+        'Fly.io may be down or the machine is sleeping. Try visiting https://stckrm.fly.dev/ping directly.');
+    } else if (workerUrl === 'https://stckrm.fly.dev') {
+      result('✓ DEPLOYMENT OK', 'ok',
+        'app.js has correct URL and backend is responding',
+        'If login still fails, the issue is in auth logic not deployment. Run key fingerprint test.');
+    } else {
+      result('? UNKNOWN', 'warn', `WORKER_URL = "${workerUrl}"`);
+    }
+  } catch(e) {
+    result('Diagnosis', 'fail', '✗ ' + e.message);
+  }
+
+  document.getElementById('run-btn').disabled = false;
+}
+</script>
+</body>
+</html>
