@@ -1,0 +1,121 @@
+:8080 {
+    encode {
+        zstd
+        br
+        gzip
+        minimum_length 256
+    }
+
+    handle /ping {
+        reverse_proxy localhost:8000
+    }
+    handle /auth/* {
+        reverse_proxy localhost:8000
+    }
+    handle /user/* {
+        reverse_proxy localhost:8000
+    }
+    handle /device/* {
+        reverse_proxy localhost:8000
+    }
+    handle /share/* {
+        reverse_proxy localhost:8000
+    }
+    handle /schedule/* {
+        reverse_proxy localhost:8000
+    }
+    handle /passkey/* {
+        reverse_proxy localhost:8000
+    }
+    handle /admin/* {
+        reverse_proxy localhost:8000
+    }
+    handle /household/* {
+        reverse_proxy localhost:8000
+    }
+    handle /items/* {
+        reverse_proxy localhost:8000
+    }
+    handle /key/* {
+        reverse_proxy localhost:8000
+    }
+    handle /data/* {
+        reverse_proxy localhost:8000
+    }
+    handle /recovery/* {
+        reverse_proxy localhost:8000
+    }
+    handle /email/* {
+        reverse_proxy localhost:8000
+    }
+    handle /invite/* {
+        reverse_proxy localhost:8000
+    }
+    handle /crypto/* {
+        reverse_proxy localhost:8000
+    }
+    handle /sync/* {
+        reverse_proxy localhost:8000
+    }
+    handle /presence* {
+        reverse_proxy localhost:8000
+    }
+    handle /reminder* {
+        reverse_proxy localhost:8000
+    }
+    handle /status {
+        reverse_proxy localhost:8000
+    }
+    handle /register {
+        reverse_proxy localhost:8000
+    }
+    handle /unregister {
+        reverse_proxy localhost:8000
+    }
+    handle /unsubscribe {
+        reverse_proxy localhost:8000
+    }
+    handle /check-now {
+        reverse_proxy localhost:8000
+    }
+    handle /send-now {
+        reverse_proxy localhost:8000
+    }
+    handle /debug-schedule {
+        reverse_proxy localhost:8000
+    }
+    handle /reset-schedule {
+        reverse_proxy localhost:8000
+    }
+    handle /set-schedule {
+        reverse_proxy localhost:8000
+    }
+    handle /send-reminder {
+        reverse_proxy localhost:8000
+    }
+
+    handle {
+        root * /app/public
+        file_server
+
+        @html path *.html
+        header @html Cache-Control "no-cache, no-store, must-revalidate"
+
+        @sw path /sw.js
+        header @sw Cache-Control "no-cache, no-store, must-revalidate"
+
+        @manifest path /manifest.json
+        header @manifest Cache-Control "public, max-age=3600"
+
+        @assets path *.js *.css
+        header @assets Cache-Control "public, max-age=3600"
+
+        header {
+            X-Content-Type-Options "nosniff"
+            X-Frame-Options "DENY"
+            Referrer-Policy "strict-origin-when-cross-origin"
+            Permissions-Policy "camera=*, microphone=()"
+            -Server
+        }
+    }
+}
