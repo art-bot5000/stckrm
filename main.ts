@@ -157,6 +157,64 @@ Deno.cron('stockroom-crypto-migration-notify', '0 9 * * *', async () => {
   }
 });
 
+// ── Account deletion helper — deletes EVERY key for a given emailHash ──
+// Used by both /user/delete (self) and /admin/delete-account.
+// Covers: user data, devices, passkeys, sessions, challenges, wrapped keys,
+//         share targets, share data, recovery OTPs, email verify tokens, schedules.
+async function _deleteAllUserData(kv: Deno.Kv, emailHash: string): Promise<void> {
+  const prefixesToScan = [
+    ['user',             emailHash],   // verifier, key envelopes, data, settings, etc.
+    ['device',           emailHash],   // trusted devices
+    ['passkey',          emailHash],   // WebAuthn credentials
+    ['passkey_session',  emailHash],   // active session tokens
+    ['passkey_challenge',emailHash],   // pending WebAuthn challenges
+    ['passkey_key',      emailHash],   // passkey-wrapped data key copies
+    ['email_verify',     emailHash],   // email verification OTPs
+  ];
+
+  for (const prefix of prefixesToScan) {
+    const iter = kv.list({ prefix });
+    for await (const entry of iter) await kv.delete(entry.key);
+  }
+
+  // Point keys (not prefix-scanned)
+  await kv.delete(['recovery_otp', emailHash]);
+
+  // Share targets owned by this user + their data
+  const shares = kv.list({ prefix: ['share'] });
+  for await (const entry of shares) {
+    if (entry.key.length !== 2) continue;
+    try {
+      const data = JSON.parse(entry.value as string);
+      if (data.ownerEmailHash === emailHash) {
+        await kv.delete(entry.key);
+        const code = entry.key[1] as string;
+        const sdIter = kv.list({ prefix: ['share_data', code] });
+        for await (const sd of sdIter) await kv.delete(sd.key);
+      }
+    } catch(e) {}
+  }
+
+  // Share keys belonging to this user
+  const shareKeyIter = kv.list({ prefix: ['share_key'] });
+  for await (const entry of shareKeyIter) {
+    const k = entry.key as string[];
+    if (k[2] === emailHash) await kv.delete(entry.key);
+  }
+
+  // Schedules (stored at top level, matched by emailHash field)
+  const schedKeys = ['schedule', 'last_sent', 'user_email', 'user_items'];
+  for (const k_ of schedKeys) {
+    const val = await kv.get([k_]);
+    if (val.value) {
+      try {
+        const d = JSON.parse(val.value as string);
+        if (d.emailHash === emailHash) await kv.delete([k_]);
+      } catch(e) {}
+    }
+  }
+}
+
 // ── Request handler ───────────────────────────────────────
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') {
@@ -173,44 +231,22 @@ Deno.serve(async (request) => {
   // ── User: delete account (all data) ──────────────────
   if (url.pathname === '/user/delete' && request.method === 'POST') {
     try {
-      const { emailHash, verifier } = await request.json();
-      if (!emailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', emailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
-      // Delete all user data, devices, schedules
-      const prefixes = [
-        ['user', emailHash],
-        ['device', emailHash],
-      ];
-      for (const prefix of prefixes) {
-        const entries = kv.list({ prefix });
-        for await (const entry of entries) await kvDel(entry.key);
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      // Accept passphrase verifier OR passkey session token
+      if (sessionToken) {
+        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else if (verifier) {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else {
+        return json({ error: 'Missing credentials' }, corsHeaders, 400);
       }
-      // Delete share targets owned by this user
-      const shares = kv.list({ prefix: ['share'] });
-      for await (const entry of shares) {
-        try {
-          const data = JSON.parse(entry.value);
-          if (data.ownerEmailHash === emailHash) await kvDel(entry.key);
-        } catch(e) {}
-      }
-      // Delete schedules
-      const schedKeys = ['schedule', 'last_sent', 'user_email', 'user_items'];
-      for (const k_ of schedKeys) {
-        const val = await kvGet([k_]);
-        // Only delete if it belongs to this user (check email match)
-        if (val.value) {
-          try {
-            const d = JSON.parse(val.value);
-            if (d.emailHash === emailHash) await kvDel([k_]);
-          } catch(e) {}
-        }
-      }
-      console.log(`Deleted account for emailHash: ${emailHash}`);
+      await _deleteAllUserData(kv, emailHash);
+      console.log(`User self-deleted account: ${emailHash}`);
       return json({ ok: true }, corsHeaders);
-    } catch(err) {
-      return json({ error: err.message }, corsHeaders, 500);
-    }
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
   // ── Device: register trusted device ─────────────────
@@ -1229,44 +1265,12 @@ Deno.serve(async (request) => {
       if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);
       const existing = await kvGet(['user', emailHash, 'verifier']);
       if (!existing.value) return json({ error: 'Account not found' }, corsHeaders, 404);
-
-      // Delete all user keys
-      const prefixes = [
-        ['user', emailHash],
-        ['device', emailHash],
-        ['share_key'],
-      ];
-      for (const prefix of prefixes.slice(0, 2)) {
-        const entries = kv.list({ prefix });
-        for await (const entry of entries) await kvDel(entry.key);
-      }
-      // Delete share keys belonging to this user
-      const shareKeyIter = kv.list({ prefix: ['share_key'] });
-      for await (const entry of shareKeyIter) {
-        const k = entry.key as string[];
-        if (k[2] === emailHash) await kvDel(entry.key);
-      }
-      // Delete share targets owned by this user and their data
-      const shares = kv.list({ prefix: ['share'] });
-      for await (const entry of shares) {
-        if (entry.key.length !== 2) continue;
-        try {
-          const data = JSON.parse(entry.value as string);
-          if (data.ownerEmailHash === emailHash) {
-            await kvDel(entry.key);
-            // Also delete share_data for this code
-            const code = entry.key[1] as string;
-            const sdIter = kv.list({ prefix: ['share_data', code] });
-            for await (const sd of sdIter) await kvDel(sd.key);
-          }
-        } catch(e) {}
-      }
-      // Delete recovery OTP if present
-      await kvDel(['recovery_otp', emailHash]);
-      console.log(`ADMIN deleted account: ${emailHash}`);
+      await _deleteAllUserData(kv, emailHash);
+      console.log('ADMIN deleted account: ' + emailHash);
       return json({ ok: true, deleted: emailHash }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
+
   // Client sends recovery code hash to identify slot,
   // gets back the encrypted DATA KEY for that slot.
   // On success: slot is invalidated, user must set new passphrase.
