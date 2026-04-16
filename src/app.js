@@ -577,7 +577,7 @@ async function wizardFinish() {
     settings.country = wizardCountry;
     await _saveSettings();
     localStorage.setItem('stockroom_seen', '1');
-    localStorage.setItem('stockroom_country_set', '1');
+    await setCountrySetForDevice();
     document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
     const countrySel = document.getElementById('setting-country');
     if (countrySel) countrySel.value = settings.country;
@@ -6136,6 +6136,19 @@ let _recoveryEmail     = '';
 let _recoveryEmailHash = '';
 let _recoveryToken     = '';
 let _recoveryDataKey   = null;
+let _recoverySessionToken = ''; // set when passkey is used as first factor
+
+// Send OTP email for recovery — shared by code-path and passkey-path
+async function _recoverySendOtp(emailHash) {
+  try {
+    await fetchKV(`${WORKER_URL}/recovery/request`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: _recoveryEmail }),
+    });
+  } catch(e) { console.warn('_recoverySendOtp:', e.message); }
+  document.getElementById('recovery-step-otp').style.display = '';
+  setTimeout(() => document.getElementById('recovery-otp-input')?.focus(), 100);
+}
 
 // ── Crypto helpers (client-side) ───────────
 // ── Crypto version config ─────────────────────────────────
@@ -6939,126 +6952,13 @@ async function exportPublicKey(credentialResponse) {
 }
 
 // ── Passkey Registration ──────────────────────────────────
+// DEPRECATED — not called from UI. Passkey is always added AFTER passphrase registration
+// via _doAddPasskeyToAccount() from the Protect screen.
 async function kvRegisterWithPasskey() {
-  const email  = document.getElementById('kv-email')?.value.trim();
-  const errEl  = document.getElementById('kv-wizard-error');
-  const btn    = document.querySelector('[onclick="kvRegisterWithPasskey()"]');
-  if (!email) { if(errEl){errEl.textContent='Enter your email address first';errEl.style.display='block';} return; }
-  if (!passkeySupported()) { if(errEl){errEl.textContent='Passkeys not supported on this device — use passphrase below';errEl.style.display='block';} return; }
-  if (btn) { btn.textContent = '⏳ Setting up…'; btn.disabled = true; }
-  try {
-    const emailHash = await kvHashEmail(email);
-    // Get challenge from server
-    const beginRes = await fetchKV(`${WORKER_URL}/passkey/register/begin`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, email }),
-    });
-    const beginData = await beginRes.json();
-    if (!beginRes.ok) throw new Error(beginData.error || 'Could not start registration');
-
-    // Create credential on device (triggers Face ID / fingerprint)
-    const credential = await navigator.credentials.create({
-      publicKey: {
-        challenge:              b64urlToUint8(beginData.challenge),
-        rp:                     beginData.rp,
-        user: {
-          id:          new TextEncoder().encode(beginData.user.id),
-          name:        beginData.user.name,
-          displayName: beginData.user.displayName,
-        },
-        pubKeyCredParams:       beginData.pubKeyCredParams,
-        timeout:                beginData.timeout,
-        attestation:            beginData.attestation,
-        authenticatorSelection: beginData.authenticatorSelection,
-      },
-    });
-    if (!credential) throw new Error('Passkey creation cancelled');
-
-    const credId    = uint8ToB64url(new Uint8Array(credential.rawId));
-    const clientDataJSON    = uint8ToB64url(new Uint8Array(credential.response.clientDataJSON));
-    const attestationObject = uint8ToB64url(new Uint8Array(credential.response.attestationObject));
-    // Extract public key from attestation for storage (SPKI format)
-    let publicKey = credId; // fallback - will be replaced by SPKI key
-    try {
-      const pkResult = credential.response.getPublicKey?.();
-      const pk = pkResult instanceof Promise ? await pkResult : pkResult;
-      if (pk) {
-        publicKey = uint8ToB64url(new Uint8Array(pk));
-        console.log('Public key extracted, length:', pk.byteLength, 'bytes');
-      } else {
-        console.warn('getPublicKey() returned null — signature verification will be skipped');
-      }
-    } catch(e) { console.warn('getPublicKey failed:', e.message); }
-
-    // Register with server
-    const finishRes = await fetchKV(`${WORKER_URL}/passkey/register/finish`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        emailHash, email, credentialId: credId,
-        publicKey, clientDataJSON, attestationObject,
-        deviceName: getDeviceName(),
-      }),
-    });
-    const finishData = await finishRes.json();
-    if (!finishRes.ok) throw new Error(finishData.error || 'Registration failed');
-
-    // Store credential ID locally for future logins
-    const storedCreds = JSON.parse(localStorage.getItem('stockroom_passkey_creds') || '{}');
-    storedCreds[emailHash] = credId;
-    localStorage.setItem('stockroom_passkey_creds', JSON.stringify(storedCreds));
-
-    // Generate full v2 key envelope so the account has a data key and recovery codes
-    const kdfSalt  = crypto.getRandomValues(new Uint8Array(32));
-    const dataKey  = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
-    const rawKey   = await crypto.subtle.exportKey('raw', dataKey);
-    // Generate 10 recovery codes
-    const recoveryCodes = Array.from({ length: 10 }, () => {
-      const bytes = crypto.getRandomValues(new Uint8Array(8));
-      const hex   = Array.from(bytes).map(b => b.toString(16).padStart(2,'0')).join('').toUpperCase();
-      return `${hex.slice(0,4)}-${hex.slice(4,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}`;
-    });
-    // Wrap data key with each recovery code via PBKDF2
-    const recoveryEnvelopes = await Promise.all(recoveryCodes.map(async code => {
-      const codeKey  = await deriveKeyFromPassphrase(code, emailHash);
-      const iv       = crypto.getRandomValues(new Uint8Array(12));
-      const wrapped  = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, codeKey, rawKey);
-      return { iv: btoa(String.fromCharCode(...iv)), data: btoa(String.fromCharCode(...new Uint8Array(wrapped))) };
-    }));
-    // Store key envelope on server (sessionToken auth — no verifier needed for passkey accounts)
-    const kdfSaltB64 = btoa(String.fromCharCode(...kdfSalt));
-    const storeRes = await fetchKV(`${WORKER_URL}/key/store`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        emailHash,
-        sessionToken:       finishData.sessionToken,
-        passphraseEnvelope: null,
-        kdfSalt:            kdfSaltB64,
-        cryptoVersion:      'v2',
-        recoveryEnvelopes,
-      }),
-    });
-    if (!storeRes.ok) {
-      const e = await storeRes.json().catch(() => ({}));
-      throw new Error(e.error || 'Failed to store key envelope');
-    }
-
-    // Set up session with the real data key
-    await kvStorePasskeySession(email, emailHash, finishData.sessionToken, dataKey);
-
-    if(errEl) errEl.style.display = 'none';
-    await postLoginWizardRoute(recoveryCodes);
-  } catch(err) {
-    if (err.name === 'NotAllowedError') {
-      if(errEl){errEl.textContent='Passkey setup was cancelled — try again or use passphrase below';errEl.style.display='block';}
-    } else {
-      if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
-    }
-  } finally {
-    if (btn) { btn.textContent = '🔑 Create account with Face ID / Fingerprint'; btn.disabled = false; }
-  }
+  console.warn('kvRegisterWithPasskey: deprecated');
 }
 
-// ── Passkey Login ─────────────────────────────────────────
+
 async function kvLoginWithPasskey() {
   // Support both the normal input and the remembered-email display input
   const email  = (document.getElementById('kv-login-email')?.value.trim()) ||
@@ -7129,8 +7029,8 @@ async function kvLoginWithPasskey() {
     if(errEl) errEl.style.display = 'none';
     persistLoginCookies(email, true);
     // Stamp permanent setup flags — these survive sign-out
-    localStorage.setItem('stockroom_protect_seen', '1');
-    localStorage.setItem('stockroom_country_set', '1');
+    await setProtectSeenForDevice();
+    await setCountrySetForDevice();
     localStorage.setItem('stockroom_seen', '1');
     await postLoginWizardRoute();
   } catch(err) {
@@ -7239,8 +7139,8 @@ async function reauthWithPasskey() {
 
 // Shared post-login wizard routing — called by all sign-in paths
 async function postLoginWizardRoute(recoveryCodes = []) {
-  const protectSeen = localStorage.getItem('stockroom_protect_seen');
-  const countrySet  = localStorage.getItem('stockroom_country_set');
+  const protectSeen = await getProtectSeenForDevice();
+  const countrySet  = await getCountrySetForDevice();
   // If returning user (no new recovery codes to show) and they have passkey set up,
   // skip the protect screen — they already secured their account
   const isReturningUser = protectSeen || (recoveryCodes.length === 0 && _kvAuthMethod === 'passkey');
@@ -7264,7 +7164,7 @@ async function postLoginWizardRoute(recoveryCodes = []) {
     document.body.classList.remove('wizard-active');
     document.getElementById('wizard').style.display = 'none';
     localStorage.setItem('stockroom_seen', '1');
-    localStorage.setItem('stockroom_protect_seen', '1'); // mark as seen so we don't show again
+    await setProtectSeenForDevice(); // stored in IDB — survives cookie clears
     const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
     if (stockTab) showView('stock', stockTab);
     scheduleRender(...RENDER_REGIONS);
@@ -7430,11 +7330,12 @@ function updateProtectContinueBtn() {
   if (btn) { btn.disabled = !checked; btn.style.opacity = checked ? '1' : '0.5'; }
 }
 
-function protectContinue() {
+async function protectContinue() {
   _protectRecoveryCodes = [];
-  localStorage.setItem('stockroom_protect_seen', '1');
+  await setProtectSeenForDevice();
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
-  if (localStorage.getItem('stockroom_country_set')) {
+  const countrySet = await getCountrySetForDevice();
+  if (countrySet) {
     document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
     localStorage.setItem('stockroom_seen', '1');
     kvSyncNow();
@@ -7460,10 +7361,66 @@ async function recoveryStepEmail() {
   const errEl = document.getElementById('recovery-email-error');
   if (!email) { if(errEl){errEl.textContent='Enter your email address';errEl.style.display='block';} return; }
   _recoveryEmail = email;
+  _recoveryEmailHash = await kvHashEmail(email);
   if(errEl) errEl.style.display='none';
   document.getElementById('recovery-step-email').style.display = 'none';
-  document.getElementById('recovery-step-code').style.display  = '';
+  // Show method choice screen — offer passkey if this device has one
+  const methodStep = document.getElementById('recovery-step-method');
+  const pkOption   = document.getElementById('recovery-passkey-option');
+  if (methodStep) {
+    if (pkOption) pkOption.style.display = (getDeviceHasPasskey() && passkeySupported()) ? 'block' : 'none';
+    methodStep.style.display = '';
+  } else {
+    // Fallback: skip straight to code
+    document.getElementById('recovery-step-code').style.display = '';
+    setTimeout(() => document.getElementById('recovery-code-input')?.focus(), 100);
+  }
+}
+
+function recoveryChooseCode() {
+  document.getElementById('recovery-step-method').style.display = 'none';
+  document.getElementById('recovery-step-code').style.display = '';
   setTimeout(() => document.getElementById('recovery-code-input')?.focus(), 100);
+}
+
+async function recoveryWithPasskey() {
+  const errEl = document.getElementById('recovery-method-error');
+  if(errEl) errEl.style.display = 'none';
+  try {
+    const emailHash = _recoveryEmailHash || await kvHashEmail(_recoveryEmail);
+    const beginRes = await fetchKV(`${WORKER_URL}/passkey/auth/begin`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash }),
+    });
+    const beginData = await beginRes.json();
+    if (!beginRes.ok) throw new Error(beginData.error || 'Could not start passkey verification');
+    const assertion = await navigator.credentials.get({
+      publicKey: {
+        challenge:        b64urlToUint8(beginData.challenge),
+        rpId:             beginData.rpId,
+        allowCredentials: beginData.allowCredentials.map(c => ({ type: 'public-key', id: b64urlToUint8(c.id) })),
+        userVerification: beginData.userVerification,
+        timeout:          beginData.timeout,
+      },
+    });
+    if (!assertion) throw new Error('Cancelled');
+    const credId           = uint8ToB64url(new Uint8Array(assertion.rawId));
+    const clientDataJSON   = uint8ToB64url(new Uint8Array(assertion.response.clientDataJSON));
+    const authenticatorData = uint8ToB64url(new Uint8Array(assertion.response.authenticatorData));
+    const signature        = uint8ToB64url(new Uint8Array(assertion.response.signature));
+    const finishRes = await fetchKV(`${WORKER_URL}/passkey/auth/finish`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash, credentialId: credId, clientDataJSON, authenticatorData, signature }),
+    });
+    const finishData = await finishRes.json();
+    if (!finishRes.ok) throw new Error(finishData.error || 'Passkey verification failed');
+    // Passkey verified — store session token for OTP step, then send email code
+    _recoverySessionToken = finishData.sessionToken;
+    document.getElementById('recovery-step-method').style.display = 'none';
+    await _recoverySendOtp(emailHash);
+  } catch(e) {
+    if (errEl) { errEl.textContent = e.name === 'NotAllowedError' ? 'Cancelled — try again' : e.message; errEl.style.display = 'block'; }
+  }
 }
 
 // ── Recovery Step B: Enter recovery code → validate → send email OTP ──
@@ -7545,11 +7502,13 @@ async function recoveryResendOtp() {
 }
 
 function recoveryBack(step) {
-  document.getElementById('recovery-step-code').style.display  = 'none';
-  document.getElementById('recovery-step-otp').style.display   = 'none';
-  document.getElementById('recovery-step-reset').style.display = 'none';
-  if (step === 'email') document.getElementById('recovery-step-email').style.display = '';
-  else if (step === 'code') document.getElementById('recovery-step-code').style.display = '';
+  document.getElementById('recovery-step-method').style.display = 'none';
+  document.getElementById('recovery-step-code').style.display   = 'none';
+  document.getElementById('recovery-step-otp').style.display    = 'none';
+  document.getElementById('recovery-step-reset').style.display  = 'none';
+  if (step === 'email')  document.getElementById('recovery-step-email').style.display = '';
+  else if (step === 'method') document.getElementById('recovery-step-method').style.display = '';
+  else if (step === 'code')   document.getElementById('recovery-step-code').style.display = '';
 }
 
 // ── Recovery Step D: Set new passphrase ─────────────────
@@ -8122,8 +8081,8 @@ async function kvRestorePasskeySession(session) {
   // Ensure device flag is set so login screen shows passkey option next time
   setDeviceHasPasskey(true);
   // Stamp permanent setup flags — these survive sign-out and should always be set for returning users
-  localStorage.setItem('stockroom_protect_seen', '1');
-  localStorage.setItem('stockroom_country_set', '1');
+  await setProtectSeenForDevice();
+  await setCountrySetForDevice();
   localStorage.setItem('stockroom_seen', '1');
   const el = document.getElementById('kv-account-email');
   if (el) el.textContent = email;
@@ -8209,6 +8168,36 @@ async function _doAddPasskeyToAccount() {
       storedCreds[_kvEmailHash] = credId;
       localStorage.setItem('stockroom_passkey_creds', JSON.stringify(storedCreds));
     } catch(e) {}
+
+    // ── KEY ARCHITECTURE FIX ──────────────────────────────────────────
+    // Immediately wrap the current data key (_kvKey) for this passkey credential.
+    // This means the FIRST passkey login on this device won't need the passphrase —
+    // the passkey-wrapped copy is stored right now while we still have the key in memory.
+    // All three methods (passphrase, passkey, recovery code) will decrypt the SAME data key.
+    if (_kvKey) {
+      try {
+        const exported  = await crypto.subtle.exportKey('raw', _kvKey);
+        const rawKeyB64 = btoa(String.fromCharCode(...new Uint8Array(exported)));
+        const wrapRes   = await fetchKV(`${WORKER_URL}/key/passkey-wrap`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            emailHash:    _kvEmailHash,
+            sessionToken: finishData.sessionToken,
+            credentialId: credId,
+            rawKeyB64,
+          }),
+        });
+        if (wrapRes.ok) {
+          console.log('Passkey-wrapped key stored during registration ✓ — future passkey logins need no passphrase');
+        } else {
+          const we = await wrapRes.json().catch(() => ({}));
+          console.warn('Could not store passkey-wrapped key during registration:', we.error);
+        }
+      } catch(wrapErr) {
+        console.warn('passkey-wrap during registration failed:', wrapErr.message);
+        // Non-fatal — first login will prompt passphrase once as fallback
+      }
+    }
 
     toast('Passkey added ✓ — you can now sign in with Face ID / Fingerprint');
     loadPasskeys();
@@ -8455,11 +8444,69 @@ async function openDeviceDb() {
 function getOrCreateDeviceId() {
   let id = localStorage.getItem('stockroom_device_id');
   if (!id) {
+    // Try to recover from IDB (handles localStorage clear)
+    id = sessionStorage.getItem('stockroom_device_id_session');
+  }
+  if (!id) {
     id = Array.from(crypto.getRandomValues(new Uint8Array(16)))
       .map(b => b.toString(16).padStart(2,'0')).join('');
-    localStorage.setItem('stockroom_device_id', id);
   }
+  try { localStorage.setItem('stockroom_device_id', id); } catch(e) {}
+  try { sessionStorage.setItem('stockroom_device_id_session', id); } catch(e) {}
   return id;
+}
+
+// On startup, also persist device ID into IDB (fire-and-forget)
+// so it can be recovered if localStorage is cleared
+;(function _persistDeviceId() {
+  try {
+    const id = getOrCreateDeviceId();
+    dbPut('settings', 'stockroom_device_id', id).catch(() => {});
+    // Also try to restore from IDB if LS is empty
+    const lsId = localStorage.getItem('stockroom_device_id');
+    if (!lsId) {
+      dbGet('settings', 'stockroom_device_id').then(val => {
+        if (val) {
+          localStorage.setItem('stockroom_device_id', val);
+          sessionStorage.setItem('stockroom_device_id_session', val);
+        }
+      }).catch(() => {});
+    }
+  } catch(e) {}
+})();
+
+// ── Per-device setup flags (survive localStorage/cookie clears) ────────────
+// Stored in IDB (keyed by deviceId) so they persist even after the user
+// clears cookies or localStorage. Falls back to localStorage for speed.
+async function _getDeviceSetupFlag(flagName) {
+  const key = `device_setup_${getOrCreateDeviceId()}_${flagName}`;
+  try { if (localStorage.getItem(key) === '1') return true; } catch(e) {}
+  try { if ((await dbGet('settings', key)) === '1') {
+    try { localStorage.setItem(key, '1'); } catch(e) {} // backfill
+    return true;
+  }} catch(e) {}
+  return false;
+}
+async function _setDeviceSetupFlag(flagName) {
+  const key = `device_setup_${getOrCreateDeviceId()}_${flagName}`;
+  try { localStorage.setItem(key, '1'); } catch(e) {}
+  try { await dbPut('settings', key, '1'); } catch(e) {}
+}
+async function getProtectSeenForDevice() {
+  if (localStorage.getItem('stockroom_protect_seen') === '1') return true;
+  return _getDeviceSetupFlag('protect_seen');
+}
+async function setProtectSeenForDevice() {
+  localStorage.setItem('stockroom_protect_seen', '1');
+  await _setDeviceSetupFlag('protect_seen');
+}
+async function getCountrySetForDevice() {
+  if (localStorage.getItem('stockroom_country_set') === '1') return true;
+  return _getDeviceSetupFlag('country_set');
+}
+async function setCountrySetForDevice() {
+  localStorage.setItem('stockroom_country_set', '1');
+  await _setDeviceSetupFlag('country_set');
 }
 
 function getDeviceName() {
@@ -11280,8 +11327,8 @@ async function init() {
 
   const seen        = localStorage.getItem('stockroom_seen');
   const wizardStep  = localStorage.getItem('stockroom_wizard_step');
-  const countrySet  = localStorage.getItem('stockroom_country_set');
-  const protectSeen = localStorage.getItem('stockroom_protect_seen');
+  const countrySet  = await getCountrySetForDevice();
+  const protectSeen = await getProtectSeenForDevice();
 
   if (_joinCode) {
   } else if (kvConnected && !protectSeen) {

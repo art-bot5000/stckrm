@@ -317,7 +317,7 @@
       <div style="text-align:center;margin-bottom:20px">
         <div style="font-size:44px;margin-bottom:12px">🔐</div>
         <h1 style="font-size:22px;font-weight:700;margin-bottom:8px">Account recovery</h1>
-        <p style="color:var(--muted);font-size:13px;line-height:1.6">Recover your account using a recovery code and email verification.</p>
+        <p style="color:var(--muted);font-size:13px;line-height:1.6">Recover your account using two verification methods.</p>
       </div>
       <div style="text-align:left">
 
@@ -334,6 +334,18 @@
         <p id="recovery-email-error" style="font-size:12px;color:var(--danger);margin-top:8px;display:none"></p>
       </div>
 
+      <!-- Step A2: Choose first verification method (passkey OR recovery code) -->
+      <div id="recovery-step-method" style="display:none">
+        <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Choose how to verify your identity — you'll then confirm with an email code.</p>
+        <div id="recovery-passkey-option" style="display:none;margin-bottom:10px">
+          <button class="btn btn-primary btn-xl full" onclick="recoveryWithPasskey()">🔑 Verify with Face ID / Fingerprint</button>
+          <div style="text-align:center;margin:10px 0;font-size:12px;color:var(--muted)">or</div>
+        </div>
+        <button class="btn btn-ghost btn-xl full" style="margin-bottom:10px" onclick="recoveryChooseCode()">🔢 Use a recovery code instead</button>
+        <button class="btn btn-ghost btn-xl full" style="font-size:13px" onclick="recoveryBack('email')">← Back</button>
+        <p id="recovery-method-error" style="font-size:12px;color:var(--danger);margin-top:8px;display:none"></p>
+      </div>
+
       <!-- Step B: Recovery code -->
       <div id="recovery-step-code" style="display:none">
         <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Enter one of your 10-character recovery codes (format: XXXX-XXXX-XXXX-XXXX)</p>
@@ -346,14 +358,14 @@
           </div>
         </div>
         <button class="btn btn-primary btn-xl full" style="margin-bottom:10px" onclick="recoveryStepCode()">Verify code →</button>
-        <button class="btn btn-ghost btn-xl full" style="font-size:13px" onclick="recoveryBack('email')">← Back</button>
+        <button class="btn btn-ghost btn-xl full" style="font-size:13px" onclick="recoveryBack('method')">← Back</button>
         <p id="recovery-code-error" style="font-size:12px;color:var(--danger);margin-top:8px;display:none"></p>
       </div>
 
       <!-- Step C: Email OTP verification -->
       <div id="recovery-step-otp" style="display:none">
         <div style="background:rgba(76,187,138,0.08);border:1px solid rgba(76,187,138,0.2);border-radius:10px;padding:12px 14px;margin-bottom:16px">
-          <div style="font-size:13px;font-weight:700;color:var(--ok);margin-bottom:4px">✓ Recovery code verified</div>
+          <div style="font-size:13px;font-weight:700;color:var(--ok);margin-bottom:4px">✓ First factor verified</div>
           <div style="font-size:12px;color:var(--muted)">We've sent a 6-digit code to your email. Enter it below to confirm your identity.</div>
         </div>
         <div class="form-group">
