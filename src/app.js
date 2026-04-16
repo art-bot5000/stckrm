@@ -6851,6 +6851,15 @@ async function kvRegister() {
     _kvKey = dataKey;
     await kvStoreSession(email, emailHash, verifier, dataKey);
     if(errEl) errEl.style.display = 'none';
+    // Clear any stale device setup flags from a previous account on this device
+    // so the protect screen shows correctly with the new recovery codes
+    localStorage.removeItem('stockroom_protect_seen');
+    localStorage.removeItem('stockroom_country_set');
+    try {
+      const devId = getOrCreateDeviceId();
+      await dbPut('settings', `device_setup_${devId}_protect_seen`, null);
+      await dbPut('settings', `device_setup_${devId}_country_set`, null);
+    } catch(e) {}
     // Verify email ownership before continuing to protect screen
     await showEmailVerification(email, emailHash, () => showProtectDataScreen(recoveryCodes));
   } catch(err) {
@@ -7193,6 +7202,7 @@ let _protectRecoveryCodes = []; // held in memory during setup only
 function showProtectDataScreen(recoveryCodes, isMigration = false) {
   _protectRecoveryCodes = recoveryCodes || [];
   const hasCodes = _protectRecoveryCodes.length > 0;
+  console.log('[protect] showProtectDataScreen called — hasCodes:', hasCodes, 'codes count:', _protectRecoveryCodes.length);
   const step1d = document.getElementById('wizard-step-1d');
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   if (step1d) {
