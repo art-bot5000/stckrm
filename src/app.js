@@ -7267,6 +7267,7 @@ async function reauthWithPasskey() {
         })),
         userVerification: beginData.userVerification,
         timeout:          beginData.timeout,
+        extensions: { prf: { eval: { first: PASSKEY_PRF_SALT } } },
       },
     });
     if (!assertion) throw new Error('Verification cancelled');
@@ -7558,6 +7559,7 @@ async function recoveryWithPasskey() {
         allowCredentials: beginData.allowCredentials.map(c => ({ type: 'public-key', id: b64urlToUint8(c.id) })),
         userVerification: beginData.userVerification,
         timeout:          beginData.timeout,
+        extensions: { prf: { eval: { first: PASSKEY_PRF_SALT } } },
       },
     });
     if (!assertion) throw new Error('Cancelled');
