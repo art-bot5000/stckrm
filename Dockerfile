@@ -2,7 +2,15 @@ FROM node:22-slim AS builder
 WORKDIR /build
 COPY package.json ./
 RUN npm install
-COPY src/ ./src/
+# Copy source files from root (not src/ subdirectory)
+COPY app.js ./src/app.js
+COPY scanner.js ./src/scanner.js
+COPY styles.css ./src/styles.css
+COPY index.html ./src/index.html
+COPY sw.js ./src/sw.js
+COPY manifest.json ./src/manifest.json
+COPY admin.html ./src/admin.html
+COPY diag.html ./src/diag.html
 RUN mkdir -p public && \
     npx terser src/app.js --compress --mangle --comments false -o public/app.js && \
     npx terser src/scanner.js --compress --mangle --comments false -o public/scanner.js && \
@@ -14,7 +22,8 @@ RUN mkdir -p public && \
       -o public/index.html && \
     cp src/sw.js public/sw.js && \
     cp src/manifest.json public/manifest.json && \
-    cp src/admin.html public/admin.html
+    cp src/admin.html public/admin.html && \
+    cp src/diag.html public/diag.html
 
 FROM denoland/deno:2.3.1
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && \

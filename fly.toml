@@ -1,8 +1,4 @@
-# fly.toml app configuration file generated for stckrm on 2026-04-12T00:08:22+01:00
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
+# fly.toml app configuration file
 app = 'stckrm'
 primary_region = 'lhr'
 
@@ -16,33 +12,18 @@ primary_region = 'lhr'
   source = 'stockroom_data'
   destination = '/data'
 
-[[services]]
-  protocol = 'tcp'
+[http_service]
   internal_port = 8080
+  force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
 
-  [[services.ports]]
-    port = 80
-    handlers = ['http']
-    force_https = true
-
-  [[services.ports]]
-    port = 443
-    handlers = ['tls', 'http']
-
-  [services.concurrency]
+  [http_service.concurrency]
     type = 'requests'
     hard_limit = 200
     soft_limit = 150
-
-  [[services.http_checks]]
-    interval = '15s'
-    timeout = '5s'
-    grace_period = '10s'
-    method = 'GET'
-    path = '/ping'
-    protocol = 'http'
 
 [[vm]]
   memory = '256mb'
