@@ -2932,6 +2932,11 @@ if ('serviceWorker' in navigator) {
       console.log('BG_SYNC received from SW');
       syncAll().catch(e => console.warn('BG_SYNC syncAll failed:', e));
     }
+    if (event.data?.type === 'SW_UPDATED') {
+      // New service worker activated — reload to get fresh app.js
+      console.log('[SW] New SW activated:', event.data.version, '— reloading for fresh files');
+      window.location.reload();
+    }
   });
 }
 
