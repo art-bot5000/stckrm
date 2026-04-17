@@ -1860,13 +1860,13 @@ window._loadScanner = function() {
   });
 };
 // Stubs: scanner.js redefines these as real functions after _loadScanner() resolves
-window.openBarcodeScanner = async function() {
+window.openBarcodeScanner = async function(...args) {
   await window._loadScanner();
-  window.openBarcodeScanner();
+  if (typeof openBarcodeScanner === 'function') openBarcodeScanner(...args);
 };
-window.quickAddBarcodeScan = async function() {
+window.quickAddBarcodeScan = async function(...args) {
   await window._loadScanner();
-  window.quickAddBarcodeScan();
+  if (typeof quickAddBarcodeScan === 'function') quickAddBarcodeScan(...args);
 };
 window.shareItem = async function(id) {
   await window._loadScanner();
@@ -1874,23 +1874,23 @@ window.shareItem = async function(id) {
 };
 window.openQuickAdd = async function() {
   await window._loadScanner();
-  window.openQuickAdd();
+  if (typeof openQuickAdd === 'function') openQuickAdd();
 };
-window.doShareImage = async function() {
+window.doShareImage = async function(...args) {
   await window._loadScanner();
-  window.doShareImage();
+  if (typeof doShareImage === 'function') doShareImage(...args);
 };
-window.doShareItemLink = async function() {
+window.doShareItemLink = async function(...args) {
   await window._loadScanner();
-  window.doShareItemLink();
+  if (typeof doShareItemLink === 'function') doShareItemLink(...args);
 };
-window.doShareLink = async function() {
+window.doShareLink = async function(...args) {
   await window._loadScanner();
-  window.doShareLink();
+  if (typeof doShareLink === 'function') doShareLink(...args);
 };
-window.doShareText = async function() {
+window.doShareText = async function(...args) {
   await window._loadScanner();
-  window.doShareText();
+  if (typeof doShareText === 'function') doShareText(...args);
 };
 </script>
 
