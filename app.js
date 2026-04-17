@@ -113,7 +113,7 @@ function getStores(code) { return STORES_BY_COUNTRY[code] || STORES_BY_COUNTRY.O
 // ═══════════════════════════════════════════
 
 const DB_NAME    = 'stockroom';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles'];
 
 let _db = null;
@@ -126,7 +126,12 @@ function openDB() {
       const db = e.target.result;
       DB_STORES.forEach(s => { if (!db.objectStoreNames.contains(s)) db.createObjectStore(s); });
     };
-    req.onsuccess = e => { _db = e.target.result; resolve(_db); };
+    req.onsuccess = e => {
+      _db = e.target.result;
+      // If another tab upgrades the DB, reset our handle so we re-open with new schema
+      _db.onversionchange = () => { _db.close(); _db = null; };
+      resolve(_db);
+    };
     req.onerror   = e => reject(e.target.error);
   });
 }
