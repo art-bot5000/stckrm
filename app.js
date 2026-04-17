@@ -10373,25 +10373,53 @@ function renderGrocery() {
   if (grocerySort === 'dept') {
     // Use manual order within each department group
     const ordered = getGroceryItemsInOrder();
-    const uncheckedOrdered = ordered.filter(i => !i.checked && (!query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query)));
+    const filteredOrdered = ordered.filter(i => !query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query));
+
+    // Build dept map including both checked and unchecked
     const deptMap = {};
-    uncheckedOrdered.forEach(item => {
+    filteredOrdered.forEach(item => {
       const dept = item.department || 'other';
-      if (!deptMap[dept]) deptMap[dept] = [];
-      deptMap[dept].push(item);
+      if (!deptMap[dept]) deptMap[dept] = { unchecked: [], checked: [] };
+      if (item.checked) deptMap[dept].checked.push(item);
+      else deptMap[dept].unchecked.push(item);
     });
+
     const deptOrder = (groceryDepts.length ? groceryDepts : DEFAULT_DEPTS).map(d => d.id);
-    const extraDepts = [...new Set(uncheckedOrdered.map(i => i.department || 'other'))].filter(d => !deptOrder.includes(d));
+    const extraDepts = [...new Set(filteredOrdered.map(i => i.department || 'other'))].filter(d => !deptOrder.includes(d));
+    const activeDepts = groceryDepts.length ? groceryDepts : DEFAULT_DEPTS;
+
     [...deptOrder, ...extraDepts].forEach(deptId => {
-      const deptItems = deptMap[deptId];
-      if (!deptItems || !deptItems.length) return;
-      const deptDef = (groceryDepts.length ? groceryDepts : DEFAULT_DEPTS).find(d => d.id === deptId) || {name:deptId, emoji:'📦'};
+      const bucket = deptMap[deptId];
+      if (!bucket || (bucket.unchecked.length === 0 && bucket.checked.length === 0)) return;
+      const deptDef = activeDepts.find(d => d.id === deptId) || {name: deptId, emoji:'📦'};
+      const allChecked = bucket.unchecked.length === 0 && bucket.checked.length > 0;
+      const totalCount = bucket.unchecked.length + bucket.checked.length;
+
+      // Fully-checked dept: show collapsed with toggle
+      if (allChecked) {
+        html += `<div class="grocery-dept-group">
+          <div class="grocery-dept-header" onclick="_toggleDeptCollapse('${deptId}')" style="cursor:pointer">
+            <span class="grocery-dept-label" style="color:var(--muted);text-decoration:line-through">${deptDef.emoji} ${esc(deptDef.name)}</span>
+            <span style="display:flex;align-items:center;gap:6px">
+              <span class="grocery-dept-count">✓ all ${totalCount}</span>
+              <span id="dept-chevron-${deptId}" style="color:var(--muted);font-size:11px;transition:transform 0.2s">▼</span>
+            </span>
+          </div>
+          <div id="dept-body-${deptId}" style="display:none">
+            ${bucket.checked.map(item => groceryItemHTML(item)).join('')}
+          </div>
+        </div>`;
+        return;
+      }
+
+      // Mixed dept: unchecked first, then checked at bottom of this dept
       html += `<div class="grocery-dept-group">
         <div class="grocery-dept-header">
           <span class="grocery-dept-label">${deptDef.emoji} ${esc(deptDef.name)}</span>
-          <span class="grocery-dept-count">${deptItems.length}</span>
+          <span class="grocery-dept-count">${bucket.unchecked.length}${bucket.checked.length ? ` · ${bucket.checked.length} done` : ''}</span>
         </div>
-        ${deptItems.map(item => groceryItemHTML(item)).join('')}
+        ${bucket.unchecked.map(item => groceryItemHTML(item)).join('')}
+        ${bucket.checked.length ? `<div style="border-top:1px dashed rgba(46,51,80,0.4);margin-top:2px">${bucket.checked.map(item => groceryItemHTML(item)).join('')}</div>` : ''}
       </div>`;
     });
   } else {
@@ -10401,8 +10429,8 @@ function renderGrocery() {
     html += sorted.map(item => groceryItemHTML(item)).join('');
   }
 
-  // Checked items always at bottom
-  if (checked.length > 0) {
+  // In alpha view: checked items at bottom (in dept view they're per-dept above)
+  if (grocerySort === 'alpha' && checked.length > 0) {
     html += `<div style="margin-top:16px">
       <div class="grocery-dept-header">
         <span class="grocery-dept-label" style="color:var(--muted)">✓ Checked</span>
@@ -10413,6 +10441,15 @@ function renderGrocery() {
   }
 
   body.innerHTML = html;
+}
+
+function _toggleDeptCollapse(deptId) {
+  const body    = document.getElementById(`dept-body-${deptId}`);
+  const chevron = document.getElementById(`dept-chevron-${deptId}`);
+  if (!body) return;
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : '';
+  if (chevron) chevron.style.transform = isOpen ? '' : 'rotate(180deg)';
 }
 
 // Edit mode item — same visual design as locked view, just with drag handle + delete + inline edit
@@ -10480,10 +10517,10 @@ function initGroceryDragSort() {
         _dragSrcEl   = row;
         _dragSrcDept = group;
         e.dataTransfer.effectAllowed = 'move';
-        setTimeout(() => row.style.opacity = '0.4', 0);
+        setTimeout(() => row.classList.add('dragging'), 0);
       });
       row.addEventListener('dragend', () => {
-        row.style.opacity = '';
+        row.classList.remove('dragging');
         _dragSrcEl   = null;
         _dragSrcDept = null;
         _persistDragOrder();
@@ -10491,7 +10528,6 @@ function initGroceryDragSort() {
       row.addEventListener('dragover', e => {
         e.preventDefault();
         if (!_dragSrcEl || _dragSrcEl === row) return;
-        // Only allow reorder within same dept group
         if (_dragSrcDept !== group) return;
         const rect = row.getBoundingClientRect();
         if (e.clientY < rect.top + rect.height / 2) group.insertBefore(_dragSrcEl, row);
@@ -10500,7 +10536,7 @@ function initGroceryDragSort() {
       // Touch drag
       row.addEventListener('touchstart', () => {
         _dragSrcEl = row; _dragSrcDept = group;
-        row.style.opacity = '0.6';
+        row.classList.add('dragging');
       }, { passive: true });
       row.addEventListener('touchmove', e => {
         if (!_dragSrcEl) return;
@@ -10513,7 +10549,11 @@ function initGroceryDragSort() {
         }
       }, { passive: true });
       row.addEventListener('touchend', () => {
-        if (_dragSrcEl) { _dragSrcEl.style.opacity = ''; _dragSrcEl = null; _dragSrcDept = null; _persistDragOrder(); }
+        if (_dragSrcEl) {
+          _dragSrcEl.classList.remove('dragging');
+          _dragSrcEl = null; _dragSrcDept = null;
+          _persistDragOrder();
+        }
       });
     });
   });
