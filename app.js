@@ -6756,21 +6756,21 @@ function showKvRegister() {
 }
 
 function showKvLogin() {
+  // Always clear all wizard steps first — prevents country/protect screens bleeding through
+  document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   const rememberedEmail   = getRememberedEmail();
   const rememberedPasskey = getRememberedPasskey();
   if (rememberedEmail) {
     // Skip email screen — go straight to auth with remembered details
     _showAuthStep(rememberedEmail, rememberedPasskey === 'true');
   } else {
-    document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
     document.getElementById('wizard-step-1b')?.classList.add('active');
     // Reset remember-me checkbox and cookie panel
     const cb = document.getElementById('remember-me-checkbox');
     if (cb) cb.checked = false;
     const panel = document.getElementById('cookie-inline-panel');
     if (panel) panel.style.display = 'none';
-    // If this device has a passkey, pre-tick the device passkey indicator
-    // so users know they can use it after entering their email
+    // If this device has a passkey, show hint so users know they can use it
     const deviceHasPK = getDeviceHasPasskey();
     const pkHint = document.getElementById('login-passkey-hint');
     if (pkHint) pkHint.style.display = deviceHasPK ? 'block' : 'none';
