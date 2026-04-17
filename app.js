@@ -7053,7 +7053,7 @@ async function kvLogin() {
     if(errEl) errEl.style.display = 'none';
     // Persist email cookie after successful login (no passkey)
     persistLoginCookies(email, false);
-    await offerTrustDevice(email, emailHash, verifier, dataKey);
+    await _trustIfRemembered(email, emailHash, verifier, dataKey);
 
     // Trigger v1→v2 migration if server says it's due
     if (keyData.migrationDue) {
@@ -8872,17 +8872,26 @@ async function removeWrappedKey(deviceId) {
   } catch(e) {}
 }
 
-async function offerTrustDevice(email, emailHash, verifier, key) {
-  const deviceId = getOrCreateDeviceId();
-  // Check if already trusted
+// Silent trust — called after successful passphrase login.
+// If the user ticked "Stay signed in", trust the device without any popup.
+// This replaces the old offerTrustDevice() confirm dialog entirely.
+async function _trustIfRemembered(email, emailHash, verifier, key) {
+  const cb = document.getElementById('remember-me-checkbox');
+  const remembered = cb?.checked || getCookieConsent() === 'granted';
+  if (!remembered) return; // user didn't ask to stay signed in
+  // Don't re-trust if already trusted
   const secret = localStorage.getItem('stockroom_device_secret');
   if (secret) {
-    const existing = await loadWrappedKey(deviceId, secret);
-    if (existing) return; // already trusted
+    const existing = await loadWrappedKey(getOrCreateDeviceId(), secret);
+    if (existing) return;
   }
-  // Ask user
-  if (!confirm('Trust this device?\n\nYou\'ll stay signed in automatically on this device. You can remove it from Settings at any time.')) return;
   await trustThisDeviceWith(email, emailHash, verifier, key);
+}
+
+async function offerTrustDevice(email, emailHash, verifier, key) {
+  // Popup removed — now handled silently via "Stay signed in" checkbox.
+  // This stub is kept so any call sites that haven't been updated still work.
+  await _trustIfRemembered(email, emailHash, verifier, key);
 }
 
 async function trustThisDeviceWith(email, emailHash, verifier, key) {
@@ -12946,7 +12955,7 @@ async function shareGateSignIn() {
     if (!res.ok) throw new Error(d.error || 'Sign-in failed');
     const key = await kvDeriveKey(email, pass);
     await kvStoreSession(email, emailHash, verifier, key);
-    await offerTrustDevice(email, emailHash, verifier, key);
+    await _trustIfRemembered(email, emailHash, verifier, key);
     await completePendingJoin();
   } catch(err) { if(errEl){errEl.textContent=err.message;errEl.style.display='block';} }
 }
@@ -12975,7 +12984,7 @@ async function shareGateRegister() {
     _kvKey = dataKey;
     await kvStoreSession(email, emailHash, verifier, dataKey);
     await showEmailVerification(email, emailHash, async () => {
-      await offerTrustDevice(email, emailHash, verifier, dataKey);
+      await _trustIfRemembered(email, emailHash, verifier, dataKey);
       await completePendingJoin();
     });
   } catch(err) { if(errEl){errEl.textContent=err.message;errEl.style.display='block';} }
