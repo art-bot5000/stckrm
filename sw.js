@@ -12,45 +12,50 @@ const CACHE_URLS = [
 
 const SYNC_TAG = 'stockroom-sync';
 
-// ── Install: cache core files ─────────────────────────────────
+// ── Install: cache core files then activate immediately ───────
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => {
-      return cache.addAll(CACHE_URLS).catch(e => {
-        console.warn('SW: cache failed for some files:', e);
-      });
+      // Fetch each file with cache-busting so we bypass any HTTP cache
+      return Promise.all(CACHE_URLS.map(url => {
+        const bustUrl = url + (url.includes('?') ? '&' : '?') + '_sw=' + CACHE_VERSION;
+        return fetch(bustUrl, { cache: 'no-store' })
+          .then(res => {
+            if (res.ok) return cache.put(url, res);
+          })
+          .catch(e => console.warn('SW install: could not cache', url, e.message));
+      }));
     })
   );
-  // Don't auto-activate — wait for the app to send SKIP_WAITING
-  // so the user can choose when to refresh
+  // Activate immediately — don't wait for SKIP_WAITING message
+  self.skipWaiting();
 });
 
-// ── Activate: clean up old caches ────────────────────────────
+// ── Activate: clean up ALL old caches ────────────────────────
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => {
-        console.log('SW: removing old cache', k);
-        return caches.delete(k);
-      }))
-    )
+    caches.keys().then(keys => {
+      console.log('SW activate: found caches:', keys);
+      return Promise.all(
+        keys
+          .filter(k => k !== CACHE_NAME && k !== 'stockroom-flags')
+          .map(k => {
+            console.log('SW: deleting old cache', k);
+            return caches.delete(k);
+          })
+      );
+    }).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// ── Message: handle SKIP_WAITING and sync requests ───────────
+// ── Message: handle SKIP_WAITING (legacy support) ─────────────
 self.addEventListener('message', event => {
   if (event.data?.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
-  if (event.data?.type === 'REMINDER_REPLACED') {
-    // Already handled by notificationclick — nothing extra needed
-  }
 });
 
-// ── Background Sync: fires when connectivity returns ─────────
-// Registered by the app whenever a save happens while offline.
-// The browser/OS guarantees this fires even if the app is closed.
+// ── Background Sync ───────────────────────────────────────────
 self.addEventListener('sync', event => {
   if (event.tag === SYNC_TAG) {
     event.waitUntil(triggerAppSync());
@@ -58,65 +63,61 @@ self.addEventListener('sync', event => {
 });
 
 async function triggerAppSync() {
-  // Try to find an open app window and tell it to sync
   const clientList = await clients.matchAll({ type: 'window', includeUncontrolled: true });
   const appClient  = clientList.find(c => c.url.includes('stockroom'));
-
   if (appClient) {
-    // App is open — post a message to trigger syncAll()
     appClient.postMessage({ type: 'BG_SYNC' });
     console.log('SW: background sync — notified open app client');
   } else {
-    // App is closed — we can't run syncAll() here (no access to Drive token/IndexedDB app state)
-    // Set a flag in SW storage so the app syncs immediately on next open
     console.log('SW: background sync — app closed, flagging for sync on next open');
-    // Use the Cache API as a lightweight flag store (no extra permissions needed)
     const cache = await caches.open('stockroom-flags');
     await cache.put('pending-sync', new Response('1'));
   }
 }
 
-// ── Fetch: cache-first for app shell, network-first for APIs ─
+// ── Fetch: network-first for same-origin, passthrough for API ─
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
 
   const url = new URL(event.request.url);
 
-  // Let API calls go straight to the network
-  if (
-    url.hostname.includes('googleapis.com')    ||
-    url.hostname.includes('dropboxapi.com')    ||
-    url.hostname.includes('dropbox.com')       ||
-    url.hostname.includes('workers.dev')       ||
-    url.hostname.includes('fly.dev')           ||
-    url.hostname.includes('deno.net')          ||
-    url.hostname.includes('resend.com')        ||
-    url.hostname.includes('openfoodfacts.org') ||
-    url.hostname.includes('openbeautyfacts.org')
-  ) {
-    return;
-  }
+  // Passthrough for all third-party APIs
+  if (url.hostname !== self.location.hostname) return;
 
-  // Cache-first for app shell
+  // Passthrough for API routes on same origin — only cache app shell files
+  const apiPrefixes = [
+    '/ping', '/auth/', '/user/', '/device/', '/share/', '/schedule/',
+    '/passkey/', '/admin/', '/household/', '/items/', '/key/', '/data/',
+    '/recovery/', '/email/', '/invite/', '/crypto/', '/sync/', '/presence',
+    '/reminder', '/status', '/register', '/unregister', '/unsubscribe',
+    '/check-now', '/send-now', '/debug-schedule', '/reset-schedule',
+    '/set-schedule', '/send-reminder',
+  ];
+  if (apiPrefixes.some(p => url.pathname.startsWith(p))) return;
+
+  // Network-first for app shell — ensures fresh files are always used
   event.respondWith(
-    caches.match(event.request).then(cached => {
-      if (cached) return cached;
-      return fetch(event.request).then(response => {
-        if (response.ok && url.origin === self.location.origin) {
+    fetch(event.request, { cache: 'no-store' })
+      .then(response => {
+        if (response.ok) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
         }
         return response;
-      }).catch(() => {
-        if (event.request.mode === 'navigate') {
-          return caches.match('./index.html');
-        }
-      });
-    })
+      })
+      .catch(() => {
+        // Offline fallback — serve from cache
+        return caches.match(event.request).then(cached => {
+          if (cached) return cached;
+          if (event.request.mode === 'navigate') {
+            return caches.match('./index.html');
+          }
+        });
+      })
   );
 });
 
-// ── Notification click: handle Replaced action or open app ───
+// ── Notification click ────────────────────────────────────────
 self.addEventListener('notificationclick', event => {
   event.notification.close();
 
@@ -128,26 +129,16 @@ self.addEventListener('notificationclick', event => {
   const appUrl     = data.url || './';
 
   if (action === 'replaced' && reminderId && token && workerUrl) {
-    // Mark as replaced directly from the notification — no app visit needed
     event.waitUntil(
       fetch(`${workerUrl}/reminder-done?id=${encodeURIComponent(reminderId)}&token=${encodeURIComponent(token)}&name=${encodeURIComponent(data.reminderName || '')}&source=push`)
         .then(res => res.json())
         .then(result => {
           const date = result.date || new Date().toISOString().slice(0, 10);
-          // Post message to any open app windows so they can update locally
           return clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
-            clientList.forEach(client => {
-              client.postMessage({
-                type:       'REMINDER_REPLACED',
-                reminderId,
-                date,
-                token,
-              });
-            });
+            clientList.forEach(client => client.postMessage({ type: 'REMINDER_REPLACED', reminderId, date, token }));
           });
         })
         .catch(() => {
-          // Network failed — open the app so user can mark manually
           return clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
             for (const client of clientList) {
               if (client.url.includes('stockroom') && 'focus' in client) return client.focus();
@@ -159,7 +150,6 @@ self.addEventListener('notificationclick', event => {
     return;
   }
 
-  // Default: 'open' action or notification body tap — focus or open app
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
       for (const client of clientList) {
