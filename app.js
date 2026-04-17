@@ -10025,6 +10025,144 @@ function setGrocerySort(mode, btn) {
   renderGrocery();
 }
 
+// ═══════════════════════════════════════════════════════════
+//  GROCERY IMPORT — from .txt / .csv
+// ═══════════════════════════════════════════════════════════
+
+// Keyword map for auto-department detection
+const DEPT_KEYWORDS = {
+  'bakery':    ['bread','loaf','roll','baguette','bagel','pitta','crumpet','muffin','croissant','brioche','sourdough','toast','wrap','tortilla'],
+  'fruit-veg': ['apple','banana','orange','grape','strawberry','berry','lemon','lime','mango','pear','peach','plum','melon','pineapple','kiwi','avocado','tomato','potato','carrot','onion','garlic','spinach','lettuce','cucumber','pepper','courgette','broccoli','cauliflower','celery','mushroom','leek','asparagus','kale','cabbage','salad','herb','coriander','parsley','basil','mint','ginger','sweetcorn','corn','pea','bean','lentil'],
+  'meat-fish': ['chicken','beef','pork','lamb','turkey','salmon','tuna','cod','haddock','prawn','shrimp','sausage','bacon','mince','steak','fillet','ham','salami','pepperoni','chorizo','duck','venison','mackerel','sea bass','crab','lobster','fish'],
+  'dairy':     ['milk','cheese','butter','yogurt','yoghurt','cream','cheddar','mozzarella','brie','camembert','feta','eggs','egg','margarine','flora','crème fraîche','soured cream','quark','ricotta'],
+  'frozen':    ['frozen','ice cream','ice lolly','pizza','chips','waffles','nuggets','burger','oven ready'],
+  'drinks':    ['juice','water','coffee','tea','wine','beer','lager','cider','spirit','gin','vodka','rum','whisky','cola','pepsi','coke','fanta','sprite','squash','cordial','smoothie','energy drink','milk','oat milk','almond milk','soy milk'],
+  'snacks':    ['crisp','chip','nuts','biscuit','cookie','chocolate','sweet','candy','popcorn','pretzel','cracker','rice cake','granola bar','cereal bar','flapjack'],
+  'household': ['washing','detergent','cleaner','bleach','sponge','cloth','toilet','kitchen roll','tissue','bin bag','clingfilm','foil','parchment','zip bag','mop','brush','soap','shampoo','conditioner','deodorant','toothbrush','toothpaste','razor','pad','tampon','nappy','baby'],
+  'baby-care': ['nappy','baby','formula','wipe','dummy','bottle'],
+};
+
+function detectDepartment(name) {
+  const lower = name.toLowerCase();
+  for (const [deptId, keywords] of Object.entries(DEPT_KEYWORDS)) {
+    if (keywords.some(kw => lower.includes(kw))) return deptId;
+  }
+  return 'other';
+}
+
+function openGroceryImport() {
+  document.getElementById('grocery-import-file').value = '';
+  document.getElementById('grocery-import-file').click();
+}
+
+function handleGroceryImportFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = '';
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const text = ev.target.result || '';
+    // Split by newlines OR commas, clean up
+    const raw = text.split(/[\n\r,]+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 1 && s.length < 200);
+    if (!raw.length) { toast('No items found in file'); return; }
+    buildGroceryImportReview(raw);
+  };
+  reader.onerror = () => toast('Could not read file');
+  reader.readAsText(file);
+}
+
+// Holds pending import items during review
+let _groceryImportDraft = [];
+
+function buildGroceryImportReview(names) {
+  _groceryImportDraft = names.map(name => ({
+    name,
+    department: detectDepartment(name),
+    notes: '',
+  }));
+
+  renderGroceryImportList();
+  const btn = document.getElementById('grocery-import-confirm-btn');
+  if (btn) btn.textContent = `✓ Add ${_groceryImportDraft.length} item${_groceryImportDraft.length !== 1 ? 's' : ''}`;
+  openModal('grocery-import-modal');
+}
+
+function renderGroceryImportList() {
+  const container = document.getElementById('grocery-import-list');
+  if (!container) return;
+
+  const depts = groceryDepts.length ? groceryDepts : DEFAULT_DEPTS;
+
+  container.innerHTML = _groceryImportDraft.map((item, i) => {
+    const deptInfo = depts.find(d => d.id === item.department) || { emoji: '📦', name: 'Other' };
+    const deptOptions = depts.map(d =>
+      `<option value="${esc(d.id)}" ${d.id === item.department ? 'selected' : ''}>${d.emoji} ${esc(d.name)}</option>`
+    ).join('');
+
+    return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:6px" id="gi-row-${i}">
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" value="${esc(item.name)}"
+          style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:13px;font-weight:600"
+          oninput="_groceryImportDraft[${i}].name=this.value"
+          placeholder="Item name">
+        <button onclick="removeGroceryImportRow(${i})"
+          style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:18px;padding:2px 4px;flex-shrink:0"
+          title="Remove this item">✕</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px"
+          onchange="_groceryImportDraft[${i}].department=this.value">
+          ${deptOptions}
+        </select>
+        <input type="text" value="${esc(item.notes)}"
+          style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--muted);font-size:12px"
+          placeholder="Note (optional)"
+          oninput="_groceryImportDraft[${i}].notes=this.value">
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function removeGroceryImportRow(i) {
+  _groceryImportDraft.splice(i, 1);
+  renderGroceryImportList();
+  const btn = document.getElementById('grocery-import-confirm-btn');
+  if (btn) btn.textContent = `✓ Add ${_groceryImportDraft.length} item${_groceryImportDraft.length !== 1 ? 's' : ''}`;
+  if (_groceryImportDraft.length === 0) closeModal('grocery-import-modal');
+}
+
+async function confirmGroceryImport() {
+  const valid = _groceryImportDraft.filter(item => item.name.trim().length > 0);
+  if (!valid.length) { toast('No items to add'); return; }
+
+  const now = new Date().toISOString();
+  valid.forEach(item => {
+    // Skip duplicates (same name, case-insensitive)
+    const exists = groceryItems.some(g => g.name.toLowerCase() === item.name.trim().toLowerCase());
+    if (!exists) {
+      groceryItems.push({
+        id:         'g_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+        name:       item.name.trim(),
+        department: item.department || 'other',
+        notes:      item.notes.trim(),
+        recurring:  false,
+        intervalDays: 0,
+        checked:    false,
+        addedAt:    now,
+        updatedAt:  now,
+      });
+    }
+  });
+
+  closeModal('grocery-import-modal');
+  _groceryImportDraft = [];
+  await saveGrocery();
+  renderGrocery();
+  toast(`${valid.length} item${valid.length !== 1 ? 's' : ''} added to grocery list ✓`);
+}
+
 function renderGrocery() {
   const query = (document.getElementById('grocery-search')?.value || '').toLowerCase().trim();
   const body  = document.getElementById('grocery-list-body');

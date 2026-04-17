@@ -1161,6 +1161,8 @@
       <button class="grocery-sort-btn active" id="grocery-sort-dept" onclick="setGrocerySort('dept',this)">By Dept</button>
       <button class="grocery-sort-btn" id="grocery-sort-alpha" onclick="setGrocerySort('alpha',this)">A–Z</button>
     </div>
+    <button class="btn btn-ghost btn-sm" onclick="openGroceryImport()" title="Import list from text file" style="flex-shrink:0">📋 Import</button>
+    <input type="file" id="grocery-import-file" accept=".txt,.csv,.text" style="display:none" onchange="handleGroceryImportFile(event)">
   </div>
   <div class="grocery-interval-info" id="grocery-interval-info"></div>
   <div id="grocery-list-body"></div>
@@ -1172,6 +1174,23 @@
   </div><!-- end #view-content -->
 
 </div><!-- end #main -->
+
+<!-- ═══ GROCERY IMPORT REVIEW MODAL ═══ -->
+<div class="modal-backdrop" id="grocery-import-modal" style="z-index:310">
+  <div class="modal" style="max-width:520px;max-height:90vh;display:flex;flex-direction:column">
+    <h2>📋 Import Grocery List</h2>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+      Review and edit each item before adding. Department is auto-detected — tap to change.
+    </p>
+    <div id="grocery-import-list" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;min-height:0;padding-right:2px"></div>
+    <div style="display:flex;gap:8px;margin-top:16px;flex-shrink:0">
+      <button class="btn btn-ghost" style="flex:1" onclick="closeModal('grocery-import-modal')">Cancel</button>
+      <button class="btn btn-primary" style="flex:2" id="grocery-import-confirm-btn" onclick="confirmGroceryImport()">
+        ✓ Add all items
+      </button>
+    </div>
+  </div>
+</div>
 
 <!-- ═══ GROCERY ADD/EDIT MODAL ═══ -->
 <div class="modal-backdrop" id="grocery-item-modal" style="z-index:300">
