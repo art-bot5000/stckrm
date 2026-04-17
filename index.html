@@ -1161,6 +1161,7 @@
       <button class="grocery-sort-btn active" id="grocery-sort-dept" onclick="setGrocerySort('dept',this)">By Dept</button>
       <button class="grocery-sort-btn" id="grocery-sort-alpha" onclick="setGrocerySort('alpha',this)">A–Z</button>
     </div>
+    <button class="btn btn-ghost btn-sm" id="grocery-edit-toggle" onclick="toggleGroceryEditMode()" title="Edit grocery list" style="flex-shrink:0">✏️ Edit</button>
     <button class="btn btn-ghost btn-sm" onclick="openGroceryImport()" title="Import list from text file" style="flex-shrink:0">📋 Import</button>
     <input type="file" id="grocery-import-file" accept=".txt,.csv,.text" style="display:none" onchange="handleGroceryImportFile(event)">
   </div>

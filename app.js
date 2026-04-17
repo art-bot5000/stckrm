@@ -9948,21 +9948,55 @@ document.addEventListener('pointerdown', (e) => {
 // ═══════════════════════════════════════════════════════════
 
 const DEFAULT_DEPTS = [
-  { id:'bakery',    name:'Bakery',       emoji:'🍞' },
-  { id:'fruit-veg', name:'Fruit & Veg',  emoji:'🥦' },
-  { id:'meat-fish', name:'Meat & Fish',  emoji:'🥩' },
-  { id:'dairy',     name:'Dairy',        emoji:'🧀' },
-  { id:'frozen',    name:'Frozen',       emoji:'🧊' },
-  { id:'drinks',    name:'Drinks',       emoji:'🥤' },
-  { id:'snacks',    name:'Snacks',       emoji:'🍿' },
-  { id:'household', name:'Household',    emoji:'🧹' },
-  { id:'baby-care', name:'Baby Care',    emoji:'🍼' },
-  { id:'other',     name:'Other',        emoji:'📦' },
+  { id:'bakery',     name:'Bakery',       emoji:'🍞' },
+  { id:'fruit-veg',  name:'Fruit & Veg',  emoji:'🥦' },
+  { id:'meat-fish',  name:'Meat & Fish',  emoji:'🥩' },
+  { id:'dairy',      name:'Dairy',        emoji:'🧀' },
+  { id:'frozen',     name:'Frozen',       emoji:'🧊' },
+  { id:'drinks',     name:'Drinks',       emoji:'🥤' },
+  { id:'snacks',     name:'Snacks',       emoji:'🍿' },
+  { id:'cupboard',   name:'Cupboard',     emoji:'🥫' },
+  { id:'household',  name:'Household',    emoji:'🧹' },
+  { id:'toiletries', name:'Toiletries',   emoji:'🧴' },
+  { id:'baby-care',  name:'Baby Care',    emoji:'🍼' },
+  { id:'other',      name:'Other',        emoji:'📦' },
 ];
 
-let groceryItems = [];
-let groceryDepts = [];
-let grocerySort  = 'dept'; // 'dept' | 'alpha'
+let groceryItems    = [];
+let groceryDepts    = [];
+let grocerySort     = 'dept'; // 'dept' | 'alpha'
+let groceryEditMode = false;  // unlock/lock toggle
+
+// Manual sort order — array of item IDs in user-defined order
+// Persisted to localStorage so it survives page reloads and view switches
+function getGroceryManualOrder() {
+  try { return JSON.parse(localStorage.getItem('stockroom_grocery_order') || '[]'); } catch(e) { return []; }
+}
+function saveGroceryManualOrder(order) {
+  try { localStorage.setItem('stockroom_grocery_order', JSON.stringify(order)); } catch(e) {}
+}
+// Returns groceryItems sorted by manual order (items not in order go to end)
+function getGroceryItemsInOrder() {
+  const order = getGroceryManualOrder();
+  if (!order.length) return [...groceryItems];
+  const orderMap = new Map(order.map((id, i) => [id, i]));
+  return [...groceryItems].sort((a, b) => {
+    const ai = orderMap.has(a.id) ? orderMap.get(a.id) : Infinity;
+    const bi = orderMap.has(b.id) ? orderMap.get(b.id) : Infinity;
+    return ai - bi;
+  });
+}
+// When a new item is added, append its id to the end of manual order
+function appendToGroceryOrder(id) {
+  const order = getGroceryManualOrder();
+  if (!order.includes(id)) { order.push(id); saveGroceryManualOrder(order); }
+}
+// Clean stale IDs from the order array (items that were deleted)
+function cleanGroceryOrder() {
+  const ids = new Set(groceryItems.map(i => i.id));
+  const clean = getGroceryManualOrder().filter(id => ids.has(id));
+  saveGroceryManualOrder(clean);
+}
 let groceryContextTarget = null;
 let groceryConvertItem   = null;
 
@@ -10031,15 +10065,17 @@ function setGrocerySort(mode, btn) {
 
 // Keyword map for auto-department detection
 const DEPT_KEYWORDS = {
-  'bakery':    ['bread','loaf','roll','baguette','bagel','pitta','crumpet','muffin','croissant','brioche','sourdough','toast','wrap','tortilla'],
-  'fruit-veg': ['apple','banana','orange','grape','strawberry','berry','lemon','lime','mango','pear','peach','plum','melon','pineapple','kiwi','avocado','tomato','potato','carrot','onion','garlic','spinach','lettuce','cucumber','pepper','courgette','broccoli','cauliflower','celery','mushroom','leek','asparagus','kale','cabbage','salad','herb','coriander','parsley','basil','mint','ginger','sweetcorn','corn','pea','bean','lentil'],
-  'meat-fish': ['chicken','beef','pork','lamb','turkey','salmon','tuna','cod','haddock','prawn','shrimp','sausage','bacon','mince','steak','fillet','ham','salami','pepperoni','chorizo','duck','venison','mackerel','sea bass','crab','lobster','fish'],
-  'dairy':     ['milk','cheese','butter','yogurt','yoghurt','cream','cheddar','mozzarella','brie','camembert','feta','eggs','egg','margarine','flora','crème fraîche','soured cream','quark','ricotta'],
-  'frozen':    ['frozen','ice cream','ice lolly','pizza','chips','waffles','nuggets','burger','oven ready'],
-  'drinks':    ['juice','water','coffee','tea','wine','beer','lager','cider','spirit','gin','vodka','rum','whisky','cola','pepsi','coke','fanta','sprite','squash','cordial','smoothie','energy drink','milk','oat milk','almond milk','soy milk'],
-  'snacks':    ['crisp','chip','nuts','biscuit','cookie','chocolate','sweet','candy','popcorn','pretzel','cracker','rice cake','granola bar','cereal bar','flapjack'],
-  'household': ['washing','detergent','cleaner','bleach','sponge','cloth','toilet','kitchen roll','tissue','bin bag','clingfilm','foil','parchment','zip bag','mop','brush','soap','shampoo','conditioner','deodorant','toothbrush','toothpaste','razor','pad','tampon','nappy','baby'],
-  'baby-care': ['nappy','baby','formula','wipe','dummy','bottle'],
+  'bakery':     ['bread','loaf','roll','baguette','bagel','pitta','crumpet','muffin','croissant','brioche','sourdough','toast','wrap','tortilla'],
+  'fruit-veg':  ['apple','banana','orange','grape','strawberry','berry','lemon','lime','mango','pear','peach','plum','melon','pineapple','kiwi','avocado','tomato','potato','carrot','onion','garlic','spinach','lettuce','cucumber','pepper','courgette','broccoli','cauliflower','celery','mushroom','leek','asparagus','kale','cabbage','salad','herb','coriander','parsley','basil','mint','ginger','sweetcorn','corn','pea','bean','lentil'],
+  'meat-fish':  ['chicken','beef','pork','lamb','turkey','salmon','tuna','cod','haddock','prawn','shrimp','sausage','bacon','mince','steak','fillet','ham','salami','pepperoni','chorizo','duck','venison','mackerel','sea bass','crab','lobster','fish'],
+  'dairy':      ['milk','cheese','butter','yogurt','yoghurt','cream','cheddar','mozzarella','brie','camembert','feta','eggs','egg','margarine','flora','crème fraîche','soured cream','quark','ricotta'],
+  'frozen':     ['frozen','ice cream','ice lolly','pizza','chips','waffles','nuggets','burger','oven ready'],
+  'drinks':     ['juice','water','coffee','tea','wine','beer','lager','cider','spirit','gin','vodka','rum','whisky','cola','pepsi','coke','fanta','sprite','squash','cordial','smoothie','energy drink','oat milk','almond milk','soy milk'],
+  'snacks':     ['crisp','chip','nuts','biscuit','cookie','chocolate','sweet','candy','popcorn','pretzel','cracker','rice cake','granola bar','cereal bar','flapjack'],
+  'cupboard':   ['pasta','rice','flour','sugar','oil','vinegar','sauce','ketchup','mustard','mayo','mayonnaise','salt','pepper','spice','herb','stock','gravy','tin','can','soup','beans','chickpea','lentils','noodle','cereal','oat','porridge','jam','honey','syrup','spread','peanut butter','coffee','tea','cocoa','breadcrumb','stuffing'],
+  'household':  ['washing','detergent','cleaner','bleach','sponge','cloth','toilet','kitchen roll','tissue','bin bag','clingfilm','foil','parchment','zip bag','mop','brush','nappy','baby wipe'],
+  'toiletries': ['soap','shampoo','conditioner','deodorant','toothbrush','toothpaste','razor','shower gel','body wash','moisturiser','lotion','sunscreen','face wash','cotton','floss','mouthwash','lip balm','perfume','aftershave','nail','pad','tampon','sanitary'],
+  'baby-care':  ['nappy','baby formula','baby food','dummy','baby bottle','baby wipe','baby lotion'],
 };
 
 function detectDepartment(name) {
@@ -10142,8 +10178,9 @@ async function confirmGroceryImport() {
     // Skip duplicates (same name, case-insensitive)
     const exists = groceryItems.some(g => g.name.toLowerCase() === item.name.trim().toLowerCase());
     if (!exists) {
+      const newId = 'g_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
       groceryItems.push({
-        id:         'g_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+        id:         newId,
         name:       item.name.trim(),
         department: item.department || 'other',
         notes:      item.notes.trim(),
@@ -10153,6 +10190,7 @@ async function confirmGroceryImport() {
         addedAt:    now,
         updatedAt:  now,
       });
+      appendToGroceryOrder(newId);
     }
   });
 
@@ -10170,14 +10208,24 @@ function renderGrocery() {
   const checkedBar = document.getElementById('grocery-checked-bar');
   if (!body) return;
 
-  // interval info
+  cleanGroceryOrder();
+
+  // Interval info
   const si = getGroceryShopInterval();
   const unitLabel = si.unit === 7 ? (si.value === 1 ? 'week' : 'weeks') : si.unit === 30 ? (si.value === 1 ? 'month' : 'months') : (si.value === 1 ? 'day' : 'days');
   if (infoEl) infoEl.textContent = `Shopping every ${si.value} ${unitLabel} · ${groceryItems.filter(i=>!i.checked).length} item${groceryItems.filter(i=>!i.checked).length===1?'':'s'} remaining`;
 
-  // subtitle
   const sub = document.getElementById('grocery-subtitle');
-  if (sub) sub.textContent = `${groceryItems.length} item${groceryItems.length===1?'':'s'} · tap to check off`;
+  if (sub) sub.textContent = `${groceryItems.length} item${groceryItems.length===1?'':'s'} · ${groceryEditMode ? '✏️ editing' : 'tap to check off'}`;
+
+  // Edit mode lock button
+  const editBtn = document.getElementById('grocery-edit-toggle');
+  if (editBtn) {
+    editBtn.textContent = groceryEditMode ? '🔒 Done' : '✏️ Edit';
+    editBtn.style.background = groceryEditMode ? 'rgba(232,168,56,0.15)' : '';
+    editBtn.style.color = groceryEditMode ? 'var(--accent)' : '';
+    editBtn.style.borderColor = groceryEditMode ? 'rgba(232,168,56,0.4)' : '';
+  }
 
   let filtered = groceryItems.filter(i => !query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query));
   const unchecked = filtered.filter(i => !i.checked);
@@ -10185,41 +10233,54 @@ function renderGrocery() {
 
   const checkedCount = groceryItems.filter(i => i.checked).length;
   if (checkedBar) {
-    checkedBar.style.display = checkedCount > 0 ? 'flex' : 'none';
+    checkedBar.style.display = !groceryEditMode && checkedCount > 0 ? 'flex' : 'none';
     const cc = document.getElementById('grocery-checked-count');
     if (cc) cc.textContent = `${checkedCount} item${checkedCount===1?'':'s'} checked`;
   }
 
   if (groceryItems.length === 0) {
-    body.innerHTML = `<div class="grocery-empty"><div class="grocery-empty-icon">🛒</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">No grocery items yet</div><div style="font-size:13px;color:var(--muted)">Add items manually or convert existing stock items.</div></div>`;
+    body.innerHTML = `<div class="grocery-empty"><div class="grocery-empty-icon">🛒</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">No grocery items yet</div><div style="font-size:13px;color:var(--muted)">Add items manually or import a list.</div></div>`;
     return;
   }
 
-  if (filtered.length === 0) {
+  if (filtered.length === 0 && !groceryEditMode) {
     body.innerHTML = `<div class="grocery-empty"><div class="grocery-empty-icon">🔍</div><div style="font-size:15px;font-weight:600">No matches</div></div>`;
+    return;
+  }
+
+  // In edit mode: show all unchecked items in manual order, draggable
+  if (groceryEditMode) {
+    const ordered = getGroceryItemsInOrder().filter(i => !i.checked);
+    const depts = groceryDepts.length ? groceryDepts : DEFAULT_DEPTS;
+    body.innerHTML = `
+      <div style="font-size:12px;color:var(--muted);padding:4px 0 10px;text-align:center">
+        ☰ Drag to reorder · tap to edit inline
+      </div>
+      <div id="grocery-drag-list" style="display:flex;flex-direction:column;gap:6px">
+        ${ordered.map(item => groceryItemEditHTML(item, depts)).join('')}
+      </div>`;
+    initGroceryDragSort();
     return;
   }
 
   let html = '';
 
   if (grocerySort === 'dept') {
-    // Group unchecked by dept
+    // Use manual order within each department group
+    const ordered = getGroceryItemsInOrder();
+    const uncheckedOrdered = ordered.filter(i => !i.checked && (!query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query)));
     const deptMap = {};
-    unchecked.forEach(item => {
+    uncheckedOrdered.forEach(item => {
       const dept = item.department || 'other';
       if (!deptMap[dept]) deptMap[dept] = [];
       deptMap[dept].push(item);
     });
-
-    const deptOrder = groceryDepts.map(d => d.id);
-    // also catch any items with unknown dept ids
-    const extraDepts = [...new Set(unchecked.map(i => i.department || 'other'))].filter(d => !deptOrder.includes(d));
-    const orderedDepts = [...deptOrder, ...extraDepts];
-
-    orderedDepts.forEach(deptId => {
+    const deptOrder = (groceryDepts.length ? groceryDepts : DEFAULT_DEPTS).map(d => d.id);
+    const extraDepts = [...new Set(uncheckedOrdered.map(i => i.department || 'other'))].filter(d => !deptOrder.includes(d));
+    [...deptOrder, ...extraDepts].forEach(deptId => {
       const deptItems = deptMap[deptId];
-      if (!deptItems || deptItems.length === 0) return;
-      const deptDef = groceryDepts.find(d => d.id === deptId) || {name: deptId, emoji:'📦'};
+      if (!deptItems || !deptItems.length) return;
+      const deptDef = (groceryDepts.length ? groceryDepts : DEFAULT_DEPTS).find(d => d.id === deptId) || {name:deptId, emoji:'📦'};
       html += `<div class="grocery-dept-group">
         <div class="grocery-dept-header">
           <span class="grocery-dept-label">${deptDef.emoji} ${esc(deptDef.name)}</span>
@@ -10229,12 +10290,13 @@ function renderGrocery() {
       </div>`;
     });
   } else {
-    // Alphabetical unchecked
-    const sorted = [...unchecked].sort((a,b) => a.name.localeCompare(b.name));
+    // Alpha view — sort alphabetically but preserve manual sub-order within same letter
+    const ordered = getGroceryItemsInOrder().filter(i => !i.checked && (!query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query)));
+    const sorted  = [...ordered].sort((a,b) => a.name.localeCompare(b.name));
     html += sorted.map(item => groceryItemHTML(item)).join('');
   }
 
-  // checked items (always at bottom, no grouping)
+  // Checked items always at bottom
   if (checked.length > 0) {
     html += `<div style="margin-top:16px">
       <div class="grocery-dept-header">
@@ -10246,6 +10308,115 @@ function renderGrocery() {
   }
 
   body.innerHTML = html;
+}
+
+// Edit mode item — inline editable fields
+function groceryItemEditHTML(item, depts) {
+  const deptOptions = depts.map(d =>
+    `<option value="${esc(d.id)}" ${(item.department||'other') === d.id ? 'selected' : ''}>${d.emoji} ${esc(d.name)}</option>`
+  ).join('');
+  return `<div class="grocery-item grocery-edit-row" data-id="${item.id}" draggable="true"
+    style="cursor:grab;gap:6px;flex-direction:column;align-items:stretch;padding:10px 12px">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="color:var(--muted);font-size:18px;cursor:grab;flex-shrink:0;touch-action:none">☰</span>
+      <input type="text" value="${esc(item.name)}"
+        style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:13px;font-weight:600"
+        onchange="updateGroceryItemInline('${item.id}','name',this.value)">
+      <button onclick="deleteGroceryItem('${item.id}')"
+        style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:2px 4px;flex-shrink:0"
+        title="Delete">🗑️</button>
+    </div>
+    <div style="display:flex;gap:6px">
+      <select style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 6px;color:var(--text);font-size:12px"
+        onchange="updateGroceryItemInline('${item.id}','department',this.value)">
+        ${deptOptions}
+      </select>
+      <input type="text" value="${esc(item.notes||'')}" placeholder="Note…"
+        style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--muted);font-size:12px"
+        onchange="updateGroceryItemInline('${item.id}','notes',this.value)">
+    </div>
+  </div>`;
+}
+
+async function updateGroceryItemInline(id, field, value) {
+  const item = groceryItems.find(i => i.id === id);
+  if (!item) return;
+  item[field] = value;
+  item.updatedAt = new Date().toISOString();
+  await saveGrocery();
+}
+
+async function deleteGroceryItem(id) {
+  if (!confirm('Remove this item from your grocery list?')) return;
+  groceryItems = groceryItems.filter(i => i.id !== id);
+  await saveGrocery();
+  renderGrocery();
+}
+
+function toggleGroceryEditMode() {
+  groceryEditMode = !groceryEditMode;
+  renderGrocery();
+}
+
+// ── Drag-to-reorder ─────────────────────────────────────────
+let _dragSrcEl = null;
+
+function initGroceryDragSort() {
+  const list = document.getElementById('grocery-drag-list');
+  if (!list) return;
+
+  list.querySelectorAll('.grocery-edit-row').forEach(row => {
+    row.addEventListener('dragstart', e => {
+      _dragSrcEl = row;
+      e.dataTransfer.effectAllowed = 'move';
+      row.style.opacity = '0.4';
+    });
+    row.addEventListener('dragend', () => {
+      row.style.opacity = '';
+      _dragSrcEl = null;
+      _persistDragOrder();
+    });
+    row.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (_dragSrcEl && _dragSrcEl !== row) {
+        const rect = row.getBoundingClientRect();
+        const mid  = rect.top + rect.height / 2;
+        if (e.clientY < mid) list.insertBefore(_dragSrcEl, row);
+        else list.insertBefore(_dragSrcEl, row.nextSibling);
+      }
+    });
+    // Touch drag support
+    let touchY0 = 0;
+    row.addEventListener('touchstart', e => {
+      if (!e.target.closest('.grocery-edit-row')) return;
+      _dragSrcEl = row;
+      touchY0 = e.touches[0].clientY;
+      row.style.opacity = '0.6';
+    }, { passive: true });
+    row.addEventListener('touchmove', e => {
+      if (!_dragSrcEl) return;
+      const y = e.touches[0].clientY;
+      const target = document.elementFromPoint(e.touches[0].clientX, y)?.closest('.grocery-edit-row');
+      if (target && target !== _dragSrcEl) {
+        const rect = target.getBoundingClientRect();
+        if (y < rect.top + rect.height / 2) list.insertBefore(_dragSrcEl, target);
+        else list.insertBefore(_dragSrcEl, target.nextSibling);
+      }
+    }, { passive: true });
+    row.addEventListener('touchend', () => {
+      if (_dragSrcEl) { _dragSrcEl.style.opacity = ''; _dragSrcEl = null; _persistDragOrder(); }
+    });
+  });
+}
+
+function _persistDragOrder() {
+  const list = document.getElementById('grocery-drag-list');
+  if (!list) return;
+  const newOrder = [...list.querySelectorAll('.grocery-edit-row')].map(el => el.dataset.id);
+  // Merge: keep the new unchecked order, append checked items at end
+  const checkedIds = groceryItems.filter(i => i.checked).map(i => i.id);
+  saveGroceryManualOrder([...newOrder, ...checkedIds]);
 }
 
 function groceryItemHTML(item) {
@@ -10363,7 +10534,9 @@ async function saveGroceryItem() {
     const item = groceryItems.find(i => i.id === id);
     if (item) { Object.assign(item, {name, department:dept, notes, recurring, intervalDays, updatedAt:new Date().toISOString()}); }
   } else {
-    groceryItems.push({ id: 'g_'+Date.now()+'_'+Math.random().toString(36).slice(2,6), name, department:dept, notes, recurring, intervalDays, checked:false, addedAt:new Date().toISOString(), updatedAt:new Date().toISOString() });
+    const newId = 'g_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
+    groceryItems.push({ id: newId, name, department:dept, notes, recurring, intervalDays, checked:false, addedAt:new Date().toISOString(), updatedAt:new Date().toISOString() });
+    appendToGroceryOrder(newId);
   }
   await saveGrocery();
   closeModal('grocery-item-modal');
