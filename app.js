@@ -7145,7 +7145,16 @@ async function kvLoginWithPasskey() {
       } else if (deviceBound) {
         // ── Path B: Device-bound IDB key ──────────────────────────────
         try {
-          const deviceKeyB64 = await dbGet('settings', `passkey_device_key_${credId}`);
+          // Check IDB first, fall back to localStorage backup
+          let deviceKeyB64 = await dbGet('settings', `passkey_device_key_${credId}`);
+          if (!deviceKeyB64) {
+            deviceKeyB64 = localStorage.getItem(`stockroom_passkey_dk_${credId}`);
+            if (deviceKeyB64) {
+              // Restore to IDB for future use
+              await dbPut('settings', `passkey_device_key_${credId}`, deviceKeyB64);
+              console.log('[passkey] Device key restored from localStorage to IDB');
+            }
+          }
           if (deviceKeyB64) {
             const deviceKeyRaw  = Uint8Array.from(atob(deviceKeyB64), c => c.charCodeAt(0));
             const deviceWrapKey = await crypto.subtle.importKey('raw', deviceKeyRaw, 'AES-KW', false, ['unwrapKey']);
@@ -8194,16 +8203,18 @@ async function _getKeyViaPassphrase(emailHash, sessionToken, credentialId, errEl
       const deviceWrapKey = await crypto.subtle.importKey('raw', deviceKeyRaw, 'AES-KW', false, ['wrapKey']);
       const deviceKeyB64  = btoa(String.fromCharCode(...deviceKeyRaw));
       const deviceEnv     = await wrapKeyWithPrf(dataKey, deviceWrapKey);
+      // Store device key in BOTH IDB and localStorage so clearing one doesn't break passkey login
       await dbPut('settings', `passkey_device_key_${credentialId}`, deviceKeyB64);
+      try { localStorage.setItem(`stockroom_passkey_dk_${credentialId}`, deviceKeyB64); } catch(e) {}
       await fetchKV(`${WORKER_URL}/key/passkey-prf-store`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ emailHash, sessionToken, credentialId, prfEnvelope: deviceEnv, deviceBound: true }),
       });
-      // Also cache locally
+      // Cache session key
       localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
         keyData: rawKeyB64, emailHash, expiry: Date.now() + 24 * 60 * 60 * 1000,
       }));
-      console.log('Passkey-wrapped key stored — future logins will not need passphrase ✓');
+      console.log('Passkey device key stored in IDB + localStorage — future logins will not need passphrase ✓');
     } catch(e) {
       console.warn('Could not store passkey-wrapped key:', e.message);
       // Non-fatal — key still works, just needs passphrase next time
@@ -8290,6 +8301,16 @@ async function addPasskeyToAccount() {
 
 async function _doAddPasskeyToAccount() {
   console.log('[passkey] _doAddPasskeyToAccount called — email:', _kvEmail, 'emailHash:', _kvEmailHash ? _kvEmailHash.slice(0,8)+'…' : 'EMPTY', 'sessionToken:', _kvSessionToken ? 'SET' : 'null', 'verifier:', _kvVerifier ? 'SET' : 'EMPTY');
+
+  // Prompt for a friendly device name so users can identify passkeys in settings
+  const suggestedName = getDeviceName();
+  const deviceName = window.prompt(
+    'Give this passkey a name so you can identify it later.\n(e.g. "Pete\'s iPhone", "Work laptop")',
+    suggestedName
+  );
+  if (deviceName === null) throw new Error('Setup cancelled'); // user pressed Cancel
+  const finalDeviceName = (deviceName || suggestedName).trim().slice(0, 50) || suggestedName;
+
   try {
     const beginRes = await fetchKV(`${WORKER_URL}/passkey/register/begin`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -8339,7 +8360,7 @@ async function _doAddPasskeyToAccount() {
       body: JSON.stringify({
         emailHash: _kvEmailHash, email: _kvEmail,
         credentialId: credId, publicKey, clientDataJSON, attestationObject,
-        deviceName: getDeviceName(),
+        deviceName: finalDeviceName,
         ...(verifierToSend ? { verifier: verifierToSend } : {}),
       }),
     });
@@ -8507,7 +8528,11 @@ const _origExportData = typeof exportData !== 'undefined' ? exportData : null;
 async function loadPasskeys() {
   const container = document.getElementById('passkey-list');
   if (!container) return;
-  if (!kvConnected) { container.innerHTML = '<p style="font-size:12px;color:var(--muted)">Sign in to manage passkeys.</p>'; return; }
+  if (!kvConnected) {
+    container.innerHTML = '<p style="font-size:12px;color:var(--muted)">Sign in to view and manage passkeys.</p>';
+    return;
+  }
+  container.innerHTML = '<p style="font-size:12px;color:var(--muted)">Loading…</p>';
   try {
     const body = _kvSessionToken
       ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken }
@@ -8516,23 +8541,23 @@ async function loadPasskeys() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) { container.innerHTML = '<p style="font-size:12px;color:var(--muted)">Could not load passkeys.</p>'; return; }
+    if (!res.ok) throw new Error('Server returned ' + res.status);
     const { credentials } = await res.json();
-    if (!credentials.length) {
-      container.innerHTML = '<p style="font-size:12px;color:var(--muted)">No passkeys yet.</p>';
+    if (!credentials || !credentials.length) {
+      container.innerHTML = '<p style="font-size:12px;color:var(--muted)">No passkeys registered yet. Add one below.</p>';
     } else {
       container.innerHTML = credentials.map(c => `
-        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px">
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;margin-bottom:6px">
           <div style="font-size:20px">🔑</div>
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;font-weight:700">${esc(c.deviceName)}</div>
             <div style="font-size:11px;color:var(--muted)">Added ${new Date(c.createdAt).toLocaleDateString('en-GB')} · Last used ${new Date(c.lastUsed).toLocaleDateString('en-GB')}</div>
           </div>
-          <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="removePasskey('${c.credentialId}')">Remove</button>
+          <button class="btn btn-ghost btn-sm" style="color:var(--danger);flex-shrink:0" onclick="removePasskey('${esc(c.credentialId)}')">Remove</button>
         </div>`).join('');
     }
   } catch(e) {
-    container.innerHTML = '<p style="font-size:12px;color:var(--muted)">Could not load passkeys.</p>';
+    container.innerHTML = `<p style="font-size:12px;color:var(--muted)">Could not load passkeys — ${e.message}. <button onclick="loadPasskeys()" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;padding:0;text-decoration:underline">Try again</button></p>`;
   }
 }
 
@@ -9097,8 +9122,11 @@ async function kvEnsureKey() {
         if (envRes && envRes.ok) {
           const { prfEnvelope, deviceBound } = await envRes.json();
           if (deviceBound) {
-            const dkb64 = await dbGet('settings', `passkey_device_key_${credentialId}`);
+            let dkb64 = await dbGet('settings', `passkey_device_key_${credentialId}`);
+            if (!dkb64) dkb64 = localStorage.getItem(`stockroom_passkey_dk_${credentialId}`);
             if (dkb64) {
+              if (!await dbGet('settings', `passkey_device_key_${credentialId}`))
+                await dbPut('settings', `passkey_device_key_${credentialId}`, dkb64);
               const dkr = Uint8Array.from(atob(dkb64), c => c.charCodeAt(0));
               const dwk = await crypto.subtle.importKey('raw', dkr, 'AES-KW', false, ['unwrapKey']);
               _kvKey = await unwrapKeyWithPrf(prfEnvelope, dwk);
