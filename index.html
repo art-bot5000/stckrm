@@ -1873,8 +1873,18 @@ window.shareItem = async function(id) {
   window.shareItem(id);
 };
 window.openQuickAdd = async function() {
-  await window._loadScanner();
-  if (typeof openQuickAdd === 'function') openQuickAdd();
+  // The quick-add modal is in index.html — open it directly without waiting for scanner.js
+  // scanner.js is only needed for saveQuickAdd and barcode scanning
+  const el = document.getElementById('quick-add-modal');
+  if (el) {
+    document.getElementById('quick-add-input').value = '';
+    document.getElementById('quick-add-preview').style.display = 'none';
+    document.getElementById('quick-add-chips').innerHTML = '';
+    el.classList.add('open');
+    setTimeout(() => document.getElementById('quick-add-input')?.focus(), 100);
+  }
+  // Pre-load scanner.js in background so saveQuickAdd is ready when user submits
+  window._loadScanner().catch(() => {});
 };
 window.doShareImage = async function(...args) {
   await window._loadScanner();

@@ -6049,15 +6049,33 @@ async function syncNow() {
       if (remote.groceries) {
         const remoteG = remote.groceries;
         const localGEmpty = groceryItems.length === 0;
-        if (remoteWins || localGEmpty || remoteG.length > groceryItems.length) { groceryItems = remoteG; await _saveGroceryLocal(); }
+        if (remoteWins || localGEmpty) {
+          groceryItems = remoteG; await _saveGroceryLocal();
+        } else {
+          const localGIds = new Set(groceryItems.map(i => i.id));
+          const newG = remoteG.filter(i => !localGIds.has(i.id));
+          if (newG.length) { groceryItems = [...groceryItems, ...newG]; await _saveGroceryLocal(); }
+        }
       }
       if (remote.departments?.length) {
         const localDEmpty = groceryDepts.length === 0;
-        if (remoteWins || localDEmpty || remote.departments.length > groceryDepts.length) { groceryDepts = remote.departments; await saveGroceryDepts(); }
+        if (remoteWins || localDEmpty) {
+          groceryDepts = remote.departments; await saveGroceryDepts();
+        } else {
+          const localDIds = new Set(groceryDepts.map(d => d.id || d.name));
+          const newD = remote.departments.filter(d => !localDIds.has(d.id || d.name));
+          if (newD.length) { groceryDepts = [...groceryDepts, ...newD]; await saveGroceryDepts(); }
+        }
       }
       if (remote.reminders && Array.isArray(remote.reminders)) {
         const localREmpty = reminders.length === 0;
-        if (remoteWins || localREmpty || remote.reminders.length > reminders.length) { reminders = remote.reminders; await saveReminders(); }
+        if (remoteWins || localREmpty) {
+          reminders = remote.reminders; await saveReminders();
+        } else {
+          const localRIds = new Set(reminders.map(r => r.id));
+          const newR = remote.reminders.filter(r => !localRIds.has(r.id));
+          if (newR.length) { reminders = [...reminders, ...newR]; await saveReminders(); }
+        }
       }
       if (remote.deletedIds && Array.isArray(remote.deletedIds)) {
         const merged = await loadDeletedIds();
@@ -9274,7 +9292,7 @@ async function kvPush() {
   );
   const tombstones = await loadDeletedIds();
   const payload = JSON.stringify({
-    items, settings, lastSynced: new Date().toISOString(),
+    items, settings, lastSynced: settings.lastSynced || new Date().toISOString(),
     groceries: groceryItems, departments: groceryDepts,
     reminders, deletedIds: [...tombstones],
     householdDir, activeProfile,
@@ -9399,11 +9417,18 @@ async function kvSyncNow(silent = false) {
         await _saveSettings();
       }
       if (remote.groceries) {
-        // Accept remote if: remote is newer, OR local is empty, OR remote has more items
         const localEmpty = groceryItems.length === 0;
-        if (remoteWins || localEmpty || remote.groceries.length > groceryItems.length) {
+        if (remoteWins || localEmpty) {
           groceryItems = remote.groceries;
           await _saveGroceryLocal();
+        } else {
+          // Merge: add any remote items that don't exist locally (by id)
+          const localIds = new Set(groceryItems.map(i => i.id));
+          const newFromRemote = remote.groceries.filter(i => !localIds.has(i.id));
+          if (newFromRemote.length) {
+            groceryItems = [...groceryItems, ...newFromRemote];
+            await _saveGroceryLocal();
+          }
         }
       }
       if (remote.departments?.length) {
@@ -9415,7 +9440,13 @@ async function kvSyncNow(silent = false) {
       }
       if (remote.reminders && Array.isArray(remote.reminders)) {
         const localREmpty = reminders.length === 0;
-        if (remoteWins || localREmpty || remote.reminders.length > reminders.length) { reminders = remote.reminders; await saveReminders(); }
+        if (remoteWins || localREmpty) {
+          reminders = remote.reminders; await saveReminders();
+        } else {
+          const localRIds = new Set(reminders.map(r => r.id));
+          const newR = remote.reminders.filter(r => !localRIds.has(r.id));
+          if (newR.length) { reminders = [...reminders, ...newR]; await saveReminders(); }
+        }
       }
       if (remote.deletedIds && Array.isArray(remote.deletedIds)) {
         const merged = await loadDeletedIds();
