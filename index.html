@@ -1859,49 +1859,18 @@ window._loadScanner = function() {
     document.head.appendChild(s);
   });
 };
-// Stubs: scanner.js redefines these as real functions after _loadScanner() resolves
-window.openBarcodeScanner = async function(...args) {
-  await window._loadScanner();
-  if (typeof openBarcodeScanner === 'function') openBarcodeScanner(...args);
+// Only two functions still need scanner.js — the actual camera scanner.
+// Everything else (quickAdd, shareItem, logPicker, etc.) is now in app.js.
+// After _loadScanner() resolves, scanner.js redefines these on window,
+// so we re-call them — they're no longer the stub at that point.
+window._scannerStub = function(name, args) {
+  window._loadScanner().then(() => {
+    // scanner.js has loaded and overwritten window[name] with the real function
+    if (typeof window[name] === 'function') window[name](...args);
+  });
 };
-window.quickAddBarcodeScan = async function(...args) {
-  await window._loadScanner();
-  if (typeof quickAddBarcodeScan === 'function') quickAddBarcodeScan(...args);
-};
-window.shareItem = async function(id) {
-  await window._loadScanner();
-  window.shareItem(id);
-};
-window.openQuickAdd = async function() {
-  // The quick-add modal is in index.html — open it directly without waiting for scanner.js
-  // scanner.js is only needed for saveQuickAdd and barcode scanning
-  const el = document.getElementById('quick-add-modal');
-  if (el) {
-    document.getElementById('quick-add-input').value = '';
-    document.getElementById('quick-add-preview').style.display = 'none';
-    document.getElementById('quick-add-chips').innerHTML = '';
-    el.classList.add('open');
-    setTimeout(() => document.getElementById('quick-add-input')?.focus(), 100);
-  }
-  // Pre-load scanner.js in background so saveQuickAdd is ready when user submits
-  window._loadScanner().catch(() => {});
-};
-window.doShareImage = async function(...args) {
-  await window._loadScanner();
-  if (typeof doShareImage === 'function') doShareImage(...args);
-};
-window.doShareItemLink = async function(...args) {
-  await window._loadScanner();
-  if (typeof doShareItemLink === 'function') doShareItemLink(...args);
-};
-window.doShareLink = async function(...args) {
-  await window._loadScanner();
-  if (typeof doShareLink === 'function') doShareLink(...args);
-};
-window.doShareText = async function(...args) {
-  await window._loadScanner();
-  if (typeof doShareText === 'function') doShareText(...args);
-};
+window.openBarcodeScanner  = function(...a) { window._scannerStub('openBarcodeScanner', a); };
+window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarcodeScan', a); };
 </script>
 
 <!-- ═══ DATA LOADING OVERLAY ═══ -->

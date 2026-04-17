@@ -1480,7 +1480,7 @@ function reminderCardHTML(r) {
       <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap" onclick="event.stopPropagation()">
         <button class="btn btn-primary btn-sm" onclick="openLogReplacementModal('${r.id}')">✅ Mark replaced</button>
         ${!isFromItem ? `<button class="btn btn-ghost btn-sm" onclick="openEditReminderModal('${r.id}')">✏️ Edit</button>` : `<button class="btn btn-ghost btn-sm" onclick="openEditModal('${r.fromItem}');enableItemEdit()">✏️ Edit item</button>`}
-        ${!isFromItem ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteReminder('${r.id}')">Delete</button>` : ''}
+        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteReminder('${isFromItem ? 'item_' + r.fromItem : r.id}')">🗑️ Delete</button>
       </div>
     </div>
   </div>`;
@@ -1803,12 +1803,38 @@ async function saveReminder() {
 }
 
 async function deleteReminder(id) {
-  if (!canWrite("reminders")) { showLockBanner("reminders"); return; }
-  if (!confirm('Delete this reminder?')) return;
-  reminders = reminders.filter(r => r.id !== id);
-  await saveReminders();
-  renderReminders();
-  toast('Reminder deleted');
+  if (!canWrite('reminders')) { showLockBanner('reminders'); return; }
+
+  const isItemReminder = id.startsWith('item_');
+  const itemId = isItemReminder ? id.replace('item_', '') : null;
+  const item   = itemId ? items.find(i => i.id === itemId) : null;
+
+  if (isItemReminder && item) {
+    const confirmed = confirm(
+      `Delete the replacement reminder for "${item.name}"?\n\n` +
+      `This will remove the reminder from the item. ` +
+      `The item itself will remain in your Stockroom.`
+    );
+    if (!confirmed) return;
+    item.replacementInterval = null;
+    item.replacementUnit     = null;
+    touchField(item, 'replacementInterval');
+    await saveData();
+    await kvSyncNow(true);
+    renderReminders();
+    scheduleRender('grid', 'dashboard');
+    toast('Reminder deleted');
+  } else {
+    const reminder = reminders.find(r => r.id === id);
+    const name = reminder?.name || 'this reminder';
+    const confirmed = confirm(`Delete "${name}"?\n\nThis cannot be undone.`);
+    if (!confirmed) return;
+    reminders = reminders.filter(r => r.id !== id);
+    await saveReminders();
+    _syncQueue.enqueue();
+    renderReminders();
+    toast('Reminder deleted');
+  }
 }
 
 // ── Log replacement ───────────────────────
@@ -11681,9 +11707,610 @@ async function init() {
   setTimeout(checkReminderNotifications, 3500);
 }
 
-// ── URL action handler ─────────────────────────────────────
-// Always defined here as a safe fallback. scanner.js overwrites this
-// with a richer version (share-target handling) once it lazy-loads.
+// ═══════════════════════════════════════════════════════════
+//  STORE PRICES (multiple stores per item)
+//  Moved from scanner.js — needed as soon as the item modal opens
+// ═══════════════════════════════════════════════════════════
+
+function renderStorePricesSection(item) {
+  const section = document.getElementById('store-prices-section');
+  const list    = document.getElementById('store-prices-list');
+  if (!section || !list) return;
+  const prices = item?.storePrices || [];
+  section.style.display = 'block';
+  if (!prices.length) {
+    list.innerHTML = `<p style="font-size:12px;color:var(--muted);padding:4px 0">No store prices added yet. Click + Add Store to compare prices across different shops.</p>`;
+    return;
+  }
+  list.innerHTML = prices.map((sp, i) => `
+    <div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+      <input type="text" value="${esc(sp.store)}" placeholder="Store name"
+        style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px"
+        onchange="updateStorePrice(${i},'store',this.value)">
+      <input type="text" value="${esc(sp.price)}" placeholder="Price"
+        style="width:80px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px;font-family:var(--mono)"
+        onchange="updateStorePrice(${i},'price',this.value)">
+      <button onclick="removeStorePrice(${i})" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:2px 4px"
+        onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--muted)'">✕</button>
+    </div>`).join('');
+  if (prices.length > 1) {
+    const parsed = prices.map((sp,i) => ({ i, val: parsePriceValue(sp.price) })).filter(x => x.val !== null);
+    if (parsed.length > 1) {
+      const min = Math.min(...parsed.map(x => x.val));
+      const cheapestIdx = parsed.find(x => x.val === min)?.i;
+      if (cheapestIdx !== undefined) {
+        const rows = list.querySelectorAll('div');
+        if (rows[cheapestIdx]) rows[cheapestIdx].style.background = 'rgba(76,187,138,0.08)';
+      }
+    }
+  }
+}
+
+function addStorePriceRow() {
+  tempStorePrices.push({ store: '', price: '' });
+  renderTempStorePrices();
+}
+
+function updateStorePrice(idx, field, val) {
+  if (tempStorePrices[idx]) tempStorePrices[idx][field] = val;
+}
+
+function removeStorePrice(idx) {
+  tempStorePrices.splice(idx, 1);
+  renderTempStorePrices();
+}
+
+function renderTempStorePrices() {
+  const section = document.getElementById('store-prices-section');
+  const list    = document.getElementById('store-prices-list');
+  if (!section || !list) return;
+  section.style.display = 'block';
+  if (!tempStorePrices.length) {
+    list.innerHTML = `<p style="font-size:12px;color:var(--muted);padding:4px 0">No store prices added yet.</p>`;
+    return;
+  }
+  list.innerHTML = tempStorePrices.map((sp, i) => `
+    <div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+      <input type="text" value="${esc(sp.store)}" placeholder="Store name"
+        style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px"
+        oninput="updateStorePrice(${i},'store',this.value)">
+      <input type="text" value="${esc(sp.price)}" placeholder="e.g. £12.99"
+        style="width:90px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px;font-family:var(--mono)"
+        oninput="updateStorePrice(${i},'price',this.value)">
+      <button onclick="removeStorePrice(${i})" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:2px 4px"
+        onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--muted)'">✕</button>
+    </div>`).join('');
+}
+
+// ═══════════════════════════════════════════════════════════
+//  QUICK ADD — moved from scanner.js
+// ═══════════════════════════════════════════════════════════
+
+function openQuickAdd() {
+  document.getElementById('quick-add-input').value = '';
+  document.getElementById('quick-add-preview').style.display = 'none';
+  document.getElementById('quick-add-chips').innerHTML = '';
+  openModal('quick-add-modal');
+  setTimeout(() => document.getElementById('quick-add-input')?.focus(), 100);
+}
+
+function parseQuickAddNames() {
+  return document.getElementById('quick-add-input').value
+    .split(',').map(s => s.trim()).filter(s => s.length > 0);
+}
+
+function updateQuickAddPreview() {
+  const names   = parseQuickAddNames();
+  const preview = document.getElementById('quick-add-preview');
+  const chips   = document.getElementById('quick-add-chips');
+  const btn     = document.getElementById('quick-add-save-btn');
+  if (!names.length) { preview.style.display = 'none'; return; }
+  preview.style.display = 'block';
+  chips.innerHTML = names.map(n =>
+    `<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:99px;font-size:12px;color:var(--text)">
+      📦 ${esc(n)}
+    </span>`
+  ).join('');
+  if (btn) btn.textContent = `⚡ Add ${names.length} Item${names.length !== 1 ? 's' : ''}`;
+}
+
+async function saveQuickAdd() {
+  const names = parseQuickAddNames();
+  if (!names.length) { toast('Enter at least one item name'); return; }
+  const now = new Date().toISOString();
+  names.forEach(name => {
+    items.push({
+      id: uid(), name, category: 'Other', cadence: 'monthly',
+      qty: 1, months: 1, url: '', store: '', notes: '',
+      rating: null, imageUrl: null, logs: [], storePrices: [],
+      quickAdded: true, updatedAt: now,
+    });
+  });
+  await saveData();
+  closeModal('quick-add-modal');
+  scheduleRender('grid', 'dashboard', 'filters', 'shopping');
+  _syncQueue.enqueue();
+  toast(`${names.length} item${names.length !== 1 ? 's' : ''} added — complete their details when ready`);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SCAN CHOOSER — shown after a barcode is scanned
+// ═══════════════════════════════════════════════════════════
+
+let scannedProductName  = '';
+let scannedProductImage = null;
+
+function openScanChooser(name, imageUrl) {
+  scannedProductName  = name;
+  scannedProductImage = imageUrl;
+  const nameEl = document.getElementById('scan-chooser-name');
+  if (nameEl) nameEl.textContent = name;
+  openModal('scan-chooser-modal');
+}
+
+function scanChooserQuickAdd() {
+  closeModal('scan-chooser-modal');
+  openQuickAdd();
+  const ta = document.getElementById('quick-add-input');
+  if (ta) { ta.value = scannedProductName; updateQuickAddPreview(); }
+}
+
+function scanChooserLogPurchase() {
+  closeModal('scan-chooser-modal');
+  openLogPicker();
+  const search = document.getElementById('log-picker-search');
+  if (search) { search.value = scannedProductName; filterLogPicker(scannedProductName); }
+}
+
+function scanChooserFullAdd() {
+  closeModal('scan-chooser-modal');
+  openAddModal();
+  document.getElementById('f-name').value = scannedProductName;
+  if (scannedProductImage) {
+    pendingImageUrl = scannedProductImage;
+    showImagePreview(scannedProductImage, 'Image found via barcode');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  LOG PURCHASE PICKER — moved from scanner.js
+// ═══════════════════════════════════════════════════════════
+
+function openLogPicker() {
+  renderLogPickerList('');
+  document.getElementById('log-picker-search').value = '';
+  openModal('log-picker-modal');
+  setTimeout(() => document.getElementById('log-picker-search').focus(), 100);
+}
+
+function renderLogPickerList(filter) {
+  const list = document.getElementById('log-picker-list');
+  if (!list) return;
+  const q      = filter.toLowerCase().trim();
+  const sorted = [...items]
+    .filter(i => !i.quickAdded)
+    .filter(i => !q || i.name.toLowerCase().includes(q))
+    .sort((a, b) => {
+      const la = a.logs?.at(-1)?.date || '0000';
+      const lb = b.logs?.at(-1)?.date || '0000';
+      return lb.localeCompare(la);
+    });
+  if (!sorted.length) {
+    list.innerHTML = `<p style="font-size:13px;color:var(--muted);text-align:center;padding:20px">No items found</p>`;
+    return;
+  }
+  list.innerHTML = sorted.map(item => {
+    const s        = calcStock(item);
+    const daysLeft = s?.daysLeft ?? null;
+    const color    = STATUS_COLOR[getStatus(s?.pct ?? null, settings.threshold)];
+    const lastLog  = item.logs?.at(-1);
+    return `<button onclick="pickItemForLog('${item.id}')"
+      style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;cursor:pointer;text-align:left;width:100%;transition:border-color 0.15s"
+      onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <div style="width:4px;height:36px;border-radius:2px;background:${color};flex-shrink:0"></div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(item.name)}</div>
+        <div style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:2px">
+          ${daysLeft !== null ? `${daysLeft}d left` : 'no data'}
+          ${lastLog ? ` · last bought ${fmtDate(lastLog.date)}` : ''}
+          ${item.store ? ` · ${esc(item.store)}` : ''}
+        </div>
+      </div>
+      <span style="font-size:18px;flex-shrink:0">+</span>
+    </button>`;
+  }).join('');
+}
+
+function filterLogPicker(val) { renderLogPickerList(val); }
+
+function pickItemForLog(id) {
+  closeModal('log-picker-modal');
+  openLogModal(id);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SHARE ITEM — moved from scanner.js
+// ═══════════════════════════════════════════════════════════
+
+let sharingItem = null;
+
+function shareItem(id) {
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  sharingItem = item;
+  const subtitle = document.getElementById('share-modal-subtitle');
+  if (subtitle) subtitle.textContent = item.name;
+  drawShareCard(item);
+  openModal('share-modal');
+}
+
+function drawShareCard(item) {
+  const canvas = document.getElementById('share-canvas');
+  if (!canvas) return;
+  const W = 600, H = 340;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, '#0f1117'); grad.addColorStop(1, '#1a1d27');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+  const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 260);
+  glow.addColorStop(0, 'rgba(232,168,56,0.07)'); glow.addColorStop(1, 'rgba(232,168,56,0)');
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = '#2e3350'; ctx.lineWidth = 1; ctx.strokeRect(0.5, 0.5, W-1, H-1);
+  const headerH = 44;
+  ctx.fillStyle = '#1a1d27'; ctx.fillRect(0, 0, W, headerH);
+  ctx.strokeStyle = '#2e3350'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, headerH); ctx.lineTo(W, headerH); ctx.stroke();
+  ctx.fillStyle = '#e8a838'; ctx.font = 'bold 13px monospace'; ctx.fillText('📦 STOCKROOM', 20, 28);
+  ctx.fillStyle = '#7880a0'; ctx.font = '11px monospace'; ctx.textAlign = 'right';
+  ctx.fillText('Household Consumables Tracker', W - 20, 28); ctx.textAlign = 'left';
+  const contentY = headerH + 24;
+  ctx.fillStyle = 'rgba(120,128,160,0.2)';
+  const catText = (item.category || 'Other').toUpperCase();
+  ctx.font = '10px monospace';
+  const catW = ctx.measureText(catText).width + 16;
+  _roundRect(ctx, 20, contentY, catW, 20, 4); ctx.fill();
+  ctx.fillStyle = '#7880a0'; ctx.fillText(catText, 28, contentY + 14);
+  ctx.fillStyle = '#e8eaf2'; ctx.font = 'bold 28px system-ui, sans-serif';
+  const nameLines = _wrapText(ctx, item.name || '', W - 48);
+  nameLines.slice(0, 2).forEach((line, i) => ctx.fillText(line, 20, contentY + 46 + i * 36));
+  const afterName = contentY + 46 + Math.min(nameLines.length, 2) * 36;
+  const pillY = afterName + 16; let pillX = 20;
+  const drawPill = (label, value, bg, textCol) => {
+    if (!value) return;
+    ctx.font = '11px system-ui, sans-serif';
+    const fullText = label ? `${label}: ${value}` : value;
+    const pw = ctx.measureText(fullText).width + 20;
+    ctx.fillStyle = bg; ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(pillX, pillY, pw, 24, 12) : _roundRect(ctx, pillX, pillY, pw, 24, 12);
+    ctx.fill(); ctx.fillStyle = textCol; ctx.fillText(fullText, pillX + 10, pillY + 16);
+    pillX += pw + 8;
+  };
+  const history = getPriceHistory(item);
+  const lastPrice = history.length ? (history[history.length-1].raw || `£${history[history.length-1].price.toFixed(2)}`) : null;
+  if (lastPrice) drawPill('Price', lastPrice, 'rgba(76,187,138,0.15)', '#4cbb8a');
+  if (item.store) drawPill('From', item.store, 'rgba(91,141,238,0.15)', '#5b8dee');
+  if (item.qty && item.qty !== 1) drawPill('Qty', `×${item.qty}`, 'rgba(120,128,160,0.15)', '#7880a0');
+  if (item.rating) drawPill('', '★'.repeat(item.rating) + '☆'.repeat(5 - item.rating), 'rgba(232,168,56,0.15)', '#e8a838');
+  const barY = H - 30;
+  ctx.fillStyle = '#0f1117'; ctx.fillRect(0, barY, W, 30);
+  ctx.strokeStyle = '#2e3350'; ctx.beginPath(); ctx.moveTo(0, barY); ctx.lineTo(W, barY); ctx.stroke();
+  if (item.url) {
+    try {
+      const domain = new URL(item.url).hostname.replace('www.', '');
+      ctx.fillStyle = '#5b8dee'; ctx.font = '11px monospace'; ctx.fillText(`🛒 ${domain}`, 20, barY + 20);
+    } catch(e) {}
+  }
+  ctx.fillStyle = '#4a5070'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
+  ctx.fillText('stckrm.fly.dev', W - 20, barY + 20); ctx.textAlign = 'left';
+}
+
+function _wrapText(ctx, text, maxWidth) {
+  const words = text.split(' '), lines = [];
+  let current = '';
+  for (const word of words) {
+    const test = current ? current + ' ' + word : word;
+    if (ctx.measureText(test).width > maxWidth && current) { lines.push(current); current = word; }
+    else { current = test; }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+function _roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+async function doShareImage() {
+  const canvas = document.getElementById('share-canvas');
+  if (!canvas || !sharingItem) return;
+  canvas.toBlob(async blob => {
+    const file = new File([blob], `${sharingItem.name.replace(/\s+/g, '-')}.png`, { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ title: sharingItem.name, text: buildShareText(sharingItem), files: [file] }); closeModal('share-modal'); }
+      catch(e) { if (e.name !== 'AbortError') _downloadShareImage(canvas, sharingItem); }
+    } else { _downloadShareImage(canvas, sharingItem); }
+  }, 'image/png');
+}
+
+function _downloadShareImage(canvas, item) {
+  const a = document.createElement('a');
+  a.download = `${item.name.replace(/\s+/g, '-')}.png`;
+  a.href = canvas.toDataURL('image/png'); a.click();
+  toast('Image saved — share from your downloads');
+}
+
+async function doShareItemLink() {
+  if (!sharingItem) return;
+  const link = generateItemShareLink(sharingItem);
+  if (navigator.share) {
+    try { await navigator.share({ title: `${sharingItem.name} — via STOCKROOM`, text: `I'm using ${sharingItem.name} in STOCKROOM:`, url: link }); closeModal('share-modal'); return; }
+    catch(e) { if (e.name === 'AbortError') return; }
+  }
+  fallbackCopy(link);
+}
+
+async function doShareLink() {
+  const url = sharingItem?.url || window.location.href;
+  if (navigator.share) {
+    try { await navigator.share({ title: sharingItem?.name, text: buildShareText(sharingItem), url }); closeModal('share-modal'); }
+    catch(e) { if (e.name !== 'AbortError') fallbackCopy(url); }
+  } else { fallbackCopy(url); }
+}
+
+async function doShareText() {
+  if (!sharingItem) return;
+  fallbackCopy(buildShareText(sharingItem));
+}
+
+function buildShareText(item) {
+  if (!item) return '';
+  const history = getPriceHistory(item);
+  const lastPrice = history.length ? (history[history.length-1].raw || `£${history[history.length-1].price.toFixed(2)}`) : null;
+  const storePrices = (item.storePrices || []).filter(sp => sp.store && sp.price);
+  const lines = [`📦 ${item.name}`];
+  if (item.category) lines.push(`Category: ${item.category}`);
+  if (lastPrice)     lines.push(`Price: ${lastPrice}`);
+  if (item.store)    lines.push(`Available at: ${item.store}`);
+  if (storePrices.length > 1) { lines.push('Price comparison:'); storePrices.forEach(sp => lines.push(`  ${sp.store}: ${sp.price}`)); }
+  if (item.qty && item.qty !== 1) lines.push(`Pack size: ×${item.qty}`);
+  if (item.rating)   lines.push(`Rated: ${'★'.repeat(item.rating)}${'☆'.repeat(5 - item.rating)}`);
+  if (item.notes)    lines.push(`Note: ${item.notes}`);
+  if (item.url)      lines.push(`Buy here: ${item.url}`);
+  lines.push(''); lines.push('Shared via STOCKROOM — stckrm.fly.dev');
+  return lines.join('\n');
+}
+
+function fallbackCopy(text) {
+  navigator.clipboard?.writeText(text)
+    .then(() => { toast('Copied to clipboard ✓'); closeModal('share-modal'); })
+    .catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.cssText = 'position:fixed;opacity:0';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+      document.body.removeChild(ta); toast('Copied to clipboard ✓'); closeModal('share-modal');
+    });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  ITEM SHARE LINK — receive items shared via URL
+// ═══════════════════════════════════════════════════════════
+
+function generateItemShareLink(item) {
+  const payload = {
+    v: 1, name: item.name, category: item.category, cadence: item.cadence,
+    qty: item.qty, months: item.months, url: item.url || '', store: item.store || '',
+    notes: item.notes || '', rating: item.rating || null,
+    storePrices: (item.storePrices || []).filter(sp => sp.store && sp.price),
+  };
+  const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+  return `${window.location.origin}/?item=${encoded}`;
+}
+
+function checkIncomingItem() {
+  const params  = new URLSearchParams(location.search);
+  const encoded = params.get('item');
+  if (!encoded) return false;
+  history.replaceState(null, '', location.pathname);
+  try {
+    const payload = JSON.parse(decodeURIComponent(escape(atob(encoded))));
+    if (!payload?.name) return false;
+    setTimeout(() => showIncomingItemPrompt(payload), 700);
+    return true;
+  } catch(e) { return false; }
+}
+
+function showIncomingItemPrompt(payload) {
+  const priceStr = (payload.storePrices || []).map(sp => `${sp.store}: ${sp.price}`).join(' · ');
+  let domainStr = '';
+  try { if (payload.url) domainStr = new URL(payload.url).hostname.replace('www.', ''); } catch(e) {}
+  const el = document.createElement('div');
+  el.id = 'incoming-item-overlay';
+  el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:flex-end;justify-content:center;padding:20px';
+  el.onclick = e => { if (e.target === el) closeIncomingItem(); };
+  el.innerHTML = `
+    <div style="background:var(--surface);border-radius:16px 16px 12px 12px;padding:24px;max-width:440px;width:100%;border:1px solid var(--border);box-shadow:0 -4px 32px rgba(0,0,0,0.4)">
+      <div style="font-size:11px;font-weight:700;color:var(--accent);font-family:var(--mono);letter-spacing:1px;margin-bottom:8px">📦 ITEM SHARED WITH YOU</div>
+      <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:4px">${esc(payload.name)}</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.8">
+        ${payload.category ? `<span style="font-family:var(--mono)">${esc(payload.category)}</span>` : ''}
+        ${payload.store    ? ` · From <strong style="color:var(--text)">${esc(payload.store)}</strong>` : ''}
+        ${priceStr         ? ` · ${esc(priceStr)}` : ''}
+        ${payload.months   ? ` · ${payload.months}mo supply` : ''}
+      </div>
+      ${payload.notes ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-bottom:14px;padding:8px;background:var(--surface2);border-radius:6px">💬 ${esc(payload.notes)}</div>` : ''}
+      ${domainStr ? `<div style="margin-bottom:14px"><a href="${esc(payload.url)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--accent2)">🛒 ${esc(domainStr)} ↗</a></div>` : ''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        <button class="btn btn-primary" style="flex:1" id="incoming-add-btn">+ Add to my stockroom</button>
+        <button class="btn btn-ghost" id="incoming-edit-btn">✏️ Add &amp; set up</button>
+        <button class="btn btn-ghost btn-sm" onclick="closeIncomingItem()">Dismiss</button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+  document.getElementById('incoming-add-btn').onclick  = () => addIncomingItem(payload, false);
+  document.getElementById('incoming-edit-btn').onclick = () => addIncomingItem(payload, true);
+}
+
+function closeIncomingItem() {
+  document.getElementById('incoming-item-overlay')?.remove();
+}
+
+async function addIncomingItem(payload, openEdit) {
+  closeIncomingItem();
+  const newItem = {
+    id: uid(), name: payload.name, category: payload.category || 'Other',
+    cadence: payload.cadence || 'monthly', qty: payload.qty || 1, months: payload.months || 1,
+    url: payload.url || '', store: payload.store || '', notes: payload.notes || '',
+    rating: payload.rating || null, storePrices: payload.storePrices || [],
+    imageUrl: null, logs: [], quickAdded: false, updatedAt: new Date().toISOString(),
+  };
+  items.push(newItem);
+  await saveData();
+  scheduleRender('grid', 'dashboard', 'shopping');
+  _syncQueue.enqueue();
+  if (openEdit) { setTimeout(() => { openEditModal(newItem.id); enableItemEdit(); }, 300); }
+  else { toast(`"${payload.name}" added ✓`); }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SHARE JOIN FLOW — moved from scanner.js
+// ═══════════════════════════════════════════════════════════
+
+async function handleShareJoinLink(code) {
+  updateSyncPill('syncing');
+  try {
+    const probe = await fetchKV(`${WORKER_URL}/share/join`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+    const probeData = await probe.json();
+    if (probe.status === 410) { toast('This invite link has expired — ask the owner for a new one'); updateSyncPill('error'); return; }
+    if (!probe.ok && !probeData.requiresAuth) throw new Error(probeData.error || 'Invalid link');
+    _pendingJoinCode  = code.toUpperCase();
+    _pendingShareMeta = probeData;
+    if (kvConnected && _kvEmailHash && (_kvVerifier || _kvSessionToken)) { await completePendingJoin(); return; }
+    showShareAuthGate(probeData);
+  } catch(err) { updateSyncPill('error'); toast('Invalid invite link — ' + err.message); }
+}
+
+function showShareAuthGate(meta) {
+  const wizard = document.getElementById('wizard');
+  if (!wizard) return;
+  wizard.style.display = 'flex';
+  const step1 = document.getElementById('wizard-step-1');
+  if (!step1) return;
+  const hCount = Object.keys(meta.households || {}).length;
+  step1.innerHTML = `
+    <div style="font-size:44px;margin-bottom:12px">🏠</div>
+    <h1 style="font-size:22px;font-weight:700;margin-bottom:6px">You're invited!</h1>
+    <p style="color:var(--muted);font-size:13px;line-height:1.6;margin-bottom:16px">
+      <strong style="color:var(--text)">${esc(meta.ownerName||'Someone')}</strong> has invited you
+      to access ${hCount} household${hCount!==1?'s':''} as a <strong>${esc(meta.type||'guest')}</strong>.
+    </p>
+    <div style="text-align:left;margin-bottom:12px">
+      <div class="form-group" style="margin-bottom:10px">
+        <label class="form-label">Email address</label>
+        <input class="form-input" id="share-gate-email" type="email" placeholder="you@example.com" autocomplete="email">
+      </div>
+      <div class="form-group" style="margin-bottom:8px">
+        <label class="form-label">Passphrase</label>
+        <input class="form-input" id="share-gate-pass" type="password" placeholder="Your passphrase" autocomplete="current-password">
+      </div>
+    </div>
+    <button class="btn btn-primary btn-xl full" style="margin-bottom:8px" onclick="shareGateSignIn()">Sign in &amp; Accept →</button>
+    <button class="btn btn-ghost btn-xl full" style="font-size:13px;margin-bottom:8px" onclick="shareGateRegister()">Create new account &amp; Accept →</button>
+    <p id="share-gate-error" style="font-size:12px;color:var(--danger);margin-top:6px;display:none"></p>
+  `;
+  step1.classList.add('active');
+}
+
+async function shareGateSignIn() {
+  const email = document.getElementById('share-gate-email')?.value.trim();
+  const pass  = document.getElementById('share-gate-pass')?.value;
+  const errEl = document.getElementById('share-gate-error');
+  if (!email || !pass) { if(errEl){errEl.textContent='Enter email and passphrase';errEl.style.display='block';} return; }
+  try {
+    const emailHash = await kvHashEmail(email);
+    const verifier  = await kvMakeVerifier(pass, emailHash);
+    const res = await fetchKV(`${WORKER_URL}/user/verify`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ emailHash, verifier }) });
+    const d = await res.json();
+    if (res.status === 404) throw new Error('Account not found — use Create new account');
+    if (!res.ok) throw new Error(d.error || 'Sign-in failed');
+    const key = await kvDeriveKey(email, pass);
+    await kvStoreSession(email, emailHash, verifier, key);
+    await offerTrustDevice(email, emailHash, verifier, key);
+    await completePendingJoin();
+  } catch(err) { if(errEl){errEl.textContent=err.message;errEl.style.display='block';} }
+}
+
+async function shareGateRegister() {
+  const email = document.getElementById('share-gate-email')?.value.trim();
+  const pass  = document.getElementById('share-gate-pass')?.value;
+  const errEl = document.getElementById('share-gate-error');
+  if (!email || !pass) { if(errEl){errEl.textContent='Enter email and passphrase';errEl.style.display='block';} return; }
+  if (pass.length < 8) { if(errEl){errEl.textContent='Passphrase must be at least 8 characters';errEl.style.display='block';} return; }
+  try {
+    const emailHash = await kvHashEmail(email);
+    const verifier  = await kvMakeVerifier(pass, emailHash);
+    const res = await fetchKV(`${WORKER_URL}/user/register`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ emailHash, verifier, email }) });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || 'Registration failed');
+    const kdfSalt = generateKdfSalt();
+    const wrapKey = await derivePassphraseWrapKeyV2(pass, emailHash, kdfSalt);
+    const dataKey = await generateDataKeyV2Extractable();
+    const passphraseEnvelope = await wrapDataKeyV2(dataKey, wrapKey);
+    const saltB64 = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    const recoveryCodes = generateRecoveryCodes(10);
+    const recoveryEnvelopes = await buildRecoveryEnvelopesV2(recoveryCodes, dataKey, emailHash);
+    const storeRes = await fetchKV(`${WORKER_URL}/key/store`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ emailHash, verifier, salt: saltB64, passphraseEnvelope, recoveryEnvelopes, kdfSalt }) });
+    if (!storeRes.ok) throw new Error('Could not store key envelopes — try again');
+    _kvKey = dataKey;
+    await kvStoreSession(email, emailHash, verifier, dataKey);
+    await showEmailVerification(email, emailHash, async () => {
+      await offerTrustDevice(email, emailHash, verifier, dataKey);
+      await completePendingJoin();
+    });
+  } catch(err) { if(errEl){errEl.textContent=err.message;errEl.style.display='block';} }
+}
+
+async function completePendingJoin() {
+  if (!_pendingJoinCode) return;
+  const code = _pendingJoinCode;
+  try {
+    const res = await fetchKV(`${WORKER_URL}/share/join`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code, guestEmailHash: _kvEmailHash, ...(_kvSessionToken ? { guestSessionToken: _kvSessionToken } : { guestVerifier: _kvVerifier }) }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not join');
+    const ecdhRes = await fetchKV(`${WORKER_URL}/share/ecdh-key/get`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ guestEmailHash: _kvEmailHash, ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }), code }) });
+    if (!ecdhRes.ok) throw new Error('Could not retrieve your share key — ask the owner to re-send the invite');
+    const { wrappedKey, ownerPublicKeyJwk } = await ecdhRes.json();
+    const guestPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
+    if (!guestPrivKey) throw new Error('Your encryption key is missing — sign out and back in to regenerate it');
+    const shareKey    = await ecdhUnwrapShareKey(guestPrivKey, ownerPublicKeyJwk, wrappedKey);
+    const shareKeyB64 = await exportShareKey(shareKey);
+    try { const stored = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}'); stored[code] = shareKeyB64; localStorage.setItem('stockroom_share_keys', JSON.stringify(stored)); } catch(e) {}
+    _shareState = { ...data, code }; _shareKey = shareKey; saveShareState();
+    _pendingJoinCode = null; _pendingShareMeta = null;
+    localStorage.setItem('stockroom_seen', '1'); localStorage.setItem('stockroom_country_set', '1');
+    document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
+    applyTabPermissions(); updateSyncPill('syncing');
+    await kvSyncNow(); scheduleRender(...RENDER_REGIONS);
+    toast(`Joined ${data.ownerName||'household'}'s STOCKROOM ✓`);
+  } catch(err) { toast('Could not join: ' + err.message); updateSyncPill('error'); }
+}
+
+function showShareWizard(shareData) { showShareAuthGate(shareData); }
+async function acceptShareAndContinue() { await completePendingJoin(); }
+function showShareJoinConfirm(shareData) { toast(`✓ Joined ${shareData.ownerName || 'household'}'s STOCKROOM as ${shareData.type || 'guest'}`); }
+
+// ═══════════════════════════════════════════════════════════
+//  URL ACTION HANDLER — moved from scanner.js
+// ═══════════════════════════════════════════════════════════
 function handleURLAction() {
   // ── Share join link: ?join=CODE ──────────────────────────
   const joinParams = new URLSearchParams(location.search);
