@@ -10087,26 +10087,97 @@ function detectDepartment(name) {
 }
 
 function openGroceryImport() {
-  document.getElementById('grocery-import-file').value = '';
-  document.getElementById('grocery-import-file').click();
+  openModal('grocery-import-info-modal');
 }
 
 function handleGroceryImportFile(e) {
   const file = e.target.files[0];
   if (!file) return;
   e.target.value = '';
+  const ext = file.name.split('.').pop().toLowerCase();
   const reader = new FileReader();
-  reader.onload = ev => {
-    const text = ev.target.result || '';
-    // Split by newlines OR commas, clean up
-    const raw = text.split(/[\n\r,]+/)
-      .map(s => s.trim())
-      .filter(s => s.length > 1 && s.length < 200);
-    if (!raw.length) { toast('No items found in file'); return; }
-    buildGroceryImportReview(raw);
-  };
+
   reader.onerror = () => toast('Could not read file');
-  reader.readAsText(file);
+
+  reader.onload = ev => {
+    let text = '';
+    const result = ev.target.result;
+
+    if (ext === 'xml') {
+      // Parse XML and extract all text nodes
+      try {
+        const parser = new DOMParser();
+        const doc    = parser.parseFromString(result, 'text/xml');
+        const walker = document.createTreeWalker(doc, NodeFilter.SHOW_TEXT);
+        const parts  = [];
+        let node;
+        while ((node = walker.nextNode())) {
+          const t = node.textContent.trim();
+          if (t) parts.push(t);
+        }
+        text = parts.join('\n');
+      } catch(e) { text = result; }
+
+    } else if (ext === 'rtf') {
+      // Strip RTF control words, keep readable text
+      text = result
+        .replace(/\\[a-z]+\d*\s?/g, ' ')
+        .replace(/[{}\\]/g, ' ')
+        .replace(/\s+/g, '\n');
+
+    } else if (ext === 'md') {
+      // Extract bullet list items and headings stripped
+      text = result
+        .split('\n')
+        .map(l => l.replace(/^[\s]*[-*+]\s+/, '').replace(/^#{1,6}\s+/, '').trim())
+        .filter(Boolean)
+        .join('\n');
+
+    } else if (ext === 'docx' || ext === 'doc') {
+      // docx is a zip — extract readable text via raw read
+      // For binary formats, convert result bytes to string and pull any readable sequences
+      const bytes = new Uint8Array(result);
+      const chunks = [];
+      let current = '';
+      for (let i = 0; i < bytes.length; i++) {
+        const b = bytes[i];
+        if (b >= 32 && b < 127) {
+          current += String.fromCharCode(b);
+        } else if (current.length >= 3) {
+          chunks.push(current.trim());
+          current = '';
+        } else {
+          current = '';
+        }
+      }
+      if (current.length >= 3) chunks.push(current.trim());
+      // Filter out XML/binary noise, keep human-readable word-like chunks
+      text = chunks
+        .filter(s => /^[A-Za-z]/.test(s) && !/^(xml|http|rId|docx|rels|word|type|xmlns|Content|Relation|Target|schema|xmlns)/i.test(s))
+        .join('\n');
+
+    } else {
+      // Plain text: txt, csv, tsv, text, fallback
+      text = typeof result === 'string' ? result : new TextDecoder().decode(result);
+    }
+
+    // Split on newlines, tabs, or commas
+    const sep = ext === 'tsv' ? /[\t\n\r]+/ : /[\n\r,;]+/;
+    const raw = text.split(sep)
+      .map(s => s.replace(/["']/g, '').trim())   // strip quotes
+      .filter(s => s.length > 1 && s.length < 200 && !/^[<>\[\]{}&|\\\/]/.test(s));
+
+    const unique = [...new Set(raw)]; // deduplicate
+    if (!unique.length) { toast('No items found in file — try a plain text file with one item per line'); return; }
+    buildGroceryImportReview(unique);
+  };
+
+  // docx/doc need binary read
+  if (ext === 'docx' || ext === 'doc') {
+    reader.readAsArrayBuffer(file);
+  } else {
+    reader.readAsText(file);
+  }
 }
 
 // Holds pending import items during review
@@ -10248,18 +10319,52 @@ function renderGrocery() {
     return;
   }
 
-  // In edit mode: show all unchecked items in manual order, draggable
+  // In edit mode: show items in same structure as locked, just with drag handle + delete + inline note
   if (groceryEditMode) {
-    const ordered = getGroceryItemsInOrder().filter(i => !i.checked);
     const depts = groceryDepts.length ? groceryDepts : DEFAULT_DEPTS;
-    body.innerHTML = `
-      <div style="font-size:12px;color:var(--muted);padding:4px 0 10px;text-align:center">
-        ☰ Drag to reorder · tap to edit inline
-      </div>
-      <div id="grocery-drag-list" style="display:flex;flex-direction:column;gap:6px">
-        ${ordered.map(item => groceryItemEditHTML(item, depts)).join('')}
+    const isDeptView = grocerySort === 'dept';
+    const canDrag    = isDeptView; // drag only in dept view
+
+    let editHtml = `<div style="font-size:12px;color:var(--muted);padding:2px 0 10px;text-align:center">
+      ${canDrag ? '☰ Drag to reorder within departments' : 'A–Z view — switch to By Dept to reorder'}
+    </div>`;
+
+    const ordered = getGroceryItemsInOrder().filter(i => !i.checked && (!query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query)));
+
+    if (isDeptView) {
+      // Group by department, same structure as locked view
+      const deptMap = {};
+      ordered.forEach(item => {
+        const d = item.department || 'other';
+        if (!deptMap[d]) deptMap[d] = [];
+        deptMap[d].push(item);
+      });
+      const deptOrder = depts.map(d => d.id);
+      const extraDepts = [...new Set(ordered.map(i => i.department || 'other'))].filter(d => !deptOrder.includes(d));
+      [...deptOrder, ...extraDepts].forEach(deptId => {
+        const deptItems = deptMap[deptId];
+        if (!deptItems || !deptItems.length) return;
+        const deptDef = depts.find(d => d.id === deptId) || {name: deptId, emoji:'📦'};
+        editHtml += `<div class="grocery-dept-group">
+          <div class="grocery-dept-header">
+            <span class="grocery-dept-label">${deptDef.emoji} ${esc(deptDef.name)}</span>
+            <span class="grocery-dept-count">${deptItems.length}</span>
+          </div>
+          <div class="grocery-edit-dept-group" data-dept="${deptId}">
+            ${deptItems.map(item => groceryItemEditHTML(item, depts, canDrag)).join('')}
+          </div>
+        </div>`;
+      });
+    } else {
+      // A-Z: sorted, no drag
+      const sorted = [...ordered].sort((a,b) => a.name.localeCompare(b.name));
+      editHtml += `<div class="grocery-edit-dept-group" data-dept="all">
+        ${sorted.map(item => groceryItemEditHTML(item, depts, false)).join('')}
       </div>`;
-    initGroceryDragSort();
+    }
+
+    body.innerHTML = editHtml;
+    if (canDrag) initGroceryDragSort();
     return;
   }
 
@@ -10310,30 +10415,35 @@ function renderGrocery() {
   body.innerHTML = html;
 }
 
-// Edit mode item — inline editable fields
-function groceryItemEditHTML(item, depts) {
+// Edit mode item — same visual design as locked view, just with drag handle + delete + inline edit
+function groceryItemEditHTML(item, depts, canDrag) {
+  const deptDef = depts.find(d => d.id === (item.department||'other')) || {name:'Other', emoji:'📦'};
   const deptOptions = depts.map(d =>
-    `<option value="${esc(d.id)}" ${(item.department||'other') === d.id ? 'selected' : ''}>${d.emoji} ${esc(d.name)}</option>`
+    `<option value="${esc(d.id)}" ${(item.department||'other') === d.id ? 'selected':''}>${d.emoji} ${esc(d.name)}</option>`
   ).join('');
-  return `<div class="grocery-item grocery-edit-row" data-id="${item.id}" draggable="true"
-    style="cursor:grab;gap:6px;flex-direction:column;align-items:stretch;padding:10px 12px">
-    <div style="display:flex;align-items:center;gap:8px">
-      <span style="color:var(--muted);font-size:18px;cursor:grab;flex-shrink:0;touch-action:none">☰</span>
+  const metaLine = grocerySort === 'alpha' ? `${deptDef.emoji} ${deptDef.name}` : '';
+  const dragHandle = canDrag
+    ? `<span class="grocery-drag-handle" title="Drag to reorder" style="color:var(--muted);font-size:14px;cursor:grab;flex-shrink:0;touch-action:none;user-select:none;padding:0 2px">☰</span>`
+    : `<span style="width:18px;flex-shrink:0"></span>`;
+  return `<div class="grocery-item grocery-edit-row" data-id="${item.id}" ${canDrag ? 'draggable="true"' : ''}>
+    ${dragHandle}
+    <input type="checkbox" class="grocery-cb" ${item.checked?'checked':''} onchange="toggleGroceryCheck('${item.id}',this)">
+    <div class="grocery-item-info">
       <input type="text" value="${esc(item.name)}"
-        style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:13px;font-weight:600"
+        class="grocery-item-name"
+        style="background:transparent;border:none;border-bottom:1px solid rgba(46,51,80,0.6);width:100%;color:var(--text);font-weight:600;padding:0 0 1px;outline:none;font-size:14px"
         onchange="updateGroceryItemInline('${item.id}','name',this.value)">
-      <button onclick="deleteGroceryItem('${item.id}')"
-        style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:2px 4px;flex-shrink:0"
-        title="Delete">🗑️</button>
+      <div style="display:flex;gap:6px;margin-top:3px;align-items:center;flex-wrap:wrap">
+        <select style="background:transparent;border:none;color:var(--muted);font-size:11px;padding:0;cursor:pointer;max-width:110px;outline:none"
+          onchange="updateGroceryItemInline('${item.id}','department',this.value)">${deptOptions}</select>
+        <input type="text" value="${esc(item.notes||'')}" placeholder="Add note…"
+          class="grocery-item-meta"
+          style="background:transparent;border:none;border-bottom:1px dashed rgba(46,51,80,0.4);color:var(--muted);padding:0;flex:1;min-width:60px;outline:none;font-size:11px"
+          onchange="updateGroceryItemInline('${item.id}','notes',this.value)">
+      </div>
     </div>
-    <div style="display:flex;gap:6px">
-      <select style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 6px;color:var(--text);font-size:12px"
-        onchange="updateGroceryItemInline('${item.id}','department',this.value)">
-        ${deptOptions}
-      </select>
-      <input type="text" value="${esc(item.notes||'')}" placeholder="Note…"
-        style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--muted);font-size:12px"
-        onchange="updateGroceryItemInline('${item.id}','notes',this.value)">
+    <div class="grocery-item-actions">
+      <button class="grocery-icon-btn" onclick="deleteGroceryItem('${item.id}')" title="Delete">🗑️</button>
     </div>
   </div>`;
 }
@@ -10359,64 +10469,65 @@ function toggleGroceryEditMode() {
 }
 
 // ── Drag-to-reorder ─────────────────────────────────────────
-let _dragSrcEl = null;
+let _dragSrcEl   = null;
+let _dragSrcDept = null;
 
 function initGroceryDragSort() {
-  const list = document.getElementById('grocery-drag-list');
-  if (!list) return;
-
-  list.querySelectorAll('.grocery-edit-row').forEach(row => {
-    row.addEventListener('dragstart', e => {
-      _dragSrcEl = row;
-      e.dataTransfer.effectAllowed = 'move';
-      row.style.opacity = '0.4';
-    });
-    row.addEventListener('dragend', () => {
-      row.style.opacity = '';
-      _dragSrcEl = null;
-      _persistDragOrder();
-    });
-    row.addEventListener('dragover', e => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      if (_dragSrcEl && _dragSrcEl !== row) {
+  // Each dept group has its own drag list
+  document.querySelectorAll('.grocery-edit-dept-group').forEach(group => {
+    group.querySelectorAll('.grocery-edit-row[draggable="true"]').forEach(row => {
+      row.addEventListener('dragstart', e => {
+        _dragSrcEl   = row;
+        _dragSrcDept = group;
+        e.dataTransfer.effectAllowed = 'move';
+        setTimeout(() => row.style.opacity = '0.4', 0);
+      });
+      row.addEventListener('dragend', () => {
+        row.style.opacity = '';
+        _dragSrcEl   = null;
+        _dragSrcDept = null;
+        _persistDragOrder();
+      });
+      row.addEventListener('dragover', e => {
+        e.preventDefault();
+        if (!_dragSrcEl || _dragSrcEl === row) return;
+        // Only allow reorder within same dept group
+        if (_dragSrcDept !== group) return;
         const rect = row.getBoundingClientRect();
-        const mid  = rect.top + rect.height / 2;
-        if (e.clientY < mid) list.insertBefore(_dragSrcEl, row);
-        else list.insertBefore(_dragSrcEl, row.nextSibling);
-      }
-    });
-    // Touch drag support
-    let touchY0 = 0;
-    row.addEventListener('touchstart', e => {
-      if (!e.target.closest('.grocery-edit-row')) return;
-      _dragSrcEl = row;
-      touchY0 = e.touches[0].clientY;
-      row.style.opacity = '0.6';
-    }, { passive: true });
-    row.addEventListener('touchmove', e => {
-      if (!_dragSrcEl) return;
-      const y = e.touches[0].clientY;
-      const target = document.elementFromPoint(e.touches[0].clientX, y)?.closest('.grocery-edit-row');
-      if (target && target !== _dragSrcEl) {
-        const rect = target.getBoundingClientRect();
-        if (y < rect.top + rect.height / 2) list.insertBefore(_dragSrcEl, target);
-        else list.insertBefore(_dragSrcEl, target.nextSibling);
-      }
-    }, { passive: true });
-    row.addEventListener('touchend', () => {
-      if (_dragSrcEl) { _dragSrcEl.style.opacity = ''; _dragSrcEl = null; _persistDragOrder(); }
+        if (e.clientY < rect.top + rect.height / 2) group.insertBefore(_dragSrcEl, row);
+        else group.insertBefore(_dragSrcEl, row.nextSibling);
+      });
+      // Touch drag
+      row.addEventListener('touchstart', () => {
+        _dragSrcEl = row; _dragSrcDept = group;
+        row.style.opacity = '0.6';
+      }, { passive: true });
+      row.addEventListener('touchmove', e => {
+        if (!_dragSrcEl) return;
+        const t = e.touches[0];
+        const target = document.elementFromPoint(t.clientX, t.clientY)?.closest('.grocery-edit-row');
+        if (target && target !== _dragSrcEl && target.closest('.grocery-edit-dept-group') === group) {
+          const rect = target.getBoundingClientRect();
+          if (t.clientY < rect.top + rect.height / 2) group.insertBefore(_dragSrcEl, target);
+          else group.insertBefore(_dragSrcEl, target.nextSibling);
+        }
+      }, { passive: true });
+      row.addEventListener('touchend', () => {
+        if (_dragSrcEl) { _dragSrcEl.style.opacity = ''; _dragSrcEl = null; _dragSrcDept = null; _persistDragOrder(); }
+      });
     });
   });
 }
 
 function _persistDragOrder() {
-  const list = document.getElementById('grocery-drag-list');
-  if (!list) return;
-  const newOrder = [...list.querySelectorAll('.grocery-edit-row')].map(el => el.dataset.id);
-  // Merge: keep the new unchecked order, append checked items at end
+  // Collect order from all dept groups in DOM order
+  const newOrder = [...document.querySelectorAll('.grocery-edit-dept-group .grocery-edit-row')]
+    .map(el => el.dataset.id).filter(Boolean);
   const checkedIds = groceryItems.filter(i => i.checked).map(i => i.id);
-  saveGroceryManualOrder([...newOrder, ...checkedIds]);
+  // Append any items not currently visible (checked, filtered out) to end
+  const visible = new Set(newOrder);
+  const rest = groceryItems.filter(i => !visible.has(i.id)).map(i => i.id);
+  saveGroceryManualOrder([...newOrder, ...rest]);
 }
 
 function groceryItemHTML(item) {

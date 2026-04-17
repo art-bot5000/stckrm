@@ -1162,8 +1162,8 @@
       <button class="grocery-sort-btn" id="grocery-sort-alpha" onclick="setGrocerySort('alpha',this)">A–Z</button>
     </div>
     <button class="btn btn-ghost btn-sm" id="grocery-edit-toggle" onclick="toggleGroceryEditMode()" title="Edit grocery list" style="flex-shrink:0">✏️ Edit</button>
-    <button class="btn btn-ghost btn-sm" onclick="openGroceryImport()" title="Import list from text file" style="flex-shrink:0">📋 Import</button>
-    <input type="file" id="grocery-import-file" accept=".txt,.csv,.text" style="display:none" onchange="handleGroceryImportFile(event)">
+    <button class="btn btn-ghost btn-sm" onclick="openGroceryImport()" title="Import grocery list" style="flex-shrink:0">📋 Import</button>
+    <input type="file" id="grocery-import-file" accept=".txt,.csv,.text,.xml,.doc,.docx,.rtf,.md,.tsv" style="display:none" onchange="handleGroceryImportFile(event)">
   </div>
   <div class="grocery-interval-info" id="grocery-interval-info"></div>
   <div id="grocery-list-body"></div>
@@ -1175,6 +1175,64 @@
   </div><!-- end #view-content -->
 
 </div><!-- end #main -->
+
+<!-- ═══ GROCERY IMPORT INSTRUCTIONS MODAL ═══ -->
+<div class="modal-backdrop" id="grocery-import-info-modal" style="z-index:305">
+  <div class="modal" style="max-width:440px">
+    <h2>📋 Import Grocery List</h2>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6">
+      Import a list of items from a file. After importing you'll be able to review, edit names, set departments and add notes before saving.
+    </p>
+
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px">
+      <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Supported formats</div>
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:12px">
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <span style="font-family:var(--mono);background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;flex-shrink:0">.txt</span>
+          <span style="color:var(--muted)">Plain text — one item per line or separated by commas</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <span style="font-family:var(--mono);background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;flex-shrink:0">.csv</span>
+          <span style="color:var(--muted)">Comma-separated values — items in first column, or comma-separated on one line</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <span style="font-family:var(--mono);background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;flex-shrink:0">.tsv</span>
+          <span style="color:var(--muted)">Tab-separated — items in first column</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <span style="font-family:var(--mono);background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;flex-shrink:0">.xml</span>
+          <span style="color:var(--muted)">XML — text content extracted from all nodes</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <span style="font-family:var(--mono);background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;flex-shrink:0">.md</span>
+          <span style="color:var(--muted)">Markdown — bullet points and list items extracted</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <span style="font-family:var(--mono);background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;flex-shrink:0">.rtf</span>
+          <span style="color:var(--muted)">Rich text — plain text extracted, formatting stripped</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <span style="font-family:var(--mono);background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;flex-shrink:0">.doc .docx</span>
+          <span style="color:var(--muted)">Word documents — text extracted line by line (best saved as .txt first for cleanest results)</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="background:rgba(88,166,255,0.06);border:1px solid rgba(88,166,255,0.2);border-radius:8px;padding:10px 12px;margin-bottom:16px">
+      <div style="font-size:12px;color:var(--accent3);line-height:1.6">
+        💡 <strong>Tip:</strong> The simplest approach is a Notes app or plain text file with one item per line:<br>
+        <span style="font-family:var(--mono);font-size:11px;color:var(--muted)">Milk<br>Bread<br>Chicken breast<br>Washing up liquid</span>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-ghost" style="flex:1" onclick="closeModal('grocery-import-info-modal')">Cancel</button>
+      <button class="btn btn-primary" style="flex:2" onclick="closeModal('grocery-import-info-modal');document.getElementById('grocery-import-file').click()">
+        Choose file →
+      </button>
+    </div>
+  </div>
+</div>
 
 <!-- ═══ GROCERY IMPORT REVIEW MODAL ═══ -->
 <div class="modal-backdrop" id="grocery-import-modal" style="z-index:310">
