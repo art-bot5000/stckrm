@@ -72,12 +72,13 @@ async function runAll() {
     const text = await r.text();
     const match = text.match(/WORKER_URL\s*=\s*['"]([^'"]+)['"]/);
     const workerUrl = match ? match[1] : 'NOT FOUND';
-    const swMatch  = text.match(/stockroom-kv-v(\d+)/);
-    const swVer    = swMatch ? swMatch[0] : 'unknown';
+    // SW version is in sw.js not app.js; the 'stockroom-kv-v1' string in app.js is a crypto salt
+    const swMatch  = text.match(/CACHE_VERSION\s*=\s*['"](stockroom[^'"]+)['"]/m);
+    const swVer    = swMatch ? swMatch[1] : '(CACHE_VERSION not in app.js — this is normal)';
     const isOld    = workerUrl.includes('deno.net');
     result('WORKER_URL in app.js', isOld ? 'fail' : 'ok',
       workerUrl + (isOld ? ' ✗ OLD DENO URL — wrong file deployed' : ' ✓'),
-      `app.js size: ${(text.length/1024).toFixed(1)}KB | SW cache version: ${swVer}`);
+      `app.js size: ${(text.length/1024).toFixed(1)}KB${swVer !== "(CACHE_VERSION not in app.js — this is normal)" ? " | app CACHE_VERSION: " + swVer : " ✓"}`);
   } catch(e) {
     result('app.js fetch', 'fail', '✗ ' + e.message);
   }
