@@ -9577,6 +9577,10 @@ async function kvSignOut() {
   if (!confirm('Sign out?\n\nYour encrypted data stays safely on the server. Sign back in with your email and passphrase to access it.')) return;
   // Dismiss any decrypt error banner — no need to show it after an intentional sign-out
   document.getElementById('kv-decrypt-error-banner')?.remove();
+  // Clean up any grocery drag UI
+  document.getElementById('grocery-change-dept-zone')?.remove();
+  document.getElementById('grocery-dept-picker-overlay')?.remove();
+  groceryEditMode = false;
   // Clear device trust
   const deviceId = getOrCreateDeviceId();
   await removeWrappedKey(deviceId);
@@ -10516,32 +10520,157 @@ let _dragSrcEl   = null;
 let _dragSrcDept = null;
 
 function _showChangeDeptZone() {
+  // Fixed bar pinned to bottom of screen — appears when drag starts
   if (document.getElementById('grocery-change-dept-zone')) {
     document.getElementById('grocery-change-dept-zone').style.display = 'flex';
     return;
   }
-  const depts = groceryDepts.length ? groceryDepts : DEFAULT_DEPTS;
-  const zone  = document.createElement('div');
-  zone.id     = 'grocery-change-dept-zone';
-  zone.style.cssText = 'background:rgba(232,168,56,0.08);border:2px dashed rgba(232,168,56,0.5);border-radius:10px;padding:10px 12px;margin-bottom:12px;flex-direction:column;gap:8px;display:flex';
-  zone.innerHTML = `<div style="font-size:12px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1px">↕ Move to department</div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px">
-      ${depts.map(d => `<button onclick="_changeDragItemDept('${d.id}')"
-        style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 12px;color:var(--text);font-size:13px;cursor:pointer;transition:background 0.15s"
-        onmouseover="this.style.background='rgba(232,168,56,0.15)'" onmouseout="this.style.background=''">${d.emoji} ${d.name}</button>`).join('')}
+  const zone = document.createElement('div');
+  zone.id = 'grocery-change-dept-zone';
+  zone.style.cssText = [
+    'position:fixed;bottom:0;left:0;right:0;z-index:500',
+    'background:rgba(15,17,23,0.96)',
+    'border-top:2px solid rgba(232,168,56,0.5)',
+    'padding:14px 20px 28px',
+    'display:flex;align-items:center;justify-content:center',
+    'backdrop-filter:blur(8px)',
+    'transition:transform 0.2s ease',
+  ].join(';');
+  zone.innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none">
+      <div style="font-size:22px">📂</div>
+      <div style="font-size:14px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1.5px">Change Department</div>
+      <div style="font-size:12px;color:var(--muted)">Drop here to reassign</div>
     </div>`;
-  zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor='var(--accent)'; });
-  zone.addEventListener('dragleave', () => { zone.style.borderColor='rgba(232,168,56,0.5)'; });
-  const body = document.getElementById('grocery-list-body');
-  if (body) body.insertBefore(zone, body.firstChild);
+  // Drop target
+  zone.addEventListener('dragover', e => {
+    e.preventDefault();
+    zone.style.borderTopColor = 'var(--accent)';
+    zone.style.background = 'rgba(232,168,56,0.12)';
+  });
+  zone.addEventListener('dragleave', () => {
+    zone.style.borderTopColor = 'rgba(232,168,56,0.5)';
+    zone.style.background = 'rgba(15,17,23,0.96)';
+  });
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.style.borderTopColor = 'rgba(232,168,56,0.5)';
+    zone.style.background = 'rgba(15,17,23,0.96)';
+    _showDeptPickerOverlay();
+  });
+  // Touch: tapping zone while dragging opens picker
+  zone.addEventListener('touchend', e => {
+    if (_dragSrcEl) {
+      e.preventDefault();
+      _showDeptPickerOverlay();
+    }
+  });
+  document.body.appendChild(zone);
 }
 
 function _hideChangeDeptZone() {
   const zone = document.getElementById('grocery-change-dept-zone');
-  if (zone) zone.style.display = 'none';
+  if (zone) { zone.style.display = 'none'; }
+}
+
+function _showDeptPickerOverlay() {
+  // Remove any existing
+  document.getElementById('grocery-dept-picker-overlay')?.remove();
+
+  const depts = groceryDepts.length ? groceryDepts : DEFAULT_DEPTS;
+  const draggingItem = _dragSrcEl;
+  const currentDept  = draggingItem?.dataset?.dept || 'other';
+  let   selectedDept = currentDept;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'grocery-dept-picker-overlay';
+  overlay.style.cssText = [
+    'position:fixed;inset:0;z-index:600',
+    'background:rgba(0,0,0,0.7)',
+    'display:flex;align-items:flex-end;justify-content:center',
+    'padding:0',
+    'backdrop-filter:blur(4px)',
+  ].join(';');
+
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:20px 20px 0 0;width:100%;max-height:75vh;display:flex;flex-direction:column;padding:20px 16px 36px;box-shadow:0 -8px 32px rgba(0,0,0,0.5)">
+      <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 18px"></div>
+      <h3 style="font-size:17px;font-weight:700;margin-bottom:4px;text-align:center">Change Department</h3>
+      <p style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:16px">Choose a department for this item</p>
+      <div id="dept-picker-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
+        ${depts.map(d => `
+          <button id="dept-pick-${d.id}" onclick="_selectPickerDept('${d.id}')"
+            style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:${d.id === currentDept ? 'rgba(232,168,56,0.12)' : 'var(--surface2)'};border:2px solid ${d.id === currentDept ? 'rgba(232,168,56,0.5)' : 'var(--border)'};border-radius:10px;cursor:pointer;text-align:left;transition:all 0.15s;width:100%">
+            <span style="font-size:22px">${d.emoji}</span>
+            <span style="font-size:16px;font-weight:600;color:var(--text)">${esc(d.name)}</span>
+            ${d.id === currentDept ? '<span style="margin-left:auto;font-size:13px;color:var(--accent)">current</span>' : ''}
+            <span id="dept-pick-check-${d.id}" style="margin-left:auto;display:${d.id === currentDept ? 'block' : 'none'};color:var(--accent);font-size:18px">✓</span>
+          </button>`).join('')}
+      </div>
+      <div style="display:flex;gap:10px">
+        <button onclick="_cancelDeptPicker()" style="flex:1;padding:13px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:16px;font-weight:600;cursor:pointer">Cancel</button>
+        <button id="dept-picker-ok" onclick="_confirmDeptPicker()" style="flex:2;padding:13px;border-radius:10px;border:none;background:var(--accent);color:#111;font-size:16px;font-weight:700;cursor:pointer">Move here →</button>
+      </div>
+    </div>`;
+
+  // Store selected dept on the overlay element for retrieval
+  overlay.dataset.selected = currentDept;
+  document.body.appendChild(overlay);
+
+  // Tap backdrop to cancel
+  overlay.addEventListener('click', e => { if (e.target === overlay) _cancelDeptPicker(); });
+}
+
+function _selectPickerDept(deptId) {
+  const overlay = document.getElementById('grocery-dept-picker-overlay');
+  if (!overlay) return;
+  // Update highlight
+  const depts = groceryDepts.length ? groceryDepts : DEFAULT_DEPTS;
+  depts.forEach(d => {
+    const btn   = document.getElementById(`dept-pick-${d.id}`);
+    const check = document.getElementById(`dept-pick-check-${d.id}`);
+    if (btn) {
+      btn.style.background    = d.id === deptId ? 'rgba(232,168,56,0.12)' : 'var(--surface2)';
+      btn.style.borderColor   = d.id === deptId ? 'rgba(232,168,56,0.5)' : 'var(--border)';
+    }
+    if (check) check.style.display = d.id === deptId ? 'block' : 'none';
+    // Remove "current" label from all, it only showed pre-selection
+  });
+  overlay.dataset.selected = deptId;
+}
+
+async function _confirmDeptPicker() {
+  const overlay = document.getElementById('grocery-dept-picker-overlay');
+  const newDeptId = overlay?.dataset?.selected;
+  if (newDeptId && _dragSrcEl) {
+    const id   = _dragSrcEl.dataset.id;
+    const item = groceryItems.find(i => i.id === id);
+    if (item && item.department !== newDeptId) {
+      item.department = newDeptId;
+      item.updatedAt  = new Date().toISOString();
+      await saveGrocery();
+    }
+  }
+  _dragSrcEl?.classList.remove('dragging');
+  _dragSrcEl = null; _dragSrcDept = null;
+  overlay?.remove();
+  _hideChangeDeptZone();
+  renderGrocery();
+}
+
+function _cancelDeptPicker() {
+  document.getElementById('grocery-dept-picker-overlay')?.remove();
+  // Item stays in original dept — just drop drag state
+  _dragSrcEl?.classList.remove('dragging');
+  _dragSrcEl = null; _dragSrcDept = null;
+  _hideChangeDeptZone();
+  _persistDragOrder();
 }
 
 async function _changeDragItemDept(newDeptId) {
+  // Kept for backwards compat — now delegates to confirm flow
+  const overlay = document.getElementById('grocery-dept-picker-overlay');
+  if (overlay) { overlay.dataset.selected = newDeptId; await _confirmDeptPicker(); return; }
   if (!_dragSrcEl) return;
   const id   = _dragSrcEl.dataset.id;
   const item = groceryItems.find(i => i.id === id);
