@@ -10348,7 +10348,12 @@ function renderGrocery() {
         editHtml += `<div class="grocery-dept-group">
           <div class="grocery-dept-header">
             <span class="grocery-dept-label">${deptDef.emoji} ${esc(deptDef.name)}</span>
-            <span class="grocery-dept-count">${deptItems.length}</span>
+            <span style="display:flex;align-items:center;gap:8px">
+              <span class="grocery-dept-count">${deptItems.length}</span>
+              <button onclick="event.stopPropagation();addGroceryItemToDept('${deptId}')"
+                style="background:none;border:none;cursor:pointer;color:var(--accent);font-size:22px;line-height:1;padding:0 2px;font-weight:300;transition:opacity 0.15s"
+                title="Add item to ${deptDef.name}">＋</button>
+            </span>
           </div>
           <div class="grocery-edit-dept-group" data-dept="${deptId}">
             ${deptItems.map(item => groceryItemEditHTML(item, depts, canDrag)).join('')}
@@ -10416,7 +10421,12 @@ function renderGrocery() {
       html += `<div class="grocery-dept-group">
         <div class="grocery-dept-header">
           <span class="grocery-dept-label">${deptDef.emoji} ${esc(deptDef.name)}</span>
-          <span class="grocery-dept-count">${bucket.unchecked.length}${bucket.checked.length ? ` · ${bucket.checked.length} done` : ''}</span>
+          <span style="display:flex;align-items:center;gap:8px">
+            <span class="grocery-dept-count">${bucket.unchecked.length}${bucket.checked.length ? ` · ${bucket.checked.length} done` : ''}</span>
+            <button onclick="event.stopPropagation();addGroceryItemToDept('${deptId}')"
+              style="background:none;border:none;cursor:pointer;color:var(--accent);font-size:22px;line-height:1;padding:0 2px;font-weight:300;transition:opacity 0.15s"
+              title="Add item to ${deptDef.name}">＋</button>
+          </span>
         </div>
         ${bucket.unchecked.map(item => groceryItemHTML(item)).join('')}
         ${bucket.checked.length ? `<div style="border-top:1px dashed rgba(46,51,80,0.4);margin-top:2px">${bucket.checked.map(item => groceryItemHTML(item)).join('')}</div>` : ''}
@@ -10454,33 +10464,29 @@ function _toggleDeptCollapse(deptId) {
 
 // Edit mode item — same visual design as locked view, just with drag handle + delete + inline edit
 function groceryItemEditHTML(item, depts, canDrag) {
-  const deptDef = depts.find(d => d.id === (item.department||'other')) || {name:'Other', emoji:'📦'};
-  const deptOptions = depts.map(d =>
-    `<option value="${esc(d.id)}" ${(item.department||'other') === d.id ? 'selected':''}>${d.emoji} ${esc(d.name)}</option>`
-  ).join('');
+  const deptDef  = depts.find(d => d.id === (item.department||'other')) || {name:'Other', emoji:'📦'};
   const metaLine = grocerySort === 'alpha' ? `${deptDef.emoji} ${deptDef.name}` : '';
   const dragHandle = canDrag
-    ? `<span class="grocery-drag-handle" title="Drag to reorder" style="color:var(--muted);font-size:14px;cursor:grab;flex-shrink:0;touch-action:none;user-select:none;padding:0 2px">☰</span>`
-    : `<span style="width:18px;flex-shrink:0"></span>`;
-  return `<div class="grocery-item grocery-edit-row" data-id="${item.id}" ${canDrag ? 'draggable="true"' : ''}>
+    ? `<span class="grocery-drag-handle" title="Hold to drag and reorder" style="color:var(--muted);font-size:16px;cursor:grab;flex-shrink:0;touch-action:none;user-select:none;padding:0 4px">☰</span>`
+    : `<span style="width:24px;flex-shrink:0"></span>`;
+  return `<div class="grocery-item grocery-edit-row" data-id="${item.id}" data-dept="${item.department||'other'}" ${canDrag ? 'draggable="true"' : ''}>
     ${dragHandle}
     <input type="checkbox" class="grocery-cb" ${item.checked?'checked':''} onchange="toggleGroceryCheck('${item.id}',this)">
     <div class="grocery-item-info">
       <input type="text" value="${esc(item.name)}"
         class="grocery-item-name"
-        style="background:transparent;border:none;border-bottom:1px solid rgba(46,51,80,0.6);width:100%;color:var(--text);font-weight:600;padding:0 0 1px;outline:none;font-size:14px"
+        style="background:transparent;border:none;border-bottom:1px solid rgba(46,51,80,0.5);width:100%;color:var(--text);padding:0 0 2px;outline:none;font-weight:600;font-size:inherit"
         onchange="updateGroceryItemInline('${item.id}','name',this.value)">
-      <div style="display:flex;gap:6px;margin-top:3px;align-items:center;flex-wrap:wrap">
-        <select style="background:transparent;border:none;color:var(--muted);font-size:11px;padding:0;cursor:pointer;max-width:110px;outline:none"
-          onchange="updateGroceryItemInline('${item.id}','department',this.value)">${deptOptions}</select>
+      <div style="display:flex;gap:6px;margin-top:3px;align-items:center">
+        ${metaLine ? `<span class="grocery-item-meta" style="flex-shrink:0;font-size:inherit">${esc(metaLine)}</span>` : ''}
         <input type="text" value="${esc(item.notes||'')}" placeholder="Add note…"
           class="grocery-item-meta"
-          style="background:transparent;border:none;border-bottom:1px dashed rgba(46,51,80,0.4);color:var(--muted);padding:0;flex:1;min-width:60px;outline:none;font-size:11px"
+          style="background:transparent;border:none;border-bottom:1px dashed rgba(46,51,80,0.35);color:var(--muted);padding:0;flex:1;min-width:40px;outline:none;font-size:inherit"
           onchange="updateGroceryItemInline('${item.id}','notes',this.value)">
       </div>
     </div>
     <div class="grocery-item-actions">
-      <button class="grocery-icon-btn" onclick="deleteGroceryItem('${item.id}')" title="Delete">🗑️</button>
+      <button class="grocery-icon-btn" onclick="deleteGroceryItem('${item.id}')" title="Delete" style="font-size:18px">🗑️</button>
     </div>
   </div>`;
 }
@@ -10509,26 +10515,65 @@ function toggleGroceryEditMode() {
 let _dragSrcEl   = null;
 let _dragSrcDept = null;
 
+function _showChangeDeptZone() {
+  if (document.getElementById('grocery-change-dept-zone')) {
+    document.getElementById('grocery-change-dept-zone').style.display = 'flex';
+    return;
+  }
+  const depts = groceryDepts.length ? groceryDepts : DEFAULT_DEPTS;
+  const zone  = document.createElement('div');
+  zone.id     = 'grocery-change-dept-zone';
+  zone.style.cssText = 'background:rgba(232,168,56,0.08);border:2px dashed rgba(232,168,56,0.5);border-radius:10px;padding:10px 12px;margin-bottom:12px;flex-direction:column;gap:8px;display:flex';
+  zone.innerHTML = `<div style="font-size:12px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1px">↕ Move to department</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">
+      ${depts.map(d => `<button onclick="_changeDragItemDept('${d.id}')"
+        style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 12px;color:var(--text);font-size:13px;cursor:pointer;transition:background 0.15s"
+        onmouseover="this.style.background='rgba(232,168,56,0.15)'" onmouseout="this.style.background=''">${d.emoji} ${d.name}</button>`).join('')}
+    </div>`;
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor='var(--accent)'; });
+  zone.addEventListener('dragleave', () => { zone.style.borderColor='rgba(232,168,56,0.5)'; });
+  const body = document.getElementById('grocery-list-body');
+  if (body) body.insertBefore(zone, body.firstChild);
+}
+
+function _hideChangeDeptZone() {
+  const zone = document.getElementById('grocery-change-dept-zone');
+  if (zone) zone.style.display = 'none';
+}
+
+async function _changeDragItemDept(newDeptId) {
+  if (!_dragSrcEl) return;
+  const id   = _dragSrcEl.dataset.id;
+  const item = groceryItems.find(i => i.id === id);
+  if (item && item.department !== newDeptId) {
+    item.department = newDeptId;
+    item.updatedAt  = new Date().toISOString();
+    await saveGrocery();
+  }
+  _dragSrcEl.classList.remove('dragging');
+  _dragSrcEl = null; _dragSrcDept = null;
+  _hideChangeDeptZone();
+  renderGrocery();
+}
+
 function initGroceryDragSort() {
-  // Each dept group has its own drag list
   document.querySelectorAll('.grocery-edit-dept-group').forEach(group => {
     group.querySelectorAll('.grocery-edit-row[draggable="true"]').forEach(row => {
       row.addEventListener('dragstart', e => {
         _dragSrcEl   = row;
         _dragSrcDept = group;
         e.dataTransfer.effectAllowed = 'move';
-        setTimeout(() => row.classList.add('dragging'), 0);
+        setTimeout(() => { row.classList.add('dragging'); _showChangeDeptZone(); }, 0);
       });
       row.addEventListener('dragend', () => {
         row.classList.remove('dragging');
-        _dragSrcEl   = null;
-        _dragSrcDept = null;
+        _hideChangeDeptZone();
+        _dragSrcEl = null; _dragSrcDept = null;
         _persistDragOrder();
       });
       row.addEventListener('dragover', e => {
         e.preventDefault();
-        if (!_dragSrcEl || _dragSrcEl === row) return;
-        if (_dragSrcDept !== group) return;
+        if (!_dragSrcEl || _dragSrcEl === row || _dragSrcDept !== group) return;
         const rect = row.getBoundingClientRect();
         if (e.clientY < rect.top + rect.height / 2) group.insertBefore(_dragSrcEl, row);
         else group.insertBefore(_dragSrcEl, row.nextSibling);
@@ -10537,6 +10582,7 @@ function initGroceryDragSort() {
       row.addEventListener('touchstart', () => {
         _dragSrcEl = row; _dragSrcDept = group;
         row.classList.add('dragging');
+        _showChangeDeptZone();
       }, { passive: true });
       row.addEventListener('touchmove', e => {
         if (!_dragSrcEl) return;
@@ -10551,6 +10597,7 @@ function initGroceryDragSort() {
       row.addEventListener('touchend', () => {
         if (_dragSrcEl) {
           _dragSrcEl.classList.remove('dragging');
+          _hideChangeDeptZone();
           _dragSrcEl = null; _dragSrcDept = null;
           _persistDragOrder();
         }
@@ -10628,6 +10675,26 @@ function openAddGroceryItem(prefillName) {
   document.getElementById('grocery-f-interval-unit').value = '1';
   document.getElementById('grocery-recurring-opts').style.display = 'none';
   populateGroceryDeptSelect('');
+  openModal('grocery-item-modal');
+  setTimeout(() => document.getElementById('grocery-f-name').focus(), 100);
+}
+
+// Add item directly to a specific department — enables edit mode first
+function addGroceryItemToDept(deptId) {
+  if (!groceryEditMode) {
+    groceryEditMode = true;
+    renderGrocery();
+  }
+  // Open the add modal pre-set to this department
+  document.getElementById('grocery-modal-title').textContent = 'Add Grocery Item';
+  document.getElementById('grocery-edit-id').value = '';
+  document.getElementById('grocery-f-name').value  = '';
+  document.getElementById('grocery-f-notes').value = '';
+  document.getElementById('grocery-f-recurring').checked = false;
+  document.getElementById('grocery-f-interval').value = '7';
+  document.getElementById('grocery-f-interval-unit').value = '1';
+  document.getElementById('grocery-recurring-opts').style.display = 'none';
+  populateGroceryDeptSelect(deptId);
   openModal('grocery-item-modal');
   setTimeout(() => document.getElementById('grocery-f-name').focus(), 100);
 }

@@ -419,10 +419,10 @@
   @media (max-width: 600px) {
 
     /* ── BASE FONT ── */
-    body { font-size: 17px; }
-    .btn { font-size: 15px; }
-    .btn-sm { font-size: 14px; }
-    .filter-chip { font-size: 14px; }
+    body { font-size: 18px; }
+    .btn { font-size: 16px; }
+    .btn-sm { font-size: 15px; }
+    .filter-chip { font-size: 15px; }
 
     /* ── HEADER ── */
     #app-header { padding: 0 12px; gap: 8px; }
@@ -443,22 +443,22 @@
 
     /* ── CARD: bigger tap targets ── */
     .btn-icon { padding: 8px 10px; font-size: 15px; }
-    .card-name { font-size: 17px; }
-    .card-category { font-size: 12px; }
-    .card-star { font-size: 24px; } /* bigger stars = easier to tap */
+    .card-name { font-size: 19px; }
+    .card-category { font-size: 13px; }
+    .card-star { font-size: 26px; }
     .card-star-rating { gap: 4px; }
-    .log-btn { padding: 12px 16px; font-size: 15px; }
-    .card-notes { font-size: 14px; }
-    .stock-bar-label { font-size: 13px; }
+    .log-btn { padding: 12px 16px; font-size: 16px; }
+    .card-notes { font-size: 15px; }
+    .stock-bar-label { font-size: 14px; }
 
     /* ── CARD META: wrap to 2×2 instead of 4 in a row ── */
     .card-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .meta-item { font-size: 13px; }
-    .meta-item strong { font-size: 14px; }
+    .meta-item { font-size: 15px; }
+    .meta-item strong { font-size: 16px; }
 
     /* ── STATUS / CADENCE BADGES ── */
-    .status-badge { font-size: 12px; padding: 4px 10px; }
-    .cadence-badge { font-size: 12px; padding: 4px 10px; }
+    .status-badge { font-size: 13px; padding: 5px 11px; }
+    .cadence-badge { font-size: 13px; padding: 5px 11px; }
 
     /* ── FILTER PANEL ── */
     #filter-toggle-btn { width: 100%; justify-content: center; padding: 10px; font-size: 14px; }
@@ -476,16 +476,16 @@
       border-radius: 20px 20px 0 0;
       padding: 20px 16px 32px;
     }
-    .modal h2 { font-size: 20px; }
-    .modal .subtitle { font-size: 14px; }
+    .modal h2 { font-size: 22px; }
+    .modal .subtitle { font-size: 15px; }
 
     /* ── FORM ── */
     .form-grid { grid-template-columns: 1fr; gap: 10px; }
     .form-full { grid-column: 1; }
-    .field label { font-size: 13px; }
+    .field label { font-size: 14px; }
     .field input, .field select, .field textarea { font-size: 16px; } /* prevent iOS zoom on focus */
     .form-input { font-size: 16px; }
-    .form-label { font-size: 14px; }
+    .form-label { font-size: 15px; }
 
     /* ── WIZARD ── */
     .wizard-box { padding: 28px 20px; border-radius: 16px; }
@@ -503,11 +503,12 @@
     .shopping-checkbox { width: 24px; height: 24px; }
     .shopping-link { padding: 8px 12px; font-size: 14px; }
 
-    /* ── REMINDERS ── */
-    .grocery-item-name { font-size: 17px; }
-    .grocery-item-meta { font-size: 14px; }
-    .grocery-dept-label { font-size: 13px; }
-    .grocery-search { font-size: 15px; }
+    /* ── REMINDERS / GROCERY ── */
+    .grocery-item-name { font-size: 18px; }
+    .grocery-item-meta { font-size: 15px; }
+    .grocery-dept-label { font-size: 14px; }
+    .grocery-dept-count { font-size: 14px; }
+    .grocery-search { font-size: 16px; }
 
     /* ── STOCK COUNT / PRICE HISTORY MODALS ── */
     #ph-chart svg { min-height: 140px; }
@@ -523,8 +524,8 @@
     /* ── SETTINGS ── */
     .setting-row { flex-wrap: wrap; gap: 10px; }
     .setting-row select { width: 100% !important; }
-    .setting-info h4 { font-size: 15px; }
-    .setting-info p { font-size: 13px; }
+    .setting-info h4 { font-size: 16px; }
+    .setting-info p { font-size: 14px; }
 
     /* ── REPORT TABLE: horizontally scrollable ── */
     .report-table { font-size: 12px; }
