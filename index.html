@@ -616,6 +616,7 @@
 
 <!-- ═══ MAIN ═══ -->
 <div id="main">
+  <div id="tabs-sticky-wrap">
   <div id="tabs">
     <button class="tab active" onclick="showView('stock',this)">📦 Stockroom</button>
     <button class="tab" onclick="showView('grocery',this)">🛒 Groceries</button>
@@ -625,6 +626,7 @@
     <button class="tab" onclick="showView('settings',this)">⚙️ Settings</button>
   </div>
 
+  </div><!-- /tabs-sticky-wrap -->
   <div id="view-content">
 
   <!-- STOCK VIEW -->
@@ -677,6 +679,14 @@
 
     <!-- Health dashboard -->
     <div id="health-dashboard" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px"></div>
+
+    <!-- Stockroom search -->
+    <div style="margin-bottom:12px">
+      <input id="stock-search" type="search" placeholder="🔍 Search items…" autocomplete="off"
+        class="grocery-search" style="width:100%;box-sizing:border-box"
+        oninput="renderGrid()">
+    </div>
+
     <div style="margin-bottom:18px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" id="filter-toggle-btn" onclick="toggleFilters()" style="display:flex;align-items:center;gap:6px">
@@ -1177,6 +1187,7 @@
 
 <!-- ═══ GROCERY VIEW ═══ -->
 <div class="view" id="view-grocery">
+  <div id="grocery-sticky-header">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
     <div>
       <h2 style="font-family:var(--mono);font-size:16px;letter-spacing:2px;color:var(--accent)">🛒 GROCERY LIST</h2>
@@ -1194,10 +1205,11 @@
       <button class="grocery-sort-btn" id="grocery-sort-alpha" onclick="setGrocerySort('alpha',this)">A–Z</button>
     </div>
     <button class="btn btn-ghost btn-sm" id="grocery-edit-toggle" onclick="toggleGroceryEditMode()" title="Edit grocery list" style="flex-shrink:0">✏️ Edit</button>
-    <button class="btn btn-ghost btn-sm" onclick="openGroceryImport()" title="Import grocery list" style="flex-shrink:0">📋 Import</button>
+
     <input type="file" id="grocery-import-file" accept=".txt,.csv,.text,.xml,.doc,.docx,.rtf,.md,.tsv" style="display:none" onchange="handleGroceryImportFile(event)">
   </div>
   <div class="grocery-interval-info" id="grocery-interval-info"></div>
+  </div><!-- /grocery-sticky-header -->
   <div id="grocery-list-body"></div>
   <div id="grocery-checked-bar" style="display:none" class="grocery-checked-bar">
     <span id="grocery-checked-count" style="font-size:13px;color:var(--muted)"></span>
@@ -2009,11 +2021,11 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
   <!-- Backdrop to close menu -->
   <div id="fab-backdrop" onclick="closeFab()" style="position:fixed;inset:0;z-index:1098;background:rgba(0,0,0,0.35);backdrop-filter:blur(2px)"></div>
   <!-- Mini-menu items (rendered by JS per view) -->
-  <div id="fab-menu" style="position:fixed;bottom:84px;right:16px;z-index:1099;display:flex;flex-direction:column;align-items:flex-end;gap:10px"></div>
+  <div id="fab-menu" style="position:fixed;bottom:184px;right:20px;z-index:1099;display:flex;flex-direction:column;align-items:flex-end;gap:10px"></div>
 </div>
 <!-- FAB trigger button -->
 <button id="fab-btn" onclick="toggleFab()" aria-label="Actions"
-  style="display:none;position:fixed;bottom:20px;right:16px;z-index:1100;width:56px;height:56px;border-radius:50%;border:none;background:var(--accent);color:#111;font-size:26px;font-weight:700;cursor:pointer;box-shadow:0 4px 20px rgba(232,168,56,0.5);transition:transform 0.2s,background 0.2s;align-items:center;justify-content:center">
+  style="display:none;position:fixed;bottom:88px;right:20px;z-index:1100;width:84px;height:84px;border-radius:50%;border:none;background:var(--accent);color:#111;font-size:36px;font-weight:700;cursor:pointer;box-shadow:0 4px 24px rgba(232,168,56,0.55);transition:transform 0.2s,background 0.2s;align-items:center;justify-content:center">
   +
 </button>
 

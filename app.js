@@ -2658,6 +2658,8 @@ function dismissInstallBanner() {
   const banner = document.getElementById('install-banner');
   if (banner) banner.classList.remove('show');
   try { localStorage.setItem('stockroom_install_dismissed', '1'); } catch(e){}
+  // Brief hint so the user knows they can still install later
+  setTimeout(() => toast('You can install STOCKROOM anytime from Settings'), 400);
 }
 
 function dismissIOSBanner() {
@@ -3350,8 +3352,9 @@ function _flushRender() {
 function renderAll() { scheduleRender(...RENDER_REGIONS); }
 
 function renderGrid() {
-  const threshold = settings.threshold;
-  const grid = document.getElementById('items-grid');
+  const threshold   = settings.threshold;
+  const grid        = document.getElementById('items-grid');
+  const stockSearch = (document.getElementById('stock-search')?.value || '').toLowerCase().trim();
 
   // Defensive guard — should never happen but prevents blank screens
   if (!Array.isArray(items)) {
@@ -3365,7 +3368,19 @@ function renderGrid() {
     // Archived items only shown when archive filter is active
     if (item._archived && activeFilter !== 'archived') return false;
     if (!item._archived && activeFilter === 'archived') return false;
-    if (activeFilter === 'archived') return true; // skip other filters for archive view
+    if (activeFilter === 'archived') {
+      if (stockSearch && !item.name.toLowerCase().includes(stockSearch) &&
+          !(item.notes||'').toLowerCase().includes(stockSearch) &&
+          !(item.category||'').toLowerCase().includes(stockSearch)) return false;
+      return true;
+    }
+
+    // Text search filter
+    if (stockSearch) {
+      const hay = [item.name, item.category, item.notes, item.store, ...(item.tags||[])].join(' ').toLowerCase();
+      if (!hay.includes(stockSearch)) return false;
+    }
+
     const s = calcStock(item);
     const status = getStatus(s?.pct ?? null, threshold);
 
@@ -10120,6 +10135,7 @@ const FAB_ACTIONS = {
     { icon: '📷', label: 'Scan Barcode',action: () => { closeFab(); sessionStorage.setItem('barcode_target','scan-chooser'); openBarcodeScanner(); } },
   ],
   grocery: [
+    // Done/Edit action is dynamically prepended in getGroceryFabActions()
     { icon: '➕', label: 'Add Item',       action: () => { closeFab(); openAddGroceryItem(); } },
     { icon: '📋', label: 'Import List',    action: () => { closeFab(); openGroceryImport(); } },
     { icon: '🏷️', label: 'Edit Depts',    action: () => { closeFab(); openGroceryDepts(); } },
@@ -10128,6 +10144,20 @@ const FAB_ACTIONS = {
     { icon: '➕', label: 'Add Reminder',  action: () => { closeFab(); openAddReminderModal(); } },
   ],
 };
+
+function getGroceryFabActions() {
+  const base = FAB_ACTIONS.grocery;
+  if (groceryEditMode) {
+    return [
+      { icon: '🔒', label: 'Done editing', action: () => { closeFab(); toggleGroceryEditMode(); } },
+      ...base,
+    ];
+  }
+  return [
+    { icon: '✏️', label: 'Edit list',    action: () => { closeFab(); toggleGroceryEditMode(); } },
+    ...base,
+  ];
+}
 
 function updateFab(viewName) {
   const btn       = document.getElementById('fab-btn');
@@ -10153,7 +10183,7 @@ function toggleFab() {
 }
 
 function openFab() {
-  const actions  = FAB_ACTIONS[_currentView];
+  const actions = _currentView === 'grocery' ? getGroceryFabActions() : FAB_ACTIONS[_currentView];
   if (!actions) return;
   _fabOpen = true;
 

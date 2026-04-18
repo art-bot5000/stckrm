@@ -560,7 +560,7 @@
     #view-grocery > div:first-child .btn-ghost,
     #view-reminders > div:first-child .btn-primary { display:none; }
     /* Add padding to bottom of views so FAB doesn't overlap last items */
-    #view-stock, #view-grocery, #view-reminders { padding-bottom: 80px; }
+    #view-stock, #view-grocery, #view-reminders { padding-bottom: 110px; }
   }
 
   /* ══════════════════════════════════════
@@ -589,6 +589,30 @@
     #health-dashboard { gap: 12px; }
     #view-savings { max-width: 800px; }
     .item-card:hover { transform: translateY(-3px); }
+
+    /* ── Sticky tab bar on desktop ── */
+    #tabs-sticky-wrap {
+      position: sticky;
+      top: 56px; /* height of app-header */
+      z-index: 90;
+      background: var(--bg);
+      padding: 10px 0 6px;
+      margin: -10px 0 0;
+      border-bottom: 1px solid var(--glass-border);
+      margin-bottom: 20px;
+    }
+
+    /* ── Sticky grocery header on desktop ── */
+    #grocery-sticky-header {
+      position: sticky;
+      top: calc(56px + 61px); /* app-header + tabs-sticky-wrap approx height */
+      z-index: 80;
+      background: var(--bg);
+      padding-bottom: 4px;
+      margin-bottom: 0;
+    }
+    /* Compensate — add top padding to grocery list body so it doesn't start behind the sticky header */
+    #view-grocery #grocery-list-body { padding-top: 4px; }
   }
 
 
