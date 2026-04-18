@@ -540,6 +540,30 @@
   }
 
   /* ══════════════════════════════════════
+     FAB — Floating Action Button (mobile)
+  ══════════════════════════════════════ */
+  @keyframes fabItemIn {
+    from { opacity:0; transform:translateY(10px) scale(0.9); }
+    to   { opacity:1; transform:translateY(0) scale(1); }
+  }
+
+  /* Hide header action buttons on mobile — FAB replaces them */
+  @media (max-width: 699px) {
+    #fab-btn { display:flex !important; }
+    /* Header quick-add and add-item buttons hidden on mobile */
+    #app-header .btn-primary,
+    #app-header .btn-ghost { display:none; }
+    /* Keep sync pill visible */
+    #app-header #sync-pill { display:flex; }
+    /* Grocery and reminders header action buttons too */
+    #view-grocery > div:first-child .btn-primary,
+    #view-grocery > div:first-child .btn-ghost,
+    #view-reminders > div:first-child .btn-primary { display:none; }
+    /* Add padding to bottom of views so FAB doesn't overlap last items */
+    #view-stock, #view-grocery, #view-reminders { padding-bottom: 80px; }
+  }
+
+  /* ══════════════════════════════════════
      DESKTOP LAYOUT (≥ 900px)
   ══════════════════════════════════════ */
   @media (min-width: 900px) {

@@ -5019,6 +5019,7 @@ function showView(name, btn) {
   }
   _currentView = name;
   if (_householdEnabled) pushPresence();
+  updateFab(name);
 }
 
 function getShoppingItems() {
@@ -5525,12 +5526,12 @@ function openDeliveredModal(id) {
   const item = items.find(i => i.id === id);
   if (!item) return;
 
-  // If no pending purchase log exists, route through log purchase first
   const hasPendingLog = item.logs?.some(l => l.pendingDelivery);
-  if (!hasPendingLog) {
+
+  // If not ordered at all and no pending log, route through log purchase first
+  if (!hasPendingLog && !item.ordered) {
     sessionStorage.setItem('log_then_deliver', id);
     openLogPurchaseModal(id);
-    // Tweak the log modal to signal this is a combined flow
     setTimeout(() => {
       const title = document.getElementById('log-modal-title');
       if (title) title.textContent = '📦 Purchase Details — ' + item.name;
@@ -10106,6 +10107,105 @@ async function prewarmView(name) {
 }
 
 // Patch tab buttons with pointerdown + pointerenter pre-warming
+// ═══════════════════════════════════════════════════════════
+//  FLOATING ACTION BUTTON (mobile only, context-aware)
+// ═══════════════════════════════════════════════════════════
+
+let _fabOpen = false;
+
+const FAB_ACTIONS = {
+  stock: [
+    { icon: '➕', label: 'Add Item',    action: () => { closeFab(); openAddModal(); } },
+    { icon: '⚡', label: 'Quick Add',   action: () => { closeFab(); openQuickAdd(); } },
+    { icon: '📷', label: 'Scan Barcode',action: () => { closeFab(); sessionStorage.setItem('barcode_target','scan-chooser'); openBarcodeScanner(); } },
+  ],
+  grocery: [
+    { icon: '➕', label: 'Add Item',       action: () => { closeFab(); openAddGroceryItem(); } },
+    { icon: '📋', label: 'Import List',    action: () => { closeFab(); openGroceryImport(); } },
+    { icon: '🏷️', label: 'Edit Depts',    action: () => { closeFab(); openGroceryDepts(); } },
+  ],
+  reminders: [
+    { icon: '➕', label: 'Add Reminder',  action: () => { closeFab(); openAddReminderModal(); } },
+  ],
+};
+
+function updateFab(viewName) {
+  const btn       = document.getElementById('fab-btn');
+  const container = document.getElementById('fab-container');
+  if (!btn || !container) return;
+
+  const isMobile = window.innerWidth < 700;
+  const actions  = FAB_ACTIONS[viewName];
+
+  if (!isMobile || !actions) {
+    btn.style.display       = 'none';
+    container.style.display = 'none';
+    closeFab(true);
+    return;
+  }
+
+  btn.style.display = 'flex';
+  closeFab(true); // reset without animation when switching views
+}
+
+function toggleFab() {
+  _fabOpen ? closeFab() : openFab();
+}
+
+function openFab() {
+  const actions  = FAB_ACTIONS[_currentView];
+  if (!actions) return;
+  _fabOpen = true;
+
+  const btn       = document.getElementById('fab-btn');
+  const menu      = document.getElementById('fab-menu');
+  const container = document.getElementById('fab-container');
+  if (!btn || !menu || !container) return;
+
+  // Rotate + to ×
+  btn.textContent    = '×';
+  btn.style.transform = 'rotate(45deg)';
+  btn.style.background = 'var(--surface)';
+  btn.style.color    = 'var(--text)';
+  btn.style.boxShadow = '0 4px 20px rgba(0,0,0,0.4)';
+
+  container.style.display = 'block';
+
+  // Build menu items bottom-up
+  menu.innerHTML = actions.map((a, i) => `
+    <div class="fab-item" style="
+      display:flex;align-items:center;gap:10px;animation:fabItemIn 0.18s ease ${i * 0.05}s both
+    ">
+      <span style="font-size:13px;font-weight:600;color:var(--text);background:var(--surface);padding:5px 12px;border-radius:8px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3);border:1px solid var(--border)">${a.label}</span>
+      <button onclick="(${a.action.toString()})()" style="
+        width:46px;height:46px;border-radius:50%;border:1px solid var(--border);
+        background:var(--surface);color:var(--text);font-size:20px;cursor:pointer;
+        display:flex;align-items:center;justify-content:center;
+        box-shadow:0 2px 12px rgba(0,0,0,0.3);flex-shrink:0
+      ">${a.icon}</button>
+    </div>`).join('');
+}
+
+function closeFab(silent = false) {
+  _fabOpen = false;
+  const btn       = document.getElementById('fab-btn');
+  const menu      = document.getElementById('fab-menu');
+  const container = document.getElementById('fab-container');
+  if (!btn) return;
+  btn.textContent      = '+';
+  btn.style.transform  = '';
+  btn.style.background = 'var(--accent)';
+  btn.style.color      = '#111';
+  btn.style.boxShadow  = '0 4px 20px rgba(232,168,56,0.5)';
+  if (menu) menu.innerHTML = '';
+  if (container) container.style.display = 'none';
+}
+
+// Resize handler — show/hide FAB based on viewport width
+window.addEventListener('resize', () => {
+  if (_currentView) updateFab(_currentView);
+}, { passive: true });
+
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.tab').forEach(btn => {
     const onclick = btn.getAttribute('onclick') || '';
@@ -12827,6 +12927,7 @@ async function init() {
   initPasskeyUI();
   loadCompactView();
   loadFilterPanelState();
+  updateFab(_currentView || 'stock'); // init FAB for current view
 
   // Init profiles — migrate if needed
   const existingProfiles = await getProfiles();
