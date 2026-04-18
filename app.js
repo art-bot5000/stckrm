@@ -5013,9 +5013,9 @@ function showView(name, btn) {
   }
   if (name === 'settings') {
     renderSettingsForUser();
-    // Rebuild country dropdown (populates options, restores saved value)
     buildSettingsCountrySelect();
     if (kvConnected) { loadTrustedDevices(); loadPasskeys(); }
+    initSettingsCollapsibles();
   }
   _currentView = name;
   if (_householdEnabled) pushPresence();
@@ -10892,15 +10892,60 @@ async function addGroceryItemToDept(deptId) {
   }, 60);
 }
 
-// Settings collapsible sections
-function toggleSettingsSection(bodyId, headerEl) {
+// ── Settings collapsible sections ────────────────────────────────
+// All sections start open by default. State persists to localStorage.
+
+const SETTINGS_COLLAPSE_KEY = 'stockroom_settings_collapsed';
+
+function _getSettingsCollapsed() {
+  try { return JSON.parse(localStorage.getItem(SETTINGS_COLLAPSE_KEY) || '{}'); }
+  catch(e) { return {}; }
+}
+
+function _saveSettingsCollapsed(state) {
+  try { localStorage.setItem(SETTINGS_COLLAPSE_KEY, JSON.stringify(state)); }
+  catch(e) {}
+}
+
+function toggleSettings(bodyId, headerEl) {
   const body = document.getElementById(bodyId);
   if (!body) return;
   const isOpen = body.style.display !== 'none';
-  body.style.display = isOpen ? 'none' : '';
-  const chevron = headerEl.querySelector('.settings-chevron');
-  if (chevron) chevron.style.transform = isOpen ? '' : 'rotate(180deg)';
+  const nowOpen = !isOpen;
+  body.style.display = nowOpen ? '' : 'none';
+  const chevron = headerEl?.querySelector('.settings-chevron');
+  if (chevron) chevron.style.transform = nowOpen ? '' : 'rotate(-90deg)';
+  // Persist
+  const state = _getSettingsCollapsed();
+  if (nowOpen) delete state[bodyId]; // open = default, no need to store
+  else state[bodyId] = true;         // collapsed = non-default, store
+  _saveSettingsCollapsed(state);
 }
+
+function initSettingsCollapsibles() {
+  const collapsed = _getSettingsCollapsed();
+  const allIds = [
+    'settings-households-body', 'settings-account-body', 'settings-alerts-body',
+    'settings-reminders-body',  'settings-prefs-body',   'settings-about-body',
+  ];
+  allIds.forEach(bodyId => {
+    const body = document.getElementById(bodyId);
+    if (!body) return;
+    // Find the preceding header by scanning siblings
+    const header = body.previousElementSibling;
+    const chevron = header?.querySelector?.('.settings-chevron');
+    if (collapsed[bodyId]) {
+      body.style.display = 'none';
+      if (chevron) chevron.style.transform = 'rotate(-90deg)';
+    } else {
+      body.style.display = '';
+      if (chevron) chevron.style.transform = '';
+    }
+  });
+}
+
+// Keep old name as alias for any stale references
+function toggleSettingsSection(bodyId, headerEl) { toggleSettings(bodyId, headerEl); }
 
 function toggleGroceryEditMode() {
   groceryEditMode = !groceryEditMode;
