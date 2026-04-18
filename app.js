@@ -4268,7 +4268,6 @@ function renderSpendChart() {
   const chartW  = W - PAD.l - PAD.r;
   const chartH  = H - PAD.t - PAD.b;
   const barW    = Math.min(36, (chartW / data.length) - 4);
-  const currency = '£';
 
   const bars = data.map(([month, d], i) => {
     const barH = maxVal > 0 ? (d.total / maxVal) * chartH : 0;
