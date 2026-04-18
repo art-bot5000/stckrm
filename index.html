@@ -704,6 +704,7 @@
           <button class="filter-chip" onclick="setFilter('status','ok',this)">🟢 Good</button>
           <button class="filter-chip" onclick="setFilter('cadence','monthly',this)">🗓️ Monthly</button>
           <button class="filter-chip" onclick="setFilter('cadence','bulk',this)">📦 Bulk</button>
+          <button class="filter-chip" onclick="setFilter('status','archived',this)" style="opacity:0.7">🗄️ Archived</button>
         </div>
         <div id="store-filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Store:</span>
@@ -874,8 +875,12 @@
     </div>
 
     <!-- 2. Account (replaces Cloud Sync) -->
-    <div class="settings-card full-width">
-      <h3>☁️ Account &amp; Sync</h3>
+    <div class="settings-collapsible-header" onclick="toggleSettingsSection('settings-account-body',this)">
+      <span>☁️ Account &amp; Sync</span>
+      <span class="settings-chevron">▼</span>
+    </div>
+    <div id="settings-account-body" class="settings-collapsible-body settings-card full-width" style="display:none">
+      <h3 style="display:none">☁️ Account &amp; Sync</h3>
       <p style="font-size:12px;color:var(--muted);margin-bottom:14px">Your data is encrypted on this device before being stored. We cannot read it.</p>
       <div class="setting-row">
         <div class="setting-info">
@@ -945,9 +950,15 @@
       </div>
     </div>
 
+    </div><!-- end settings-account-body -->
+
     <!-- 3. Alerts — push + email reports merged -->
-    <div class="settings-card">
-      <h3>🔔 Alerts &amp; Reports</h3>
+    <div class="settings-collapsible-header" onclick="toggleSettingsSection('settings-alerts-body',this)">
+      <span>🔔 Alerts &amp; Reports</span>
+      <span class="settings-chevron">▼</span>
+    </div>
+    <div id="settings-alerts-body" class="settings-collapsible-body settings-card" style="display:none">
+      <h3 style="display:none">🔔 Alerts &amp; Reports</h3>
 
       <!-- Push notifications -->
       <h4 style="font-size:13px;font-weight:700;margin-bottom:4px">Push Notifications</h4>
@@ -980,8 +991,6 @@
       <div style="border-top:1px solid var(--glass-border);margin:16px 0"></div>
 
       <!-- Email reports -->
-      <h4 style="font-size:13px;font-weight:700;margin-bottom:4px">📧 Email Reports</h4>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">Get a scheduled stock report by email listing items running low.</p>
       <div id="email-setup-needed" style="display:none">
         <p style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6">The email service requires a backend URL to be configured. Contact the app owner for setup details.</p>
       </div>
@@ -1105,9 +1114,16 @@
       </div>
     </div>
 
-    <!-- 5. Preferences -->
+    </div><!-- end settings-alerts-body -->
+
+    <!-- 5+6. Preferences & Data — one collapsible section -->
+    <div class="settings-collapsible-header" onclick="toggleSettingsSection('settings-prefs-body',this)">
+      <span>⚙️ Preferences &amp; Data</span>
+      <span class="settings-chevron">▼</span>
+    </div>
+    <div id="settings-prefs-body" class="settings-collapsible-body" style="display:none">
     <div class="settings-card">
-      <h3>⚙️ Preferences</h3>
+      <h3 style="display:none">⚙️ Preferences</h3>
       <div class="setting-row">
         <div class="setting-info"><h4>Low stock warning</h4><p>Warn when stock drops below this %</p></div>
         <select id="setting-threshold" onchange="saveSettings()" style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
@@ -1137,6 +1153,8 @@
         <button class="btn btn-danger btn-sm" onclick="clearAll()">Clear All</button>
       </div>
     </div>
+
+    </div><!-- end settings-prefs-body -->
 
     <!-- 7. About -->
     <div class="settings-card">
@@ -1231,9 +1249,10 @@
       </div>
     </div>
 
-    <div style="display:flex;gap:8px">
-      <button class="btn btn-ghost" style="flex:1" onclick="closeModal('grocery-import-info-modal')">Cancel</button>
-      <button class="btn btn-primary" style="flex:2" onclick="closeModal('grocery-import-info-modal');document.getElementById('grocery-import-file').click()">
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-ghost" style="flex:1;min-width:80px" onclick="closeModal('grocery-import-info-modal')">Cancel</button>
+      <button class="btn btn-ghost" style="flex:1;min-width:100px" onclick="pasteGroceryImport()">📋 Paste</button>
+      <button class="btn btn-primary" style="flex:2;min-width:120px" onclick="closeModal('grocery-import-info-modal');document.getElementById('grocery-import-file').click()">
         Choose file →
       </button>
     </div>

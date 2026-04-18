@@ -619,7 +619,15 @@
   .grocery-context-item:hover { background:var(--surface2); }
   .grocery-context-item.danger { color:var(--danger); }
   .grocery-interval-info { font-size:12px; color:var(--muted); margin-bottom:16px; }
+  /* Bigger dept up/down arrow tap targets */
   .dept-manage-row { display:flex; align-items:center; gap:8px; padding:10px 0; border-bottom:1px solid rgba(46,51,80,0.4); }
   .dept-manage-emoji { font-size:20px; width:28px; text-align:center; flex-shrink:0; }
   .dept-manage-name { flex:1; font-size:14px; }
-  .dept-manage-actions { display:flex; gap:4px; }
+  .dept-manage-actions { display:flex; gap:2px; }
+  .dept-manage-actions .grocery-icon-btn { min-width:40px; min-height:40px; font-size:20px; display:flex; align-items:center; justify-content:center; padding:4px; }
+  /* Collapsible settings section headers */
+  .settings-collapsible-header { display:flex; align-items:center; justify-content:space-between; padding:14px 18px; background:rgba(26,29,39,0.7); border:1px solid var(--glass-border); border-radius:12px; cursor:pointer; margin-bottom:4px; font-size:15px; font-weight:700; color:var(--text); transition:background 0.15s; user-select:none; }
+  .settings-collapsible-header:hover, .settings-collapsible-header:active { background:rgba(46,51,80,0.7); }
+  .settings-chevron { font-size:13px; color:var(--muted); transition:transform 0.2s; flex-shrink:0; }
+  .settings-collapsible-body { margin-bottom:10px; }
+  .settings-collapsible-body.settings-card { margin-top:0; border-top-left-radius:0; border-top-right-radius:0; }

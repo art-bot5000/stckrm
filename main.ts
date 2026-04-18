@@ -1359,12 +1359,46 @@ Deno.serve(async (request) => {
     try {
       const { emailHash, verifier } = await request.json();
       if (!emailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
+
+      // ── Rate limiting: max 5 attempts per 15 minutes per emailHash ──
+      const rlKey  = ['rate_limit', 'login', emailHash];
+      const WINDOW = 15 * 60 * 1000; // 15 minutes
+      const MAX    = 5;
+      const now    = Date.now();
+
+      const rlRaw  = await kvGet(rlKey);
+      const rl     = rlRaw.value ? JSON.parse(rlRaw.value) : { attempts: [], lockedUntil: 0 };
+
+      if (rl.lockedUntil && now < rl.lockedUntil) {
+        const retryAfter = Math.ceil((rl.lockedUntil - now) / 1000);
+        return json({ error: 'Too many attempts — try again later', retryAfter, lockedUntil: rl.lockedUntil }, corsHeaders, 429);
+      }
+
+      // Prune old attempts outside window
+      rl.attempts = (rl.attempts || []).filter((t: number) => now - t < WINDOW);
+
       const stored = await kvGet(['user', emailHash, 'verifier']);
       if (!stored.value) return json({ error: 'User not found' }, corsHeaders, 404);
-      if (stored.value !== verifier) return json({ error: 'Incorrect passphrase' }, corsHeaders, 401);
+
+      if (stored.value !== verifier) {
+        rl.attempts.push(now);
+        if (rl.attempts.length >= MAX) {
+          rl.lockedUntil = now + WINDOW;
+          rl.attempts    = [];
+        }
+        await kvSet(rlKey, JSON.stringify(rl), { expireIn: WINDOW * 2 });
+        const attemptsLeft = MAX - rl.attempts.length;
+        if (rl.lockedUntil) {
+          return json({ error: 'Too many failed attempts — account locked for 15 minutes', retryAfter: WINDOW / 1000, lockedUntil: rl.lockedUntil }, corsHeaders, 429);
+        }
+        return json({ error: `Incorrect passphrase — ${attemptsLeft} attempt${attemptsLeft !== 1 ? 's' : ''} remaining before lockout` }, corsHeaders, 401);
+      }
+
+      // Success — clear rate limit
+      if (rl.attempts.length > 0) await kvSet(rlKey, JSON.stringify({ attempts: [], lockedUntil: 0 }), { expireIn: WINDOW });
       return json({ ok: true }, corsHeaders);
     } catch(err) {
-      return json({ error: err.message }, corsHeaders, 500);
+      return json({ error: (err as Error).message }, corsHeaders, 500);
     }
   }
 

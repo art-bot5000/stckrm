@@ -2892,6 +2892,30 @@ let deletedItem   = null;
 let deletedIndex  = null;
 let undoTimer     = null;
 
+async function archiveItem(id) {
+  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  item._archived  = true;
+  item.updatedAt  = new Date().toISOString();
+  await saveData();
+  scheduleRender('grid', 'dashboard');
+  _syncQueue.enqueue();
+  toast(`"${item.name}" archived`);
+}
+
+async function restoreItem(id) {
+  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  delete item._archived;
+  item.updatedAt = new Date().toISOString();
+  await saveData();
+  scheduleRender('grid', 'dashboard');
+  _syncQueue.enqueue();
+  toast(`"${item.name}" restored`);
+}
+
 async function deleteItem(id) {
   const idx  = items.findIndex(i => i.id === id);
   const item = items[idx];
@@ -3338,6 +3362,10 @@ function renderGrid() {
   let filtered = items.filter(item => {
     // Quick-added items live in their own section
     if (item.quickAdded) return false;
+    // Archived items only shown when archive filter is active
+    if (item._archived && activeFilter !== 'archived') return false;
+    if (!item._archived && activeFilter === 'archived') return false;
+    if (activeFilter === 'archived') return true; // skip other filters for archive view
     const s = calcStock(item);
     const status = getStatus(s?.pct ?? null, threshold);
 
@@ -3440,7 +3468,10 @@ function cardHTML(item, threshold) {
         <button class="btn-icon" title="Price history" onclick="openPriceHistoryModal('${item.id}')" ${getPriceHistory(item).length < 2 ? 'style="opacity:0.35;cursor:default"' : ''}>💰</button>
         <button class="btn-icon" title="Share item" onclick="shareItem('${item.id}')">↗️</button>
         <button class="btn-icon" title="Edit" onclick="openEditModal('${item.id}');enableItemEdit()">✏️</button>
-        <button class="btn-icon" title="Delete" onclick="deleteItem('${item.id}')">🗑️</button>
+        ${item._archived
+          ? `<button class="btn-icon" title="Restore from archive" onclick="restoreItem('${item.id}')">♻️</button>
+             <button class="btn-icon" title="Delete permanently" onclick="deleteItem('${item.id}')">🗑️</button>`
+          : `<button class="btn-icon" title="Archive item" onclick="archiveItem('${item.id}')">📦</button>`}
       </div>
     </div>
     <div class="card-name" style="margin-bottom:12px">${esc(item.name)}</div>
@@ -4153,17 +4184,83 @@ function getMonthlySpend() {
     .slice(-12); // last 12 months
 }
 
+function calcPeriodSpend(days) {
+  // Sum all logged purchases in the last N days that have prices
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  let total = 0, priced = 0, unpriced = 0;
+  const missingItems = [];
+  items.forEach(item => {
+    if (item._archived) return;
+    let itemHadLog = false;
+    (item.logs || []).forEach(log => {
+      if (!log.date) return;
+      const logMs = new Date(log.date).getTime();
+      if (logMs < cutoff) return;
+      itemHadLog = true;
+      const val = parsePriceValue(log.price);
+      if (val !== null) { total += val; priced++; }
+      else unpriced++;
+    });
+    if (itemHadLog) {
+      const latestLog = (item.logs || []).filter(l => {
+        const ms = new Date(l.date).getTime();
+        return ms >= cutoff;
+      });
+      const anyUnpriced = latestLog.some(l => parsePriceValue(l.price) === null);
+      if (anyUnpriced && !missingItems.includes(item.name)) {
+        missingItems.push(item.name);
+      }
+    }
+  });
+  return { total, priced, unpriced, missingItems };
+}
+
 function renderSpendChart() {
   const chartEl     = document.getElementById('spend-chart');
   const breakdownEl = document.getElementById('spend-breakdown');
   if (!chartEl || !breakdownEl) return;
 
+  // ── 7 / 30 day spend summary ──
+  const s7  = calcPeriodSpend(7);
+  const s30 = calcPeriodSpend(30);
+  const currency = '£';
+  const hasAnySpend = s7.total > 0 || s30.total > 0;
+  const allMissing  = [...new Set([...s7.missingItems, ...s30.missingItems])];
+
+  let summaryHtml = '';
+  if (hasAnySpend) {
+    const missingNote = allMissing.length
+      ? `<div style="margin-top:8px;font-size:11px;color:var(--muted);line-height:1.5">
+          ⚠️ <strong>Estimate only</strong> — some purchases have no price logged:
+          ${allMissing.slice(0,5).map(n=>`<em>${n}</em>`).join(', ')}${allMissing.length>5?' and more':''}.<br>
+          Figures may not reflect actual spend due to missing prices and usage changes.
+        </div>`
+      : `<div style="margin-top:6px;font-size:11px;color:var(--muted)">Based on logged purchase prices. Actual spend may vary.</div>`;
+
+    summaryHtml = `
+      <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+        <div style="flex:1;min-width:120px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 16px">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Last 7 days</div>
+          <div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--text)">${currency}${s7.total.toFixed(2)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">${s7.priced} purchase${s7.priced!==1?'s':''} logged</div>
+        </div>
+        <div style="flex:1;min-width:120px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 16px">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Last 30 days</div>
+          <div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--accent)">${currency}${s30.total.toFixed(2)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">${s30.priced} purchase${s30.priced!==1?'s':''} logged</div>
+        </div>
+      </div>
+      ${missingNote}
+      ${allMissing.length ? '' : ''}`;
+  }
+
   const data = getMonthlySpend();
   if (!data.length) {
-    chartEl.innerHTML     = `<p style="color:var(--muted);font-size:13px">No price data logged yet. Add prices when logging purchases to track spend over time.</p>`;
+    chartEl.innerHTML     = summaryHtml + `<p style="color:var(--muted);font-size:13px;margin-top:12px">No price data logged yet. Add prices when logging purchases to track spend over time.</p>`;
     breakdownEl.innerHTML = '';
     return;
   }
+  chartEl.innerHTML = summaryHtml;
 
   const totals  = data.map(([, d]) => d.total);
   const maxVal  = Math.max(...totals);
@@ -4199,7 +4296,8 @@ function renderSpendChart() {
   };
   const yLabels = [0, maxVal / 2, maxVal].map(yLabel).join('');
 
-  chartEl.innerHTML = `
+  chartEl.innerHTML += `
+    <div style="font-size:13px;font-weight:700;color:var(--muted);margin-bottom:8px;margin-top:12px;font-family:var(--mono);text-transform:uppercase;letter-spacing:1px">Monthly trend</div>
     <svg viewBox="0 0 ${W} ${H}" style="width:100%;border-radius:8px;background:#1a1d27">
       ${yLabels}${avgLine}${bars}
     </svg>
@@ -5580,6 +5678,30 @@ async function saveStartedUsing() {
   scheduleRender('grid', 'dashboard');
   setTimeout(syncAll, 400);
   toast('Start date saved — stock clock updated ✓');
+}
+
+async function archiveItem(id) {
+  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  item._archived  = true;
+  item.updatedAt  = new Date().toISOString();
+  await saveData();
+  scheduleRender('grid', 'dashboard');
+  _syncQueue.enqueue();
+  toast(`"${item.name}" archived`);
+}
+
+async function restoreItem(id) {
+  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  delete item._archived;
+  item.updatedAt = new Date().toISOString();
+  await saveData();
+  scheduleRender('grid', 'dashboard');
+  _syncQueue.enqueue();
+  toast(`"${item.name}" restored`);
 }
 
 async function deleteItem(id) {
@@ -7026,7 +7148,8 @@ async function kvLogin() {
     });
     const data = await res.json();
     if (res.status === 404) throw new Error('Account not found for ' + email + ' — check your email address, or create a new account');
-    if (res.status === 401) throw new Error('Incorrect passphrase — try again');
+    if (res.status === 429) throw new Error(_handleLoginRateLimit(res, data) || data.error);
+    if (res.status === 401) throw new Error(data.error || 'Incorrect passphrase — try again');
     if (!res.ok) throw new Error(data.error || 'Sign-in failed');
 
     // Fetch key envelope — response carries cryptoVersion, kdfSalt, migrationDue
@@ -7276,6 +7399,11 @@ async function reauthWithPassphrase() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ emailHash: _kvEmailHash, verifier }),
     });
+    if (res.status === 429) {
+      const d = await res.json().catch(() => ({}));
+      errEl.textContent = _handleLoginRateLimit(res, d) || 'Too many attempts — please wait';
+      errEl.style.display = 'block'; return;
+    }
     if (res.status === 401) { errEl.textContent = 'Incorrect passphrase'; errEl.style.display = 'block'; return; }
     if (!res.ok) throw new Error('Verification failed');
 
@@ -8894,6 +9022,20 @@ async function offerTrustDevice(email, emailHash, verifier, key) {
   await _trustIfRemembered(email, emailHash, verifier, key);
 }
 
+// Handles 429 rate-limit responses from /user/verify
+// Returns an error message string, or null if not a rate limit
+function _handleLoginRateLimit(res, data) {
+  if (res.status !== 429) return null;
+  const until = data?.lockedUntil;
+  if (until) {
+    const remaining = Math.ceil((until - Date.now()) / 60000);
+    return `Too many failed attempts — please wait ${remaining} minute${remaining !== 1 ? 's' : ''} before trying again.`;
+  }
+  const retryAfter = data?.retryAfter;
+  if (retryAfter) return `Too many failed attempts — please wait ${Math.ceil(retryAfter / 60)} minutes before trying again.`;
+  return 'Too many attempts — please wait before trying again.';
+}
+
 async function trustThisDeviceWith(email, emailHash, verifier, key) {
   try {
     const deviceId = getOrCreateDeviceId();
@@ -8903,6 +9045,8 @@ async function trustThisDeviceWith(email, emailHash, verifier, key) {
       localStorage.setItem('stockroom_device_secret', secret);
     }
     await saveWrappedKey(deviceId, key, secret);
+    // Record when trust was established — used for 30-day expiry
+    localStorage.setItem('stockroom_trust_ts', String(Date.now()));
     // Also store raw key bytes in localStorage as fallback for IDB failures
     try {
       const exported = await crypto.subtle.exportKey('raw', key);
@@ -9125,8 +9269,55 @@ async function kvRestoreSession() {
   }
 }
 
+// Check if the trusted-device session has expired (30 days).
+// Returns true if expired and reauth was shown; the caller should return false.
+async function _checkTrustExpiry() {
+  const ts = localStorage.getItem('stockroom_trust_ts');
+  if (!ts) return false; // no trust established
+  const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+  if (Date.now() - parseInt(ts) < THIRTY_DAYS) return false; // still valid
+
+  // Expired — clear cached key material but keep session credentials
+  localStorage.removeItem('stockroom_device_secret');
+  localStorage.removeItem('stockroom_kv_key_fallback');
+  localStorage.removeItem('stockroom_trust_ts');
+  localStorage.removeItem('stockroom_kv_session_key');
+  _kvKey = null;
+
+  // Show the "Protecting your data" reauth modal
+  return new Promise(resolve => {
+    const modal = document.getElementById('reauth-modal');
+    const reasonEl = document.getElementById('reauth-reason');
+    if (reasonEl) reasonEl.innerHTML =
+      `Your session has expired. For your security, STOCKROOM requires you to re-enter your passphrase every 30 days.<br>
+       <span style="font-size:11px;opacity:0.7;display:block;margin-top:6px">Your data remains safely encrypted on the server.</span>`;
+    // Update heading to "Protecting your data"
+    const h2 = modal?.querySelector('h2');
+    if (h2) h2.textContent = 'Protecting your data';
+    // Hide passkey option for this re-authentication
+    const pkOpt = document.getElementById('reauth-passkey-option');
+    if (pkOpt) pkOpt.style.display = 'none';
+    requireReauth('', async () => {
+      // After successful reauth, re-establish trust so the 30-day clock resets
+      if (_kvKey && _kvEmail && _kvEmailHash && _kvVerifier) {
+        await trustThisDeviceWith(_kvEmail, _kvEmailHash, _kvVerifier, _kvKey);
+      }
+      resolve(false); // not expired (now re-authenticated)
+    }, { passkeyAllowed: false });
+    // If modal was not shown (requireReauth bailed), resolve
+    if (!document.getElementById('reauth-modal').style.display || document.getElementById('reauth-modal').style.display === 'none') {
+      resolve(true);
+    }
+  });
+}
+
 async function kvEnsureKey() {
   if (_kvKey) return true;
+
+  // 30-day trusted-device session expiry check
+  const expired = await _checkTrustExpiry();
+  if (expired) return false;
+  if (_kvKey) return true; // reauth restored the key
 
   // 1. Trusted device — IndexedDB (with localStorage fallback for desktop/mobile switches)
   const secret = localStorage.getItem('stockroom_device_secret');
@@ -10104,6 +10295,22 @@ function openGroceryImport() {
   openModal('grocery-import-info-modal');
 }
 
+async function pasteGroceryImport() {
+  closeModal('grocery-import-info-modal');
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text || !text.trim()) { toast('Clipboard is empty'); return; }
+    const raw = text.split(/[\n\r,;]+/)
+      .map(s => s.replace(/["']/g, '').trim())
+      .filter(s => s.length > 1 && s.length < 200);
+    const unique = [...new Set(raw)];
+    if (!unique.length) { toast('No items found in clipboard text'); return; }
+    buildGroceryImportReview(unique);
+  } catch(e) {
+    toast('Cannot read clipboard — try choosing a file instead');
+  }
+}
+
 function handleGroceryImportFile(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -10623,7 +10830,10 @@ function _showDeptPickerForSelection() {
     <div style="background:var(--surface);border-radius:20px 20px 0 0;width:100%;max-height:75vh;display:flex;flex-direction:column;padding:20px 16px 36px;box-shadow:0 -8px 32px rgba(0,0,0,0.5)">
       <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 18px"></div>
       <h3 style="font-size:17px;font-weight:700;margin-bottom:4px;text-align:center">Change Department</h3>
-      <p style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:16px">Move ${count} item${count!==1?'s':''} to…</p>
+      <p style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:4px">Move ${count} item${count!==1?'s':''} to…</p>
+      <div style="text-align:center;margin-bottom:14px">
+        <button onclick="_cancelDeptPicker();openGroceryDepts()" style="background:none;border:none;color:var(--accent);font-size:13px;cursor:pointer;text-decoration:underline;padding:0">✏️ Edit Departments</button>
+      </div>
       <div style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
         ${depts.map(d => `
           <button id="dept-pick-${d.id}" onclick="_selectPickerDept('${d.id}')"
@@ -10681,6 +10891,16 @@ async function addGroceryItemToDept(deptId) {
     const input = document.getElementById(`gi-name-${newId}`);
     if (input) { input.focus(); input.select(); }
   }, 60);
+}
+
+// Settings collapsible sections
+function toggleSettingsSection(bodyId, headerEl) {
+  const body = document.getElementById(bodyId);
+  if (!body) return;
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : '';
+  const chevron = headerEl.querySelector('.settings-chevron');
+  if (chevron) chevron.style.transform = isOpen ? '' : 'rotate(180deg)';
 }
 
 function toggleGroceryEditMode() {
@@ -10775,7 +10995,10 @@ function _showDeptPickerOverlay() {
     <div style="background:var(--surface);border-radius:20px 20px 0 0;width:100%;max-height:75vh;display:flex;flex-direction:column;padding:20px 16px 36px;box-shadow:0 -8px 32px rgba(0,0,0,0.5)">
       <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 18px"></div>
       <h3 style="font-size:17px;font-weight:700;margin-bottom:4px;text-align:center">Change Department</h3>
-      <p style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:16px">Choose a department for this item</p>
+      <p style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:4px">Choose a department for this item</p>
+      <div style="text-align:center;margin-bottom:14px">
+        <button onclick="_cancelDeptPicker();openGroceryDepts()" style="background:none;border:none;color:var(--accent);font-size:13px;cursor:pointer;text-decoration:underline;padding:0">✏️ Edit Departments</button>
+      </div>
       <div id="dept-picker-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
         ${depts.map(d => `
           <button id="dept-pick-${d.id}" onclick="_selectPickerDept('${d.id}')"
