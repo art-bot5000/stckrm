@@ -603,6 +603,7 @@
   .grocery-drag-handle { color:var(--muted); font-size:15px; cursor:grab; flex-shrink:0; touch-action:none; user-select:none; padding:0 3px; transition:color 0.15s; }
   .grocery-drag-handle:hover { color:var(--accent); }
   .grocery-edit-row { transition:transform 0.1s, opacity 0.1s, background 0.1s; }
+  .grocery-edit-row.edit-selected { background:rgba(232,168,56,0.08); border-color:rgba(232,168,56,0.3) !important; border-radius:6px; }
   .grocery-edit-row.dragging {
     opacity: 0.85;
     transform: translate(4px, -4px);

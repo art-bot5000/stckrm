@@ -9978,7 +9978,8 @@ const DEFAULT_DEPTS = [
 let groceryItems    = [];
 let groceryDepts    = [];
 let grocerySort     = 'dept'; // 'dept' | 'alpha'
-let groceryEditMode = false;  // unlock/lock toggle
+let groceryEditMode    = false;  // unlock/lock toggle
+let grocerySelected   = new Set(); // IDs selected in edit mode multi-select
 
 // Manual sort order — array of item IDs in user-defined order
 // Persisted to localStorage so it survives page reloads and view switches
@@ -10293,6 +10294,11 @@ function renderGrocery() {
   if (!body) return;
 
   cleanGroceryOrder();
+  // Hide multi-select bar whenever we re-render
+  if (!groceryEditMode) {
+    const sb = document.getElementById('grocery-selection-bar');
+    if (sb) sb.style.display = 'none';
+  }
 
   // Interval info
   const si = getGroceryShopInterval();
@@ -10339,7 +10345,7 @@ function renderGrocery() {
     const canDrag    = isDeptView; // drag only in dept view
 
     let editHtml = `<div style="font-size:12px;color:var(--muted);padding:2px 0 10px;text-align:center">
-      ${canDrag ? '☰ Drag to reorder within departments' : 'A–Z view — switch to By Dept to reorder'}
+      ${canDrag ? 'Hold ☰ and drag to reorder within departments' : 'A–Z view — switch to By Dept to reorder'}
     </div>`;
 
     const ordered = getGroceryItemsInOrder().filter(i => !i.checked && (!query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query)));
@@ -10479,17 +10485,25 @@ function _toggleDeptCollapse(deptId) {
 function groceryItemEditHTML(item, depts, canDrag) {
   const deptDef  = depts.find(d => d.id === (item.department||'other')) || {name:'Other', emoji:'📦'};
   const metaLine = grocerySort === 'alpha' ? `${deptDef.emoji} ${deptDef.name}` : '';
+  const isSelected = grocerySelected.has(item.id);
+  const isNew = item._isNew; // blank row being named inline
   const dragHandle = canDrag
     ? `<span class="grocery-drag-handle" title="Hold to drag and reorder" style="color:var(--muted);font-size:16px;cursor:grab;flex-shrink:0;touch-action:none;user-select:none;padding:0 4px">☰</span>`
     : `<span style="width:24px;flex-shrink:0"></span>`;
-  return `<div class="grocery-item grocery-edit-row" data-id="${item.id}" data-dept="${item.department||'other'}" ${canDrag ? 'draggable="true"' : ''}>
+  return `<div class="grocery-item grocery-edit-row${isSelected?' edit-selected':''}" data-id="${item.id}" data-dept="${item.department||'other'}" ${canDrag ? 'draggable="true"' : ''}>
     ${dragHandle}
-    <input type="checkbox" class="grocery-cb" ${item.checked?'checked':''} onchange="toggleGroceryCheck('${item.id}',this)">
+    <input type="checkbox" class="grocery-cb grocery-select-cb" ${isSelected?'checked':''}
+      onchange="toggleGrocerySelect('${item.id}',this)"
+      onclick="event.stopPropagation()"
+      title="Select item">
     <div class="grocery-item-info">
       <input type="text" value="${esc(item.name)}"
         class="grocery-item-name"
+        id="gi-name-${item.id}"
         style="background:transparent;border:none;border-bottom:1px solid rgba(46,51,80,0.5);width:100%;color:var(--text);padding:0 0 2px;outline:none;font-weight:600;font-size:inherit"
-        onchange="updateGroceryItemInline('${item.id}','name',this.value)">
+        placeholder="${isNew ? 'Item name…' : ''}"
+        onchange="updateGroceryItemInline('${item.id}','name',this.value)"
+        ${isNew ? `onblur="_groceryNewItemBlur('${item.id}')"` : ''}>
       <div style="display:flex;gap:6px;margin-top:3px;align-items:center">
         ${metaLine ? `<span class="grocery-item-meta" style="flex-shrink:0;font-size:inherit">${esc(metaLine)}</span>` : ''}
         <input type="text" value="${esc(item.notes||'')}" placeholder="Add note…"
@@ -10497,9 +10511,6 @@ function groceryItemEditHTML(item, depts, canDrag) {
           style="background:transparent;border:none;border-bottom:1px dashed rgba(46,51,80,0.35);color:var(--muted);padding:0;flex:1;min-width:40px;outline:none;font-size:inherit"
           onchange="updateGroceryItemInline('${item.id}','notes',this.value)">
       </div>
-    </div>
-    <div class="grocery-item-actions">
-      <button class="grocery-icon-btn" onclick="deleteGroceryItem('${item.id}')" title="Delete" style="font-size:18px">🗑️</button>
     </div>
   </div>`;
 }
@@ -10509,19 +10520,174 @@ async function updateGroceryItemInline(id, field, value) {
   if (!item) return;
   item[field] = value;
   item.updatedAt = new Date().toISOString();
+  // Once the user has set a name, clear the _isNew flag
+  if (field === 'name') delete item._isNew;
   await saveGrocery();
+}
+
+// Called when a new blank item's name field loses focus — remove if still empty
+async function _groceryNewItemBlur(id) {
+  const item = groceryItems.find(i => i.id === id);
+  if (!item) return;
+  if (item._isNew && !item.name.trim()) {
+    // Never named — remove it silently
+    groceryItems = groceryItems.filter(i => i.id !== id);
+    const order = getGroceryManualOrder().filter(oid => oid !== id);
+    saveGroceryManualOrder(order);
+    await saveGrocery();
+    renderGrocery();
+  }
 }
 
 async function deleteGroceryItem(id) {
   if (!confirm('Remove this item from your grocery list?')) return;
   groceryItems = groceryItems.filter(i => i.id !== id);
+  grocerySelected.delete(id);
   await saveGrocery();
   renderGrocery();
+  _updateGrocerySelectionBar();
+}
+
+// ── Multi-select (edit mode) ─────────────────────────────────────────
+
+function toggleGrocerySelect(id, cb) {
+  if (cb.checked) grocerySelected.add(id);
+  else            grocerySelected.delete(id);
+  // Highlight the row
+  const row = document.querySelector(`.grocery-edit-row[data-id="${id}"]`);
+  if (row) row.classList.toggle('edit-selected', cb.checked);
+  _updateGrocerySelectionBar();
+}
+
+function _updateGrocerySelectionBar() {
+  let bar = document.getElementById('grocery-selection-bar');
+  const count = grocerySelected.size;
+
+  if (!groceryEditMode || count === 0) {
+    if (bar) bar.style.display = 'none';
+    return;
+  }
+
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'grocery-selection-bar';
+    bar.style.cssText = [
+      'position:fixed;bottom:0;left:0;right:0;z-index:400',
+      'background:var(--surface)',
+      'border-top:2px solid var(--border)',
+      'padding:12px 16px 28px',
+      'display:flex;gap:10px;align-items:center',
+      'backdrop-filter:blur(8px)',
+      'box-shadow:0 -4px 20px rgba(0,0,0,0.3)',
+    ].join(';');
+    document.body.appendChild(bar);
+  }
+
+  bar.style.display = 'flex';
+  bar.innerHTML = `
+    <span style="font-size:13px;color:var(--muted);flex-shrink:0">${count} selected</span>
+    <div style="flex:1"></div>
+    <button onclick="_changeSelectedDept()"
+      style="padding:10px 16px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:14px;font-weight:600;cursor:pointer">
+      📂 Change Dept
+    </button>
+    <button onclick="_deleteSelected()"
+      style="padding:10px 16px;border-radius:8px;border:none;background:rgba(232,80,80,0.15);color:var(--danger);font-size:14px;font-weight:600;cursor:pointer">
+      🗑️ Delete
+    </button>`;
+}
+
+function _changeSelectedDept() {
+  if (grocerySelected.size === 0) return;
+  // Show dept picker — we use a special sentinel item id 'multi' to signal multi-mode
+  _showDeptPickerForSelection();
+}
+
+function _showDeptPickerForSelection() {
+  document.getElementById('grocery-dept-picker-overlay')?.remove();
+  const depts = groceryDepts.length ? groceryDepts : DEFAULT_DEPTS;
+  const count = grocerySelected.size;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'grocery-dept-picker-overlay';
+  overlay.style.cssText = [
+    'position:fixed;inset:0;z-index:600',
+    'background:rgba(0,0,0,0.7)',
+    'display:flex;align-items:flex-end;justify-content:center',
+    'backdrop-filter:blur(4px)',
+  ].join(';');
+  overlay.dataset.mode     = 'multi';
+  overlay.dataset.selected = '';
+
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:20px 20px 0 0;width:100%;max-height:75vh;display:flex;flex-direction:column;padding:20px 16px 36px;box-shadow:0 -8px 32px rgba(0,0,0,0.5)">
+      <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 18px"></div>
+      <h3 style="font-size:17px;font-weight:700;margin-bottom:4px;text-align:center">Change Department</h3>
+      <p style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:16px">Move ${count} item${count!==1?'s':''} to…</p>
+      <div style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
+        ${depts.map(d => `
+          <button id="dept-pick-${d.id}" onclick="_selectPickerDept('${d.id}')"
+            style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--surface2);border:2px solid var(--border);border-radius:10px;cursor:pointer;text-align:left;width:100%;transition:all 0.15s">
+            <span style="font-size:22px">${d.emoji}</span>
+            <span style="font-size:16px;font-weight:600;color:var(--text)">${esc(d.name)}</span>
+            <span id="dept-pick-check-${d.id}" style="margin-left:auto;display:none;color:var(--accent);font-size:18px">✓</span>
+          </button>`).join('')}
+      </div>
+      <div style="display:flex;gap:10px">
+        <button onclick="_cancelDeptPicker()" style="flex:1;padding:13px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:16px;font-weight:600;cursor:pointer">Cancel</button>
+        <button onclick="_confirmDeptPicker()" style="flex:2;padding:13px;border-radius:10px;border:none;background:var(--accent);color:#111;font-size:16px;font-weight:700;cursor:pointer">Move here →</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) _cancelDeptPicker(); });
+}
+
+async function _deleteSelected() {
+  const ids = [...grocerySelected];
+  if (!ids.length) return;
+  if (!confirm(`Delete ${ids.length} item${ids.length!==1?'s':''}?`)) return;
+  groceryItems = groceryItems.filter(i => !grocerySelected.has(i.id));
+  grocerySelected.clear();
+  await saveGrocery();
+  renderGrocery();
+  _updateGrocerySelectionBar();
+}
+
+// ── Inline add (+ button) ────────────────────────────────────────────
+
+async function addGroceryItemToDept(deptId) {
+  // Enable edit mode if not already
+  if (!groceryEditMode) {
+    groceryEditMode = true;
+    renderGrocery();
+  }
+  // Create a blank item and insert at the top of that dept
+  const newId = 'g_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+  const newItem = {
+    id: newId, name: '', department: deptId || 'other',
+    notes: '', recurring: false, intervalDays: 0,
+    checked: false, addedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    _isNew: true,
+  };
+  groceryItems.unshift(newItem); // put at start so it sorts to top of dept after order rebuild
+  // Put at top of manual order for this dept
+  const order = getGroceryManualOrder();
+  saveGroceryManualOrder([newId, ...order]);
+  await saveGrocery();
+  renderGrocery();
+  // Focus the new item's name input
+  setTimeout(() => {
+    const input = document.getElementById(`gi-name-${newId}`);
+    if (input) { input.focus(); input.select(); }
+  }, 60);
 }
 
 function toggleGroceryEditMode() {
   groceryEditMode = !groceryEditMode;
+  if (!groceryEditMode) grocerySelected.clear();
   renderGrocery();
+  _updateGrocerySelectionBar();
 }
 
 // ── Drag-to-reorder ─────────────────────────────────────────
@@ -10652,20 +10818,36 @@ function _selectPickerDept(deptId) {
 async function _confirmDeptPicker() {
   const overlay   = document.getElementById('grocery-dept-picker-overlay');
   const newDeptId = overlay?.dataset?.selected;
-  const itemId    = overlay?.dataset?.itemId;
-  if (newDeptId && itemId) {
-    const item = groceryItems.find(i => i.id === itemId);
-    if (item && item.department !== newDeptId) {
-      item.department = newDeptId;
-      item.updatedAt  = new Date().toISOString();
-      await saveGrocery();
+  if (!newDeptId) { overlay?.remove(); return; }
+
+  if (overlay?.dataset?.mode === 'multi') {
+    // Multi-select mode — move all selected items
+    const ids = [...grocerySelected];
+    ids.forEach(id => {
+      const item = groceryItems.find(i => i.id === id);
+      if (item) { item.department = newDeptId; item.updatedAt = new Date().toISOString(); }
+    });
+    grocerySelected.clear();
+    await saveGrocery();
+    overlay?.remove();
+    renderGrocery();
+    _updateGrocerySelectionBar();
+  } else {
+    // Single drag-to-change-dept mode
+    const itemId = overlay?.dataset?.itemId;
+    if (itemId) {
+      const item = groceryItems.find(i => i.id === itemId);
+      if (item && item.department !== newDeptId) {
+        item.department = newDeptId;
+        item.updatedAt  = new Date().toISOString();
+        await saveGrocery();
+      }
     }
+    if (_dragSrcEl) { _dragSrcEl.classList.remove('dragging'); _dragSrcEl = null; _dragSrcDept = null; }
+    overlay?.remove();
+    _hideChangeDeptZone();
+    renderGrocery();
   }
-  // Clean up drag state if still active
-  if (_dragSrcEl) { _dragSrcEl.classList.remove('dragging'); _dragSrcEl = null; _dragSrcDept = null; }
-  overlay?.remove();
-  _hideChangeDeptZone();
-  renderGrocery();
 }
 
 function _cancelDeptPicker() {
@@ -10807,16 +10989,26 @@ function groceryItemHTML(item) {
     item.recurring ? `↻ every ${item.intervalDays||7}d` : null,
   ].filter(Boolean).join(' · ');
 
-  return `<div class="grocery-item${item.checked?' checked':''}" id="gitem-${item.id}">
-    <input type="checkbox" class="grocery-cb" ${item.checked?'checked':''} onchange="toggleGroceryCheck('${item.id}',this)">
+  // Full-row tap target: no checkbox, no menu button
+  return `<div class="grocery-item${item.checked?' checked':''}" id="gitem-${item.id}"
+    role="button" tabindex="0"
+    onclick="tapGroceryItem('${item.id}')"
+    onkeydown="if(event.key==='Enter'||event.key===' ')tapGroceryItem('${item.id}')"
+    style="cursor:pointer;user-select:none">
     <div class="grocery-item-info">
       <div class="grocery-item-name">${esc(item.name)}</div>
       ${meta ? `<div class="grocery-item-meta">${esc(meta)}</div>` : ''}
     </div>
-    <div class="grocery-item-actions">
-      <button class="grocery-icon-btn" onclick="openGroceryContext(event,'${item.id}')" title="Options">•••</button>
-    </div>
   </div>`;
+}
+
+async function tapGroceryItem(id) {
+  const item = groceryItems.find(i => i.id === id);
+  if (!item) return;
+  item.checked   = !item.checked;
+  item.checkedAt = item.checked ? new Date().toISOString() : null;
+  await saveGrocery();
+  renderGrocery();
 }
 
 async function toggleGroceryCheck(id, cb) {
@@ -10862,25 +11054,6 @@ function openAddGroceryItem(prefillName) {
 }
 
 // Add item directly to a specific department — enables edit mode first
-function addGroceryItemToDept(deptId) {
-  if (!groceryEditMode) {
-    groceryEditMode = true;
-    renderGrocery();
-  }
-  // Open the add modal pre-set to this department
-  document.getElementById('grocery-modal-title').textContent = 'Add Grocery Item';
-  document.getElementById('grocery-edit-id').value = '';
-  document.getElementById('grocery-f-name').value  = '';
-  document.getElementById('grocery-f-notes').value = '';
-  document.getElementById('grocery-f-recurring').checked = false;
-  document.getElementById('grocery-f-interval').value = '7';
-  document.getElementById('grocery-f-interval-unit').value = '1';
-  document.getElementById('grocery-recurring-opts').style.display = 'none';
-  populateGroceryDeptSelect(deptId);
-  openModal('grocery-item-modal');
-  setTimeout(() => document.getElementById('grocery-f-name').focus(), 100);
-}
-
 function openEditGroceryItem(id) {
   const item = groceryItems.find(i => i.id === id);
   if (!item) return;
