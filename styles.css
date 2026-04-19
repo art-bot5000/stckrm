@@ -595,11 +595,20 @@
       position: sticky;
       top: 56px; /* height of app-header */
       z-index: 90;
-      background: var(--bg);
-      padding: 10px 0 6px;
+      background: linear-gradient(to bottom, var(--bg) 0%, transparent 100%);
+      padding: 10px 0 14px;
       margin: -10px 0 0;
+      margin-bottom: 12px;
+      /* Border and opacity controlled by JS scroll listener */
+      border-top: 0px solid var(--glass-border);
+      border-bottom: 0px solid var(--glass-border);
+      transition: border-width 0.2s, padding 0.2s;
+    }
+    /* When scrolled — JS adds this class */
+    #tabs-sticky-wrap.tabs-scrolled {
+      border-top: 1px solid var(--glass-border);
       border-bottom: 1px solid var(--glass-border);
-      margin-bottom: 20px;
+      padding: 6px 0 10px;
     }
 
     /* ── Sticky grocery header on desktop ── */

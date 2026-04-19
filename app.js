@@ -10232,6 +10232,95 @@ function closeFab(silent = false) {
 }
 
 // Resize handler — show/hide FAB based on viewport width
+// ── Sticky tab bar scroll behaviour ─────────────────────────────
+// On desktop: add/remove .tabs-scrolled class based on scroll position
+// This drives the border and padding transition in CSS
+(function initTabsScroll() {
+  let _lastScrollY = 0;
+  const SCROLL_THRESHOLD = 40; // px from top before "scrolled" state kicks in
+
+  function _updateTabsScroll() {
+    const wrap = document.getElementById('tabs-sticky-wrap');
+    if (!wrap) return;
+    const scrolled = (window.scrollY || document.documentElement.scrollTop) > SCROLL_THRESHOLD;
+    wrap.classList.toggle('tabs-scrolled', scrolled);
+  }
+
+  // Only wire up on desktop — on mobile the tabs wrap isn't sticky
+  if (window.innerWidth >= 900) {
+    window.addEventListener('scroll', _updateTabsScroll, { passive: true });
+  }
+  window.addEventListener('resize', () => {
+    if (window.innerWidth >= 900) {
+      window.addEventListener('scroll', _updateTabsScroll, { passive: true });
+    }
+  }, { passive: true });
+})();
+
+// ── Smart sync — latency-aware debounce for grocery checks ──────
+// Detects high-latency / cellular connections and batches grocery
+// UI updates optimistically (instant local render) then syncs lazily.
+const _smartSync = {
+  _isHighLatency: false,
+  _lastProbe:     0,
+  _probeInterval: 30_000, // probe every 30s max
+
+  // Quick heuristic: NetworkInformation API if available
+  _checkNetwork() {
+    try {
+      const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      if (conn) {
+        // effectiveType: 'slow-2g'|'2g'|'3g'|'4g'
+        if (['slow-2g','2g','3g'].includes(conn.effectiveType)) return true;
+        if (conn.saveData) return true;
+        if (conn.rtt && conn.rtt > 200) return true;  // >200ms RTT = high latency
+      }
+    } catch(e) {}
+    return false;
+  },
+
+  // Probe actual latency with a tiny HEAD request to our own origin
+  async _probeLatency() {
+    const now = Date.now();
+    if (now - this._lastProbe < this._probeInterval) return;
+    this._lastProbe = now;
+    try {
+      const t0  = performance.now();
+      await fetch(window.location.origin + '/favicon.ico?_=' + now, {
+        method: 'HEAD', cache: 'no-store', signal: AbortSignal.timeout(3000),
+      });
+      const rtt = performance.now() - t0;
+      this._isHighLatency = rtt > 300; // >300ms round trip = treat as high latency
+    } catch(e) {
+      // If probe fails, assume high latency / offline
+      this._isHighLatency = true;
+    }
+  },
+
+  // Returns appropriate debounce delay in ms
+  debounceMs() {
+    if (this._checkNetwork() || this._isHighLatency) return 5000; // batch over 5s on slow connections
+    return 1500; // default
+  },
+
+  // Queue-aware enqueue that respects detected latency
+  enqueueGrocery() {
+    // Run probe in background (non-blocking)
+    this._probeLatency().catch(() => {});
+    const delay = this.debounceMs();
+    _syncQueue.pending++;
+    _syncQueue.errorMsg = null;
+    clearTimeout(_syncQueue.timer);
+    _syncQueue.timer = setTimeout(() => _syncQueue._flush(), delay);
+    // Show a subtle indicator only if delay is noticeable
+    if (delay >= 5000) {
+      _syncQueue._show('syncing', 'Changes queued — syncing when ready…');
+    } else {
+      _syncQueue._show('syncing', 'Saving…');
+    }
+  },
+};
+
 window.addEventListener('resize', () => {
   if (_currentView) updateFab(_currentView);
 }, { passive: true });
@@ -11402,24 +11491,51 @@ function groceryItemHTML(item) {
 async function tapGroceryItem(id) {
   const item = groceryItems.find(i => i.id === id);
   if (!item) return;
+
+  // Optimistic update — flip state immediately in memory
   item.checked   = !item.checked;
   item.checkedAt = item.checked ? new Date().toISOString() : null;
-  await saveGrocery();
-  renderGrocery();
+
+  // Update the DOM instantly without waiting for save/re-render
+  _updateGroceryItemDOM(id, item.checked);
+
+  // Save locally (IDB, fast), then smart-queue server sync
+  await _saveGroceryLocal();
+  _smartSync.enqueueGrocery();
+  bcPost({ type: 'GROCERY_CHANGED' });
+
+  // Full re-render deferred — lets item animate to bottom of dept smoothly
+  setTimeout(() => renderGrocery(), 350);
 }
 
 async function toggleGroceryCheck(id, cb) {
   const item = groceryItems.find(i => i.id === id);
   if (!item) return;
-  item.checked = cb.checked;
+  item.checked   = cb.checked;
   item.checkedAt = cb.checked ? new Date().toISOString() : null;
-  await saveGrocery();
-  renderGrocery();
+
+  // Save and smart-queue
+  await _saveGroceryLocal();
+  _smartSync.enqueueGrocery();
+  bcPost({ type: 'GROCERY_CHANGED' });
+
+  setTimeout(() => renderGrocery(), 350);
+}
+
+// Instantly update a single grocery item's visual state without full re-render
+function _updateGroceryItemDOM(id, checked) {
+  const el = document.getElementById(`gitem-${id}`);
+  if (!el) return;
+  el.classList.toggle('checked', checked);
+  // Strike through name
+  const nameEl = el.querySelector('.grocery-item-name');
+  if (nameEl) nameEl.style.textDecoration = checked ? 'line-through' : '';
+  // Dim the row
+  el.style.opacity = checked ? '0.45' : '';
 }
 
 async function clearCheckedGrocery() {
-  if (!canWrite("groceries")) { showLockBanner("groceries"); return; }
-  // For recurring items: reset check and bump addedAt; for non-recurring: remove
+  if (!canWrite('groceries')) { showLockBanner('groceries'); return; }
   groceryItems = groceryItems.filter(item => {
     if (!item.checked) return true;
     if (item.recurring) {
@@ -11430,7 +11546,8 @@ async function clearCheckedGrocery() {
     }
     return false;
   });
-  await saveGrocery();
+  await _saveGroceryLocal();
+  _smartSync.enqueueGrocery();
   renderGrocery();
 }
 
