@@ -614,6 +614,28 @@
   <button class="btn btn-sm" style="background:rgba(232,168,56,0.2);border:1px solid rgba(232,168,56,0.4);color:var(--accent);font-size:12px" onclick="event.stopPropagation();scrollToIncomplete()">View →</button>
 </div>
 
+<!-- ═══ APP SIDEBAR (desktop only) ═══ -->
+<nav id="app-nav">
+  <div class="app-nav-logo">
+    <div class="logo" style="font-size:11px;letter-spacing:3px;cursor:pointer" onclick="openProfilePicker()">STOCKROOM</div>
+    <span id="app-nav-profile" style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:2px;cursor:pointer" onclick="openProfilePicker()"></span>
+  </div>
+  <div class="app-nav-links">
+    <button class="app-nav-link active" data-view="stock"      onclick="navTo('stock')">📦 <span>Stockroom</span></button>
+    <button class="app-nav-link"        data-view="grocery"    onclick="navTo('grocery')">🛒 <span>Groceries</span></button>
+    <button class="app-nav-link"        data-view="reminders"  onclick="navTo('reminders')">🔔 <span>Reminders</span></button>
+    <button class="app-nav-link"        data-view="savings"    onclick="navTo('savings')">💰 <span>Savings</span></button>
+    <button class="app-nav-link"        data-view="report"     onclick="navTo('report')">📋 <span>Report</span></button>
+  </div>
+  <div class="app-nav-bottom">
+    <div id="app-nav-sync" class="sync-pill pending app-nav-sync-pill" onclick="handleSyncPillTap()">
+      <div class="sync-dot"></div>
+      <span class="sync-label-nav">Syncing…</span>
+    </div>
+    <button class="app-nav-link" data-view="settings" onclick="navTo('settings')">⚙️ <span>Settings</span></button>
+  </div>
+</nav>
+
 <!-- ═══ MAIN ═══ -->
 <div id="main">
   <div id="tabs-sticky-wrap">
@@ -623,7 +645,6 @@
     <button class="tab" onclick="showView('reminders',this)">🔔 Reminders</button>
     <button class="tab" onclick="showView('savings',this)">💰 Savings</button>
     <button class="tab" onclick="showView('report',this)">📋 Report</button>
-    <button class="tab" onclick="showView('settings',this)">⚙️ Settings</button>
   </div>
 
   </div><!-- /tabs-sticky-wrap -->
@@ -653,7 +674,8 @@
   </div>
 
     <!-- Pending deliveries section -->
-    <div id="pending-deliveries-section" style="display:none;margin-bottom:20px">
+    <div id="stock-top-sections" style="display:flex;gap:16px;margin-bottom:0">
+    <div id="pending-deliveries-section" style="display:none;flex:1;margin-bottom:20px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:13px;font-weight:700;color:#5b8dee">📦 Pending Deliveries</span>
@@ -676,25 +698,26 @@
       <div id="incomplete-grid"></div>
       <div style="border-bottom:1px solid var(--border);margin-bottom:16px;margin-top:4px"></div>
     </div>
+    </div><!-- /stock-top-sections -->
 
     <!-- Health dashboard -->
     <div id="health-dashboard" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px"></div>
 
-    <!-- Stockroom search -->
-    <div style="margin-bottom:12px">
+    <!-- Stockroom search — shown on mobile; on desktop it moves inline with filters -->
+    <div id="stock-search-mobile" style="margin-bottom:12px">
       <input id="stock-search" type="search" placeholder="🔍 Search items…" autocomplete="off"
         class="grocery-search" style="width:100%;box-sizing:border-box"
-        oninput="renderGrid()">
+        oninput="document.getElementById('stock-search-inline').value=this.value;renderGrid()">
     </div>
 
     <div style="margin-bottom:18px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
-        <button class="btn btn-ghost btn-sm" id="filter-toggle-btn" onclick="toggleFilters()" style="display:flex;align-items:center;gap:6px">
+      <div id="stock-toolbar-row" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" id="filter-toggle-btn" onclick="toggleFilters()" style="display:flex;align-items:center;gap:6px;flex-shrink:0">
           <span id="filter-toggle-icon">▸</span> Filters
           <span id="filter-active-badge" style="display:none;background:var(--accent);color:#111;font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;font-family:var(--mono)"></span>
         </button>
         <select id="sort-select" onchange="setSort(this.value)"
-          style="font-size:12px;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:5px 24px 5px 8px;font-family:var(--sans);cursor:pointer;outline:none">
+          style="font-size:12px;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:5px 24px 5px 8px;font-family:var(--sans);cursor:pointer;outline:none;flex-shrink:0">
           <option value="status">↕ Sort: Status</option>
           <option value="name">↕ Sort: Name</option>
           <option value="days">↕ Sort: Days left</option>
@@ -702,7 +725,10 @@
           <option value="rating">↕ Sort: Rating</option>
           <option value="added">↕ Sort: Date added</option>
         </select>
-        <button id="compact-toggle-btn" class="btn btn-ghost btn-sm" onclick="toggleCompactView()" title="Toggle compact view" style="padding:5px 8px">⊟</button>
+        <!-- Search inline with filters on desktop (hidden on mobile where it lives above) -->
+        <input id="stock-search-inline" type="search" placeholder="🔍 Search…" autocomplete="off"
+          class="grocery-search" style="flex:1;min-width:120px;display:none"
+          oninput="document.getElementById('stock-search').value=this.value;renderGrid()">
       </div>
 
       <div id="filter-panel" style="display:none;flex-direction:column;gap:8px;margin-bottom:10px;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:10px">
@@ -842,18 +868,6 @@
   <div class="view" id="view-settings">
     <!-- Fly.io-style: left nav sidebar + right scrollable content -->
     <div class="settings-layout">
-
-      <!-- Left sidebar navigation -->
-      <nav class="settings-sidebar" id="settings-sidebar">
-        <a class="settings-nav-link" onclick="scrollToSection('settings-households-body')">🏠 Households</a>
-        <a class="settings-nav-link" onclick="scrollToSection('settings-account-body')">☁️ Account &amp; Sync</a>
-        <a class="settings-nav-link" onclick="scrollToSection('settings-alerts-body')">🔔 Alerts &amp; Reports</a>
-        <a class="settings-nav-link" onclick="scrollToSection('settings-reminders-body')">📅 Reminder Schedules</a>
-        <a class="settings-nav-link" onclick="scrollToSection('settings-prefs-body')">⚙️ Preferences &amp; Data</a>
-        <a class="settings-nav-link" onclick="scrollToSection('settings-about-body')">ℹ️ About</a>
-      </nav>
-
-      <!-- Right content panel -->
       <div class="settings-content" id="settings-content">
 
     <!-- 1. Households — first, it's a core feature -->

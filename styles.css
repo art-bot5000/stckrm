@@ -26,6 +26,22 @@
   body.wizard-active #install-banner,
   body.wizard-active #sync-queue-bar { display: none !important; }
 
+  /* ── APP SIDEBAR NAV (desktop) ── */
+  #app-nav {
+    display: none; /* hidden on mobile */
+  }
+  .app-nav-link {
+    display:flex; align-items:center; gap:10px;
+    width:100%; padding:10px 14px; border-radius:8px;
+    border:none; background:none; color:var(--muted);
+    font-size:14px; font-weight:500; cursor:pointer;
+    text-align:left; transition:all 0.15s;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .app-nav-link:hover { background:rgba(232,168,56,0.07); color:var(--text); }
+  .app-nav-link.active { background:rgba(232,168,56,0.12); color:var(--accent); font-weight:700; }
+  .app-nav-sync-pill { width:100%; justify-content:flex-start; margin-bottom:4px; font-size:12px; }
+
   /* ── PWA INSTALL BANNER ── */
   #install-banner { display:none; position:fixed; bottom:0; left:0; right:0; z-index:997; background:var(--surface); border-top:1px solid var(--border); padding:14px 20px; align-items:center; gap:12px; box-shadow:0 -4px 20px rgba(0,0,0,0.3); }
   #install-banner.show { display:flex; }
@@ -172,7 +188,27 @@
   .buy-chip { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 700; }
 
   /* ── SETTINGS ── */
-  /* ── Settings Fly.io-style two-column layout ── */
+  /* ── New hybrid shopping list items ── */
+  .sl-item { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:11px 14px; margin-bottom:8px; transition:border-color 0.15s; }
+  .sl-item:hover { border-color:var(--muted); }
+  .sl-item.sl-ordered { opacity:0.7; }
+  .sl-item-top { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px; }
+  .sl-item-name { font-size:15px; font-weight:700; flex:1; min-width:0; }
+  .sl-days { font-size:11px; font-family:var(--mono); flex-shrink:0; }
+  .sl-bar-wrap { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .sl-bar { flex:1; height:5px; background:var(--surface2); border-radius:3px; overflow:hidden; }
+  .sl-bar-fill { height:100%; border-radius:3px; transition:width 0.3s; }
+  .sl-pct { font-size:11px; font-family:var(--mono); flex-shrink:0; width:32px; text-align:right; }
+  .sl-actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .sl-btn { font-size:12px; font-weight:600; padding:5px 10px; border-radius:6px; border:1px solid var(--border); cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:3px; transition:all 0.15s; white-space:nowrap; background:var(--surface2); color:var(--text); }
+  .sl-btn-buy { background:var(--accent); color:#111; border-color:var(--accent); }
+  .sl-btn-buy:hover { background:#f0b84a; }
+  .sl-btn-search { color:var(--muted); }
+  .sl-btn-order { color:#5b8dee; border-color:rgba(91,141,238,0.4); background:rgba(91,141,238,0.07); }
+  .sl-btn-unorder { color:var(--muted); font-size:11px; }
+  .sl-btn-delivered { color:var(--ok); border-color:rgba(76,187,138,0.4); background:rgba(76,187,138,0.07); }
+
+  /* ── Settings section title inside box ── */
   .settings-layout { display:flex; flex-direction:column; gap:0; }
   .settings-sidebar { display:none; } /* mobile: hidden, use collapsible headers */
   .settings-content { flex:1; }
@@ -581,7 +617,52 @@
      DESKTOP LAYOUT (≥ 900px)
   ══════════════════════════════════════ */
   @media (min-width: 900px) {
-    #main { max-width: 1200px; padding: 28px 32px; }
+    /* ── Sidebar layout ── */
+    #app-nav {
+      display: flex;
+      flex-direction: column;
+      position: fixed;
+      top: 0; left: 0; bottom: 0;
+      width: 220px;
+      background: rgba(15,17,23,0.97);
+      border-right: 1px solid var(--glass-border);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      z-index: 200;
+      padding: 0;
+      overflow-y: auto;
+    }
+    .app-nav-logo {
+      padding: 20px 16px 16px;
+      border-bottom: 1px solid var(--glass-border);
+      margin-bottom: 8px;
+    }
+    .app-nav-links {
+      flex: 1;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .app-nav-bottom {
+      padding: 8px;
+      border-top: 1px solid var(--glass-border);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    /* App header hidden on desktop — sidebar replaces it */
+    #app-header { display: none; }
+    /* Tabs sticky wrap hidden on desktop — sidebar replaces it */
+    #tabs-sticky-wrap { display: none; }
+    /* Main shifts right to clear sidebar */
+    #main {
+      margin-left: 220px;
+      max-width: none;
+      padding: 28px 36px;
+    }
+    /* Sync pill in sidebar mirrors app header */
+    body.wizard-active #app-nav { display: none; }
     #tabs { gap: 6px; padding: 5px; }
     .tab { padding: 9px 22px; font-size: 13px; }
     #items-grid { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; }
@@ -589,20 +670,37 @@
     #view-settings.active { display:block; }
     /* Two-column layout: sidebar + content */
     #view-settings .settings-layout { flex-direction:row; align-items:flex-start; gap:0; }
-    #view-settings .settings-sidebar {
-      display:flex; flex-direction:column; gap:2px;
-      width:220px; flex-shrink:0;
-      position:sticky; top:calc(56px + 61px);
-      max-height:calc(100vh - 120px); overflow-y:auto;
-      padding:8px 16px 8px 0; border-right:1px solid var(--glass-border);
-      margin-right:28px;
+    /* Settings internal sidebar removed — global sidebar handles nav */
+    #view-settings .settings-sidebar { display:none !important; }
+    /* On desktop: sections always expanded, header fused with card */
+    #view-settings .settings-section-header {
+      pointer-events:none;
+      background:rgba(26,29,39,0.7);
+      border:1px solid var(--glass-border);
+      border-bottom:none;
+      border-radius:14px 14px 0 0;
+      padding:16px 22px 14px;
+      margin-bottom:0;
+      font-size:17px;
     }
-    /* On desktop show all sections expanded — no toggle */
-    #view-settings .settings-section-header { pointer-events:none; }
-    #view-settings .settings-collapsible-body { display:block !important; }
+    #view-settings .settings-section-header + .settings-collapsible-body.settings-card {
+      border-top-left-radius:0;
+      border-top-right-radius:0;
+      border-top:none;
+    }
+    #view-settings .settings-collapsible-body { display:block !important; margin-top:0; }
     #view-settings .settings-card { margin-bottom:18px; }
     #view-settings .settings-card.full-width { width:100%; }
     #view-settings .settings-content { flex:1; min-width:0; }
+
+    /* ── Pending + Quick Added side by side on desktop ── */
+    #stock-top-sections { flex-direction:row !important; }
+    #pending-deliveries-section, #incomplete-section { flex:1; min-width:0; }
+
+    /* ── Inline search replaces standalone search bar on desktop ── */
+    #stock-search-mobile { display:none; }
+    #stock-search-inline { display:flex !important; }
+    #stock-toolbar-row { flex-wrap:nowrap; }
     #view-report { max-width: 100%; }
     #view-grocery { max-width: 720px; }
     #view-reminders { max-width: 720px; }
@@ -706,8 +804,9 @@
   .dept-manage-name { flex:1; font-size:14px; }
   .dept-manage-actions { display:flex; gap:2px; }
   .dept-manage-actions .grocery-icon-btn { min-width:40px; min-height:40px; font-size:20px; display:flex; align-items:center; justify-content:center; padding:4px; }
+  /* ── Settings section title inside box ── */
   /* Collapsible settings section headers */
-  .settings-collapsible-header { display:flex; align-items:center; justify-content:space-between; padding:14px 18px; background:rgba(26,29,39,0.7); border:1px solid var(--glass-border); border-radius:12px; cursor:pointer; margin-bottom:4px; font-size:15px; font-weight:700; color:var(--text); transition:background 0.15s; user-select:none; }
+  .settings-collapsible-header { display:flex; align-items:center; justify-content:space-between; padding:14px 18px; background:rgba(26,29,39,0.7); border:1px solid var(--glass-border); border-radius:12px; cursor:pointer; margin-bottom:4px; font-size:17px; font-weight:700; color:var(--text); transition:background 0.15s; user-select:none; }
   .settings-collapsible-header:hover, .settings-collapsible-header:active { background:rgba(46,51,80,0.7); }
   .settings-chevron { font-size:13px; color:var(--muted); transition:transform 0.2s; flex-shrink:0; display:inline-block; }
   .settings-collapsible-body { margin-bottom:10px; }

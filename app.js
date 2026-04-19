@@ -4971,7 +4971,7 @@ function _doTransition(direction, fn) {
 }
 
 function setStockOnlyUI(visible) {
-  const ids = ['health-dashboard', 'filter-toggle-btn', 'sort-select', 'compact-toggle-btn', 'tag-filter-bar', 'sns-banner', 'pending-deliveries-section', 'incomplete-section'];
+  const ids = ['health-dashboard', 'filter-toggle-btn', 'sort-select', 'tag-filter-bar', 'sns-banner', 'pending-deliveries-section', 'incomplete-section', 'stock-search-mobile'];
   ids.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = visible ? '' : 'none';
@@ -5021,18 +5021,17 @@ function showShoppingListInline() { switchToShopping(); }
 
 function showView(name, btn) {
   _currentViewName = name;
-  // Check tab access for shared users
   const sectionMap = { grocery:'groceries', reminders:'reminders', savings:'savings', report:'report', stock:'stockroom', shopping:'stockroom' };
   const section    = sectionMap[name];
-  if (section && !canView(section)) {
-    showLockBanner(section);
-    return;
-  }
-  // Tab switches are instant — no transition (feels snappier on the tab bar)
+  if (section && !canView(section)) { showLockBanner(section); return; }
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.getElementById('view-'+name).classList.add('active');
-  btn.classList.add('active');
+  if (btn) btn.classList.add('active');
+  // Sync sidebar active state
+  document.querySelectorAll('.app-nav-link').forEach(a => {
+    a.classList.toggle('active', a.dataset.view === name);
+  });
   if (name === 'report')    { renderReport(); if (spendVisible) renderSpendChart(); }
   if (name === 'reminders') renderReminders();
   if (name === 'shopping')  renderShoppingList();
@@ -5053,6 +5052,25 @@ function showView(name, btn) {
   _currentView = name;
   if (_householdEnabled) pushPresence();
   updateFab(name);
+}
+
+// navTo — called by sidebar links (no btn element needed)
+function navTo(name) {
+  // Find the matching tab button if it exists (for mobile tab state)
+  const tabBtn = [...document.querySelectorAll('.tab')].find(t => {
+    const oc = t.getAttribute('onclick') || '';
+    return oc.includes(`'${name}'`);
+  });
+  showView(name, tabBtn || { classList: { add: () => {}, remove: () => {} } });
+}
+
+// Update sidebar profile label and sync state
+function _updateSidebarProfile() {
+  const el = document.getElementById('app-nav-profile');
+  if (el) {
+    const name = _householdName || settings?.email?.split('@')[0] || 'Home';
+    el.textContent = name;
+  }
 }
 
 function getShoppingItems() {
@@ -5181,8 +5199,8 @@ function renderShoppingList() {
   buildShoppingTagFilterBarInline();
   const shoppingItems = getShoppingItems();
   const storeLabel = shoppingStores.has('__all__') ? 'All Stores' : [...shoppingStores].join(', ');
+  const threshold = settings.threshold;
 
-  // Update subtitle and store pills
   document.getElementById('shopping-subtitle').textContent =
     `Items running out within ${shoppingDays} days · ${storeLabel}`;
 
@@ -5212,57 +5230,51 @@ function renderShoppingList() {
     byStore[store].push({ item, daysLeft, pct });
   });
 
-  // If all stores, also group items with no store
   const q = encodeURIComponent;
 
   container.innerHTML = getShoppingPresenceBar() + Object.entries(byStore).map(([store, entries]) => {
     const itemsHTML = entries.map(({ item, daysLeft, pct }) => {
-      const runOutDate = new Date(Date.now() + daysLeft * 86400000)
-        .toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
-      const urgency = daysLeft <= 7 ? 'urgent' : daysLeft <= 14 ? 'soon' : '';
+      const s = calcStock(item);
+      const status = getStatus(s?.pct ?? null, threshold);
+      const color = STATUS_COLOR[status];
+      const fillColor = status === 'critical' ? '#e85050' : status === 'warn' ? '#e8a838' : '#4cbb8a';
       const urgencyColor = daysLeft <= 7 ? 'var(--danger)' : daysLeft <= 14 ? 'var(--warn)' : 'var(--muted)';
-      const rating = item.rating ? starsHTML(item.rating) : '';
+      const runOutDate = new Date(Date.now() + daysLeft * 86400000)
+        .toLocaleDateString('en-GB', { day:'numeric', month:'short' });
 
-      // Build links
+      // Buy now link
       const buyLink = item.url
-        ? `<a class="shopping-link primary" href="${esc(item.url)}" target="_blank" rel="noopener">🛒 Buy now</a>`
+        ? `<a class="sl-btn sl-btn-buy" href="${esc(item.url)}" target="_blank" rel="noopener">🛒 Buy now</a>`
         : '';
 
-      const altLinks = getStores(settings.country).slice(0,3).map(s =>
-        `<a class="shopping-link alt" href="${s.url(q(item.name))}" target="_blank" rel="noopener">🔍 ${s.name.replace(/^[^\s]+\s/,'')}</a>`
+      // Store search links (first 2 only to keep compact)
+      const altLinks = getStores(settings.country).slice(0,2).map(st =>
+        `<a class="sl-btn sl-btn-search" href="${st.url(q(item.name))}" target="_blank" rel="noopener">🔍 ${st.name.replace(/^[^\s]+\s/,'')}</a>`
       ).join('');
 
-      const poorRating = item.rating && item.rating <= 2
-        ? `<a class="shopping-link warn" href="${getStores(settings.country)[0].url(q(item.name+' alternative'))}" target="_blank" rel="noopener">⚠️ Find alternative</a>`
-        : '';
+      // Ordered / Delivered buttons
+      const orderedBtn = !item.ordered
+        ? `<button class="sl-btn sl-btn-order" onclick="markOrdered('${item.id}')">📦 Ordered?</button>`
+        : `<button class="sl-btn sl-btn-unorder" onclick="unmarkOrdered('${item.id}')">↩ Unmark</button>`;
+      const deliveredBtn = `<button class="sl-btn sl-btn-delivered" onclick="openDeliveredModal('${item.id}')">✓ Delivered</button>`;
 
       const orderedBadge = item.ordered
-        ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(91,141,238,0.15);border:1px solid rgba(91,141,238,0.3);color:#5b8dee;font-family:var(--mono)">📦 Ordered</span>`
+        ? `<span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;background:rgba(91,141,238,0.15);border:1px solid rgba(91,141,238,0.3);color:#5b8dee;font-family:var(--mono);flex-shrink:0">📦 Ordered</span>`
         : '';
 
-      return `<div class="shopping-item ${urgency}" id="si-${item.id}">
-        <div style="flex:1;min-width:0">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span class="shopping-item-name">${esc(item.name)}</span>
-            ${rating}
-            ${orderedBadge}
-          </div>
-          <div class="shopping-item-meta">
-            <span class="shopping-meta-pill" style="color:${urgencyColor}">⏱ Runs out: <strong style="color:${urgencyColor}">${runOutDate}</strong></span>
-            <span class="shopping-meta-pill">📅 ${daysLeft}d left</span>
-            <span class="shopping-meta-pill">📊 ${pct}% remaining</span>
-            ${item.cadence==='bulk'?'<span class="shopping-meta-pill">📦 Bulk buy</span>':''}
-          </div>
-          <div class="shopping-links">
-            ${buyLink}${altLinks}${poorRating}
-            ${!item.ordered
-              ? `<button class="btn btn-ghost btn-sm" style="font-size:12px;color:#5b8dee;border-color:#5b8dee" onclick="markOrdered('${item.id}')">📦 Mark ordered</button>`
-              : `<button class="btn btn-ghost btn-sm" style="font-size:12px;color:var(--muted)" onclick="unmarkOrdered('${item.id}')">↩ Unmark</button>`
-            }
-            <button class="btn btn-ghost btn-sm" style="font-size:12px;color:var(--ok);border-color:var(--ok)" onclick="openDeliveredModal('${item.id}')">📦 Delivered</button>
-          </div>
+      return `<div class="sl-item${item.ordered?' sl-ordered':''}" id="si-${item.id}" style="border-left:3px solid ${color}">
+        <div class="sl-item-top">
+          <span class="sl-item-name">${esc(item.name)}</span>
+          ${orderedBadge}
+          <span class="sl-days" style="color:${urgencyColor}">${daysLeft}d · ${runOutDate}</span>
         </div>
-        <input type="checkbox" class="shopping-checkbox" title="Mark as bought" onchange="toggleShoppingCheck('${item.id}',this)">
+        <div class="sl-bar-wrap">
+          <div class="sl-bar"><div class="sl-bar-fill" style="width:${pct??0}%;background:${fillColor}"></div></div>
+          <span class="sl-pct" style="color:${color}">${pct ?? '?'}%</span>
+        </div>
+        <div class="sl-actions">
+          ${buyLink}${altLinks}${orderedBtn}${deliveredBtn}
+        </div>
       </div>`;
     }).join('');
 
@@ -10015,6 +10027,7 @@ function updateDriveUI()    { /* Drive removed */ }
 function renderSettingsForUser() {
   const settingsView = document.getElementById('view-settings');
   if (!settingsView) return;
+  _updateSidebarProfile();
 
   if (!isOwner()) {
     // Shared user — show banner and hide owner-only cards
@@ -10059,19 +10072,30 @@ function renderSettingsForUser() {
 function updateSyncPill(state, provider) {
   const pill  = document.getElementById('sync-pill');
   const label = document.getElementById('sync-label');
-  if (!pill || !label) return;
-  if (state === 'syncing') { pill.className = 'sync-pill pending'; label.textContent = 'Syncing…'; }
-  if (state === 'synced')  { pill.className = 'sync-pill synced';  label.textContent = 'Synced';
-    // Return to Connected after 3s so pill doesn't linger on Synced
-    clearTimeout(pill._connectedTimer);
-    pill._connectedTimer = setTimeout(() => {
-      if (pill.className === 'sync-pill synced' && label.textContent === 'Synced') {
-        label.textContent = 'Connected';
-      }
-    }, 3000);
+  const navPill  = document.getElementById('app-nav-sync');
+  const navLabel = navPill?.querySelector('.sync-label-nav');
+
+  function _applyState(p, l) {
+    if (!p || !l) return;
+    if (state === 'syncing')   { p.className = p.className.replace(/synced|error/g,'').trim() + ' pending'; l.textContent = 'Syncing…'; }
+    if (state === 'synced')    { p.className = p.className.replace(/pending|error/g,'').trim() + ' synced';  l.textContent = 'Synced'; }
+    if (state === 'connected') { p.className = p.className.replace(/pending|error/g,'').trim() + ' synced';  l.textContent = 'Connected'; }
+    if (state === 'error')     { p.className = p.className.replace(/synced|pending/g,'').trim() + ' error';  l.textContent = 'Sync error'; }
   }
-  if (state === 'connected') { pill.className = 'sync-pill synced'; label.textContent = 'Connected'; }
-  if (state === 'error')   { pill.className = 'sync-pill error';   label.textContent = 'Sync error'; }
+
+  if (pill && label) {
+    if (state === 'syncing') { pill.className = 'sync-pill pending'; label.textContent = 'Syncing…'; }
+    if (state === 'synced')  { pill.className = 'sync-pill synced';  label.textContent = 'Synced';
+      clearTimeout(pill._connectedTimer);
+      pill._connectedTimer = setTimeout(() => {
+        if (pill.className === 'sync-pill synced' && label.textContent === 'Synced') label.textContent = 'Connected';
+        if (navLabel && navLabel.textContent === 'Synced') navLabel.textContent = 'Connected';
+      }, 3000);
+    }
+    if (state === 'connected') { pill.className = 'sync-pill synced'; label.textContent = 'Connected'; }
+    if (state === 'error')     { pill.className = 'sync-pill error';  label.textContent = 'Sync error'; }
+  }
+  _applyState(navPill, navLabel);
 }
 
 
@@ -13156,6 +13180,7 @@ async function init() {
   loadCompactView();
   loadFilterPanelState();
   updateFab(_currentView || 'stock'); // init FAB for current view
+  _updateSidebarProfile();            // populate sidebar household name
 
   // Init profiles — migrate if needed
   const existingProfiles = await getProfiles();
