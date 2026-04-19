@@ -14,7 +14,7 @@
     --card-shadow: 0 2px 12px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.04) inset;
     --card-shadow-hover: 0 6px 24px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   body { background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; }
   /* Ambient temperature tint overlay */
   body::after { content:''; position:fixed; inset:0; background:var(--temp-tint); pointer-events:none; z-index:1; transition:background 3s ease; }
@@ -172,6 +172,16 @@
   .buy-chip { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 700; }
 
   /* ── SETTINGS ── */
+  /* ── Settings Fly.io-style two-column layout ── */
+  .settings-layout { display:flex; flex-direction:column; gap:0; }
+  .settings-sidebar { display:none; } /* mobile: hidden, use collapsible headers */
+  .settings-content { flex:1; }
+  .settings-nav-link { display:block; padding:10px 14px; font-size:14px; font-weight:500; color:var(--muted); cursor:pointer; border-radius:8px; transition:all 0.15s; border:none; background:none; text-decoration:none; }
+  .settings-nav-link:hover { background:rgba(232,168,56,0.08); color:var(--text); }
+  .settings-nav-link.active { background:rgba(232,168,56,0.12); color:var(--accent); font-weight:600; }
+  /* On desktop, section headers lose their toggle behaviour visually */
+  .settings-section-header { cursor:default; }
+  .settings-section-header .settings-chevron { display:none; }
   .settings-card { background: rgba(26,29,39,0.7); border: 1px solid var(--glass-border); border-radius: 14px; padding: 22px; margin-bottom: 14px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: var(--card-shadow); }
   .settings-card h3 { font-size: 14px; font-weight: 700; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--glass-border); }
   .setting-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid rgba(46,51,80,0.3); }
@@ -546,6 +556,10 @@
     from { opacity:0; transform:translateY(10px) scale(0.9); }
     to   { opacity:1; transform:translateY(0) scale(1); }
   }
+  @keyframes fabSlideLeft {
+    from { opacity:0; transform:translateX(20px) scale(0.9); }
+    to   { opacity:1; transform:translateX(0) scale(1); }
+  }
 
   /* Hide header action buttons on mobile — FAB replaces them */
   @media (max-width: 699px) {
@@ -572,9 +586,23 @@
     .tab { padding: 9px 22px; font-size: 13px; }
     #items-grid { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; }
     .modal { max-width: 600px; padding: 32px; }
-    #view-settings.active { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
-    #view-settings .settings-card { margin-bottom: 0; }
-    #view-settings .settings-card.full-width { grid-column: 1 / -1; }
+    #view-settings.active { display:block; }
+    /* Two-column layout: sidebar + content */
+    #view-settings .settings-layout { flex-direction:row; align-items:flex-start; gap:0; }
+    #view-settings .settings-sidebar {
+      display:flex; flex-direction:column; gap:2px;
+      width:220px; flex-shrink:0;
+      position:sticky; top:calc(56px + 61px);
+      max-height:calc(100vh - 120px); overflow-y:auto;
+      padding:8px 16px 8px 0; border-right:1px solid var(--glass-border);
+      margin-right:28px;
+    }
+    /* On desktop show all sections expanded — no toggle */
+    #view-settings .settings-section-header { pointer-events:none; }
+    #view-settings .settings-collapsible-body { display:block !important; }
+    #view-settings .settings-card { margin-bottom:18px; }
+    #view-settings .settings-card.full-width { width:100%; }
+    #view-settings .settings-content { flex:1; min-width:0; }
     #view-report { max-width: 100%; }
     #view-grocery { max-width: 720px; }
     #view-reminders { max-width: 720px; }
@@ -595,19 +623,15 @@
       position: sticky;
       top: 56px; /* height of app-header */
       z-index: 90;
-      background: linear-gradient(to bottom, var(--bg) 0%, transparent 100%);
+      background: linear-gradient(to bottom, var(--bg) 60%, transparent 100%);
       padding: 10px 0 14px;
       margin: -10px 0 0;
       margin-bottom: 12px;
-      /* Border and opacity controlled by JS scroll listener */
-      border-top: 0px solid var(--glass-border);
-      border-bottom: 0px solid var(--glass-border);
-      transition: border-width 0.2s, padding 0.2s;
+      border: none;
+      transition: padding 0.2s;
     }
-    /* When scrolled — JS adds this class */
+    /* When scrolled — tighten padding only, no border */
     #tabs-sticky-wrap.tabs-scrolled {
-      border-top: 1px solid var(--glass-border);
-      border-bottom: 1px solid var(--glass-border);
       padding: 6px 0 10px;
     }
 

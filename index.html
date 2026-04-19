@@ -840,9 +840,24 @@
 
   <!-- SETTINGS VIEW -->
   <div class="view" id="view-settings">
+    <!-- Fly.io-style: left nav sidebar + right scrollable content -->
+    <div class="settings-layout">
+
+      <!-- Left sidebar navigation -->
+      <nav class="settings-sidebar" id="settings-sidebar">
+        <a class="settings-nav-link" onclick="scrollToSection('settings-households-body')">🏠 Households</a>
+        <a class="settings-nav-link" onclick="scrollToSection('settings-account-body')">☁️ Account &amp; Sync</a>
+        <a class="settings-nav-link" onclick="scrollToSection('settings-alerts-body')">🔔 Alerts &amp; Reports</a>
+        <a class="settings-nav-link" onclick="scrollToSection('settings-reminders-body')">📅 Reminder Schedules</a>
+        <a class="settings-nav-link" onclick="scrollToSection('settings-prefs-body')">⚙️ Preferences &amp; Data</a>
+        <a class="settings-nav-link" onclick="scrollToSection('settings-about-body')">ℹ️ About</a>
+      </nav>
+
+      <!-- Right content panel -->
+      <div class="settings-content" id="settings-content">
 
     <!-- 1. Households — first, it's a core feature -->
-    <div class="settings-collapsible-header" onclick="toggleSettings('settings-households-body',this)">
+    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-households-body',this)">
       <span>🏠 Households</span>
       <span class="settings-chevron">▾</span>
     </div>
@@ -889,7 +904,7 @@
     </div>
 
     <!-- 2. Account (replaces Cloud Sync) -->
-    <div class="settings-collapsible-header" onclick="toggleSettings('settings-account-body',this)">
+    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-account-body',this)">
       <span>☁️ Account &amp; Sync</span>
       <span class="settings-chevron">▾</span>
     </div>
@@ -966,7 +981,7 @@
 
 
     <!-- 3. Alerts — push + email reports merged -->
-    <div class="settings-collapsible-header" onclick="toggleSettings('settings-alerts-body',this)">
+    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-alerts-body',this)">
       <span>🔔 Alerts &amp; Reports</span>
       <span class="settings-chevron">▾</span>
     </div>
@@ -1068,7 +1083,7 @@
     </div>
 
     <!-- 4. Reminders (renamed from "Email Reminders" — these are in-app reminder schedules) -->
-    <div class="settings-collapsible-header" onclick="toggleSettings('settings-reminders-body',this)">
+    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-reminders-body',this)">
       <span>📅 Reminder Schedules</span>
       <span class="settings-chevron">▾</span>
     </div>
@@ -1132,7 +1147,7 @@
     </div>
 
     <!-- 5+6. Preferences & Data — one collapsible section -->
-    <div class="settings-collapsible-header" onclick="toggleSettings('settings-prefs-body',this)">
+    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-prefs-body',this)">
       <span>⚙️ Preferences &amp; Data</span>
       <span class="settings-chevron">▾</span>
     </div>
@@ -1171,7 +1186,7 @@
     </div><!-- /settings-prefs-body -->
 
     <!-- 7. About -->
-    <div class="settings-collapsible-header" onclick="toggleSettings('settings-about-body',this)">
+    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-about-body',this)">
       <span>ℹ️ About</span>
       <span class="settings-chevron">▾</span>
     </div>
@@ -1183,6 +1198,8 @@
         Data syncs securely to the cloud, encrypted on your device. Export regularly as an additional backup.
       </p>
     </div>
+      </div><!-- /settings-content -->
+    </div><!-- /settings-layout -->
   </div>
 
 <!-- ═══ GROCERY VIEW ═══ -->
@@ -2025,7 +2042,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 </div>
 <!-- FAB trigger button -->
 <button id="fab-btn" onclick="toggleFab()" aria-label="Actions"
-  style="display:none;position:fixed;bottom:88px;right:20px;z-index:1100;width:84px;height:84px;border-radius:50%;border:none;background:var(--accent);color:#111;font-size:36px;font-weight:700;cursor:pointer;box-shadow:0 4px 24px rgba(232,168,56,0.55);transition:transform 0.2s,background 0.2s;align-items:center;justify-content:center">
+  style="display:none;position:fixed;bottom:88px;right:20px;z-index:1100;width:84px;height:84px;border-radius:50%;border:none;background:var(--accent);color:#111;font-size:36px;font-weight:700;cursor:pointer;box-shadow:0 4px 24px rgba(232,168,56,0.55);transition:transform 0.2s,background 0.2s;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;outline:none;user-select:none">
   +
 </button>
 

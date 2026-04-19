@@ -114,7 +114,7 @@ function getStores(code) { return STORES_BY_COUNTRY[code] || STORES_BY_COUNTRY.O
 
 const DB_NAME    = 'stockroom';
 const DB_VERSION = 2;
-const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles'];
+const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds'];
 
 let _db = null;
 
@@ -448,6 +448,24 @@ async function mergeItems(local, remote, remoteWins = false) {
 
   return Array.from(merged.values());
 }
+// ── Grocery tombstones — tracks deleted grocery item IDs so they aren't re-added on sync
+async function loadGroceryDeletedIds() {
+  try {
+    const stored = await dbGet('groceryDeletedIds', 'groceryDeletedIds');
+    return new Set(Array.isArray(stored) ? stored : []);
+  } catch(e) { return new Set(); }
+}
+async function addGroceryTombstone(id) {
+  try {
+    const set = await loadGroceryDeletedIds();
+    set.add(id);
+    // Keep max 500 tombstones; prune oldest if over limit
+    const arr = [...set];
+    const trimmed = arr.slice(-500);
+    await dbPut('groceryDeletedIds', 'groceryDeletedIds', trimmed);
+  } catch(e) {}
+}
+
 async function loadDeletedIds() {
   const stored = await dbGet('deletedIds', 'deletedIds');
   if (stored) return new Set(stored);
@@ -6212,11 +6230,12 @@ async function syncNow() {
       if (remote.groceries) {
         const remoteG = remote.groceries;
         const localGEmpty = groceryItems.length === 0;
+        const gTombstones = await loadGroceryDeletedIds();
         if (remoteWins || localGEmpty) {
-          groceryItems = remoteG; await _saveGroceryLocal();
+          groceryItems = remoteG.filter(i => !gTombstones.has(i.id)); await _saveGroceryLocal();
         } else {
           const localGIds = new Set(groceryItems.map(i => i.id));
-          const newG = remoteG.filter(i => !localGIds.has(i.id));
+          const newG = remoteG.filter(i => !localGIds.has(i.id) && !gTombstones.has(i.id));
           if (newG.length) { groceryItems = [...groceryItems, ...newG]; await _saveGroceryLocal(); }
         }
       }
@@ -9659,13 +9678,15 @@ async function kvSyncNow(silent = false) {
       }
       if (remote.groceries) {
         const localEmpty = groceryItems.length === 0;
+        const groceryTombstones = await loadGroceryDeletedIds();
         if (remoteWins || localEmpty) {
-          groceryItems = remote.groceries;
+          // Filter out any items we have locally tombstoned (user deleted them)
+          groceryItems = remote.groceries.filter(i => !groceryTombstones.has(i.id));
           await _saveGroceryLocal();
         } else {
-          // Merge: add any remote items that don't exist locally (by id)
+          // Merge: add remote items not in local AND not tombstoned (i.e. not deleted locally)
           const localIds = new Set(groceryItems.map(i => i.id));
-          const newFromRemote = remote.groceries.filter(i => !localIds.has(i.id));
+          const newFromRemote = remote.groceries.filter(i => !localIds.has(i.id) && !groceryTombstones.has(i.id));
           if (newFromRemote.length) {
             groceryItems = [...groceryItems, ...newFromRemote];
             await _saveGroceryLocal();
@@ -10130,90 +10151,93 @@ let _fabOpen = false;
 
 const FAB_ACTIONS = {
   stock: [
-    { icon: '➕', label: 'Add Item',    action: () => { closeFab(); openAddModal(); } },
-    { icon: '⚡', label: 'Quick Add',   action: () => { closeFab(); openQuickAdd(); } },
-    { icon: '📷', label: 'Scan Barcode',action: () => { closeFab(); sessionStorage.setItem('barcode_target','scan-chooser'); openBarcodeScanner(); } },
-  ],
-  grocery: [
-    // Done/Edit action is dynamically prepended in getGroceryFabActions()
-    { icon: '➕', label: 'Add Item',       action: () => { closeFab(); openAddGroceryItem(); } },
-    { icon: '📋', label: 'Import List',    action: () => { closeFab(); openGroceryImport(); } },
-    { icon: '🏷️', label: 'Edit Depts',    action: () => { closeFab(); openGroceryDepts(); } },
+    { icon: '⚡', label: 'Quick Add',    action: () => { closeFab(); openQuickAdd(); } },
+    { icon: '📷', label: 'Scan Barcode', action: () => { closeFab(); sessionStorage.setItem('barcode_target','scan-chooser'); openBarcodeScanner(); } },
+    { icon: '➕', label: 'Add Item',     action: () => { closeFab(); openAddModal(); } },
   ],
   reminders: [
-    { icon: '➕', label: 'Add Reminder',  action: () => { closeFab(); openAddReminderModal(); } },
+    { icon: '➕', label: 'Add Reminder', action: () => { closeFab(); openAddReminderModal(); } },
   ],
 };
 
+// Grocery FAB: primary action slides left, secondaries stack above
 function getGroceryFabActions() {
-  const base = FAB_ACTIONS.grocery;
   if (groceryEditMode) {
-    return [
-      { icon: '🔒', label: 'Done editing', action: () => { closeFab(); toggleGroceryEditMode(); } },
-      ...base,
-    ];
+    return {
+      primary:     { icon: '🔒', label: 'Done editing',   action: () => { closeFab(); toggleGroceryEditMode(); } },
+      secondaries: [
+        { icon: '📋', label: 'Import List', action: () => { closeFab(); openGroceryImport(); } },
+        { icon: '🏷️', label: 'Edit Depts', action: () => { closeFab(); openGroceryDepts(); } },
+      ],
+    };
   }
-  return [
-    { icon: '✏️', label: 'Edit list',    action: () => { closeFab(); toggleGroceryEditMode(); } },
-    ...base,
-  ];
+  return {
+    primary:     { icon: '✏️', label: 'Add / Edit List', action: () => { closeFab(); toggleGroceryEditMode(); } },
+    secondaries: [
+      { icon: '📋', label: 'Import List', action: () => { closeFab(); openGroceryImport(); } },
+      { icon: '🏷️', label: 'Edit Depts', action: () => { closeFab(); openGroceryDepts(); } },
+    ],
+  };
 }
 
 function updateFab(viewName) {
   const btn       = document.getElementById('fab-btn');
   const container = document.getElementById('fab-container');
   if (!btn || !container) return;
-
-  const isMobile = window.innerWidth < 700;
-  const actions  = FAB_ACTIONS[viewName];
-
-  if (!isMobile || !actions) {
-    btn.style.display       = 'none';
-    container.style.display = 'none';
-    closeFab(true);
-    return;
+  const isMobile  = window.innerWidth < 700;
+  const hasActions = viewName === 'grocery' || !!FAB_ACTIONS[viewName];
+  if (!isMobile || !hasActions) {
+    btn.style.display = 'none'; container.style.display = 'none';
+    closeFab(true); return;
   }
-
   btn.style.display = 'flex';
-  closeFab(true); // reset without animation when switching views
+  closeFab(true);
 }
 
-function toggleFab() {
-  _fabOpen ? closeFab() : openFab();
-}
+function toggleFab() { _fabOpen ? closeFab() : openFab(); }
 
 function openFab() {
-  const actions = _currentView === 'grocery' ? getGroceryFabActions() : FAB_ACTIONS[_currentView];
-  if (!actions) return;
   _fabOpen = true;
-
   const btn       = document.getElementById('fab-btn');
   const menu      = document.getElementById('fab-menu');
   const container = document.getElementById('fab-container');
   if (!btn || !menu || !container) return;
 
-  // Rotate + to ×
-  btn.textContent    = '×';
-  btn.style.transform = 'rotate(45deg)';
+  btn.textContent      = '×';
+  btn.style.transform  = 'rotate(45deg)';
   btn.style.background = 'var(--surface)';
-  btn.style.color    = 'var(--text)';
-  btn.style.boxShadow = '0 4px 20px rgba(0,0,0,0.4)';
-
+  btn.style.color      = 'var(--text)';
+  btn.style.boxShadow  = '0 4px 20px rgba(0,0,0,0.4)';
   container.style.display = 'block';
 
-  // Build menu items bottom-up
-  menu.innerHTML = actions.map((a, i) => `
-    <div class="fab-item" style="
-      display:flex;align-items:center;gap:10px;animation:fabItemIn 0.18s ease ${i * 0.05}s both
-    ">
-      <span style="font-size:13px;font-weight:600;color:var(--text);background:var(--surface);padding:5px 12px;border-radius:8px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3);border:1px solid var(--border)">${a.label}</span>
-      <button onclick="(${a.action.toString()})()" style="
-        width:46px;height:46px;border-radius:50%;border:1px solid var(--border);
-        background:var(--surface);color:var(--text);font-size:20px;cursor:pointer;
-        display:flex;align-items:center;justify-content:center;
-        box-shadow:0 2px 12px rgba(0,0,0,0.3);flex-shrink:0
-      ">${a.icon}</button>
-    </div>`).join('');
+  if (_currentView === 'grocery') {
+    const { primary, secondaries } = getGroceryFabActions();
+
+    // Secondaries stack above FAB (normal vertical menu)
+    menu.innerHTML = secondaries.map((a, i) => `
+      <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;animation:fabItemIn 0.18s ease ${(i+1)*0.06}s both">
+        <span onclick="(${a.action.toString()})()" style="font-size:17px;font-weight:600;color:var(--text);background:var(--surface);padding:7px 14px;border-radius:8px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3);border:1px solid var(--border);cursor:pointer">${a.label}</span>
+        <button onclick="(${a.action.toString()})()" style="width:52px;height:52px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,0.3);flex-shrink:0">${a.icon}</button>
+      </div>`).join('');
+
+    // Primary slides out to the LEFT of the FAB button
+    document.getElementById('fab-primary-slide')?.remove();
+    const slide = document.createElement('div');
+    slide.id = 'fab-primary-slide';
+    slide.style.cssText = 'position:fixed;bottom:88px;right:112px;z-index:1100;display:flex;align-items:center;gap:10px;animation:fabSlideLeft 0.22s cubic-bezier(0.34,1.56,0.64,1) both';
+    slide.innerHTML = `
+      <span onclick="(${primary.action.toString()})()" style="font-size:17px;font-weight:700;color:#111;background:var(--accent);padding:10px 18px;border-radius:12px;white-space:nowrap;box-shadow:0 4px 16px rgba(232,168,56,0.45);cursor:pointer;border:none">${primary.label}</span>
+      <span style="font-size:24px">${primary.icon}</span>`;
+    container.appendChild(slide);
+
+  } else {
+    const actions = FAB_ACTIONS[_currentView] || [];
+    menu.innerHTML = actions.map((a, i) => `
+      <div style="display:flex;align-items:center;gap:10px;animation:fabItemIn 0.18s ease ${i*0.05}s both">
+        <span onclick="(${a.action.toString()})()" style="font-size:17px;font-weight:600;color:var(--text);background:var(--surface);padding:7px 14px;border-radius:8px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3);border:1px solid var(--border);cursor:pointer">${a.label}</span>
+        <button onclick="(${a.action.toString()})()" style="width:52px;height:52px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,0.3);flex-shrink:0">${a.icon}</button>
+      </div>`).join('');
+  }
 }
 
 function closeFab(silent = false) {
@@ -10221,6 +10245,7 @@ function closeFab(silent = false) {
   const btn       = document.getElementById('fab-btn');
   const menu      = document.getElementById('fab-menu');
   const container = document.getElementById('fab-container');
+  document.getElementById('fab-primary-slide')?.remove();
   if (!btn) return;
   btn.textContent      = '+';
   btn.style.transform  = '';
@@ -10449,6 +10474,8 @@ async function loadGrocery() {
 // Save groceries to IDB and profile only — no sync trigger.
 // Used internally (e.g. from within a sync) to avoid re-entrant sync loops.
 async function _saveGroceryLocal() {
+  // Strip any blank entries (e.g. inline-added items left unnamed)
+  groceryItems = groceryItems.filter(i => i.name && i.name.trim().length > 0);
   await dbPut('groceries', 'items', groceryItems);
   if (activeProfile) await saveCurrentProfile();
 }
@@ -10769,8 +10796,8 @@ function renderGrocery() {
     const isDeptView = grocerySort === 'dept';
     const canDrag    = isDeptView; // drag only in dept view
 
-    let editHtml = `<div style="font-size:12px;color:var(--muted);padding:2px 0 10px;text-align:center">
-      ${canDrag ? 'Hold ☰ and drag to reorder within departments' : 'A–Z view — switch to By Dept to reorder'}
+    let editHtml = `<div id="grocery-drag-hint" style="font-size:12px;color:var(--muted);padding:6px 0 10px;text-align:center;position:sticky;top:0;z-index:10;background:var(--bg);margin:0 -2px;border-bottom:1px solid rgba(46,51,80,0.3);margin-bottom:8px">
+      ${canDrag ? '☰ Hold and drag to reorder within departments' : 'A–Z view — switch to By Dept to reorder'}
     </div>`;
 
     const ordered = getGroceryItemsInOrder().filter(i => !i.checked && (!query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query)));
@@ -10968,6 +10995,7 @@ async function deleteGroceryItem(id) {
   if (!confirm('Remove this item from your grocery list?')) return;
   groceryItems = groceryItems.filter(i => i.id !== id);
   grocerySelected.delete(id);
+  await addGroceryTombstone(id);
   await saveGrocery();
   renderGrocery();
   _updateGrocerySelectionBar();
@@ -11076,6 +11104,8 @@ async function _deleteSelected() {
   if (!ids.length) return;
   if (!confirm(`Delete ${ids.length} item${ids.length!==1?'s':''}?`)) return;
   groceryItems = groceryItems.filter(i => !grocerySelected.has(i.id));
+  // Add all deleted IDs to tombstones so they don't return from sync
+  await Promise.all(ids.map(id => addGroceryTombstone(id)));
   grocerySelected.clear();
   await saveGrocery();
   renderGrocery();
@@ -11127,6 +11157,11 @@ function _saveSettingsCollapsed(state) {
 }
 
 function toggleSettings(bodyId, headerEl) {
+  // On desktop the sections are always expanded — clicking the header scrolls to it instead
+  if (window.innerWidth >= 900) {
+    scrollToSection(bodyId);
+    return;
+  }
   const body = document.getElementById(bodyId);
   if (!body) return;
   const isOpen = body.style.display !== 'none';
@@ -11134,10 +11169,9 @@ function toggleSettings(bodyId, headerEl) {
   body.style.display = nowOpen ? '' : 'none';
   const chevron = headerEl?.querySelector('.settings-chevron');
   if (chevron) chevron.style.transform = nowOpen ? '' : 'rotate(-90deg)';
-  // Persist
   const state = _getSettingsCollapsed();
-  if (nowOpen) delete state[bodyId]; // open = default, no need to store
-  else state[bodyId] = true;         // collapsed = non-default, store
+  if (nowOpen) delete state[bodyId];
+  else state[bodyId] = true;
   _saveSettingsCollapsed(state);
 }
 
@@ -11147,13 +11181,20 @@ function initSettingsCollapsibles() {
     'settings-households-body', 'settings-account-body', 'settings-alerts-body',
     'settings-reminders-body',  'settings-prefs-body',   'settings-about-body',
   ];
+
+  // On desktop: always show all sections, sidebar handles navigation
+  const isDesktop = window.innerWidth >= 900;
+
   allIds.forEach(bodyId => {
     const body = document.getElementById(bodyId);
     if (!body) return;
-    // Find the preceding header by scanning siblings
     const header = body.previousElementSibling;
     const chevron = header?.querySelector?.('.settings-chevron');
-    if (collapsed[bodyId]) {
+    if (isDesktop) {
+      // Always expanded on desktop
+      body.style.display = '';
+      if (chevron) chevron.style.transform = '';
+    } else if (collapsed[bodyId]) {
       body.style.display = 'none';
       if (chevron) chevron.style.transform = 'rotate(-90deg)';
     } else {
@@ -11161,6 +11202,46 @@ function initSettingsCollapsibles() {
       if (chevron) chevron.style.transform = '';
     }
   });
+
+  if (isDesktop) _initSettingsSidebarScroll();
+}
+
+function scrollToSection(bodyId) {
+  const el = document.getElementById(bodyId);
+  if (!el) return;
+  const offset = 56 + 61 + 20; // app-header + tabs-wrap + spacing
+  const top = el.getBoundingClientRect().top + window.scrollY - offset;
+  window.scrollTo({ top, behavior: 'smooth' });
+  document.querySelectorAll('.settings-nav-link').forEach(a => {
+    a.classList.toggle('active', (a.getAttribute('onclick') || '').includes(bodyId));
+  });
+}
+
+function _initSettingsSidebarScroll() {
+  // Highlight sidebar link as each section scrolls into view
+  const sections = [
+    'settings-households-body', 'settings-account-body', 'settings-alerts-body',
+    'settings-reminders-body',  'settings-prefs-body',   'settings-about-body',
+  ];
+  // Remove any old observer
+  if (window._settingsObserver) window._settingsObserver.disconnect();
+  window._settingsObserver = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const id = entry.target.id;
+        document.querySelectorAll('.settings-nav-link').forEach(a => {
+          a.classList.toggle('active', (a.getAttribute('onclick') || '').includes(id));
+        });
+      }
+    });
+  }, { rootMargin: '-10% 0px -70% 0px', threshold: 0 });
+  sections.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) window._settingsObserver.observe(el);
+  });
+  // Highlight first link by default
+  const first = document.querySelector('.settings-nav-link');
+  if (first) first.classList.add('active');
 }
 
 // Keep old name as alias for any stale references
