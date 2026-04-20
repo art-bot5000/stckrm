@@ -736,13 +736,13 @@
     /* ── Sticky grocery header on desktop ── */
     #grocery-sticky-header {
       position: sticky;
-      top: calc(56px + 61px); /* app-header + tabs-sticky-wrap approx height */
+      top: 0; /* no app-header or tab bar above on desktop — sidebar layout */
       z-index: 80;
       background: var(--bg);
       padding-bottom: 4px;
+      padding-top: 8px;
       margin-bottom: 0;
     }
-    /* Compensate — add top padding to grocery list body so it doesn't start behind the sticky header */
     #view-grocery #grocery-list-body { padding-top: 4px; }
   }
 
