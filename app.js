@@ -209,6 +209,19 @@ let wizardCountry = 'GB';
 let compactView = false;
 let activeProfile = 'default'; // household profile key
 
+// ── Notes state ───────────────────────────────────────────
+let notes = [];                    // array of note metadata + body (unlocked) or no body (locked)
+let _notesFilter = 'all';          // 'all'|'pinned'|'archived'|'trash'
+let _notesSearch = '';
+let _editingNoteId = null;         // currently open note id
+let _noteUnlocked = new Map();     // noteId → { body, lastActivity, inactivityTimer }
+let _noteColourPickerOpen = false;
+let _noteUndoStack = new Map();    // noteId → string[]
+let _noteRedoStack = new Map();    // noteId → string[]
+let _noteBodyDirty = false;        // unsaved changes flag
+let _noteAutoSaveTimer = null;
+let _noteOtpPending = false;       // waiting for 2FA OTP input
+
 // Drive / Dropbox — disabled in KV build (kept as no-op vars to avoid reference errors)
 let driveConnected   = false;
 let dropboxToken     = null;
@@ -1361,6 +1374,15 @@ async function loadReminders() {
 async function saveReminders() {
   await dbPut('reminders', 'reminders', reminders);
   if (activeProfile) await saveCurrentProfile();
+}
+
+async function loadNotes() {
+  const stored = await dbGet('items', 'notes');
+  if (stored && Array.isArray(stored)) notes = stored;
+}
+
+async function saveNotes() {
+  await dbPut('items', 'notes', notes);
 }
 
 // ── Calculations ──────────────────────────
@@ -3011,6 +3033,10 @@ const AUTO_SYNC_COOLDOWN = 30000; // min 30s between auto-syncs
 
 // Sync when user switches back to the tab/app
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    // Re-lock all unlocked secure notes immediately
+    _relockAllNotes();
+  }
   if (document.visibilityState === 'visible') {
     const now = Date.now();
     if (now - lastAutoSync > AUTO_SYNC_COOLDOWN) {
@@ -4982,7 +5008,7 @@ function updateStockShoppingHeader(mode) {
 }
 
 // ── View Transitions helpers ──────────────────────────────
-const TAB_ORDER = ['stock', 'grocery', 'reminders', 'savings', 'report', 'settings'];
+const TAB_ORDER = ['stock', 'grocery', 'notes', 'reminders', 'savings', 'report', 'settings'];
 let _currentView = 'stock';
 
 function _vtSupported() { return !!document.startViewTransition; }
@@ -5063,6 +5089,7 @@ function showView(name, btn) {
   if (name === 'shopping')  renderShoppingList();
   if (name === 'savings')   renderSavingsView();
   if (name === 'grocery')   renderGrocery();
+  if (name === 'notes')     renderNotes();
   if (name === 'stock') {
     updateStockShoppingHeader('stock');
     setStockOnlyUI(true);
@@ -9601,6 +9628,7 @@ async function kvPush() {
     reminders, deletedIds: [...tombstones],
     householdDir, activeProfile,
     shareTargets: _shareTargets,
+    notes: notes.map(n => ({ ...n, body: n.locked ? undefined : n.body })),
   });
   _keyFingerprint(_kvKey).then(fp => console.log('[key] kvPush: encrypting with key fingerprint:', fp));
   const ciphertext = await kvEncrypt(_kvKey, payload);
@@ -9758,6 +9786,22 @@ async function kvSyncNow(silent = false) {
         const merged = await loadDeletedIds();
         remote.deletedIds.forEach(id => merged.add(id));
         await saveDeletedIds(merged);
+      }
+      // Merge notes
+      if (remote.notes && Array.isArray(remote.notes)) {
+        if (remoteWins || notes.length === 0) {
+          notes = remote.notes;
+        } else {
+          const localNMap = new Map(notes.map(n => [n.id, n]));
+          remote.notes.forEach(rn => {
+            const ln = localNMap.get(rn.id);
+            if (!ln || new Date(rn.updatedAt) > new Date(ln.updatedAt || 0)) {
+              localNMap.set(rn.id, { ...rn, body: rn.locked ? (ln?.body) : rn.body });
+            }
+          });
+          notes = [...localNMap.values()];
+        }
+        await saveNotes();
       }
       if (remote.householdDir) {
         const localProfiles = await getProfiles();
@@ -10246,9 +10290,9 @@ function updateFab(viewName) {
   const container = document.getElementById('fab-container');
   if (!btn || !container) return;
   const isMobile  = window.innerWidth < 700;
-  // FAB only on stock, grocery, reminders — never on settings/savings/report
+  // FAB only on stock, grocery, reminders — never on settings/savings/report/notes
   const hasActions = (viewName === 'grocery' || !!FAB_ACTIONS[viewName])
-                  && viewName !== 'settings' && viewName !== 'savings' && viewName !== 'report';
+                  && viewName !== 'settings' && viewName !== 'savings' && viewName !== 'report' && viewName !== 'notes';
   if (!isMobile || !hasActions) {
     btn.style.display = 'none'; container.style.display = 'none';
     closeFab(true); return;
@@ -13792,6 +13836,7 @@ async function init() {
   loadNotifSettings();
   initHouseholdSettingsUI();
   await loadReminders();
+  await loadNotes();
   await loadGrocery();
   await checkGroceryRecurring();
   renderReminders(); // pre-render for badge count
@@ -14508,3 +14553,783 @@ function handleURLAction() {
 }
 
 init();
+
+// ═══════════════════════════════════════════
+//  SECURE NOTES
+// ═══════════════════════════════════════════
+
+function _noteUid() {
+  return 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+}
+
+// ── Re-lock helpers ───────────────────────
+function _relockAllNotes() {
+  _noteUnlocked.forEach((state, noteId) => {
+    clearTimeout(state.inactivityTimer);
+  });
+  _noteUnlocked.clear();
+  // If editor is open on a locked note, close it back to grid
+  if (_editingNoteId) {
+    const n = notes.find(x => x.id === _editingNoteId);
+    if (n && n.locked) {
+      _closeNoteEditorImmediate();
+      renderNotes();
+    }
+  }
+}
+
+function _startNoteInactivityTimer(noteId) {
+  const state = _noteUnlocked.get(noteId);
+  if (!state) return;
+  clearTimeout(state.inactivityTimer);
+  state.inactivityTimer = setTimeout(() => {
+    _noteUnlocked.delete(noteId);
+    // If this note is currently open, close editor to grid
+    if (_editingNoteId === noteId) {
+      _closeNoteEditorImmediate();
+      renderNotes();
+      toast('Note locked after inactivity');
+    }
+  }, 30 * 60 * 1000); // 30 minutes
+}
+
+function _resetNoteActivity(noteId) {
+  const state = _noteUnlocked.get(noteId);
+  if (!state) return;
+  state.lastActivity = Date.now();
+  _startNoteInactivityTimer(noteId);
+}
+
+// ── IDB persistence ───────────────────────
+// (loadNotes / saveNotes defined earlier near saveReminders)
+
+// ── Render notes grid ─────────────────────
+async function renderNotes() {
+  await loadNotes();
+  const grid    = document.getElementById('notes-grid');
+  const empty   = document.getElementById('notes-empty');
+  const banner  = document.getElementById('notes-2fa-banner');
+  const toggleBtn = document.getElementById('notes-2fa-toggle-btn');
+  if (!grid) return;
+
+  // 2FA banner
+  const has2fa = !!settings.notes2fa;
+  if (banner)    { banner.style.display = has2fa ? 'flex' : 'none'; }
+  if (toggleBtn) { toggleBtn.textContent = has2fa ? 'Disable 2-step' : 'Enable 2-step'; }
+
+  const q = (_notesSearch || '').toLowerCase().trim();
+  const now = Date.now();
+  const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+
+  // Filter
+  let visible = notes.filter(n => {
+    if (_notesFilter === 'trash')    return !!n.deletedAt;
+    if (_notesFilter === 'archived') return !n.deletedAt && !!n.archived;
+    if (_notesFilter === 'pinned')   return !n.deletedAt && !n.archived && !!n.pinned;
+    return !n.deletedAt && !n.archived; // 'all'
+  });
+
+  // Purge notes deleted >30 days ago
+  const before = notes.length;
+  notes = notes.filter(n => !n.deletedAt || (now - new Date(n.deletedAt).getTime()) < thirtyDaysMs);
+  if (notes.length !== before) await saveNotes();
+
+  // Search
+  if (q) {
+    visible = visible.filter(n =>
+      n.title.toLowerCase().includes(q) ||
+      (!n.locked && (n.body || '').toLowerCase().includes(q))
+    );
+  }
+
+  if (!visible.length) {
+    grid.innerHTML = '';
+    if (empty) empty.style.display = 'block';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  // Sort: pinned first, then by updatedAt desc
+  visible.sort((a, b) => {
+    if (a.pinned && !b.pinned) return -1;
+    if (!a.pinned && b.pinned) return 1;
+    return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
+  });
+
+  // Render pinned section header if mixed
+  const hasPinned   = visible.some(n => n.pinned);
+  const hasUnpinned = visible.some(n => !n.pinned);
+  const showHeaders = hasPinned && hasUnpinned && _notesFilter === 'all';
+
+  let html = '';
+  let inPinned = false;
+
+  visible.forEach(n => {
+    if (showHeaders && n.pinned && !inPinned) {
+      html += `<div class="notes-section-label" style="grid-column:1/-1">📌 Pinned</div>`;
+      inPinned = true;
+    }
+    if (showHeaders && !n.pinned && inPinned) {
+      html += `<div class="notes-section-label" style="grid-column:1/-1">📝 Notes</div>`;
+      inPinned = false;
+    }
+    html += _noteCardHTML(n);
+  });
+
+  grid.innerHTML = html;
+}
+
+function _noteCardHTML(n) {
+  const isUnlocked = _noteUnlocked.has(n.id);
+  const bgStyle    = n.colour ? `background:${n.colour};` : '';
+  const unlocked   = _noteUnlocked.get(n.id);
+  const preview    = n.locked && !isUnlocked
+    ? ''
+    : (unlocked?.body || n.body || '').slice(0, 200);
+
+  // Reminder badge
+  const linkedReminder = reminders.find(r => r.linkedNoteId === n.id);
+  let reminderBadge = '';
+  if (linkedReminder) {
+    const days = getReminderDaysUntil(linkedReminder);
+    const col  = days !== null && days < 0 ? 'var(--danger)' : days !== null && days <= 7 ? 'var(--warn)' : 'var(--muted)';
+    reminderBadge = `<span class="note-card-badge" style="background:rgba(255,255,255,0.08);color:${col}">🔔${days !== null ? (days < 0 ? ' overdue' : ` ${days}d`) : ''}</span>`;
+  }
+
+  // Tick summary
+  let tickBadge = '';
+  if (n.tickBoxesVisible && n.tickBoxes) {
+    const total   = Object.keys(n.tickBoxes).length;
+    const checked = Object.values(n.tickBoxes).filter(Boolean).length;
+    if (total > 0) tickBadge = `<span class="note-card-badge" style="background:rgba(76,187,138,0.15);color:var(--ok)">☑ ${checked}/${total}</span>`;
+  }
+
+  const trashLabel = n.deletedAt
+    ? `<span style="font-size:10px;color:var(--danger);font-family:var(--mono)">🗑 ${Math.max(0,30 - Math.round((Date.now()-new Date(n.deletedAt).getTime())/86400000))}d left</span>`
+    : '';
+
+  return `<div class="note-card${n.pinned?' pinned':''}" style="${bgStyle}" onclick="openNoteEditor('${n.id}')" role="button" tabindex="0" onkeydown="if(event.key==='Enter')openNoteEditor('${n.id}')">
+    <div class="note-card-title">${esc(n.title)}</div>
+    ${n.locked && !isUnlocked
+      ? `<div class="note-card-lock">🔒 Tap to unlock</div>`
+      : preview ? `<div class="note-card-preview">${esc(preview)}</div>` : ''}
+    <div class="note-card-meta">
+      ${reminderBadge}${tickBadge}${trashLabel}
+    </div>
+  </div>`;
+}
+
+function setNotesFilter(f, btn) {
+  _notesFilter = f;
+  document.querySelectorAll('.note-chip').forEach(c => c.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  renderNotes();
+}
+
+function filterNotes(q) {
+  _notesSearch = q;
+  renderNotes();
+}
+
+// ── Editor open/close ─────────────────────
+async function openNoteEditor(noteId) {
+  const overlay = document.getElementById('note-editor-overlay');
+  if (!overlay) return;
+
+  if (!noteId) {
+    // New note
+    const n = {
+      id: _noteUid(), title: '', body: '', locked: false,
+      pinned: false, archived: false, colour: null,
+      tickBoxesVisible: false, tickBoxes: {},
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      deletedAt: null,
+    };
+    notes.push(n);
+    await saveNotes();
+    _editingNoteId = n.id;
+    _noteUndoStack.set(n.id, []);
+    _noteRedoStack.set(n.id, []);
+    _renderNoteEditor(n, false);
+    overlay.classList.add('open');
+    document.getElementById('note-title-input')?.focus();
+    return;
+  }
+
+  const n = notes.find(x => x.id === noteId);
+  if (!n) return;
+  _editingNoteId = noteId;
+  if (!_noteUndoStack.has(noteId)) { _noteUndoStack.set(noteId, []); _noteRedoStack.set(noteId, []); }
+
+  // Trash guard
+  if (n.deletedAt) {
+    if (confirm(`Restore "${n.title}" from trash?`)) {
+      n.deletedAt = null; n.updatedAt = new Date().toISOString();
+      await saveNotes(); renderNotes();
+    }
+    return;
+  }
+
+  const isUnlocked = _noteUnlocked.has(noteId);
+  _renderNoteEditor(n, n.locked && !isUnlocked);
+  overlay.classList.add('open');
+
+  if (n.locked && !isUnlocked) {
+    // Show lock screen, hide body
+    _showNoteLockScreen(n);
+  } else {
+    _showNoteBody(n);
+    if (isUnlocked) _resetNoteActivity(noteId);
+  }
+}
+
+function _renderNoteEditor(n, showLock) {
+  // Toolbar state
+  document.getElementById('note-btn-pin')?.classList.toggle('active', !!n.pinned);
+  document.getElementById('note-btn-archive')?.classList.toggle('active', !!n.archived);
+  document.getElementById('note-btn-lock')?.classList.toggle('active', !!n.locked);
+  document.getElementById('note-btn-lock').textContent = n.locked ? '🔒' : '🔓';
+  document.getElementById('note-btn-tick')?.classList.toggle('active', !!n.tickBoxesVisible);
+  document.getElementById('note-secure-badge').style.display = n.locked ? 'block' : 'none';
+
+  // Colour swatches
+  document.querySelectorAll('.note-swatch').forEach(s => {
+    s.classList.toggle('active', (s.dataset.colour || '') === (n.colour || ''));
+  });
+
+  // Editor background
+  const overlay = document.getElementById('note-editor-overlay');
+  overlay.style.background = n.colour || 'var(--bg)';
+
+  // Undo/redo buttons
+  _updateNoteUndoRedoBtns(n.id);
+
+  // Title
+  const titleEl = document.getElementById('note-title-input');
+  if (titleEl) { titleEl.value = n.title; titleEl.style.display = ''; }
+
+  // Reminder button badge
+  const hasReminder = reminders.some(r => r.linkedNoteId === n.id);
+  const rBtn = document.getElementById('note-btn-reminder');
+  if (rBtn) rBtn.classList.toggle('active', hasReminder);
+}
+
+function _showNoteLockScreen(n) {
+  document.getElementById('note-editor-body').style.display  = 'none';
+  document.getElementById('note-lock-screen').classList.add('open');
+  document.getElementById('note-lock-title').textContent = n.title;
+  document.getElementById('note-lock-error').textContent = '';
+  document.getElementById('note-otp-section').style.display = 'none';
+  document.getElementById('note-unlock-btn').style.display  = 'block';
+  _noteOtpPending = false;
+}
+
+function _showNoteBody(n) {
+  document.getElementById('note-lock-screen').classList.remove('open');
+  document.getElementById('note-editor-body').style.display = 'flex';
+
+  const unlocked = _noteUnlocked.get(n.id);
+  const body = unlocked ? unlocked.body : (n.body || '');
+
+  if (n.tickBoxesVisible) {
+    _renderTickBody(n, body);
+  } else {
+    document.getElementById('note-ticks-body').style.display = 'none';
+    const ta = document.getElementById('note-body-input');
+    ta.style.display = '';
+    ta.value = body;
+  }
+}
+
+function _closeNoteEditorImmediate() {
+  const overlay = document.getElementById('note-editor-overlay');
+  if (overlay) overlay.classList.remove('open');
+  _editingNoteId = null;
+  _noteBodyDirty = false;
+  clearTimeout(_noteAutoSaveTimer);
+  _noteColourPickerOpen = false;
+  document.getElementById('note-colour-picker').style.display = 'none';
+}
+
+async function closeNoteEditor() {
+  if (_noteBodyDirty) await _autoSaveNote();
+  _closeNoteEditorImmediate();
+  renderNotes();
+}
+
+// ── Unlock flow ───────────────────────────
+async function unlockCurrentNote() {
+  const n = notes.find(x => x.id === _editingNoteId);
+  if (!n) return;
+  const errEl = document.getElementById('note-lock-error');
+  errEl.textContent = '';
+
+  // Use existing requireReauth mechanism
+  requireReauth(
+    `Unlock "${n.title}"`,
+    async () => {
+      // First factor passed — check if 2FA needed
+      if (settings.notes2fa) {
+        await _sendNoteOtp();
+      } else {
+        await _fetchAndUnlockNote(n);
+      }
+    },
+    { passkeyAllowed: true }
+  );
+}
+
+async function _sendNoteOtp() {
+  const errEl = document.getElementById('note-lock-error');
+  try {
+    const res = await fetchKV(`${WORKER_URL}/note/otp/send`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        emailHash: _kvEmailHash,
+        ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+      }),
+    });
+    if (!res.ok) { const d = await res.json(); errEl.textContent = d.error || 'Could not send code'; return; }
+    // Show OTP input
+    document.getElementById('note-unlock-btn').style.display = 'none';
+    document.getElementById('note-otp-section').style.display = 'flex';
+    document.getElementById('note-otp-input').value = '';
+    document.getElementById('note-otp-error').textContent = '';
+    setTimeout(() => document.getElementById('note-otp-input')?.focus(), 100);
+    _noteOtpPending = true;
+  } catch(e) {
+    errEl.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function verifyNoteOtp() {
+  const otp   = document.getElementById('note-otp-input')?.value.trim();
+  const errEl = document.getElementById('note-otp-error');
+  if (!otp || otp.length !== 6) { errEl.textContent = 'Enter the 6-digit code'; return; }
+  try {
+    const res = await fetchKV(`${WORKER_URL}/note/otp/verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash: _kvEmailHash, otp }),
+    });
+    const d = await res.json();
+    if (!res.ok) { errEl.textContent = d.error || 'Incorrect code'; return; }
+    // OTP verified — fetch the body
+    const n = notes.find(x => x.id === _editingNoteId);
+    if (n) await _fetchAndUnlockNote(n);
+  } catch(e) {
+    errEl.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function resendNoteOtp() {
+  document.getElementById('note-otp-error').textContent = '';
+  await _sendNoteOtp();
+}
+
+async function _fetchAndUnlockNote(n) {
+  const errEl = document.getElementById('note-lock-error');
+  try {
+    const res = await fetchKV(`${WORKER_URL}/note/body/pull`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        emailHash: _kvEmailHash,
+        ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+        noteId: n.id,
+      }),
+    });
+    if (!res.ok) {
+      const d = await res.json();
+      errEl.textContent = d.error || 'Could not fetch note';
+      return;
+    }
+    const { ciphertext } = await res.json();
+    if (!await kvEnsureKey()) { errEl.textContent = 'Encryption key unavailable'; return; }
+    const body = await kvDecrypt(_kvKey, ciphertext);
+    // Cache in memory
+    _noteUnlocked.set(n.id, { body, lastActivity: Date.now(), inactivityTimer: null });
+    _startNoteInactivityTimer(n.id);
+    _showNoteBody(n);
+    _renderNoteEditor(n, false);
+  } catch(e) {
+    errEl.textContent = 'Could not unlock: ' + e.message;
+  }
+}
+
+// ── Toolbar actions ───────────────────────
+async function toggleNotePin() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  n.pinned = !n.pinned; n.updatedAt = new Date().toISOString();
+  document.getElementById('note-btn-pin')?.classList.toggle('active', n.pinned);
+  await saveNotes(); await _syncNoteIfConnected();
+}
+
+async function toggleNoteArchive() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  n.archived = !n.archived; n.updatedAt = new Date().toISOString();
+  document.getElementById('note-btn-archive')?.classList.toggle('active', n.archived);
+  await saveNotes(); await _syncNoteIfConnected();
+  if (n.archived) { toast('Note archived'); closeNoteEditor(); }
+}
+
+async function toggleNoteLock() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  if (n.locked) {
+    // Unlocking — pull body from server and embed locally
+    if (!confirm('Remove security from this note? The body will be stored with your other data.')) return;
+    const unlocked = _noteUnlocked.get(n.id);
+    if (!unlocked) { toast('Unlock the note first before removing security'); return; }
+    n.body   = unlocked.body;
+    n.locked = false;
+    _noteUnlocked.delete(n.id);
+    // Delete the server-side body
+    await fetchKV(`${WORKER_URL}/note/body/delete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        emailHash: _kvEmailHash,
+        ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+        noteId: n.id,
+      }),
+    }).catch(() => {});
+    toast('Note is no longer secured');
+  } else {
+    // Locking — push body to server and strip from local
+    if (!n.body && !_noteUnlocked.get(n.id)?.body) { toast('Add some content first'); return; }
+    const body = _noteUnlocked.get(n.id)?.body || n.body || '';
+    if (!await kvEnsureKey()) return;
+    const ciphertext = await kvEncrypt(_kvKey, body);
+    const res = await fetchKV(`${WORKER_URL}/note/body/push`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        emailHash: _kvEmailHash,
+        ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+        noteId: n.id, ciphertext,
+      }),
+    });
+    if (!res.ok) { toast('Could not secure note — check connection'); return; }
+    n.body   = undefined;
+    n.locked = true;
+    _noteUnlocked.set(n.id, { body, lastActivity: Date.now(), inactivityTimer: null });
+    _startNoteInactivityTimer(n.id);
+    toast('Note is now secured 🔒');
+  }
+  n.updatedAt = new Date().toISOString();
+  _renderNoteEditor(n, false);
+  await saveNotes(); await _syncNoteIfConnected();
+}
+
+async function toggleNoteTicks() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  n.tickBoxesVisible = !n.tickBoxesVisible;
+  if (!n.tickBoxes) n.tickBoxes = {};
+  document.getElementById('note-btn-tick')?.classList.toggle('active', n.tickBoxesVisible);
+  const body = _getCurrentEditorBody(n);
+  if (n.tickBoxesVisible) {
+    _renderTickBody(n, body);
+    document.getElementById('note-body-input').style.display = 'none';
+  } else {
+    document.getElementById('note-ticks-body').style.display = 'none';
+    const ta = document.getElementById('note-body-input');
+    ta.style.display = ''; ta.value = body;
+  }
+  n.updatedAt = new Date().toISOString();
+  await saveNotes();
+}
+
+function _renderTickBody(n, body) {
+  const container = document.getElementById('note-ticks-body');
+  if (!container) return;
+  container.style.display = 'block';
+  const paragraphs = (body || '').split('\n').filter(p => p.trim());
+  if (!paragraphs.length) {
+    container.innerHTML = `<p style="color:var(--muted);font-size:13px">Add some lines — each line becomes a tick box.</p>`;
+    return;
+  }
+  container.innerHTML = paragraphs.map((p, i) => {
+    const checked = !!(n.tickBoxes || {})[i];
+    return `<label style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
+      <input type="checkbox" ${checked ? 'checked' : ''} onchange="onNoteTick(${i},this.checked)"
+        style="margin-top:3px;width:18px;height:18px;min-width:18px;accent-color:var(--accent)">
+      <span style="${checked ? 'text-decoration:line-through;color:var(--muted)' : 'color:var(--text)'};font-size:14px;line-height:1.5">${esc(p)}</span>
+    </label>`;
+  }).join('');
+}
+
+async function onNoteTick(idx, checked) {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  if (!n.tickBoxes) n.tickBoxes = {};
+  n.tickBoxes[idx] = checked;
+  n.updatedAt = new Date().toISOString();
+  await saveNotes();
+  if (n.locked) _resetNoteActivity(n.id);
+}
+
+function toggleNoteColourPicker() {
+  const picker = document.getElementById('note-colour-picker');
+  _noteColourPickerOpen = !_noteColourPickerOpen;
+  picker.style.display = _noteColourPickerOpen ? 'flex' : 'none';
+}
+
+async function setNoteColour(colour) {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  n.colour = colour || null; n.updatedAt = new Date().toISOString();
+  document.getElementById('note-editor-overlay').style.background = colour || 'var(--bg)';
+  document.querySelectorAll('.note-swatch').forEach(s =>
+    s.classList.toggle('active', (s.dataset.colour || '') === (colour || ''))
+  );
+  _noteColourPickerOpen = false;
+  document.getElementById('note-colour-picker').style.display = 'none';
+  await saveNotes(); await _syncNoteIfConnected();
+}
+
+function copyNoteBody() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  const body = _getCurrentEditorBody(n);
+  const text = `${n.title}\n\n${body}`;
+  navigator.clipboard?.writeText(text).then(() => toast('Copied ✓')).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta); toast('Copied ✓');
+  });
+}
+
+async function deleteCurrentNote() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  if (n.deletedAt) {
+    if (!confirm(`Permanently delete "${n.title}"? This cannot be undone.`)) return;
+    notes = notes.filter(x => x.id !== n.id);
+    if (n.locked) {
+      await fetchKV(`${WORKER_URL}/note/body/delete`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash: _kvEmailHash, ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }, noteId: n.id }),
+      }).catch(() => {});
+    }
+  } else {
+    if (!confirm(`Move "${n.title}" to trash?`)) return;
+    n.deletedAt  = new Date().toISOString();
+    n.updatedAt  = new Date().toISOString();
+    // Also remove from reminders
+    reminders = reminders.filter(r => r.linkedNoteId !== n.id);
+    await saveReminders();
+  }
+  _noteUnlocked.delete(n.id);
+  await saveNotes();
+  await _syncNoteIfConnected();
+  _closeNoteEditorImmediate();
+  renderNotes();
+}
+
+// ── Body editing ──────────────────────────
+function _getCurrentEditorBody(n) {
+  if (n.tickBoxesVisible) {
+    // Reconstruct from tick body labels
+    const labels = document.querySelectorAll('#note-ticks-body label span');
+    return [...labels].map(s => s.textContent).join('\n');
+  }
+  return document.getElementById('note-body-input')?.value || '';
+}
+
+function onNoteTitleInput() {
+  _noteBodyDirty = true;
+  clearTimeout(_noteAutoSaveTimer);
+  _noteAutoSaveTimer = setTimeout(_autoSaveNote, 1200);
+  const n = notes.find(x => x.id === _editingNoteId);
+  if (n && n.locked) _resetNoteActivity(n.id);
+}
+
+function onNoteBodyInput() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  const ta   = document.getElementById('note-body-input');
+  const body = ta?.value || '';
+
+  // Push undo snapshot
+  const stack = _noteUndoStack.get(n.id) || [];
+  const last  = stack[stack.length - 1];
+  if (last !== body) {
+    stack.push(body);
+    if (stack.length > 50) stack.shift();
+    _noteUndoStack.set(n.id, stack);
+    _noteRedoStack.set(n.id, []);
+    _updateNoteUndoRedoBtns(n.id);
+  }
+
+  _noteBodyDirty = true;
+  clearTimeout(_noteAutoSaveTimer);
+  _noteAutoSaveTimer = setTimeout(_autoSaveNote, 1200);
+  if (n.locked) _resetNoteActivity(n.id);
+}
+
+async function _autoSaveNote() {
+  const n = notes.find(x => x.id === _editingNoteId);
+  if (!n) return;
+  const titleEl = document.getElementById('note-title-input');
+  const title   = (titleEl?.value || '').trim();
+  if (!title) return; // require title
+
+  const body = _getCurrentEditorBody(n);
+  n.title     = title;
+  n.updatedAt = new Date().toISOString();
+
+  if (n.locked) {
+    // Update in-memory cache only; push to server
+    const state = _noteUnlocked.get(n.id);
+    if (state) {
+      state.body = body;
+      if (!await kvEnsureKey()) return;
+      const ciphertext = await kvEncrypt(_kvKey, body);
+      await fetchKV(`${WORKER_URL}/note/body/push`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          emailHash: _kvEmailHash,
+          ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+          noteId: n.id, ciphertext,
+        }),
+      }).catch(() => {});
+    }
+  } else {
+    n.body = body;
+  }
+
+  _noteBodyDirty = false;
+  await saveNotes();
+  await _syncNoteIfConnected();
+}
+
+// ── Undo / Redo ───────────────────────────
+function noteUndo() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  const stack = _noteUndoStack.get(n.id) || [];
+  if (stack.length < 2) return;
+  const current = stack.pop();
+  (_noteRedoStack.get(n.id) || []).push(current);
+  _noteRedoStack.set(n.id, _noteRedoStack.get(n.id) || []);
+  const prev = stack[stack.length - 1] || '';
+  const ta = document.getElementById('note-body-input');
+  if (ta) { ta.value = prev; }
+  _noteBodyDirty = true; clearTimeout(_noteAutoSaveTimer); _noteAutoSaveTimer = setTimeout(_autoSaveNote, 800);
+  _updateNoteUndoRedoBtns(n.id);
+}
+
+function noteRedo() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  const redoStack = _noteRedoStack.get(n.id) || [];
+  if (!redoStack.length) return;
+  const next = redoStack.pop();
+  (_noteUndoStack.get(n.id) || []).push(next);
+  const ta = document.getElementById('note-body-input');
+  if (ta) { ta.value = next; }
+  _noteBodyDirty = true; clearTimeout(_noteAutoSaveTimer); _noteAutoSaveTimer = setTimeout(_autoSaveNote, 800);
+  _updateNoteUndoRedoBtns(n.id);
+}
+
+function _updateNoteUndoRedoBtns(noteId) {
+  const undoBtn = document.getElementById('note-undo-btn');
+  const redoBtn = document.getElementById('note-redo-btn');
+  if (undoBtn) undoBtn.disabled = (_noteUndoStack.get(noteId) || []).length < 2;
+  if (redoBtn) redoBtn.disabled = (_noteRedoStack.get(noteId) || []).length === 0;
+}
+
+// ── Reminder ──────────────────────────────
+function openNoteReminder() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  const existing = reminders.find(r => r.linkedNoteId === n.id);
+  const dtInput  = document.getElementById('note-reminder-datetime');
+  const notesInp = document.getElementById('note-reminder-notes');
+  const existDiv = document.getElementById('note-reminder-existing');
+  const delBtn   = document.getElementById('note-reminder-delete-btn');
+
+  if (existing) {
+    existDiv.style.display = 'block';
+    existDiv.textContent   = `Current: ${existing.name} — ${fmtDate(existing.lastReplaced || '')}`;
+    delBtn.style.display   = 'inline-block';
+  } else {
+    existDiv.style.display = 'none';
+    delBtn.style.display   = 'none';
+  }
+
+  // Default datetime: tomorrow at 9am
+  const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(9, 0, 0, 0);
+  dtInput.value  = existing?.reminderDate ? existing.reminderDate.slice(0, 16) : tomorrow.toISOString().slice(0, 16);
+  notesInp.value = existing?.notes || '';
+  openModal('note-reminder-modal');
+}
+
+async function saveNoteReminder() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  const dt    = document.getElementById('note-reminder-datetime')?.value;
+  const notes_ = document.getElementById('note-reminder-notes')?.value.trim();
+  if (!dt) { toast('Pick a date and time'); return; }
+
+  // Remove existing note reminder
+  reminders = reminders.filter(r => r.linkedNoteId !== n.id);
+
+  reminders.push({
+    id:           uid(),
+    name:         n.title || 'Note reminder',
+    interval:     1, unit: 'months',
+    lastReplaced: null,
+    notes:        notes_,
+    linkedNoteId: n.id,
+    reminderDate: new Date(dt).toISOString(),
+    createdAt:    new Date().toISOString(),
+  });
+  await saveReminders();
+  closeModal('note-reminder-modal');
+  _renderNoteEditor(n, false);
+  renderNotes();
+  await _syncNoteIfConnected();
+  toast('Reminder set ✓');
+}
+
+async function deleteNoteReminder() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  reminders = reminders.filter(r => r.linkedNoteId !== n.id);
+  await saveReminders();
+  closeModal('note-reminder-modal');
+  _renderNoteEditor(n, false);
+  renderNotes();
+  toast('Reminder removed');
+}
+
+// ── 2FA toggle ────────────────────────────
+async function toggleNotes2fa() {
+  if (!kvConnected) { toast('Sign in to change this setting'); return; }
+  if (settings.notes2fa) {
+    if (!confirm('Disable 2-step unlock for secure notes?')) return;
+    settings.notes2fa = false;
+  } else {
+    settings.notes2fa = true;
+    toast('2-step unlock enabled — you\'ll receive an email code when unlocking secure notes');
+  }
+  await _saveSettings();
+  await _syncNoteIfConnected();
+  renderNotes();
+}
+
+// ── Keyboard shortcuts ────────────────────
+document.addEventListener('keydown', e => {
+  if (!_editingNoteId) return;
+  const ctrl = e.ctrlKey || e.metaKey;
+  if (ctrl && !e.shiftKey && e.key === 'z') { e.preventDefault(); noteUndo(); }
+  if (ctrl && (e.shiftKey && e.key === 'z' || e.key === 'y')) { e.preventDefault(); noteRedo(); }
+  if (e.key === 'Escape') {
+    // Close colour picker first, then editor
+    if (_noteColourPickerOpen) {
+      _noteColourPickerOpen = false;
+      document.getElementById('note-colour-picker').style.display = 'none';
+    } else {
+      closeNoteEditor();
+    }
+  }
+});
+
+// ── Sync helper ───────────────────────────
+async function _syncNoteIfConnected() {
+  if (kvConnected && !_shareState) {
+    kvPush().catch(e => console.warn('notes kvPush:', e.message));
+  }
+}
+
+// Render note reminder cards in the Reminders tab
+// Patch into reminderCardHTML — note reminders show 📝 label
+const _origReminderCardHTML = typeof reminderCardHTML === 'function' ? reminderCardHTML : null;
