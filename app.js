@@ -13725,12 +13725,13 @@ function showShareAuthGate(meta) {
   const step1 = document.getElementById('wizard-step-1');
   if (!step1) return;
   const hCount = Object.keys(meta.households || {}).length;
+  const groupName = meta.name ? `the <strong>${esc(meta.name)}</strong> group` : 'this household';
   step1.innerHTML = `
     <div style="font-size:44px;margin-bottom:12px">🏠</div>
     <h1 style="font-size:22px;font-weight:700;margin-bottom:6px">You're invited!</h1>
     <p style="color:var(--muted);font-size:13px;line-height:1.6;margin-bottom:16px">
       <strong style="color:var(--text)">${esc(meta.ownerName||'Someone')}</strong> has invited you
-      to access ${hCount} household${hCount!==1?'s':''} as a <strong>${esc(meta.type||'guest')}</strong>.
+      to access ${hCount} household${hCount!==1?'s':''} as a member of ${groupName}.
     </p>
     <div style="text-align:left;margin-bottom:12px">
       <div class="form-group" style="margin-bottom:10px">
@@ -13802,25 +13803,60 @@ async function completePendingJoin() {
   if (!_pendingJoinCode) return;
   const code = _pendingJoinCode;
   try {
-    const res = await fetchKV(`${WORKER_URL}/share/join`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code, guestEmailHash: _kvEmailHash, ...(_kvSessionToken ? { guestSessionToken: _kvSessionToken } : { guestVerifier: _kvVerifier }) }) });
+    const res  = await fetchKV(`${WORKER_URL}/share/join`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code,
+        guestEmailHash:    _kvEmailHash,
+        ...(_kvSessionToken ? { guestSessionToken: _kvSessionToken } : { guestVerifier: _kvVerifier }),
+      }),
+    });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not join');
-    const ecdhRes = await fetchKV(`${WORKER_URL}/share/ecdh-key/get`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ guestEmailHash: _kvEmailHash, ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }), code }) });
-    if (!ecdhRes.ok) throw new Error('Could not retrieve your share key — ask the owner to re-send the invite');
+    if (!res.ok) throw new Error(data.error || 'Invalid invite link — it may have expired');
+    // Server returned 200 but with ok:false — means it needs auth (shouldn't happen here but guard it)
+    if (data.requiresAuth) throw new Error('Authentication required — please sign in first');
+
+    const ecdhRes = await fetchKV(`${WORKER_URL}/share/ecdh-key/get`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        guestEmailHash: _kvEmailHash,
+        ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
+        code,
+      }),
+    });
+    if (!ecdhRes.ok) {
+      const ed = await ecdhRes.json().catch(() => ({}));
+      throw new Error(ed.error || 'Could not retrieve your share key — ask the owner to re-send the invite');
+    }
     const { wrappedKey, ownerPublicKeyJwk } = await ecdhRes.json();
     const guestPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
     if (!guestPrivKey) throw new Error('Your encryption key is missing — sign out and back in to regenerate it');
     const shareKey    = await ecdhUnwrapShareKey(guestPrivKey, ownerPublicKeyJwk, wrappedKey);
     const shareKeyB64 = await exportShareKey(shareKey);
-    try { const stored = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}'); stored[code] = shareKeyB64; localStorage.setItem('stockroom_share_keys', JSON.stringify(stored)); } catch(e) {}
-    _shareState = { ...data, code }; _shareKey = shareKey; saveShareState();
-    _pendingJoinCode = null; _pendingShareMeta = null;
-    localStorage.setItem('stockroom_seen', '1'); localStorage.setItem('stockroom_country_set', '1');
-    document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
-    applyTabPermissions(); updateSyncPill('syncing');
-    await kvSyncNow(); scheduleRender(...RENDER_REGIONS);
-    toast(`Joined ${data.ownerName||'household'}'s STOCKROOM ✓`);
-  } catch(err) { toast('Could not join: ' + err.message); updateSyncPill('error'); }
+    try {
+      const stored = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+      stored[code] = shareKeyB64;
+      localStorage.setItem('stockroom_share_keys', JSON.stringify(stored));
+    } catch(e) {}
+    _shareState = { ...data, code };
+    _shareKey   = shareKey;
+    saveShareState();
+    _pendingJoinCode  = null;
+    _pendingShareMeta = null;
+    localStorage.setItem('stockroom_seen', '1');
+    localStorage.setItem('stockroom_country_set', '1');
+    document.body.classList.remove('wizard-active');
+    document.getElementById('wizard').style.display = 'none';
+    applyTabPermissions();
+    updateSyncPill('syncing');
+    await kvSyncNow();
+    scheduleRender(...RENDER_REGIONS);
+    toast(`✓ Joined ${data.ownerName || 'household'}'s STOCKROOM`);
+  } catch(err) {
+    const msg = err.message || 'Unknown error — please try again';
+    toast('Could not join: ' + msg);
+    updateSyncPill('error');
+  }
 }
 
 function showShareWizard(shareData) { showShareAuthGate(shareData); }

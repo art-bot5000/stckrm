@@ -1592,7 +1592,7 @@ Deno.serve(async (request) => {
   // ── Share: join ───────────────────────────────────────
   if (url.pathname === '/share/join' && request.method === 'POST') {
     try {
-      const { code, guestEmailHash, guestVerifier } = await request.json();
+      const { code, guestEmailHash, guestVerifier, guestSessionToken } = await request.json();
       if (!code) return json({ error: 'Missing code' }, corsHeaders, 400);
       const r = await kvGet(['share', code.toUpperCase()]);
       if (!r.value) return json({ error: 'Invalid invite link' }, corsHeaders, 404);
@@ -1602,12 +1602,18 @@ Deno.serve(async (request) => {
         const expiresAt = target.expiresAt ? new Date(target.expiresAt).getTime() : Infinity;
         if (Date.now() > expiresAt) return json({ error: 'This invite link has expired. Ask the owner for a new link.' }, corsHeaders, 410);
       }
-      if (!guestEmailHash || !guestVerifier) {
-        // Not signed in — return metadata only so UI can prompt sign-in
+      // No credentials at all — return metadata so UI can prompt sign-in
+      if (!guestEmailHash || (!guestVerifier && !guestSessionToken)) {
         return json({ ok: false, requiresAuth: true, ownerName: target.ownerName, name: target.name, type: target.type, householdNames: target.householdNames, households: target.households }, corsHeaders);
       }
-      const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);
-      if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      // Authenticate: accept passkey sessionToken OR passphrase verifier
+      if (guestSessionToken) {
+        const sess = await kvGet(['passkey_session', guestEmailHash, guestSessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);
+        if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       if (!target.members) target.members = [];
       if (!target.members.includes(guestEmailHash)) {
         target.members.push(guestEmailHash);
@@ -1624,7 +1630,7 @@ Deno.serve(async (request) => {
       if (!ownerEmailHash || (!verifier && !sessionToken) || !code || !ciphertext) return json({ error: 'Missing fields' }, corsHeaders, 400);
       // Accept either passphrase verifier or session token (passkey login)
       if (sessionToken) {
-        const sessStored = await kvGet(['session', ownerEmailHash, sessionToken]);
+        const sessStored = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
         if (!sessStored.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
       } else {
         const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
@@ -1647,7 +1653,7 @@ Deno.serve(async (request) => {
       if (!code || !guestEmailHash || (!guestVerifier && !guestSessionToken)) return json({ error: 'Authentication required' }, corsHeaders, 401);
       // Accept either passphrase verifier or session token (passkey login)
       if (guestSessionToken) {
-        const sessStored = await kvGet(['session', guestEmailHash, guestSessionToken]);
+        const sessStored = await kvGet(['passkey_session', guestEmailHash, guestSessionToken]);
         if (!sessStored.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
       } else {
         const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);
