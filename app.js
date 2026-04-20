@@ -2282,11 +2282,23 @@ async function deleteProfile(key) {
   if (!confirm(`Delete "${name}" and all its items, groceries and reminders?\n\nThis cannot be undone.`)) return;
   delete profiles[key];
   await saveProfiles(profiles);
+  // Record this key as deleted so the sync merge doesn't re-create it
+  _addDeletedHousehold(key);
   if (activeProfile === key) await loadProfile('default');
   renderProfileList();
   renderSettingsHouseholdList();
   toast(`"${name}" deleted`);
   _syncQueue.enqueue();
+}
+
+function _getDeletedHouseholds() {
+  try { return new Set(JSON.parse(localStorage.getItem('stockroom_deleted_households') || '[]')); }
+  catch(e) { return new Set(); }
+}
+function _addDeletedHousehold(key) {
+  const set = _getDeletedHouseholds();
+  set.add(key);
+  try { localStorage.setItem('stockroom_deleted_households', JSON.stringify([...set])); } catch(e) {}
 }
 
 // ═══════════════════════════════════════════
@@ -6281,7 +6293,10 @@ async function syncNow() {
       if (remote.householdDir && typeof remote.householdDir === 'object') {
         const localProfiles = await getProfiles();
         let changed = false;
+        const deletedHouseholds = _getDeletedHouseholds();
         Object.entries(remote.householdDir).forEach(([key, meta]) => {
+          // Skip re-creating households the user has explicitly deleted
+          if (deletedHouseholds.has(key)) return;
           if (!localProfiles[key]) {
             localProfiles[key] = { name: meta.name, colour: meta.colour, items: [], settings: {}, reminders: [], groceries: [], departments: [] };
             changed = true;
@@ -6334,8 +6349,8 @@ async function syncNow() {
       householdDir, activeProfile,
       shareTargets: _shareTargets, // persists share targets to Drive
     });
-    if (_shareState) await proxyWriteDrive(payload);
-    else               await drivePush(payload);
+    // Guests are read-only — never push back to the owner's store
+    if (!_shareState) await drivePush(payload);
 
     updateSyncPill('synced');
   } catch(err) {
@@ -9731,7 +9746,10 @@ async function kvSyncNow(silent = false) {
       if (remote.householdDir) {
         const localProfiles = await getProfiles();
         let changed = false;
+        const deletedHouseholds = _getDeletedHouseholds();
         Object.entries(remote.householdDir).forEach(([key, meta]) => {
+          // Skip re-creating households the user has explicitly deleted
+          if (deletedHouseholds.has(key)) return;
           if (!localProfiles[key]) {
             localProfiles[key] = { name: meta.name, colour: meta.colour, items: [], settings: {}, reminders: [], groceries: [], departments: [] };
             changed = true;
@@ -10708,26 +10726,22 @@ async function _saveQuickList() {
   const defaultDept = depts[0]?.id || 'other';
 
   for (const name of names) {
-    // Check if item already exists in current list — skip if so
     const exists = groceryItems.find(i => i.name.toLowerCase() === name.toLowerCase() && (i.listId||'default') === activeGroceryListId);
     if (exists) continue;
-    // Look up dept from existing item with same name
+    // Dept: existing item match → keyword detection → fallback
     const existing = groceryItems.find(i => i.name.toLowerCase() === name.toLowerCase());
+    const dept = existing?.department || detectDepartment(name) || defaultDept;
     const newId = 'g_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
     groceryItems.push({
-      id: newId, name,
-      department: existing?.department || defaultDept,
-      listId: activeGroceryListId,
+      id: newId, name, department: dept, listId: activeGroceryListId,
       notes: '', recurring: false, intervalDays: 7,
       checked: false, addedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
     appendToGroceryOrder(newId);
   }
 
-  // Touch list updatedAt
   const list = _activeGroceryList();
   if (list) { list.updatedAt = new Date().toISOString(); await _saveGroceryLists(); }
-
   document.getElementById('quick-list-overlay')?.remove();
   await saveGrocery();
   renderGrocery();
@@ -11629,6 +11643,7 @@ function toggleSettingsSection(bodyId, headerEl) { toggleSettings(bodyId, header
 function toggleGroceryEditMode() {
   groceryEditMode = !groceryEditMode;
   if (!groceryEditMode) grocerySelected.clear();
+  updateFab('grocery'); // refresh FAB immediately — shows Done / Add+Edit
   renderGrocery();
   _updateGrocerySelectionBar();
 }
@@ -12850,11 +12865,23 @@ async function openEditShareTarget(code) {
   _shareTargetType   = target.type || 'family';
   _shareTargetPerms  = JSON.parse(JSON.stringify(target.households || {}));
   _shareTargetColour = target.colour || HOUSEHOLD_COLOURS[0];
-
   _shareTargetDone   = false;
-  document.getElementById('share-target-modal-title').textContent = '✏️ Edit Person';
+
+  document.getElementById('share-target-modal-title').textContent = '✏️ Edit Access';
   document.getElementById('share-target-code').value = code;
   document.getElementById('share-target-name').value = target.name || '';
+
+  // Show email field in edit mode (for sending update email)
+  const emailGroup = document.getElementById('share-target-email-group');
+  if (emailGroup) {
+    emailGroup.style.display = 'block';
+    const emailLabel = emailGroup.querySelector('label');
+    if (emailLabel) emailLabel.textContent = 'Their email (to send update notification)';
+    const emailHint = emailGroup.querySelector('p');
+    if (emailHint) emailHint.textContent = 'Optional — fill in to email them the updated permissions.';
+    document.getElementById('share-target-email').value = target.guestEmail || '';
+  }
+
   document.getElementById('share-link-section').style.display = 'none';
   document.getElementById('share-target-save-btn').textContent = 'Save changes';
   selectShareType(_shareTargetType, document.querySelector(`.share-type-btn[data-type="${_shareTargetType}"]`));
@@ -12882,8 +12909,20 @@ async function saveShareTarget() {
       });
       if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || 'Update failed'); }
       await pushSharedData(code);
-      toast(`Updated ${name} ✓`);
-      if (btn) { btn.textContent = 'Save changes'; btn.disabled = false; }
+
+      // Try sending update email if guest email is filled in
+      const guestEmailEl = document.getElementById('share-target-email');
+      const guestEmailVal = guestEmailEl?.value.trim();
+      if (guestEmailVal && WORKER_URL) {
+        // Store the guest email on the target for future reference
+        const tgt = _shareTargets.find(t => t.code === code);
+        if (tgt) tgt.guestEmail = guestEmailVal;
+        await _sendShareEmail(guestEmailVal, { code, name, type: _shareTargetType, households: _shareTargetPerms, isUpdate: true }).catch(() => {});
+      }
+
+      await loadShareTargets();
+      closeModal('share-target-modal');
+      toast(`✓ ${name}'s access updated`);
     } else {
       // Create new — ECDH key wrapping flow
       const guestEmail = document.getElementById('share-target-email')?.value.trim();
@@ -12970,11 +13009,20 @@ async function saveShareTarget() {
       const inviteLink = data.link || `${location.origin}${location.pathname}?join=${data.code}`;
       try { await navigator.clipboard.writeText(inviteLink); } catch(e) {}
 
+      // Send invite email if address provided
+      const createEmailEl = document.getElementById('share-target-email');
+      const createEmailVal = createEmailEl?.value.trim();
+      if (createEmailVal && WORKER_URL) {
+        await _sendShareEmail(createEmailVal, {
+          code: data.code, name, type: _shareTargetType,
+          households: _shareTargetPerms, isUpdate: false, inviteLink,
+        }).catch(() => {});
+      }
+
       await loadShareTargets();
       closeModal('share-target-modal');
       _shareTargetDone = false; // reset for next use
 
-      // Show the link visibly in a larger toast/confirm
       toast(`✓ Share created — link copied! Send it to ${name}`);
       if (kvConnected) setTimeout(syncAll, 600);
     }
@@ -13094,13 +13142,22 @@ async function pushSharedData(code, shareKey) {
       const hGroceries  = hKey === activeProfile ? groceryItems: (hProfile?.groceries  || []);
       const hReminders  = hKey === activeProfile ? reminders   : (hProfile?.reminders  || []);
       const hDepts      = hKey === activeProfile ? groceryDepts: (hProfile?.departments|| []);
+
+      // Respect per-section permissions — only push what the guest can view
+      const perms = target?.households?.[hKey] || {};
+      const canSeeStockroom  = perms.stockroom  && perms.stockroom  !== 'none';
+      const canSeeGroceries  = perms.groceries  && perms.groceries  !== 'none';
+      const canSeeReminders  = perms.reminders  && perms.reminders  !== 'none';
+
       const payload = JSON.stringify({
-        items: hItems, settings: hSettings,
-        groceries: hGroceries, reminders: hReminders, departments: hDepts,
-        lastSynced: new Date().toISOString(),
+        items:       canSeeStockroom ? hItems     : [],
+        settings:    hSettings,
+        groceries:   canSeeGroceries ? hGroceries : [],
+        reminders:   canSeeReminders ? hReminders : [],
+        departments: canSeeGroceries ? hDepts     : [],
+        lastSynced:  new Date().toISOString(),
       });
       const ciphertext  = await encryptWithShareKey(sk, payload);
-      // Support both verifier (passphrase) and sessionToken (passkey) auth
       const authFields  = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
       await fetchKV(`${WORKER_URL}/share/data/push`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -13328,6 +13385,22 @@ async function _doClearAllShares() {
   try { localStorage.removeItem('stockroom_share_keys'); } catch(e) {}
   await loadShareTargets();
   toast(failed ? `Cleared with ${failed} error(s) — check console` : 'All shares removed ✓');
+}
+
+// Send share invite or update email via server
+async function _sendShareEmail(guestEmail, { code, name, type, households, isUpdate = false, inviteLink = '' }) {
+  if (!guestEmail || !WORKER_URL) return;
+  try {
+    const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+    await fetchKV(`${WORKER_URL}/share/send-email`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ownerEmailHash: _kvEmailHash, ...authFields,
+        guestEmail, code, name, type, households, isUpdate, inviteLink,
+        ownerName: settings.email?.split('@')[0] || 'Your household',
+      }),
+    });
+  } catch(e) { console.warn('share email failed:', e.message); }
 }
 
 function copyShareLink() {
