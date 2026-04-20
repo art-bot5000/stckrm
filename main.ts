@@ -1517,10 +1517,15 @@ Deno.serve(async (request) => {
   if (url.pathname === '/share/create' && request.method === 'POST') {
     try {
       const body = await request.json();
-      const { ownerEmailHash, verifier, name, type, ownerName, households, householdNames, colour } = body;
-      if (!ownerEmailHash || !verifier || !name || !households) return json({ error: 'Missing required fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken, name, type, ownerName, households, householdNames, colour } = body;
+      if (!ownerEmailHash || (!verifier && !sessionToken) || !name || !households) return json({ error: 'Missing required fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const code = Array.from(crypto.getRandomValues(new Uint8Array(4)))
         .map(b => b.toString(36).padStart(2,'0')).join('').toUpperCase().slice(0,6);
       const target = {
@@ -1542,8 +1547,8 @@ Deno.serve(async (request) => {
   // storing the raw key on the server.
   if (url.pathname === '/share/key/store' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, code, encryptedShareKey } = await request.json();
-      if (!ownerEmailHash || !verifier || !code || !encryptedShareKey) {
+      const { ownerEmailHash, verifier, sessionToken, code, encryptedShareKey } = await request.json();
+      if (!ownerEmailHash || (!verifier && !sessionToken) || !code || !encryptedShareKey) {
         return json({ error: 'Missing fields' }, corsHeaders, 400);
       }
       const stored = await kvGet(['user', ownerEmailHash, 'verifier']);

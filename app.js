@@ -220,6 +220,11 @@ let dropboxConnected = false;
 function openModal(id) {
   const el = document.getElementById(id);
   if (!el) { console.error('openModal: element not found:', id); return; }
+  // Hide FAB and done-slide while any modal is open
+  const fabBtn = document.getElementById('fab-btn');
+  if (fabBtn) fabBtn.style.opacity = '0';
+  document.getElementById('grocery-done-slide')?.remove();
+  closeFab(true);
   try {
     if (_vtSupported() && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       el.style.viewTransitionName = 'modal-layer';
@@ -228,7 +233,6 @@ function openModal(id) {
       el.classList.add('open');
     }
   } catch(e) {
-    // View transition failed — open directly
     console.warn('openModal: view transition failed, opening directly', e.message);
     el.classList.add('open');
   }
@@ -241,6 +245,16 @@ function closeModal(id) {
   } else {
     document.getElementById(id).classList.remove('open');
   }
+  // Restore FAB visibility if no other modals remain open
+  setTimeout(() => {
+    const anyOpen = document.querySelector('.modal-backdrop.open, .modal.open');
+    if (!anyOpen) {
+      const fabBtn = document.getElementById('fab-btn');
+      if (fabBtn && fabBtn.style.display !== 'none') fabBtn.style.opacity = '1';
+      // Restore done-editing slide if still in grocery edit mode
+      if (_currentView === 'grocery' && groceryEditMode) _showGroceryDoneSlide();
+    }
+  }, 50);
 }
 
 // ═══════════════════════════════════════════
@@ -5064,6 +5078,8 @@ function showView(name, btn) {
   _currentView = name;
   if (_householdEnabled) pushPresence();
   updateFab(name);
+  // Clear grocery done-slide when leaving grocery view
+  if (name !== 'grocery') _hideGroceryDoneSlide?.();
 }
 
 // navTo — called by sidebar links (no btn element needed)
@@ -10230,12 +10246,15 @@ function updateFab(viewName) {
   const container = document.getElementById('fab-container');
   if (!btn || !container) return;
   const isMobile  = window.innerWidth < 700;
-  const hasActions = viewName === 'grocery' || !!FAB_ACTIONS[viewName];
+  // FAB only on stock, grocery, reminders — never on settings/savings/report
+  const hasActions = (viewName === 'grocery' || !!FAB_ACTIONS[viewName])
+                  && viewName !== 'settings' && viewName !== 'savings' && viewName !== 'report';
   if (!isMobile || !hasActions) {
     btn.style.display = 'none'; container.style.display = 'none';
     closeFab(true); return;
   }
   btn.style.display = 'flex';
+  btn.style.opacity = '1';
   closeFab(true);
 }
 
@@ -10668,46 +10687,71 @@ function openQuickList() {
   overlay.id = 'quick-list-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(0,0,0,0.75);display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px)';
   overlay.innerHTML = `
-    <div style="background:var(--surface);border-radius:20px 20px 0 0;width:100%;max-width:600px;padding:24px 20px 36px;box-shadow:0 -8px 32px rgba(0,0,0,0.5)">
+    <div style="background:var(--surface);border-radius:20px 20px 0 0;width:100%;max-width:600px;padding:24px 20px 36px;box-shadow:0 -8px 32px rgba(0,0,0,0.5);max-height:90vh;overflow-y:auto">
       <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px"></div>
-      <h3 style="font-size:18px;font-weight:700;margin-bottom:6px;text-align:center">⚡ Quick List</h3>
-      <p style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:14px">Type items separated by commas — press Enter or tap Add</p>
+      <h3 style="font-size:18px;font-weight:700;margin-bottom:4px;text-align:center">⚡ Quick List</h3>
+      <p style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:16px">Type items separated by commas. Tap a suggestion to add it.</p>
+      <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <div style="flex:1;min-width:140px">
+          <label style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;display:block;margin-bottom:4px">List name (optional)</label>
+          <input id="ql-list-name" class="form-input" type="text" placeholder="e.g. Mid-week top-up" autocomplete="off" style="width:100%;box-sizing:border-box">
+        </div>
+        <div style="flex:1;min-width:140px">
+          <label style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;display:block;margin-bottom:4px">Store (optional)</label>
+          <input id="ql-store-name" class="form-input" type="text" placeholder="e.g. Tesco, Lidl" autocomplete="off" style="width:100%;box-sizing:border-box">
+        </div>
+      </div>
       <div style="position:relative;margin-bottom:10px">
-        <textarea id="quick-list-input" rows="3" placeholder="milk, eggs, bread, pasta…"
+        <textarea id="quick-list-input" rows="3" placeholder="milk, eggs, bread…"
           style="width:100%;box-sizing:border-box;background:var(--surface2);border:1.5px solid var(--border);border-radius:10px;padding:12px;color:var(--text);font-size:16px;font-family:var(--sans);resize:none;line-height:1.5"
           oninput="_quickListAutocomplete(this.value)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();_saveQuickList()}"></textarea>
-        <div id="quick-list-suggestions" style="display:none;position:absolute;bottom:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;max-height:160px;overflow-y:auto;margin-bottom:4px;box-shadow:0 -4px 16px rgba(0,0,0,0.3)"></div>
+        <div id="quick-list-suggestions" style="display:none;position:absolute;bottom:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;max-height:180px;overflow-y:auto;margin-bottom:4px;box-shadow:0 -4px 16px rgba(0,0,0,0.3);z-index:10"></div>
       </div>
       <div id="quick-list-preview" style="display:flex;flex-wrap:wrap;gap:6px;min-height:28px;margin-bottom:14px"></div>
       <div style="display:flex;gap:10px">
         <button onclick="document.getElementById('quick-list-overlay').remove()" style="flex:1;padding:13px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:16px;font-weight:600;cursor:pointer">Cancel</button>
-        <button onclick="_saveQuickList()" style="flex:2;padding:13px;border-radius:10px;border:none;background:var(--accent);color:#111;font-size:16px;font-weight:700;cursor:pointer">Add to list →</button>
+        <button onclick="_saveQuickList()" style="flex:2;padding:13px;border-radius:10px;border:none;background:var(--accent);color:#111;font-size:16px;font-weight:700;cursor:pointer">Save list →</button>
       </div>
     </div>`;
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
   document.body.appendChild(overlay);
-  setTimeout(() => document.getElementById('quick-list-input')?.focus(), 100);
+  setTimeout(() => document.getElementById('ql-list-name')?.focus(), 100);
 }
 
 function _quickListAutocomplete(val) {
-  const sugg = document.getElementById('quick-list-suggestions');
+  const sugg    = document.getElementById('quick-list-suggestions');
   const preview = document.getElementById('quick-list-preview');
   if (!sugg || !preview) return;
 
-  // Update preview pills
+  // Preview pills for all typed entries
   const parts = val.split(',').map(s => s.trim()).filter(Boolean);
   preview.innerHTML = parts.map(p => `<span style="padding:4px 12px;border-radius:99px;background:rgba(232,168,56,0.15);border:1px solid rgba(232,168,56,0.3);font-size:13px;color:var(--accent)">${esc(p)}</span>`).join('');
 
-  // Autocomplete on the last partial word
+  // Autocomplete on the last partial token — match ANYWHERE in name
   const lastPart = val.split(',').pop()?.trim() || '';
-  if (lastPart.length < 2) { sugg.style.display = 'none'; return; }
-  const matches = groceryItems.filter(i => i.name.toLowerCase().startsWith(lastPart.toLowerCase()) && !parts.slice(0,-1).includes(i.name)).slice(0, 6);
+  if (lastPart.length < 1) { sugg.style.display = 'none'; return; }
+  const already = new Set(parts.slice(0, -1).map(p => p.toLowerCase()));
+  const matches = groceryItems
+    .filter(i => i.name.toLowerCase().includes(lastPart.toLowerCase()) && !already.has(i.name.toLowerCase()))
+    .slice(0, 8);
   if (!matches.length) { sugg.style.display = 'none'; return; }
   sugg.style.display = 'block';
-  sugg.innerHTML = matches.map(i => `<div onclick="_quickListPickSuggestion('${esc(i.name)}')" style="padding:10px 14px;cursor:pointer;font-size:14px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">${esc(i.name)}</div>`).join('');
+  sugg.innerHTML = matches.map(i => {
+    // Highlight the matching part
+    const lo = i.name.toLowerCase();
+    const lp = lastPart.toLowerCase();
+    const idx = lo.indexOf(lp);
+    const before = esc(i.name.slice(0, idx));
+    const match  = `<strong style="color:var(--accent)">${esc(i.name.slice(idx, idx + lastPart.length))}</strong>`;
+    const after  = esc(i.name.slice(idx + lastPart.length));
+    return `<div onclick="_quickListPickSuggestion('${esc(i.name).replace(/'/g,"\\'")}','${i.department||'other'}')"
+      style="padding:10px 14px;cursor:pointer;font-size:14px;border-bottom:1px solid var(--border)"
+      onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''"
+      >${before}${match}${after}</div>`;
+  }).join('');
 }
 
-function _quickListPickSuggestion(name) {
+function _quickListPickSuggestion(name, dept) {
   const inp = document.getElementById('quick-list-input');
   if (!inp) return;
   const parts = inp.value.split(',');
@@ -10721,31 +10765,35 @@ function _quickListPickSuggestion(name) {
 async function _saveQuickList() {
   const val = document.getElementById('quick-list-input')?.value || '';
   const names = val.split(',').map(s => s.trim()).filter(Boolean);
-  if (!names.length) { toast('Enter at least one item'); return; }
-  const depts = groceryDepts.length ? groceryDepts : DEFAULT_DEPTS;
-  const defaultDept = depts[0]?.id || 'other';
+  if (!names.length) { toast('Type at least one item'); return; }
 
+  const listNameVal  = document.getElementById('ql-list-name')?.value.trim();
+  const storeNameVal = document.getElementById('ql-store-name')?.value.trim();
+  const depts = groceryDepts.length ? groceryDepts : DEFAULT_DEPTS;
+
+  // Create a new list for this quick session
+  const newListId  = 'gl_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
+  const newListName = listNameVal || `Quick list ${new Date().toLocaleDateString('en-GB', {day:'numeric',month:'short'})}`;
+  groceryLists.push({ id: newListId, name: newListName, store: storeNameVal || '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+
+  // Add items with best-effort department detection
   for (const name of names) {
-    const exists = groceryItems.find(i => i.name.toLowerCase() === name.toLowerCase() && (i.listId||'default') === activeGroceryListId);
-    if (exists) continue;
-    // Dept: existing item match → keyword detection → fallback
     const existing = groceryItems.find(i => i.name.toLowerCase() === name.toLowerCase());
-    const dept = existing?.department || detectDepartment(name) || defaultDept;
+    const dept = existing?.department || detectDepartment(name) || depts[0]?.id || 'other';
     const newId = 'g_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
-    groceryItems.push({
-      id: newId, name, department: dept, listId: activeGroceryListId,
-      notes: '', recurring: false, intervalDays: 7,
-      checked: false, addedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-    });
+    groceryItems.push({ id: newId, name, department: dept, listId: newListId, notes: '', recurring: false, intervalDays: 7, checked: false, addedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
     appendToGroceryOrder(newId);
   }
 
-  const list = _activeGroceryList();
-  if (list) { list.updatedAt = new Date().toISOString(); await _saveGroceryLists(); }
+  // Switch to new list
+  activeGroceryListId = newListId;
+  try { localStorage.setItem('stockroom_active_grocery_list', newListId); } catch(e) {}
+
   document.getElementById('quick-list-overlay')?.remove();
+  await _saveGroceryLists();
   await saveGrocery();
   renderGrocery();
-  toast(`✓ Added ${names.length} item${names.length!==1?'s':''}`);
+  toast(`✓ Created "${newListName}" with ${names.length} item${names.length!==1?'s':''}`);
 }
 
 // ── Change store for grocery item ─────────────────────────────────────────
@@ -11643,9 +11691,31 @@ function toggleSettingsSection(bodyId, headerEl) { toggleSettings(bodyId, header
 function toggleGroceryEditMode() {
   groceryEditMode = !groceryEditMode;
   if (!groceryEditMode) grocerySelected.clear();
-  updateFab('grocery'); // refresh FAB immediately — shows Done / Add+Edit
+  // When entering edit mode, auto-show the Done editing pill beside the FAB
+  if (groceryEditMode) {
+    _showGroceryDoneSlide();
+  } else {
+    _hideGroceryDoneSlide();
+  }
   renderGrocery();
   _updateGrocerySelectionBar();
+}
+
+// Show the "Done editing" amber pill sliding left from FAB — always visible in edit mode
+function _showGroceryDoneSlide() {
+  const btn = document.getElementById('fab-btn');
+  if (!btn || btn.style.display === 'none') return;
+  _hideGroceryDoneSlide();
+  const slide = document.createElement('div');
+  slide.id = 'grocery-done-slide';
+  slide.onclick = () => { toggleGroceryEditMode(); };
+  slide.style.cssText = 'position:fixed;bottom:88px;right:112px;z-index:1100;display:flex;align-items:center;gap:10px;cursor:pointer;animation:fabSlideLeft 0.22s cubic-bezier(0.34,1.56,0.64,1) both';
+  slide.innerHTML = `<span style="font-size:17px;font-weight:700;color:#111;background:var(--accent);padding:10px 18px;border-radius:12px;white-space:nowrap;box-shadow:0 4px 16px rgba(232,168,56,0.45)">🔒 Done editing</span>`;
+  document.body.appendChild(slide);
+}
+
+function _hideGroceryDoneSlide() {
+  document.getElementById('grocery-done-slide')?.remove();
 }
 
 // ── Drag-to-reorder ─────────────────────────────────────────
