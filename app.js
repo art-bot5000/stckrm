@@ -6220,7 +6220,8 @@ async function syncNow() {
   updateSyncPill('syncing');
   try {
     // Pull from backend (owner uses /sync/pull, joined members use proxy)
-    const remote = _shareState ? await proxyReadDrive() : await drivePull();
+    // Guests use kvPull() which correctly hits /share/data/pull with credentials
+    const remote = await (_shareState ? kvPull() : drivePull());
 
     if (remote && Array.isArray(remote.items)) {
       const localLastSynced  = settings.lastSynced ? new Date(settings.lastSynced).getTime() : 0;
@@ -12585,21 +12586,25 @@ async function saveShareTarget() {
       // 9. Push initial shared data
       await pushSharedData(data.code, shareKey);
 
-      // 10. Show code-only invite link (no key in URL)
-      const inviteLink = data.link || `${location.origin}${location.pathname}?join=${data.code}`;
-      document.getElementById('share-link-value').textContent = inviteLink;
-      document.getElementById('share-link-section').style.display = 'block';
-      if (btn) { btn.textContent = 'Done'; btn.disabled = false; }
-      _shareTargetDone = true;
-
+      // 10. Share created — enable household, close modal, show link in toast
       if (!_householdEnabled) {
         _householdEnabled = true;
         try { localStorage.setItem('stockroom_household', JSON.stringify({ enabled: true, colour: _householdColour })); } catch(e) {}
         connectPresence();
       }
+
+      // Copy link to clipboard and close modal — no "Done" step needed
+      const inviteLink = data.link || `${location.origin}${location.pathname}?join=${data.code}`;
+      try { await navigator.clipboard.writeText(inviteLink); } catch(e) {}
+
+      await loadShareTargets();
+      closeModal('share-target-modal');
+      _shareTargetDone = false; // reset for next use
+
+      // Show the link visibly in a larger toast/confirm
+      toast(`✓ Share created — link copied! Send it to ${name}`);
+      if (kvConnected) setTimeout(syncAll, 600);
     }
-    await loadShareTargets();
-    if (kvConnected) setTimeout(syncAll, 600);
   } catch(err) {
     console.error('saveShareTarget:', err);
     toast('Could not save: ' + err.message);
@@ -12708,16 +12713,25 @@ async function pushSharedData(code, shareKey) {
 
   for (const hKey of households) {
     try {
-      // Build a filtered payload for this household
+      // Build full payload for this household (same shape as kvPush so guest merge works)
       const allProfiles = await getProfiles();
       const hProfile    = allProfiles[hKey] || allProfiles['default'];
-      const hItems      = hKey === activeProfile ? items : (hProfile?.items || []);
-      const hSettings   = hKey === activeProfile ? settings : (hProfile?.settings || {});
-      const payload     = JSON.stringify({ items: hItems, settings: hSettings, lastSynced: new Date().toISOString() });
+      const hItems      = hKey === activeProfile ? items       : (hProfile?.items      || []);
+      const hSettings   = hKey === activeProfile ? settings    : (hProfile?.settings   || {});
+      const hGroceries  = hKey === activeProfile ? groceryItems: (hProfile?.groceries  || []);
+      const hReminders  = hKey === activeProfile ? reminders   : (hProfile?.reminders  || []);
+      const hDepts      = hKey === activeProfile ? groceryDepts: (hProfile?.departments|| []);
+      const payload = JSON.stringify({
+        items: hItems, settings: hSettings,
+        groceries: hGroceries, reminders: hReminders, departments: hDepts,
+        lastSynced: new Date().toISOString(),
+      });
       const ciphertext  = await encryptWithShareKey(sk, payload);
+      // Support both verifier (passphrase) and sessionToken (passkey) auth
+      const authFields  = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
       await fetchKV(`${WORKER_URL}/share/data/push`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code, household: hKey, ciphertext }),
+        body: JSON.stringify({ ownerEmailHash: _kvEmailHash, ...authFields, code, household: hKey, ciphertext }),
       });
     } catch(e) { console.warn('pushSharedData failed for', hKey, e.message); }
   }

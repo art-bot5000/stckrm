@@ -1620,10 +1620,16 @@ Deno.serve(async (request) => {
   // ── Share: push shared data (owner re-encrypts for guests) ──
   if (url.pathname === '/share/data/push' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, code, household, ciphertext } = await request.json();
-      if (!ownerEmailHash || !verifier || !code || !ciphertext) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken, code, household, ciphertext } = await request.json();
+      if (!ownerEmailHash || (!verifier && !sessionToken) || !code || !ciphertext) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      // Accept either passphrase verifier or session token (passkey login)
+      if (sessionToken) {
+        const sessStored = await kvGet(['session', ownerEmailHash, sessionToken]);
+        if (!sessStored.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const share = await kvGet(['share', code.toUpperCase()]);
       if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);
       if (JSON.parse(share.value).ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
@@ -1637,10 +1643,16 @@ Deno.serve(async (request) => {
   // ── Share: pull shared data (guest reads) ────────────
   if (url.pathname === '/share/data/pull' && request.method === 'POST') {
     try {
-      const { guestEmailHash, guestVerifier, code, household } = await request.json();
-      if (!code || !guestEmailHash || !guestVerifier) return json({ error: 'Authentication required' }, corsHeaders, 401);
-      const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);
-      if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { guestEmailHash, guestVerifier, guestSessionToken, code, household } = await request.json();
+      if (!code || !guestEmailHash || (!guestVerifier && !guestSessionToken)) return json({ error: 'Authentication required' }, corsHeaders, 401);
+      // Accept either passphrase verifier or session token (passkey login)
+      if (guestSessionToken) {
+        const sessStored = await kvGet(['session', guestEmailHash, guestSessionToken]);
+        if (!sessStored.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);
+        if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const share = await kvGet(['share', code.toUpperCase()]);
       if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);
       const target = JSON.parse(share.value);
