@@ -114,7 +114,7 @@ function getStores(code) { return STORES_BY_COUNTRY[code] || STORES_BY_COUNTRY.O
 
 const DB_NAME    = 'stockroom';
 const DB_VERSION = 2;
-const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds'];
+const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists'];
 
 let _db = null;
 
@@ -10199,7 +10199,9 @@ function getGroceryFabActions() {
   return {
     primary:     { icon: '✏️', label: 'Add / Edit List', action: () => { closeFab(); toggleGroceryEditMode(); } },
     secondaries: [
+      { icon: '⚡', label: 'Quick List',  action: () => { closeFab(); openQuickList(); } },
       { icon: '📋', label: 'Import List', action: () => { closeFab(); openGroceryImport(); } },
+      { icon: '🏪', label: 'Add Store',   action: () => { closeFab(); openAddGroceryList(); } },
       { icon: '🏷️', label: 'Edit Depts', action: () => { closeFab(); openGroceryDepts(); } },
     ],
   };
@@ -10438,6 +10440,8 @@ let groceryItems    = [];
 let groceryDepts    = [];
 let grocerySort     = 'dept'; // 'dept' | 'alpha'
 let groceryEditMode    = false;  // unlock/lock toggle
+let groceryLists    = [];    // [{ id, name, store, createdAt, updatedAt }]
+let activeGroceryListId = 'default'; // currently viewed list
 let grocerySelected   = new Set(); // IDs selected in edit mode multi-select
 
 // Manual sort order — array of item IDs in user-defined order
@@ -10451,9 +10455,10 @@ function saveGroceryManualOrder(order) {
 // Returns groceryItems sorted by manual order (items not in order go to end)
 function getGroceryItemsInOrder() {
   const order = getGroceryManualOrder();
-  if (!order.length) return [...groceryItems];
+  const listFiltered = groceryItems.filter(i => (i.listId || 'default') === activeGroceryListId);
+  if (!order.length) return [...listFiltered];
   const orderMap = new Map(order.map((id, i) => [id, i]));
-  return [...groceryItems].sort((a, b) => {
+  return [...listFiltered].sort((a, b) => {
     const ai = orderMap.has(a.id) ? orderMap.get(a.id) : Infinity;
     const bi = orderMap.has(b.id) ? orderMap.get(b.id) : Infinity;
     return ai - bi;
@@ -10476,10 +10481,10 @@ let groceryConvertItem   = null;
 async function loadGrocery() {
   const storedItems = await dbGet('groceries', 'items');
   const storedDepts = await dbGet('departments', 'departments');
+  const storedLists = await dbGet('groceryLists', 'groceryLists');
   if (storedItems) {
     groceryItems = storedItems;
   } else {
-    // Migration from localStorage
     try {
       const raw = localStorage.getItem('stockroom_groceries');
       if (raw) { groceryItems = JSON.parse(raw) || []; await dbPut('groceries', 'items', groceryItems); localStorage.removeItem('stockroom_groceries'); }
@@ -10494,6 +10499,315 @@ async function loadGrocery() {
     } catch(e) { groceryDepts = null; }
   }
   if (!groceryDepts || groceryDepts.length === 0) groceryDepts = DEFAULT_DEPTS.map(d => ({...d}));
+
+  // Load grocery lists — migrate existing items to 'default' list if needed
+  if (storedLists && storedLists.length) {
+    groceryLists = storedLists;
+  } else {
+    groceryLists = [{ id: 'default', name: 'Main List', store: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
+    await _saveGroceryLists();
+  }
+  // Ensure all items have a listId
+  let needsSave = false;
+  groceryItems.forEach(i => { if (!i.listId) { i.listId = 'default'; needsSave = true; } });
+  if (needsSave) await _saveGroceryLocal();
+  activeGroceryListId = localStorage.getItem('stockroom_active_grocery_list') || 'default';
+  if (!groceryLists.find(l => l.id === activeGroceryListId)) activeGroceryListId = 'default';
+}
+
+async function _saveGroceryLists() {
+  await dbPut('groceryLists', 'groceryLists', groceryLists);
+}
+
+function _activeGroceryListItems() {
+  return groceryItems.filter(i => (i.listId || 'default') === activeGroceryListId);
+}
+
+function _activeGroceryList() {
+  return groceryLists.find(l => l.id === activeGroceryListId) || groceryLists[0];
+}
+
+// ── Grocery List Picker (shown when 2+ lists exist) ──────────────────────
+function renderGroceryListPicker() {
+  const body = document.getElementById('grocery-list-body');
+  const query = (document.getElementById('grocery-search')?.value || '').toLowerCase();
+  if (!body) return;
+
+  let lists = [...groceryLists].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  if (query) lists = lists.filter(l => l.name.toLowerCase().includes(query) || (l.store||'').toLowerCase().includes(query));
+
+  const fmt = d => new Date(d).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+
+  body.innerHTML = `
+    <div style="margin-bottom:16px">
+      ${lists.map(l => {
+        const itemCount = groceryItems.filter(i => (i.listId||'default') === l.id && !i.checked).length;
+        const checked   = groceryItems.filter(i => (i.listId||'default') === l.id &&  i.checked).length;
+        return `
+        <div onclick="switchGroceryList('${l.id}')" style="display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;cursor:pointer;transition:border-color 0.15s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:16px;font-weight:700;margin-bottom:3px">${esc(l.name)}</div>
+            <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">
+              ${l.store ? `🏪 ${esc(l.store)} · ` : ''}${itemCount} item${itemCount!==1?'s':''} remaining${checked ? ` · ${checked} done` : ''} · ${fmt(l.updatedAt)}
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            <button onclick="event.stopPropagation();editGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:13px;cursor:pointer">✏️</button>
+            ${groceryLists.length > 1 ? `<button onclick="event.stopPropagation();deleteGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--danger);font-size:13px;cursor:pointer">🗑️</button>` : ''}
+          </div>
+        </div>`; }).join('')}
+    </div>`;
+
+  // Update subtitle
+  const sub = document.getElementById('grocery-subtitle');
+  if (sub) sub.textContent = `${groceryLists.length} list${groceryLists.length!==1?'s':''} · tap to open`;
+}
+
+function switchGroceryList(id) {
+  activeGroceryListId = id;
+  try { localStorage.setItem('stockroom_active_grocery_list', id); } catch(e) {}
+  // Update the active list's updatedAt
+  const list = groceryLists.find(l => l.id === id);
+  if (list) { list.updatedAt = new Date().toISOString(); _saveGroceryLists(); }
+  renderGrocery();
+}
+
+// ── Add / Edit Store list ─────────────────────────────────────────────────
+function openAddGroceryList() {
+  _openGroceryListModal(null);
+}
+
+function editGroceryList(id) {
+  _openGroceryListModal(id);
+}
+
+function _openGroceryListModal(id) {
+  document.getElementById('grocery-list-picker-overlay')?.remove();
+  const list = id ? groceryLists.find(l => l.id === id) : null;
+  const overlay = document.createElement('div');
+  overlay.id = 'grocery-list-picker-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(0,0,0,0.7);display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:20px 20px 0 0;width:100%;max-width:560px;padding:24px 20px 36px;box-shadow:0 -8px 32px rgba(0,0,0,0.5)">
+      <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 18px"></div>
+      <h3 style="font-size:18px;font-weight:700;margin-bottom:16px;text-align:center">${list ? 'Edit List' : '➕ New Shopping List'}</h3>
+      <div class="field" style="margin-bottom:12px">
+        <label style="font-size:12px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;display:block;margin-bottom:4px">List name</label>
+        <input id="gl-name" class="form-input" type="text" value="${esc(list?.name||'')}" placeholder="e.g. Tesco run, Weekend shop…" autocomplete="off">
+      </div>
+      <div class="field" style="margin-bottom:20px">
+        <label style="font-size:12px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;display:block;margin-bottom:4px">Store (optional)</label>
+        <input id="gl-store" class="form-input" type="text" value="${esc(list?.store||'')}" placeholder="e.g. Tesco, Lidl, Amazon…" autocomplete="off">
+      </div>
+      <div style="display:flex;gap:10px">
+        <button onclick="document.getElementById('grocery-list-picker-overlay').remove()" style="flex:1;padding:13px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:16px;font-weight:600;cursor:pointer">Cancel</button>
+        <button onclick="_saveGroceryListModal('${id||''}')" style="flex:2;padding:13px;border-radius:10px;border:none;background:var(--accent);color:#111;font-size:16px;font-weight:700;cursor:pointer">${list ? 'Save' : 'Create list'}</button>
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  setTimeout(() => document.getElementById('gl-name').focus(), 100);
+}
+
+async function _saveGroceryListModal(id) {
+  const name  = document.getElementById('gl-name')?.value.trim();
+  const store = document.getElementById('gl-store')?.value.trim();
+  if (!name) { toast('Enter a list name'); return; }
+  document.getElementById('grocery-list-picker-overlay')?.remove();
+
+  if (id) {
+    const list = groceryLists.find(l => l.id === id);
+    if (list) { list.name = name; list.store = store; list.updatedAt = new Date().toISOString(); }
+  } else {
+    const newId = 'gl_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
+    groceryLists.push({ id: newId, name, store, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    activeGroceryListId = newId;
+    try { localStorage.setItem('stockroom_active_grocery_list', newId); } catch(e) {}
+  }
+  await _saveGroceryLists();
+  renderGrocery();
+}
+
+async function deleteGroceryList(id) {
+  if (groceryLists.length <= 1) { toast("Can't delete the last list"); return; }
+  if (!confirm('Delete this list? Items in it will also be deleted.')) return;
+  await Promise.all(groceryItems.filter(i => (i.listId||'default') === id).map(i => addGroceryTombstone(i.id)));
+  groceryItems = groceryItems.filter(i => (i.listId||'default') !== id);
+  groceryLists = groceryLists.filter(l => l.id !== id);
+  if (activeGroceryListId === id) {
+    activeGroceryListId = groceryLists[0]?.id || 'default';
+    try { localStorage.setItem('stockroom_active_grocery_list', activeGroceryListId); } catch(e) {}
+  }
+  await _saveGroceryLists();
+  await saveGrocery();
+  renderGrocery();
+}
+
+// ── Quick List ────────────────────────────────────────────────────────────
+function openQuickList() {
+  document.getElementById('quick-list-overlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'quick-list-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(0,0,0,0.75);display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:20px 20px 0 0;width:100%;max-width:600px;padding:24px 20px 36px;box-shadow:0 -8px 32px rgba(0,0,0,0.5)">
+      <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px"></div>
+      <h3 style="font-size:18px;font-weight:700;margin-bottom:6px;text-align:center">⚡ Quick List</h3>
+      <p style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:14px">Type items separated by commas — press Enter or tap Add</p>
+      <div style="position:relative;margin-bottom:10px">
+        <textarea id="quick-list-input" rows="3" placeholder="milk, eggs, bread, pasta…"
+          style="width:100%;box-sizing:border-box;background:var(--surface2);border:1.5px solid var(--border);border-radius:10px;padding:12px;color:var(--text);font-size:16px;font-family:var(--sans);resize:none;line-height:1.5"
+          oninput="_quickListAutocomplete(this.value)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();_saveQuickList()}"></textarea>
+        <div id="quick-list-suggestions" style="display:none;position:absolute;bottom:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;max-height:160px;overflow-y:auto;margin-bottom:4px;box-shadow:0 -4px 16px rgba(0,0,0,0.3)"></div>
+      </div>
+      <div id="quick-list-preview" style="display:flex;flex-wrap:wrap;gap:6px;min-height:28px;margin-bottom:14px"></div>
+      <div style="display:flex;gap:10px">
+        <button onclick="document.getElementById('quick-list-overlay').remove()" style="flex:1;padding:13px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:16px;font-weight:600;cursor:pointer">Cancel</button>
+        <button onclick="_saveQuickList()" style="flex:2;padding:13px;border-radius:10px;border:none;background:var(--accent);color:#111;font-size:16px;font-weight:700;cursor:pointer">Add to list →</button>
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  setTimeout(() => document.getElementById('quick-list-input')?.focus(), 100);
+}
+
+function _quickListAutocomplete(val) {
+  const sugg = document.getElementById('quick-list-suggestions');
+  const preview = document.getElementById('quick-list-preview');
+  if (!sugg || !preview) return;
+
+  // Update preview pills
+  const parts = val.split(',').map(s => s.trim()).filter(Boolean);
+  preview.innerHTML = parts.map(p => `<span style="padding:4px 12px;border-radius:99px;background:rgba(232,168,56,0.15);border:1px solid rgba(232,168,56,0.3);font-size:13px;color:var(--accent)">${esc(p)}</span>`).join('');
+
+  // Autocomplete on the last partial word
+  const lastPart = val.split(',').pop()?.trim() || '';
+  if (lastPart.length < 2) { sugg.style.display = 'none'; return; }
+  const matches = groceryItems.filter(i => i.name.toLowerCase().startsWith(lastPart.toLowerCase()) && !parts.slice(0,-1).includes(i.name)).slice(0, 6);
+  if (!matches.length) { sugg.style.display = 'none'; return; }
+  sugg.style.display = 'block';
+  sugg.innerHTML = matches.map(i => `<div onclick="_quickListPickSuggestion('${esc(i.name)}')" style="padding:10px 14px;cursor:pointer;font-size:14px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">${esc(i.name)}</div>`).join('');
+}
+
+function _quickListPickSuggestion(name) {
+  const inp = document.getElementById('quick-list-input');
+  if (!inp) return;
+  const parts = inp.value.split(',');
+  parts[parts.length - 1] = ' ' + name;
+  inp.value = parts.join(',') + ', ';
+  document.getElementById('quick-list-suggestions').style.display = 'none';
+  _quickListAutocomplete(inp.value);
+  inp.focus();
+}
+
+async function _saveQuickList() {
+  const val = document.getElementById('quick-list-input')?.value || '';
+  const names = val.split(',').map(s => s.trim()).filter(Boolean);
+  if (!names.length) { toast('Enter at least one item'); return; }
+  const depts = groceryDepts.length ? groceryDepts : DEFAULT_DEPTS;
+  const defaultDept = depts[0]?.id || 'other';
+
+  for (const name of names) {
+    // Check if item already exists in current list — skip if so
+    const exists = groceryItems.find(i => i.name.toLowerCase() === name.toLowerCase() && (i.listId||'default') === activeGroceryListId);
+    if (exists) continue;
+    // Look up dept from existing item with same name
+    const existing = groceryItems.find(i => i.name.toLowerCase() === name.toLowerCase());
+    const newId = 'g_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+    groceryItems.push({
+      id: newId, name,
+      department: existing?.department || defaultDept,
+      listId: activeGroceryListId,
+      notes: '', recurring: false, intervalDays: 7,
+      checked: false, addedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    appendToGroceryOrder(newId);
+  }
+
+  // Touch list updatedAt
+  const list = _activeGroceryList();
+  if (list) { list.updatedAt = new Date().toISOString(); await _saveGroceryLists(); }
+
+  document.getElementById('quick-list-overlay')?.remove();
+  await saveGrocery();
+  renderGrocery();
+  toast(`✓ Added ${names.length} item${names.length!==1?'s':''}`);
+}
+
+// ── Change store for grocery item ─────────────────────────────────────────
+function openChangeGroceryItemStore(itemId) {
+  document.getElementById('grocery-store-picker-overlay')?.remove();
+  const item = groceryItems.find(i => i.id === itemId);
+  const stores = [...new Set(groceryLists.filter(l => l.store).map(l => l.store))];
+  const overlay = document.createElement('div');
+  overlay.id = 'grocery-store-picker-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(0,0,0,0.7);display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:20px 20px 0 0;width:100%;max-width:560px;padding:24px 20px 36px;box-shadow:0 -8px 32px rgba(0,0,0,0.5)">
+      <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 18px"></div>
+      <h3 style="font-size:17px;font-weight:700;margin-bottom:4px;text-align:center">Move to list</h3>
+      <p style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:14px">Choose which list to move <strong>${esc(item?.name||'this item')}</strong> to</p>
+      <div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto;margin-bottom:16px">
+        ${groceryLists.map(l => `
+          <button onclick="_moveItemToList('${itemId}','${l.id}')"
+            style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:${(item?.listId||'default')===l.id?'rgba(232,168,56,0.12)':'var(--surface2)'};border:2px solid ${(item?.listId||'default')===l.id?'rgba(232,168,56,0.5)':'var(--border)'};border-radius:10px;cursor:pointer;text-align:left;width:100%">
+            <span style="font-size:16px;font-weight:600;color:var(--text);flex:1">${esc(l.name)}</span>
+            ${l.store ? `<span style="font-size:12px;color:var(--muted)">🏪 ${esc(l.store)}</span>` : ''}
+            ${(item?.listId||'default')===l.id ? '<span style="color:var(--accent);font-size:18px">✓</span>' : ''}
+          </button>`).join('')}
+      </div>
+      <button onclick="document.getElementById('grocery-store-picker-overlay').remove()" style="width:100%;padding:13px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:16px;font-weight:600;cursor:pointer">Cancel</button>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+async function _moveItemToList(itemId, listId) {
+  document.getElementById('grocery-store-picker-overlay')?.remove();
+  const item = groceryItems.find(i => i.id === itemId);
+  if (item) { item.listId = listId; item.updatedAt = new Date().toISOString(); }
+  const list = groceryLists.find(l => l.id === listId);
+  if (list) { list.updatedAt = new Date().toISOString(); await _saveGroceryLists(); }
+  await saveGrocery();
+  renderGrocery();
+}
+
+async function _moveSelectedToList(listId) {
+  document.getElementById('grocery-store-picker-overlay')?.remove();
+  const ids = [...grocerySelected];
+  ids.forEach(id => {
+    const item = groceryItems.find(i => i.id === id);
+    if (item) { item.listId = listId; item.updatedAt = new Date().toISOString(); }
+  });
+  const list = groceryLists.find(l => l.id === listId);
+  if (list) { list.updatedAt = new Date().toISOString(); await _saveGroceryLists(); }
+  grocerySelected.clear();
+  await saveGrocery();
+  renderGrocery();
+}
+
+function openChangeSelectedStore() {
+  if (grocerySelected.size === 0) return;
+  document.getElementById('grocery-store-picker-overlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'grocery-store-picker-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(0,0,0,0.7);display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px)';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:20px 20px 0 0;width:100%;max-width:560px;padding:24px 20px 36px;box-shadow:0 -8px 32px rgba(0,0,0,0.5)">
+      <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 18px"></div>
+      <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;text-align:center">Move ${grocerySelected.size} item${grocerySelected.size!==1?'s':''} to list</h3>
+      <div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto;margin-bottom:16px">
+        ${groceryLists.map(l => `
+          <button onclick="_moveSelectedToList('${l.id}')"
+            style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--surface2);border:2px solid var(--border);border-radius:10px;cursor:pointer;text-align:left;width:100%">
+            <span style="font-size:16px;font-weight:600;color:var(--text);flex:1">${esc(l.name)}</span>
+            ${l.store ? `<span style="font-size:12px;color:var(--muted)">🏪 ${esc(l.store)}</span>` : ''}
+          </button>`).join('')}
+      </div>
+      <button onclick="document.getElementById('grocery-store-picker-overlay').remove()" style="width:100%;padding:13px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:16px;font-weight:600;cursor:pointer">Cancel</button>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
 }
 
 // Save groceries to IDB and profile only — no sync trigger.
@@ -10502,6 +10816,7 @@ async function _saveGroceryLocal() {
   // Strip any blank entries (e.g. inline-added items left unnamed)
   groceryItems = groceryItems.filter(i => i.name && i.name.trim().length > 0);
   await dbPut('groceries', 'items', groceryItems);
+  await _saveGroceryLists();
   if (activeProfile) await saveCurrentProfile();
 }
 
@@ -10770,6 +11085,36 @@ function renderGrocery() {
   const checkedBar = document.getElementById('grocery-checked-bar');
   if (!body) return;
 
+  // ── Multi-list picker: show list selector when 2+ lists and no active list chosen ──
+  const multiList = groceryLists.length > 1;
+  const listBrowsing = multiList && !activeGroceryListId;
+
+  // Update back-to-lists button visibility
+  let backBtn = document.getElementById('grocery-back-to-lists');
+  if (multiList) {
+    if (!backBtn) {
+      backBtn = document.createElement('button');
+      backBtn.id = 'grocery-back-to-lists';
+      backBtn.className = 'btn btn-ghost btn-sm';
+      backBtn.textContent = '← All lists';
+      backBtn.onclick = () => { activeGroceryListId = ''; renderGrocery(); };
+      backBtn.style.cssText = 'margin-bottom:12px;display:block';
+      body.parentNode.insertBefore(backBtn, body);
+    }
+    backBtn.style.display = activeGroceryListId ? 'inline-flex' : 'none';
+  } else if (backBtn) {
+    backBtn.remove();
+  }
+
+  // Show list picker if no active list or browsing mode
+  if (multiList && !activeGroceryListId) {
+    renderGroceryListPicker();
+    const sub = document.getElementById('grocery-subtitle');
+    if (sub) sub.textContent = `${groceryLists.length} lists · tap to open`;
+    if (infoEl) infoEl.textContent = '';
+    return;
+  }
+
   cleanGroceryOrder();
   // Hide multi-select bar whenever we re-render
   if (!groceryEditMode) {
@@ -10777,13 +11122,17 @@ function renderGrocery() {
     if (sb) sb.style.display = 'none';
   }
 
-  // Interval info
+  // Filter to active list only
+  const listItems = groceryItems.filter(i => (i.listId || 'default') === activeGroceryListId);
+
+  // Interval info — scoped to active list
   const si = getGroceryShopInterval();
   const unitLabel = si.unit === 7 ? (si.value === 1 ? 'week' : 'weeks') : si.unit === 30 ? (si.value === 1 ? 'month' : 'months') : (si.value === 1 ? 'day' : 'days');
-  if (infoEl) infoEl.textContent = `Shopping every ${si.value} ${unitLabel} · ${groceryItems.filter(i=>!i.checked).length} item${groceryItems.filter(i=>!i.checked).length===1?'':'s'} remaining`;
+  const activeListName = _activeGroceryList()?.name || '';
+  if (infoEl) infoEl.textContent = `Shopping every ${si.value} ${unitLabel} · ${listItems.filter(i=>!i.checked).length} item${listItems.filter(i=>!i.checked).length===1?'':'s'} remaining`;
 
   const sub = document.getElementById('grocery-subtitle');
-  if (sub) sub.textContent = `${groceryItems.length} item${groceryItems.length===1?'':'s'} · ${groceryEditMode ? '✏️ editing' : 'tap to check off'}`;
+  if (sub) sub.textContent = `${listItems.length} item${listItems.length===1?'':'s'} · ${groceryEditMode ? '✏️ editing' : 'tap to check off'}`;
 
   // Edit mode lock button
   const editBtn = document.getElementById('grocery-edit-toggle');
@@ -10794,19 +11143,20 @@ function renderGrocery() {
     editBtn.style.borderColor = groceryEditMode ? 'rgba(232,168,56,0.4)' : '';
   }
 
-  let filtered = groceryItems.filter(i => !query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query));
+  let filtered = listItems.filter(i => !query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query));
   const unchecked = filtered.filter(i => !i.checked);
   const checked   = filtered.filter(i =>  i.checked);
 
   const checkedCount = groceryItems.filter(i => i.checked).length;
   if (checkedBar) {
+    const checkedCount = listItems.filter(i => i.checked).length;
     checkedBar.style.display = !groceryEditMode && checkedCount > 0 ? 'flex' : 'none';
     const cc = document.getElementById('grocery-checked-count');
     if (cc) cc.textContent = `${checkedCount} item${checkedCount===1?'':'s'} checked`;
   }
 
-  if (groceryItems.length === 0) {
-    body.innerHTML = `<div class="grocery-empty"><div class="grocery-empty-icon">🛒</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">No grocery items yet</div><div style="font-size:13px;color:var(--muted)">Add items manually or import a list.</div></div>`;
+  if (listItems.length === 0) {
+    body.innerHTML = `<div class="grocery-empty"><div class="grocery-empty-icon">🛒</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">No items in this list yet</div><div style="font-size:13px;color:var(--muted)">Tap ⚡ Quick List or ✏️ Edit to add items.</div></div>`;
     return;
   }
 
@@ -11065,6 +11415,10 @@ function _updateGrocerySelectionBar() {
   bar.innerHTML = `
     <span style="font-size:13px;color:var(--muted);flex-shrink:0">${count} selected</span>
     <div style="flex:1"></div>
+    ${groceryLists.length > 1 ? `<button onclick="openChangeSelectedStore()"
+      style="padding:10px 16px;border-radius:8px;border:1px solid rgba(91,141,238,0.4);background:rgba(91,141,238,0.07);color:#5b8dee;font-size:14px;font-weight:600;cursor:pointer">
+      🏪 Move list
+    </button>` : ''}
     <button onclick="_changeSelectedDept()"
       style="padding:10px 16px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:14px;font-weight:600;cursor:pointer">
       📂 Change Dept
@@ -11295,40 +11649,57 @@ function _showChangeDeptZone() {
     'position:fixed;bottom:0;left:0;right:0;z-index:500',
     'background:rgba(15,17,23,0.96)',
     'border-top:2px solid rgba(232,168,56,0.5)',
-    'padding:14px 20px 28px',
-    'display:flex;align-items:center;justify-content:center',
+    'padding:14px 16px 28px',
+    'display:flex;align-items:center;justify-content:center;gap:12px',
     'backdrop-filter:blur(8px)',
     'transition:transform 0.2s ease',
   ].join(';');
-  zone.innerHTML = `
-    <div style="display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none">
-      <div style="font-size:22px">📂</div>
-      <div style="font-size:14px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1.5px">Change Department</div>
-      <div style="font-size:12px;color:var(--muted)">Drop here to reassign</div>
-    </div>`;
-  // Drop target
-  zone.addEventListener('dragover', e => {
-    e.preventDefault();
-    zone.style.borderTopColor = 'var(--accent)';
-    zone.style.background = 'rgba(232,168,56,0.12)';
+
+  // Change Dept drop target
+  const deptBtn = document.createElement('div');
+  deptBtn.id = 'grocery-zone-dept';
+  deptBtn.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px;border:2px dashed rgba(232,168,56,0.4);border-radius:12px;cursor:pointer';
+  deptBtn.innerHTML = `<div style="font-size:22px">📂</div><div style="font-size:12px;font-weight:700;color:var(--accent);letter-spacing:1px">CHANGE DEPT</div>`;
+  deptBtn.addEventListener('dragover', e => { e.preventDefault(); deptBtn.style.background='rgba(232,168,56,0.12)'; });
+  deptBtn.addEventListener('dragleave', () => { deptBtn.style.background=''; });
+  deptBtn.addEventListener('drop', e => { e.preventDefault(); deptBtn.style.background=''; _showDeptPickerOverlay(); });
+  deptBtn.addEventListener('touchend', e => { if (_dragSrcEl) { e.preventDefault(); _showDeptPickerOverlay(); } });
+
+  // Change List button (only if 2+ lists)
+  const listBtn = document.createElement('div');
+  listBtn.id = 'grocery-zone-list';
+  listBtn.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px;border:2px dashed rgba(91,141,238,0.4);border-radius:12px;cursor:pointer';
+  listBtn.innerHTML = `<div style="font-size:22px">🏪</div><div style="font-size:12px;font-weight:700;color:#5b8dee;letter-spacing:1px">CHANGE LIST</div>`;
+  listBtn.addEventListener('dragover', e => { e.preventDefault(); listBtn.style.background='rgba(91,141,238,0.12)'; });
+  listBtn.addEventListener('dragleave', () => { listBtn.style.background=''; });
+  listBtn.addEventListener('drop', e => { e.preventDefault(); listBtn.style.background=''; const id = _dragSrcEl?.dataset?.id; if (id) openChangeGroceryItemStore(id); _hideChangeDeptZone(); });
+  listBtn.addEventListener('touchend', e => { if (_dragSrcEl) { e.preventDefault(); const id = _dragSrcEl.dataset.id; if (id) openChangeGroceryItemStore(id); _hideChangeDeptZone(); } });
+
+  // Delete button
+  const delBtn = document.createElement('div');
+  delBtn.id = 'grocery-zone-delete';
+  delBtn.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px;border:2px dashed rgba(232,80,80,0.4);border-radius:12px;cursor:pointer';
+  delBtn.innerHTML = `<div style="font-size:22px">🗑️</div><div style="font-size:12px;font-weight:700;color:var(--danger);letter-spacing:1px">DELETE</div>`;
+  delBtn.addEventListener('dragover', e => { e.preventDefault(); delBtn.style.background='rgba(232,80,80,0.12)'; });
+  delBtn.addEventListener('dragleave', () => { delBtn.style.background=''; });
+  delBtn.addEventListener('drop', async e => {
+    e.preventDefault(); delBtn.style.background='';
+    const id = _dragSrcEl?.dataset?.id;
+    if (id) { groceryItems = groceryItems.filter(i => i.id !== id); await addGroceryTombstone(id); await saveGrocery(); renderGrocery(); }
+    _hideChangeDeptZone(); _dragSrcEl = null;
   });
-  zone.addEventListener('dragleave', () => {
-    zone.style.borderTopColor = 'rgba(232,168,56,0.5)';
-    zone.style.background = 'rgba(15,17,23,0.96)';
-  });
-  zone.addEventListener('drop', e => {
-    e.preventDefault();
-    zone.style.borderTopColor = 'rgba(232,168,56,0.5)';
-    zone.style.background = 'rgba(15,17,23,0.96)';
-    _showDeptPickerOverlay();
-  });
-  // Touch: tapping zone while dragging opens picker
-  zone.addEventListener('touchend', e => {
+  delBtn.addEventListener('touchend', async e => {
     if (_dragSrcEl) {
       e.preventDefault();
-      _showDeptPickerOverlay();
+      const id = _dragSrcEl.dataset.id;
+      if (id) { groceryItems = groceryItems.filter(i => i.id !== id); await addGroceryTombstone(id); await saveGrocery(); renderGrocery(); }
+      _hideChangeDeptZone(); _dragSrcEl = null;
     }
   });
+
+  zone.appendChild(deptBtn);
+  if (groceryLists.length > 1) zone.appendChild(listBtn);
+  zone.appendChild(delBtn);
   document.body.appendChild(zone);
 }
 
@@ -11643,6 +12014,8 @@ function _updateGroceryItemDOM(id, checked) {
 async function clearCheckedGrocery() {
   if (!canWrite('groceries')) { showLockBanner('groceries'); return; }
   groceryItems = groceryItems.filter(item => {
+    // Only touch items in the active list
+    if ((item.listId || 'default') !== activeGroceryListId) return true;
     if (!item.checked) return true;
     if (item.recurring) {
       item.checked   = false;
@@ -11728,7 +12101,7 @@ async function saveGroceryItem() {
     if (item) { Object.assign(item, {name, department:dept, notes, recurring, intervalDays, updatedAt:new Date().toISOString()}); }
   } else {
     const newId = 'g_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
-    groceryItems.push({ id: newId, name, department:dept, notes, recurring, intervalDays, checked:false, addedAt:new Date().toISOString(), updatedAt:new Date().toISOString() });
+    groceryItems.push({ id: newId, name, department:dept, notes, recurring, intervalDays, checked:false, listId: activeGroceryListId, addedAt:new Date().toISOString(), updatedAt:new Date().toISOString() });
     appendToGroceryOrder(newId);
   }
   await saveGrocery();
@@ -12742,7 +13115,63 @@ async function pushAllSharedData() {
   if (!_shareTargets?.length) return;
   for (const target of _shareTargets) {
     await pushSharedData(target.code).catch(e => console.warn('pushAllSharedData failed for', target.code, e.message));
+    // Also fulfil any pending rewrap requests from new guests
+    await _fulfilPendingRewraps(target.code).catch(e => console.warn('rewrap failed for', target.code, e.message));
   }
+}
+
+// When a new guest accepts an invite before the owner had their ECDH pubkey,
+// they store a rewrap request. Owner's app picks this up on next sync and wraps for them.
+async function _fulfilPendingRewraps(code) {
+  if (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
+  const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+  try {
+    const res = await fetchKV(`${WORKER_URL}/share/ecdh-key/pending-rewraps`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ownerEmailHash: _kvEmailHash, ...authFields, code }),
+    });
+    if (!res.ok) return;
+    const { requests } = await res.json();
+    if (!requests?.length) return;
+
+    const ownerPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
+    if (!ownerPrivKey) return;
+    const ownerPubRes = await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/get`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash: _kvEmailHash }),
+    });
+    if (!ownerPubRes.ok) return;
+    const { publicKeyJwk: ownerPubKeyJwk } = await ownerPubRes.json();
+
+    // Recover the share key for this code
+    const sk = await (async () => {
+      try {
+        const stored = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+        const b64 = stored[code];
+        if (b64) {
+          const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+          return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+        }
+      } catch(e) {}
+      return recoverShareKey(code);
+    })();
+    if (!sk) return;
+
+    for (const req of requests) {
+      if (!req.guestEmailHash || !req.guestPublicKeyJwk) continue;
+      try {
+        const wrappedKey = await ecdhWrapShareKey(ownerPrivKey, req.guestPublicKeyJwk, sk);
+        await fetchKV(`${WORKER_URL}/share/ecdh-key/store`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ownerEmailHash: _kvEmailHash, ...authFields, code,
+            guestEmailHash: req.guestEmailHash, wrappedKey, ownerPublicKeyJwk: ownerPubKeyJwk,
+          }),
+        });
+        console.log('[share] rewrapped key for guest:', req.guestEmailHash);
+      } catch(e) { console.warn('[share] rewrap failed for', req.guestEmailHash, e.message); }
+    }
+  } catch(e) { /* non-critical */ }
 }
 
 async function resyncSharedData(code) {
@@ -13764,6 +14193,8 @@ async function shareGateSignIn() {
     if (!res.ok) throw new Error(d.error || 'Sign-in failed');
     const key = await kvDeriveKey(email, pass);
     await kvStoreSession(email, emailHash, verifier, key);
+    // Ensure ECDH keypair is ready BEFORE attempting join (required for key unwrapping)
+    await ensureEcdhKeypair(emailHash).catch(e => console.warn('ensureEcdhKeypair:', e.message));
     await _trustIfRemembered(email, emailHash, verifier, key);
     await completePendingJoin();
   } catch(err) { if(errEl){errEl.textContent=err.message;errEl.style.display='block';} }
@@ -13824,6 +14255,21 @@ async function completePendingJoin() {
         code,
       }),
     });
+
+    // If no wrapped key exists yet, request the owner to re-wrap on their next sync
+    if (ecdhRes.status === 404) {
+      // Store a pending-rewrap request on the server so owner's app picks it up
+      await fetchKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          guestEmailHash: _kvEmailHash,
+          ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
+          code,
+        }),
+      }).catch(() => {}); // non-blocking
+      throw new Error('Your invite is being set up — ask the owner to open STOCKROOM, then tap this link again');
+    }
+
     if (!ecdhRes.ok) {
       const ed = await ecdhRes.json().catch(() => ({}));
       throw new Error(ed.error || 'Could not retrieve your share key — ask the owner to re-send the invite');
