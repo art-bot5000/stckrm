@@ -1709,84 +1709,7 @@ Deno.serve(async (request) => {
 
 
   // ── Share: send invite/update email to guest ─────────
-  if (url.pathname === '/share/send-email' && request.method === 'POST') {
-    try {
-      if (!env.RESEND_API_KEY) return json({ error: 'Email not configured' }, corsHeaders, 500);
-      const { ownerEmailHash, verifier, sessionToken, guestEmail, code, name, type,
-              households, isUpdate, inviteLink, ownerName } = await request.json();
-      if (!ownerEmailHash || !guestEmail || !code) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      // Auth
-      if (sessionToken) {
-        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
-        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);
-      } else if (verifier) {
-        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
-      } else { return json({ error: 'Missing credentials' }, corsHeaders, 400); }
 
-      const share = await kvGet(['share', code.toUpperCase()]);
-      if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);
-      const target = JSON.parse(share.value);
-      if (target.ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
-
-      // Build permissions summary
-      const permLines = Object.entries(households || {}).map(([hKey, perms]: [string, any]) => {
-        const hName = (target.householdNames?.[hKey] || hKey);
-        const sections = Object.entries(perms)
-          .filter(([_, v]) => v === 'rw' || v === 'r')
-          .map(([k, v]) => `${k} (${v === 'rw' ? 'read & write' : 'read only'})`);
-        return `<li><strong>${hName}:</strong> ${sections.join(', ') || 'view only'}</li>`;
-      }).join('');
-
-      const expiresAt = target.expiresAt ? new Date(target.expiresAt).toLocaleString('en-GB') : '24 hours from now';
-      const link = inviteLink || `https://stckrm.fly.dev/?join=${code}`;
-
-      const subject = isUpdate
-        ? `📋 Your STOCKROOM access has been updated`
-        : `🏠 You've been invited to ${ownerName}'s STOCKROOM`;
-
-      const html = `<!DOCTYPE html><html><body style="font-family:sans-serif;background:#0f1117;color:#eee;padding:32px">
-        <div style="max-width:520px;margin:0 auto;background:#1a1d27;border-radius:16px;padding:32px">
-          <div style="font-size:13px;font-weight:700;letter-spacing:3px;color:#e8a838;margin-bottom:24px">STOCKROOM</div>
-          <h1 style="font-size:22px;font-weight:700;margin-bottom:8px;color:#fff">
-            ${isUpdate ? '📋 Your access has been updated' : `🏠 You're invited`}
-          </h1>
-          <p style="color:#aaa;font-size:14px;line-height:1.6;margin-bottom:20px">
-            ${isUpdate
-              ? `<strong style="color:#fff">${ownerName}</strong> has updated your access to their STOCKROOM.`
-              : `<strong style="color:#fff">${ownerName}</strong> has invited you to access their STOCKROOM household as <strong>${name || 'a member'}</strong>.`
-            }
-          </p>
-          ${permLines ? `
-          <div style="background:#0f1117;border-radius:10px;padding:16px;margin-bottom:20px">
-            <div style="font-size:11px;color:#888;font-family:monospace;letter-spacing:1px;margin-bottom:8px">PERMISSIONS GRANTED</div>
-            <ul style="margin:0;padding-left:18px;color:#ccc;font-size:14px;line-height:1.8">${permLines}</ul>
-          </div>` : ''}
-          ${!isUpdate ? `
-          <a href="${link}" style="display:block;background:#e8a838;color:#111;font-size:16px;font-weight:700;padding:14px 24px;border-radius:10px;text-decoration:none;text-align:center;margin-bottom:16px">
-            Accept invitation →
-          </a>
-          <div style="background:#0f1117;border-radius:8px;padding:12px;margin-bottom:16px">
-            <div style="font-size:11px;color:#888;font-family:monospace;margin-bottom:4px">INVITE LINK</div>
-            <div style="font-size:12px;color:#e8a838;font-family:monospace;word-break:break-all">${link}</div>
-          </div>
-          <p style="color:#888;font-size:12px">⏰ This invite link expires <strong>${expiresAt}</strong>.</p>
-          ` : ''}
-          <p style="color:#666;font-size:11px;margin-top:24px">STOCKROOM — Household Consumables Tracker</p>
-        </div>
-      </body></html>`;
-
-      const r = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: env.FROM_EMAIL, to: [guestEmail], subject, html }),
-      });
-      if (!r.ok) { const d = await r.json(); return json({ error: d.message || 'Email failed' }, corsHeaders, 500); }
-      return json({ ok: true }, corsHeaders);
-    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
-  }
-
-  // ── Share: delete ─────────────────────────────────────
   if (url.pathname === '/share/delete' && request.method === 'POST') {
     try {
       const { ownerEmailHash, verifier, code } = await request.json();
@@ -2061,7 +1984,7 @@ Deno.serve(async (request) => {
       const html = `<!DOCTYPE html><html><body style="background:#0f1117;color:#e0e0e0;font-family:sans-serif;padding:32px">
         <div style="max-width:480px;margin:0 auto;background:#1a1d27;border-radius:14px;padding:28px">
           <div style="font-size:11px;letter-spacing:3px;color:#e8a838;font-family:monospace;margin-bottom:8px">STOCKROOM</div>
-          <h2 style="color:#fff;margin:0 0 16px">${isUpdate ? '🔄 Access Updated' : '🏠 You're Invited!'}</h2>
+          <h2 style="color:#fff;margin:0 0 16px">${isUpdate ? 'Access Updated' : 'You&apos;re Invited!'}</h2>
           ${expiresNote}
           ${permsSection}
           ${linkSection}
