@@ -171,6 +171,8 @@ async function _deleteAllUserData(kv: Deno.Kv, emailHash: string): Promise<void>
     ['passkey_key',          emailHash],   // old server-wrapped data key copies (deprecated)
     ['passkey_prf_envelope', emailHash],   // PRF/device-bound envelope (new architecture)
     ['email_verify',     emailHash],   // email verification OTPs
+    ['note_body',        emailHash],   // secure note bodies
+    ['notes_session',    emailHash],   // notes 2FA session tokens
   ];
 
   for (const prefix of prefixesToScan) {
@@ -2082,6 +2084,146 @@ Deno.serve(async (request) => {
       const stored = await kvGet(['share_ecdh_key', code.toUpperCase(), guestEmailHash]);
       if (!stored.value) return json({ error: 'No ECDH key found for this share' }, corsHeaders, 404);
       return json({ ok: true, ...JSON.parse(stored.value) }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Secure Notes: push encrypted body ───────────────────
+  if (url.pathname === '/note/body/push' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, noteId, ciphertext } = await request.json();
+      if (!emailHash || !noteId) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else if (verifier) {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else {
+        return json({ error: 'Missing credentials' }, corsHeaders, 400);
+      }
+      if (ciphertext) {
+        await kvSet(['note_body', emailHash, noteId], ciphertext);
+      } else {
+        await kvDel(['note_body', emailHash, noteId]);
+      }
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Secure Notes: pull encrypted body (requires re-auth) ─
+  if (url.pathname === '/note/body/pull' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, noteId } = await request.json();
+      if (!emailHash || !noteId) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else if (verifier) {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else {
+        return json({ error: 'Missing credentials' }, corsHeaders, 400);
+      }
+      const data = await kvGet(['note_body', emailHash, noteId]);
+      if (!data.value) return json({ error: 'Note body not found' }, corsHeaders, 404);
+      return json({ ciphertext: data.value }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Secure Notes: delete body ─────────────────────────────
+  if (url.pathname === '/note/body/delete' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, noteId } = await request.json();
+      if (!emailHash || !noteId) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else if (verifier) {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else {
+        return json({ error: 'Missing credentials' }, corsHeaders, 400);
+      }
+      await kvDel(['note_body', emailHash, noteId]);
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Secure Notes: send 2FA OTP ────────────────────────────
+  if (url.pathname === '/note/otp/send' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else if (verifier) {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else {
+        return json({ error: 'Missing credentials' }, corsHeaders, 400);
+      }
+      // Rate limit: 1 OTP per 60 seconds
+      const last = await kvGet(['notes_otp', emailHash]);
+      if (last.value) {
+        const d = JSON.parse(last.value);
+        if (Date.now() - new Date(d.sentAt).getTime() < 60000) {
+          return json({ error: 'Please wait 60 seconds before requesting another code' }, corsHeaders, 429);
+        }
+      }
+      // Look up email address
+      const emailRec = await kvGet(['user', emailHash, 'email']);
+      const emailAddr = emailRec.value || '';
+      if (!emailAddr || !env.RESEND_API_KEY) return json({ error: 'Email not configured' }, corsHeaders, 500);
+      const otp = Array.from(crypto.getRandomValues(new Uint8Array(6))).map(b => b % 10).join('');
+      await kvSet(['notes_otp', emailHash], JSON.stringify({ otp, sentAt: new Date().toISOString(), attempts: 0 }), { expireIn: 5 * 60 * 1000 });
+      const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;background:#f5f5f5;padding:32px">
+        <div style="max-width:480px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
+          <div style="background:#111;padding:20px 28px;display:flex;align-items:center;gap:12px">
+            <span style="font-size:24px">📝</span>
+            <div style="color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px">STOCKROOM</div>
+          </div>
+          <div style="padding:28px">
+            <h2 style="margin:0 0 8px;color:#111">Secure Note unlock code</h2>
+            <p style="color:#666;margin:0 0 24px;font-size:14px">Enter this code to unlock your secure note. Valid for 5 minutes.</p>
+            <div style="background:#f5f5f5;border-radius:8px;padding:20px;text-align:center">
+              <div style="font-size:40px;font-weight:800;letter-spacing:8px;color:#111;font-family:monospace">${otp}</div>
+            </div>
+            <p style="color:#999;margin:20px 0 0;font-size:12px">If you didn't request this, someone may be trying to access your notes.</p>
+          </div>
+        </div>
+      </body></html>`;
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: env.FROM_EMAIL, to: [emailAddr], subject: '🔒 STOCKROOM — Secure Note unlock code', html }),
+      });
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Secure Notes: verify 2FA OTP ─────────────────────────
+  if (url.pathname === '/note/otp/verify' && request.method === 'POST') {
+    try {
+      const { emailHash, otp } = await request.json();
+      if (!emailHash || !otp) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const stored = await kvGet(['notes_otp', emailHash]);
+      if (!stored.value) return json({ error: 'Code expired — request a new one' }, corsHeaders, 410);
+      const data = JSON.parse(stored.value);
+      data.attempts = (data.attempts || 0) + 1;
+      if (data.attempts > 5) {
+        await kvDel(['notes_otp', emailHash]);
+        return json({ error: 'Too many attempts — request a new code' }, corsHeaders, 429);
+      }
+      if (String(data.otp) !== String(otp).trim()) {
+        await kvSet(['notes_otp', emailHash], JSON.stringify(data), { expireIn: 5 * 60 * 1000 });
+        return json({ error: 'Incorrect code' }, corsHeaders, 401);
+      }
+      await kvDel(['notes_otp', emailHash]);
+      // Issue a short-lived notes session token (30 min)
+      const notesToken = Array.from(crypto.getRandomValues(new Uint8Array(24))).map(b => b.toString(16).padStart(2,'0')).join('');
+      await kvSet(['notes_session', emailHash, notesToken], '1', { expireIn: 30 * 60 * 1000 });
+      return json({ ok: true, notesToken }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
