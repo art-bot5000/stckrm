@@ -1711,8 +1711,7 @@
   </div>
 </div>
 
-<!-- Share Target Modal -->
-<div class="modal-backdrop" id="share-target-modal">
+<!-- Share Target Modal -->\n<div class="modal-backdrop" id="share-target-modal">
   <div class="modal" style="max-width:420px;max-height:80vh;overflow-y:auto">
     <h2 id="share-target-modal-title">👤 Add Person</h2>
     <input type="hidden" id="share-target-code">
@@ -1724,6 +1723,13 @@
       <label class="form-label">Their email address</label>
       <input class="form-input" id="share-target-email" type="email" placeholder="their@email.com" autocomplete="off">
       <p style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">They must already have a STOCKROOM account. Their email is used to encrypt the share key — it never leaves your device.</p>
+    </div>
+    <!-- Email notification checkbox — shown only in edit mode -->
+    <div id="share-send-email-row" class="form-group" style="display:none;margin-bottom:12px">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:14px">
+        <input type="checkbox" id="share-send-email-cb" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer">
+        <span>Send them an email about this update</span>
+      </label>
     </div>
     <div class="form-group" style="margin-bottom:16px">
       <label class="form-label">Role</label>

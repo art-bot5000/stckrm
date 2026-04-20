@@ -12851,6 +12851,10 @@ async function openAddShareTarget() {
   document.getElementById('share-target-modal-title').textContent = '👤 Add Person';
   document.getElementById('share-target-code').value = '';
   document.getElementById('share-target-name').value = '';
+  document.getElementById('share-target-email').value = '';
+  // Hide the "send notification" checkbox — only relevant on edit
+  const sendEmailRow = document.getElementById('share-send-email-row');
+  if (sendEmailRow) sendEmailRow.style.display = 'none';
   document.getElementById('share-link-section').style.display = 'none';
   document.getElementById('share-target-save-btn').textContent = 'Create & get link';
   selectShareType('family', document.querySelector('.share-type-btn[data-type="family"]'));
@@ -12871,16 +12875,21 @@ async function openEditShareTarget(code) {
   document.getElementById('share-target-code').value = code;
   document.getElementById('share-target-name').value = target.name || '';
 
-  // Show email field in edit mode (for sending update email)
+  // Restore plain label text (same as create)
   const emailGroup = document.getElementById('share-target-email-group');
-  if (emailGroup) {
-    emailGroup.style.display = 'block';
-    const emailLabel = emailGroup.querySelector('label');
-    if (emailLabel) emailLabel.textContent = 'Their email (to send update notification)';
-    const emailHint = emailGroup.querySelector('p');
-    if (emailHint) emailHint.textContent = 'Optional — fill in to email them the updated permissions.';
-    document.getElementById('share-target-email').value = target.guestEmail || '';
-  }
+  if (emailGroup) emailGroup.style.display = 'block';
+  const emailLabel = document.querySelector('#share-target-email-group label');
+  if (emailLabel) emailLabel.textContent = 'Their email address';
+  const emailHint = document.querySelector('#share-target-email-group p');
+  if (emailHint) emailHint.textContent = 'Their email is used to encrypt the share key — it never leaves your device.';
+  // Pre-fill saved email
+  document.getElementById('share-target-email').value = target.guestEmail || '';
+
+  // Show "send email notification" checkbox (hidden on create screen)
+  const sendEmailRow = document.getElementById('share-send-email-row');
+  if (sendEmailRow) sendEmailRow.style.display = 'block';
+  const sendEmailCb = document.getElementById('share-send-email-cb');
+  if (sendEmailCb) sendEmailCb.checked = false;
 
   document.getElementById('share-link-section').style.display = 'none';
   document.getElementById('share-target-save-btn').textContent = 'Save changes';
@@ -12910,13 +12919,13 @@ async function saveShareTarget() {
       if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || 'Update failed'); }
       await pushSharedData(code);
 
-      // Try sending update email if guest email is filled in
-      const guestEmailEl = document.getElementById('share-target-email');
+      // Always persist the email address; only send notification if checkbox ticked
+      const guestEmailEl  = document.getElementById('share-target-email');
       const guestEmailVal = guestEmailEl?.value.trim();
-      if (guestEmailVal && WORKER_URL) {
-        // Store the guest email on the target for future reference
-        const tgt = _shareTargets.find(t => t.code === code);
-        if (tgt) tgt.guestEmail = guestEmailVal;
+      const tgt = _shareTargets.find(t => t.code === code);
+      if (tgt && guestEmailVal) tgt.guestEmail = guestEmailVal;
+      const sendEmailCb = document.getElementById('share-send-email-cb');
+      if (guestEmailVal && sendEmailCb?.checked && WORKER_URL) {
         await _sendShareEmail(guestEmailVal, { code, name, type: _shareTargetType, households: _shareTargetPerms, isUpdate: true }).catch(() => {});
       }
 
