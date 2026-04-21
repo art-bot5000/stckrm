@@ -373,6 +373,9 @@ async function saveSettings() {
   updateLastSentUI();
   pushScheduleToWorker();
   scheduleRender('settings-ui', 'sns');
+  // Keep Account & Security view in sync
+  const accSec = document.getElementById('view-account-security');
+  if (accSec && accSec.classList.contains('active')) renderAccountSecurity();
 }
 
 function _capitaliseFirst(str) {
@@ -424,9 +427,8 @@ function renderAccountSecurity() {
   // Email
   const emailEl = document.getElementById('acc-sec-email');
   if (emailEl) emailEl.textContent = settings.email || _kvEmail || '—';
-  // 2FA button
-  const n2faBtn = document.getElementById('notes-2fa-acc-btn');
-  if (n2faBtn) n2faBtn.textContent = settings.notes2fa ? 'Disable' : 'Enable';
+  // MFA status
+  _updateMfaSettingsUI();
 }
 
 function saveSettingsCountry(val) {
@@ -5168,7 +5170,7 @@ function showView(name, btn) {
   if (name === 'shopping')  renderShoppingList();
   if (name === 'savings')   renderSavingsView();
   if (name === 'grocery')   renderGrocery();
-  if (name === 'notes')     renderNotes();
+  if (name === 'notes')     { renderNotes(); setTimeout(_maybeShowMfaPrompt, 400); }
   if (name === 'account-security') renderAccountSecurity();
   if (name === 'stock') {
     updateStockShoppingHeader('stock');
@@ -5914,16 +5916,36 @@ function updatePriceLinks() {
 //  DATA MANAGEMENT
 // ═══════════════════════════════════════════
 function exportData() {
-  requireReauth('Re-enter your passphrase to export your data.', _doExportData, { passkeyAllowed: true });
+  const hasSecure = notes.some(n => n.locked);
+  if (hasSecure) {
+    openModal('export-secure-notes-modal');
+  } else {
+    requireReauth('Re-enter your passphrase to export your data.', _doExportData, { passkeyAllowed: true });
+  }
 }
 
-function _doExportData() {
+function exportDataWithSecureChoice(includeUnlocked) {
+  closeModal('export-secure-notes-modal');
+  requireReauth('Re-enter your passphrase to export your data.', () => _doExportData(includeUnlocked), { passkeyAllowed: true });
+}
+
+function _doExportData(includeSecureNotes = false) {
+  // Build notes export - exclude body of locked notes unless includeSecureNotes
+  const exportNotes = notes.map(n => {
+    if (n.locked && !includeSecureNotes) return { ...n, body: undefined };
+    if (n.locked && includeSecureNotes) {
+      const unlocked = _noteUnlocked.get(n.id);
+      return { ...n, body: unlocked?.body || '[locked — could not export]', locked: false };
+    }
+    return n;
+  });
   const exportPayload = {
     items,
     settings,
     groceries:   groceryItems,
     reminders,
     departments: groceryDepts,
+    notes:       exportNotes,
     exportedAt:  new Date().toISOString(),
     version:     2,
   };
@@ -7627,7 +7649,13 @@ async function reauthWithPassphrase() {
 
     errEl.style.display = 'none';
     document.getElementById('reauth-modal').style.display = 'none';
-    if (_reauthCallback) { _reauthCallback(); _reauthCallback = null; }
+    // MFA intercept — if enabled, show MFA modal before running callback
+    if (_mfaEnabled() && _reauthCallback) {
+      await _mfaIntercept(_reauthCallback);
+      _reauthCallback = null;
+    } else {
+      if (_reauthCallback) { _reauthCallback(); _reauthCallback = null; }
+    }
   } catch(e) {
     errEl.textContent = e.message; errEl.style.display = 'block';
   }
@@ -7667,7 +7695,12 @@ async function reauthWithPasskey() {
     if (!finishRes.ok) { const d = await finishRes.json().catch(()=>({})); throw new Error(d.error || 'Verification failed'); }
     errEl.style.display = 'none';
     document.getElementById('reauth-modal').style.display = 'none';
-    if (_reauthCallback) { _reauthCallback(); _reauthCallback = null; }
+    if (_mfaEnabled() && _reauthCallback) {
+      await _mfaIntercept(_reauthCallback);
+      _reauthCallback = null;
+    } else {
+      if (_reauthCallback) { _reauthCallback(); _reauthCallback = null; }
+    }
   } catch(e) {
     if (e.name === 'NotAllowedError') { errEl.textContent = 'Verification cancelled'; }
     else { errEl.textContent = e.message; }
@@ -10229,9 +10262,7 @@ function renderSettingsForUser() {
   // Populate display name field
   const nameEl = document.getElementById('setting-display-name');
   if (nameEl && settings.displayName) nameEl.value = settings.displayName;
-  // Notes 2FA button state
-  const n2faBtn = document.getElementById('notes-2fa-settings-btn');
-  if (n2faBtn) n2faBtn.textContent = settings.notes2fa ? 'Disable' : 'Enable';
+  _updateMfaSettingsUI();
   updateHeaderGreeting();
   _updateSidebarProfile();
   renderAccountSecurity();
@@ -14795,21 +14826,38 @@ async function renderNotes() {
     return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
   });
 
+  // Trash filter: show empty state instead of add-note prompt
+  if (_notesFilter === 'trash' && !visible.length) {
+    grid.innerHTML = '';
+    if (empty) { empty.style.display = 'block'; empty.innerHTML = `<div style="font-size:48px;margin-bottom:12px">🗑️</div><div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--text)">Trash is empty</div><p style="font-size:13px;line-height:1.6">Deleted notes appear here for 30 days.</p>`; }
+    return;
+  }
+  if (_notesFilter === 'archived' && !visible.length) {
+    grid.innerHTML = '';
+    if (empty) { empty.style.display = 'block'; empty.innerHTML = `<div style="font-size:48px;margin-bottom:12px">📦</div><div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--text)">No archived notes</div><p style="font-size:13px;line-height:1.6">Archived notes appear here.</p>`; }
+    return;
+  }
+
+  // Trash: show "Empty trash" button
+  const trashBar = _notesFilter === 'trash' && visible.length
+    ? `<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="emptyNotesTrash()">🗑️ Empty trash</button></div>`
+    : '';
+
   // Render pinned section header if mixed
   const hasPinned   = visible.some(n => n.pinned);
   const hasUnpinned = visible.some(n => !n.pinned);
   const showHeaders = hasPinned && hasUnpinned && _notesFilter === 'all';
 
-  let html = '';
+  let html = trashBar;
   let inPinned = false;
 
   visible.forEach(n => {
     if (showHeaders && n.pinned && !inPinned) {
-      html += `<div class="notes-section-label" style="grid-column:1/-1">📌 Pinned</div>`;
+      html += `<div class="notes-section-label" style="padding:8px 0 4px">📌 Pinned</div>`;
       inPinned = true;
     }
     if (showHeaders && !n.pinned && inPinned) {
-      html += `<div class="notes-section-label" style="grid-column:1/-1">📝 Notes</div>`;
+      html += `<div class="notes-section-label" style="padding:8px 0 4px">📝 Notes</div>`;
       inPinned = false;
     }
     html += _noteCardHTML(n);
@@ -14824,38 +14872,198 @@ function _noteCardHTML(n) {
   const unlocked   = _noteUnlocked.get(n.id);
   const rawPreview = n.locked && !isUnlocked ? '' : (unlocked?.body || n.body || '');
   const _tmpDiv = document.createElement('div'); _tmpDiv.innerHTML = rawPreview;
-  const preview = (_tmpDiv.innerText || _tmpDiv.textContent || '').slice(0, 200);
+  const previewText = (_tmpDiv.innerText || _tmpDiv.textContent || '').trim();
+  // Show up to 2 lines worth (~120 chars)
+  const preview = previewText.slice(0, 120) + (previewText.length > 120 ? '…' : '');
 
-  // Reminder badge
+  const isSelected = _noteSelected.has(n.id);
+
+  // Status icons
+  const icons = [];
+  if (n.pinned)  icons.push('📌');
+  if (n.locked)  icons.push(isUnlocked ? '🔓' : '🔒');
+  if (n.archived) icons.push('📦');
+  if (n.deletedAt) {
+    const daysLeft = Math.max(0, 30 - Math.round((Date.now()-new Date(n.deletedAt).getTime())/86400000));
+    icons.push(`<span style="font-size:10px;color:var(--danger);font-family:var(--mono)">🗑 ${daysLeft}d</span>`);
+  }
   const linkedReminder = reminders.find(r => r.linkedNoteId === n.id);
-  let reminderBadge = '';
   if (linkedReminder) {
     const days = getReminderDaysUntil(linkedReminder);
     const col  = days !== null && days < 0 ? 'var(--danger)' : days !== null && days <= 7 ? 'var(--warn)' : 'var(--muted)';
-    reminderBadge = `<span class="note-card-badge" style="background:rgba(255,255,255,0.08);color:${col}">🔔${days !== null ? (days < 0 ? ' overdue' : ` ${days}d`) : ''}</span>`;
+    icons.push(`<span style="color:${col};font-size:12px">🔔</span>`);
   }
-
-  // Tick summary
-  let tickBadge = '';
   if (n.tickBoxesVisible && n.tickBoxes) {
-    const total   = Object.keys(n.tickBoxes).length;
+    const total = Object.keys(n.tickBoxes).length;
     const checked = Object.values(n.tickBoxes).filter(Boolean).length;
-    if (total > 0) tickBadge = `<span class="note-card-badge" style="background:rgba(76,187,138,0.15);color:var(--ok)">☑ ${checked}/${total}</span>`;
+    if (total > 0) icons.push(`<span style="font-size:10px;color:var(--ok);font-family:var(--mono)">☑${checked}/${total}</span>`);
   }
+  const iconHtml = icons.length ? `<span style="display:flex;align-items:center;gap:4px;flex-shrink:0">${icons.join('')}</span>` : '';
 
-  const trashLabel = n.deletedAt
-    ? `<span style="font-size:10px;color:var(--danger);font-family:var(--mono)">🗑 ${Math.max(0,30 - Math.round((Date.now()-new Date(n.deletedAt).getTime())/86400000))}d left</span>`
+  // Secure-now button for unlocked secure notes
+  const secureNowBtn = (n.locked && isUnlocked)
+    ? `<button onclick="event.stopPropagation();secureLockNote('${n.id}')" class="note-secure-now-btn" title="Lock again">🔒 Secure now</button>`
     : '';
 
-  return `<div class="note-card${n.pinned?' pinned':''}" style="${bgStyle}" onclick="openNoteEditor('${n.id}')" role="button" tabindex="0" onkeydown="if(event.key==='Enter')openNoteEditor('${n.id}')">
-    <div class="note-card-title">${esc(n.title)}</div>
-    ${n.locked && !isUnlocked
-      ? `<div class="note-card-lock">🔒 Tap to unlock</div>`
-      : preview ? `<div class="note-card-preview">${esc(preview)}</div>` : ''}
-    <div class="note-card-meta">
-      ${reminderBadge}${tickBadge}${trashLabel}
+  const selectedStyle = isSelected ? 'border-color:var(--accent);background:rgba(232,168,56,0.08);' : '';
+
+  return `<div class="note-row${isSelected?' note-selected':''}" style="${bgStyle}${selectedStyle}"
+    data-note-id="${n.id}"
+    onclick="_noteRowClick('${n.id}', event)"
+    ontouchstart="_noteRowTouchStart('${n.id}', event)"
+    ontouchend="_noteRowTouchEnd('${n.id}', event)"
+    role="button" tabindex="0">
+    <div style="display:flex;align-items:flex-start;gap:10px">
+      ${_noteSelected.size > 0 ? `<div class="note-select-indicator${isSelected?' checked':''}" onclick="event.stopPropagation();_toggleNoteSelect('${n.id}')"></div>` : ''}
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div class="note-card-title" style="flex:1">${esc(n.title) || '<span style="color:var(--muted);font-style:italic">Untitled</span>'}</div>
+          ${iconHtml}
+        </div>
+        ${n.locked && !isUnlocked
+          ? `<div style="font-size:12px;color:var(--muted);margin-top:3px">🔒 Tap to unlock</div>`
+          : preview ? `<div class="note-row-preview">${esc(preview)}</div>` : ''}
+      </div>
     </div>
+    ${secureNowBtn}
   </div>`;
+}
+
+// ── Note row interaction ──────────────────
+let _noteLongPressTimer = null;
+let _noteTouchMoved = false;
+let _noteSelected = new Set();
+
+function _noteRowTouchStart(id, e) {
+  _noteTouchMoved = false;
+  _noteLongPressTimer = setTimeout(() => {
+    if (!_noteTouchMoved) {
+      navigator.vibrate && navigator.vibrate(40);
+      _startNoteMultiSelect(id);
+    }
+  }, 500);
+}
+
+function _noteRowTouchEnd(id, e) {
+  clearTimeout(_noteLongPressTimer);
+}
+
+document.addEventListener('touchmove', () => { _noteTouchMoved = true; clearTimeout(_noteLongPressTimer); }, { passive: true });
+
+function _noteRowClick(id, e) {
+  if (_noteSelected.size > 0) {
+    _toggleNoteSelect(id);
+    return;
+  }
+  openNoteEditor(id);
+}
+
+function _startNoteMultiSelect(id) {
+  _noteSelected.add(id);
+  renderNotes();
+  _showNoteActionBar();
+}
+
+function _toggleNoteSelect(id) {
+  if (_noteSelected.has(id)) _noteSelected.delete(id);
+  else _noteSelected.add(id);
+  if (_noteSelected.size === 0) { _hideNoteActionBar(); }
+  else { _showNoteActionBar(); }
+  renderNotes();
+}
+
+function _showNoteActionBar() {
+  let bar = document.getElementById('note-action-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'note-action-bar';
+    bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);padding:16px 20px;display:flex;gap:10px;justify-content:space-around;z-index:350;box-shadow:0 -4px 20px rgba(0,0,0,0.3)';
+    bar.innerHTML = `
+      <button class="btn btn-ghost" onclick="_bulkNoteAction('pin')" style="flex:1;flex-direction:column;gap:4px;height:56px;font-size:12px">📌<br>Pin</button>
+      <button class="btn btn-ghost" onclick="_bulkNoteAction('archive')" style="flex:1;flex-direction:column;gap:4px;height:56px;font-size:12px">📦<br>Archive</button>
+      <button class="btn btn-danger" onclick="_bulkNoteAction('delete')" style="flex:1;flex-direction:column;gap:4px;height:56px;font-size:12px">🗑️<br>Delete</button>
+      <button class="btn btn-ghost" onclick="_cancelNoteSelect()" style="flex:1;flex-direction:column;gap:4px;height:56px;font-size:12px">✕<br>Cancel</button>
+    `;
+    document.body.appendChild(bar);
+  }
+  // Update count
+  bar.querySelector('button:last-child').parentElement;
+  const countEl = document.getElementById('note-action-count');
+  if (!countEl) {
+    const label = document.createElement('div');
+    label.id = 'note-action-count';
+    label.style.cssText = 'position:fixed;bottom:76px;left:50%;transform:translateX(-50%);background:var(--accent);color:#111;font-size:12px;font-weight:700;padding:3px 12px;border-radius:99px;z-index:351';
+    document.body.appendChild(label);
+  }
+  document.getElementById('note-action-count').textContent = `${_noteSelected.size} selected`;
+}
+
+function _hideNoteActionBar() {
+  document.getElementById('note-action-bar')?.remove();
+  document.getElementById('note-action-count')?.remove();
+}
+
+function _cancelNoteSelect() {
+  _noteSelected.clear();
+  _hideNoteActionBar();
+  renderNotes();
+}
+
+async function _bulkNoteAction(action) {
+  const ids = [..._noteSelected];
+  for (const id of ids) {
+    const n = notes.find(x => x.id === id);
+    if (!n) continue;
+    if (action === 'pin')     { n.pinned = !n.pinned; n.updatedAt = new Date().toISOString(); }
+    if (action === 'archive') { n.archived = true; n.updatedAt = new Date().toISOString(); }
+    if (action === 'delete')  { n.deletedAt = new Date().toISOString(); n.updatedAt = new Date().toISOString(); }
+  }
+  _noteSelected.clear();
+  _hideNoteActionBar();
+  await saveNotes();
+  await _syncNoteIfConnected();
+  renderNotes();
+  toast(action === 'pin' ? 'Updated ✓' : action === 'archive' ? 'Archived ✓' : 'Moved to trash');
+}
+
+async function emptyNotesTrash() {
+  if (!confirm('Permanently delete all notes in trash? This cannot be undone.')) return;
+  const trashIds = notes.filter(n => !!n.deletedAt).map(n => n.id);
+  for (const id of trashIds) {
+    const n = notes.find(x => x.id === id);
+    if (n?.locked) {
+      await fetchKV(`${WORKER_URL}/note/body/delete`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ emailHash:_kvEmailHash, ..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier}, noteId:id }),
+      }).catch(()=>{});
+    }
+  }
+  notes = notes.filter(n => !n.deletedAt);
+  await saveNotes();
+  await _syncNoteIfConnected();
+  renderNotes();
+  toast('Trash emptied');
+}
+
+async function secureLockNote(noteId) {
+  const n = notes.find(x => x.id === noteId);
+  if (!n || !n.locked) return;
+  const state = _noteUnlocked.get(noteId);
+  if (!state) return;
+  if (!await kvEnsureKey()) return;
+  const ciphertext = await kvEncrypt(_kvKey, state.body);
+  const res = await fetchKV(`${WORKER_URL}/note/body/push`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ emailHash:_kvEmailHash, ..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier}, noteId, ciphertext }),
+  });
+  if (res.ok) {
+    _noteUnlocked.delete(noteId);
+    clearTimeout(state.inactivityTimer);
+    // Close editor if open
+    if (_editingNoteId === noteId) { _closeNoteEditorImmediate(); }
+    renderNotes();
+    toast('Note locked 🔒');
+  }
 }
 
 function setNotesFilter(f, btn) {
@@ -15025,9 +15233,9 @@ async function unlockCurrentNote() {
   requireReauth(
     `Unlock "${n.title}"`,
     async () => {
-      // First factor passed — check if 2FA needed
-      if (settings.notes2fa) {
-        await _sendNoteOtp();
+      // First factor passed — check if MFA needed
+      if (_mfaEnabled()) {
+        await _mfaIntercept(() => _fetchAndUnlockNote(n));
       } else {
         await _fetchAndUnlockNote(n);
       }
@@ -15131,8 +15339,8 @@ async function toggleNoteArchive() {
 async function toggleNoteLock() {
   const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
   if (!n.locked) {
-    // Suggest 2FA when first securing a note (after a short delay so editor is visible)
-    setTimeout(_maybeShowNotes2faPrompt, 800);
+    // Suggest MFA when first securing a note
+    setTimeout(_maybeShowMfaPrompt, 800);
   }
   if (n.locked) {
     // Unlocking — pull body from server and embed locally
@@ -15425,19 +15633,9 @@ async function deleteNoteReminder() {
   toast('Reminder removed');
 }
 
-// ── 2FA toggle ────────────────────────────
+// ── 2FA toggle (delegated to MFA system) ──────────────────────────
 async function toggleNotes2fa() {
-  if (!kvConnected) { toast('Sign in to change this setting'); return; }
-  if (settings.notes2fa) {
-    if (!confirm('Disable 2-step unlock for secure notes?')) return;
-    settings.notes2fa = false;
-  } else {
-    settings.notes2fa = true;
-    toast('2-step unlock enabled — you\'ll receive an email code when unlocking secure notes');
-  }
-  await _saveSettings();
-  await _syncNoteIfConnected();
-  renderNotes();
+  if (_mfaEnabled()) { await mfaDisable(); } else { openMfaSetup(); }
 }
 
 // ── Keyboard shortcuts ────────────────────
@@ -15491,37 +15689,312 @@ function _updateFmtBtnStates() {
   });
 }
 
-// ── 2FA prompt modal ──────────────────────
-const _NOTES_2FA_DISMISSED_KEY = 'stockroom_notes2fa_dismissed';
 
-function _maybeShowNotes2faPrompt() {
-  if (settings.notes2fa) return; // already on
-  if (localStorage.getItem(_NOTES_2FA_DISMISSED_KEY)) return; // dismissed before
-  // Only prompt if signed in (no point offering 2FA to local-only users)
-  if (!kvConnected) return;
-  openModal('notes-2fa-prompt-modal');
+
+// ═══════════════════════════════════════════
+//  BACK BUTTON / SWIPE INTERSTITIAL
+// ═══════════════════════════════════════════
+
+(function _initBackInterstitial() {
+  // Push a history entry so the first back press/swipe hits us, not the previous page
+  history.pushState({ stockroom: true }, '');
+
+  let _touchStartX = 0;
+  let _touchStartY = 0;
+  const SWIPE_THRESHOLD = 40; // px from left edge to count as back swipe
+
+  document.addEventListener('touchstart', e => {
+    _touchStartX = e.touches[0].clientX;
+    _touchStartY = e.touches[0].clientY;
+  }, { passive: true });
+
+  document.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - _touchStartX;
+    const dy = Math.abs(e.changedTouches[0].clientY - _touchStartY);
+    // Swipe right from left edge (back gesture on iOS/Android)
+    if (_touchStartX < 30 && dx > 60 && dy < 80) {
+      _showBackInterstitial();
+    }
+  }, { passive: true });
+
+  window.addEventListener('popstate', e => {
+    if (window._allowExit) { window._allowExit = false; return; }
+    if (e.state?.stockroom) return; // our own push — ignore
+    history.pushState({ stockroom: true }, '');
+    _showBackInterstitial();
+  });
+})();
+
+function _showBackInterstitial() {
+  // Don't show if wizard is active or a modal is already open
+  if (document.body.classList.contains('wizard-active')) return;
+  if (document.querySelector('.modal-backdrop.open')) return;
+  openModal('back-interstitial-modal');
 }
 
-function enableNotes2faFromPrompt() {
-  settings.notes2fa = true;
-  _saveSettings().catch(() => {});
-  closeModal('notes-2fa-prompt-modal');
-  toast('2-step unlock enabled ✓');
+function backInterstitialGoTo(view) {
+  closeModal('back-interstitial-modal');
+  const tab = [...document.querySelectorAll('.tab, .app-nav-link')].find(t =>
+    t.dataset?.view === view || t.textContent?.toLowerCase().includes(view)
+  );
+  if (tab) { tab.click(); } else { navTo(view); }
 }
 
-function dismissNotes2faPrompt() {
-  localStorage.setItem(_NOTES_2FA_DISMISSED_KEY, '1');
-  closeModal('notes-2fa-prompt-modal');
+function backInterstitialExit() {
+  closeModal('back-interstitial-modal');
+  window._allowExit = true;
+  history.back();
 }
 
-// Also expose toggleNotes2fa for Settings
-async function toggleNotes2fa() {
-  if (!kvConnected) { toast('Sign in to change this setting'); return; }
-  settings.notes2fa = !settings.notes2fa;
+// ═══════════════════════════════════════════
+//  MULTIFACTOR AUTHENTICATION (MFA)
+// ═══════════════════════════════════════════
+// Replaces notes-only 2FA. Works across the whole app via requireReauth hook.
+// Methods: Email OTP | TOTP (authenticator app)
+// settings.mfa = { enabled: bool, method: 'email'|'totp', totpSecret: string|null }
+
+const _MFA_DISMISSED_KEY = 'stockroom_mfa_prompt_dismissed';
+let _pendingMfaCallback = null;
+let _mfaOtpSent = false;
+let _mfaVerifyAltMode = false;
+
+function _mfaEnabled() {
+  return !!(settings.mfa?.enabled);
+}
+
+function _mfaMethod() {
+  return settings.mfa?.method || 'email';
+}
+
+// Called after first-factor (passphrase/passkey) succeeds — intercept if MFA enabled
+async function _mfaIntercept(callback) {
+  if (!_mfaEnabled()) { callback(); return; }
+  _pendingMfaCallback = callback;
+  _mfaVerifyAltMode = false;
+  // Show correct hint on open
+  const totpHint  = document.getElementById('mfa-totp-hint');
+  const emailHint = document.getElementById('mfa-email-hint');
+  const altBtn    = document.getElementById('mfa-alt-method');
+  const isPrimaryTotp = _mfaMethod() === 'totp';
+  if (totpHint)  totpHint.style.display  = isPrimaryTotp ? 'block' : 'none';
+  if (emailHint) emailHint.style.display = isPrimaryTotp ? 'none'  : 'block';
+  if (altBtn)    altBtn.textContent = isPrimaryTotp ? 'Use email code instead' : 'Use authenticator app instead';
+  if (_mfaMethod() === 'email') {
+    await _mfaSendEmailOtp();
+  }
+  openModal('mfa-verify-modal');
+}
+
+async function _mfaSendEmailOtp() {
+  const errEl = document.getElementById('mfa-otp-error');
+  if (errEl) errEl.textContent = '';
+  try {
+    const res = await fetchKV(`${WORKER_URL}/note/otp/send`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ emailHash:_kvEmailHash, ..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier} }),
+    });
+    if (!res.ok) {
+      const d = await res.json();
+      if (errEl) errEl.textContent = d.error || 'Could not send code';
+    }
+    _mfaOtpSent = true;
+  } catch(e) {
+    if (errEl) errEl.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function mfaVerifySubmit() {
+  // Effective method: if alt mode active, use the opposite of primary
+  const primary = _mfaMethod();
+  const method  = _mfaVerifyAltMode ? (primary === 'totp' ? 'email' : 'totp') : primary;
+  const codeEl = document.getElementById('mfa-verify-code');
+  const errEl  = document.getElementById('mfa-otp-error');
+  const code   = codeEl?.value.trim().replace(/\s/g,'');
+  if (!code || code.length < 6) { if(errEl) errEl.textContent='Enter your 6-digit code'; return; }
+
+  if (method === 'email') {
+    const res = await fetchKV(`${WORKER_URL}/note/otp/verify`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ emailHash:_kvEmailHash, otp:code }),
+    });
+    const d = await res.json();
+    if (!res.ok) { if(errEl) errEl.textContent = d.error || 'Incorrect code'; return; }
+  } else {
+    // TOTP verify client-side
+    const secret = settings.mfa?.totpSecret;
+    if (!secret) { if(errEl) errEl.textContent = 'TOTP not configured'; return; }
+    const valid = await _totpVerify(secret, code);
+    if (!valid) { if(errEl) errEl.textContent = 'Incorrect code — check your authenticator app'; return; }
+  }
+
+  closeModal('mfa-verify-modal');
+  if (codeEl) codeEl.value = '';
+  _mfaVerifyAltMode = false;
+  if (_pendingMfaCallback) { const cb = _pendingMfaCallback; _pendingMfaCallback = null; cb(); }
+}
+
+async function mfaResendCode() {
+  await _mfaSendEmailOtp();
+  toast('Code sent ✓');
+}
+
+function mfaSwitchMethod() {
+  _mfaVerifyAltMode = !_mfaVerifyAltMode;
+  const primary = _mfaMethod();
+  // After toggle: effective method is opposite of primary when alt active
+  const effectiveTotp = _mfaVerifyAltMode ? (primary !== 'totp') : (primary === 'totp');
+  const totpHint  = document.getElementById('mfa-totp-hint');
+  const emailHint = document.getElementById('mfa-email-hint');
+  const altBtn    = document.getElementById('mfa-alt-method');
+  if (totpHint)  totpHint.style.display  = effectiveTotp ? 'block' : 'none';
+  if (emailHint) emailHint.style.display = effectiveTotp ? 'none'  : 'block';
+  if (altBtn)    altBtn.textContent = effectiveTotp ? 'Use email code instead' : 'Use authenticator app instead';
+  // If switching to email in alt mode, send the OTP now
+  if (_mfaVerifyAltMode && !effectiveTotp) {
+    _mfaSendEmailOtp();
+  }
+}
+
+// ── TOTP (RFC 6238) pure JS implementation ──
+function _totpGenerate(secret, time) {
+  // Decode base32 secret
+  const b32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const clean = secret.toUpperCase().replace(/[^A-Z2-7]/g,'');
+  let bits = '';
+  for (const c of clean) bits += b32.indexOf(c).toString(2).padStart(5,'0');
+  const bytes = new Uint8Array(bits.length >> 3);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(bits.slice(i*8,(i+1)*8),2);
+
+  // Counter = floor(time / 30)
+  const counter = Math.floor((time || Date.now()/1000) / 30);
+  const msg = new Uint8Array(8);
+  let c = counter;
+  for (let i = 7; i >= 0; i--) { msg[i] = c & 0xff; c >>>= 8; }
+
+  // HMAC-SHA1
+  async function hmacSha1(key, data) {
+    const k = await crypto.subtle.importKey('raw', key, {name:'HMAC',hash:'SHA-1'}, false, ['sign']);
+    return new Uint8Array(await crypto.subtle.sign('HMAC', k, data));
+  }
+  // Synchronous fallback via Web Crypto (returns promise — caller must await)
+  return hmacSha1(bytes, msg).then(hash => {
+    const offset = hash[19] & 0xf;
+    const code = ((hash[offset]&0x7f)<<24|(hash[offset+1]&0xff)<<16|(hash[offset+2]&0xff)<<8|(hash[offset+3]&0xff)) % 1000000;
+    return code.toString().padStart(6,'0');
+  });
+}
+
+async function _totpVerify(secret, code) {
+  // Accept current window and ±1 step
+  const t = Date.now()/1000;
+  for (const offset of [-30, 0, 30]) {
+    if (await _totpGenerate(secret, t + offset) === code) return true;
+  }
+  return false;
+}
+
+function _totpNewSecret() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  return Array.from(crypto.getRandomValues(new Uint8Array(20))).map(b => chars[b % 32]).join('');
+}
+
+function _totpOtpauthUrl(secret) {
+  const label = encodeURIComponent(`STOCKROOM:${settings.email || _kvEmail || 'account'}`);
+  const issuer = encodeURIComponent('STOCKROOM');
+  return `otpauth://totp/${label}?secret=${secret}&issuer=${issuer}&digits=6&period=30`;
+}
+
+// Simple QR code via Google Charts API (no external lib needed)
+function _totpQrUrl(secret) {
+  const data = encodeURIComponent(_totpOtpauthUrl(secret));
+  return `https://chart.googleapis.com/chart?cht=qr&chs=220x220&chl=${data}&choe=UTF-8`;
+}
+
+// ── MFA setup flow ──────────────────────────
+async function openMfaSetup() {
+  const modal = document.getElementById('mfa-setup-modal');
+  if (!modal) return;
+  // Pre-generate TOTP secret
+  const secret = _totpNewSecret();
+  window._pendingTotpSecret = secret;
+  const qrImg = document.getElementById('mfa-totp-qr');
+  if (qrImg) qrImg.src = _totpQrUrl(secret);
+  const secretEl = document.getElementById('mfa-totp-secret-display');
+  if (secretEl) secretEl.textContent = secret.match(/.{1,4}/g).join(' ');
+  // Default to email method
+  _mfaSetupSelectMethod('email');
+  const emailDisp = document.getElementById('mfa-setup-email-display');
+  if (emailDisp) emailDisp.textContent = settings.email || _kvEmail || '(your email)';
+  openModal('mfa-setup-modal');
+}
+
+function _mfaSetupSelectMethod(method) {
+  document.getElementById('mfa-setup-email-section').style.display = method === 'email' ? 'block' : 'none';
+  document.getElementById('mfa-setup-totp-section').style.display  = method === 'totp'  ? 'block' : 'none';
+  document.querySelectorAll('.mfa-method-btn').forEach(b => b.classList.toggle('active', b.dataset.method === method));
+  window._pendingMfaSetupMethod = method;
+}
+
+async function mfaSetupConfirm() {
+  const method = window._pendingMfaSetupMethod || 'email';
+  const errEl  = document.getElementById('mfa-setup-error');
+  if (errEl) errEl.textContent = '';
+
+  if (method === 'totp') {
+    const codeEl = document.getElementById('mfa-setup-totp-code');
+    const code   = codeEl?.value.trim();
+    if (!code || code.length < 6) { if(errEl) errEl.textContent='Enter the 6-digit code from your app'; return; }
+    const valid = await _totpVerify(window._pendingTotpSecret, code);
+    if (!valid) { if(errEl) errEl.textContent='Code incorrect — make sure your device time is accurate'; return; }
+    settings.mfa = { enabled:true, method:'totp', totpSecret: window._pendingTotpSecret };
+  } else {
+    settings.mfa = { enabled:true, method:'email', totpSecret: null };
+  }
+
   await _saveSettings();
-  toast(settings.notes2fa ? '2-step unlock enabled ✓' : '2-step unlock disabled');
+  closeModal('mfa-setup-modal');
+  closeModal('mfa-prompt-modal');
+  localStorage.setItem(_MFA_DISMISSED_KEY, 'enabled');
+  _updateMfaSettingsUI();
+  toast('Multifactor authentication enabled ✓');
 }
 
-// Render note reminder cards in the Reminders tab
-// Patch into reminderCardHTML — note reminders show 📝 label
-const _origReminderCardHTML = typeof reminderCardHTML === 'function' ? reminderCardHTML : null;
+async function mfaDisable() {
+  if (!confirm('Disable multifactor authentication? Your account will only require your passphrase or passkey.')) return;
+  settings.mfa = { enabled:false, method:'email', totpSecret:null };
+  await _saveSettings();
+  _updateMfaSettingsUI();
+  toast('MFA disabled');
+}
+
+function _updateMfaSettingsUI() {
+  const enabledEl = document.getElementById('mfa-settings-status');
+  const toggleBtn = document.getElementById('mfa-settings-toggle');
+  if (enabledEl) enabledEl.textContent = _mfaEnabled() ? `Enabled (${_mfaMethod() === 'totp' ? 'Authenticator app' : 'Email code'})` : 'Disabled';
+  if (toggleBtn) toggleBtn.textContent = _mfaEnabled() ? 'Disable' : 'Enable';
+  // Also update old notes2fa references for compat
+  const n2faBtn = document.getElementById('notes-2fa-settings-btn');
+  if (n2faBtn) n2faBtn.textContent = _mfaEnabled() ? 'Disable' : 'Enable';
+  const n2faAcc = document.getElementById('notes-2fa-acc-btn');
+  if (n2faAcc) n2faAcc.textContent = _mfaEnabled() ? 'Disable' : 'Enable';
+}
+
+// First-visit MFA prompt (shown when entering Notes if MFA not set up)
+function _maybeShowMfaPrompt() {
+  if (_mfaEnabled()) return;
+  if (localStorage.getItem(_MFA_DISMISSED_KEY)) return;
+  if (!kvConnected) return;
+  openModal('mfa-prompt-modal');
+}
+
+function dismissMfaPrompt() {
+  localStorage.setItem(_MFA_DISMISSED_KEY, 'dismissed');
+  closeModal('mfa-prompt-modal');
+}
+
+// Hook MFA into requireReauth — override the reauthWithPassphrase success path
+// MFA fires after credential verified, before callback
+const _origReauthWithPassphrase = reauthWithPassphrase;
+// (reauthWithPassphrase is async and defined earlier; we wrap its callback dispatch)
+// Instead of monkey-patching, we intercept at _reauthCallback dispatch level:
+// Patch: after reauthWithPassphrase verifies, if MFA enabled, show MFA modal before running callback
