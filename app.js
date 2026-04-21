@@ -375,6 +375,48 @@ async function saveSettings() {
   scheduleRender('settings-ui', 'sns');
 }
 
+function _capitaliseFirst(str) {
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+function saveDisplayName(raw) {
+  const name = _capitaliseFirst((raw || '').trim());
+  settings.displayName = name;
+  _saveSettings();
+  updateHeaderGreeting();
+}
+
+function wizardNameInput(raw) {
+  const name = _capitaliseFirst((raw || '').trim());
+  settings.displayName = name || undefined;
+}
+
+function updateHeaderGreeting() {
+  const el = document.getElementById('header-greeting');
+  if (!el) return;
+  const name = settings.displayName ? _capitaliseFirst(settings.displayName) : '';
+  if (name) {
+    el.style.display = 'flex';
+    el.innerHTML = `Hi, <strong style="color:var(--text);margin-left:3px">${esc(name)}</strong>`;
+  } else {
+    el.style.display = 'flex';
+    el.innerHTML = `Hi, <strong style="color:var(--text);margin-left:3px">there</strong> — <a href="#" onclick="event.preventDefault();openSettingsSection('settings-prefs-body')" style="color:var(--accent);margin-left:4px;font-size:11px">add your name</a>`;
+  }
+}
+
+function openSettingsSection(sectionId) {
+  const tab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Settings'));
+  if (tab) showView('settings', tab);
+  setTimeout(() => {
+    const el = document.getElementById(sectionId);
+    if (el) {
+      el.classList.add('open');
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, 150);
+}
+
 async function _saveSettings() {
   // Internal: save settings without triggering UI side effects
   await dbPut('settings', 'settings', settings);
@@ -625,12 +667,16 @@ async function wizardFinish() {
     // Pick up country selected before app.js loaded (via inline stub)
     if (window._pendingCountry) wizardCountry = window._pendingCountry;
     settings.country = wizardCountry;
+    // Capture name from wizard if entered
+    const wizardName = document.getElementById('wizard-display-name')?.value?.trim();
+    if (wizardName) settings.displayName = _capitaliseFirst(wizardName);
     await _saveSettings();
     localStorage.setItem('stockroom_seen', '1');
     await setCountrySetForDevice();
     document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
     const countrySel = document.getElementById('setting-country');
     if (countrySel) countrySel.value = settings.country;
+    updateHeaderGreeting();
     scheduleRender(...RENDER_REGIONS);
     const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
     if (stockTab) showView('stock', stockTab);
@@ -10146,6 +10192,10 @@ function renderSettingsForUser() {
       card.style.display = signedIn ? '' : 'none';
     }
   });
+  // Populate display name field
+  const nameEl = document.getElementById('setting-display-name');
+  if (nameEl && settings.displayName) nameEl.value = settings.displayName;
+  updateHeaderGreeting();
 }
 
 function updateSyncPill(state, provider) {
@@ -10261,6 +10311,9 @@ const FAB_ACTIONS = {
   reminders: [
     { icon: '➕', label: 'Add Reminder', action: () => { closeFab(); openAddReminderModal(); } },
   ],
+  notes: [
+    { icon: '📝', label: 'New Note', action: () => { closeFab(); openNoteEditor(null); } },
+  ],
 };
 
 // Grocery FAB: primary action slides left, secondaries stack above
@@ -10290,9 +10343,9 @@ function updateFab(viewName) {
   const container = document.getElementById('fab-container');
   if (!btn || !container) return;
   const isMobile  = window.innerWidth < 700;
-  // FAB only on stock, grocery, reminders — never on settings/savings/report/notes
+  // FAB only on stock, grocery, reminders, notes — never on settings/savings/report
   const hasActions = (viewName === 'grocery' || !!FAB_ACTIONS[viewName])
-                  && viewName !== 'settings' && viewName !== 'savings' && viewName !== 'report' && viewName !== 'notes';
+                  && viewName !== 'settings' && viewName !== 'savings' && viewName !== 'report';
   if (!isMobile || !hasActions) {
     btn.style.display = 'none'; container.style.display = 'none';
     closeFab(true); return;
@@ -10611,37 +10664,75 @@ function _activeGroceryList() {
 // ── Grocery List Picker (shown when 2+ lists exist) ──────────────────────
 function renderGroceryListPicker() {
   const body = document.getElementById('grocery-list-body');
-  const query = (document.getElementById('grocery-search')?.value || '').toLowerCase();
+  const query = (document.getElementById('grocery-search')?.value || '').toLowerCase().trim();
   if (!body) return;
 
   let lists = [...groceryLists].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
-  if (query) lists = lists.filter(l => l.name.toLowerCase().includes(query) || (l.store||'').toLowerCase().includes(query));
+
+  // When searching, include lists that match by name/store OR contain matching items
+  if (query) {
+    lists = lists.filter(l => {
+      const nameMatch  = l.name.toLowerCase().includes(query) || (l.store||'').toLowerCase().includes(query);
+      const itemMatch  = groceryItems.some(i =>
+        (i.listId||'default') === l.id &&
+        (i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query))
+      );
+      return nameMatch || itemMatch;
+    });
+  }
 
   const fmt = d => new Date(d).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
 
   body.innerHTML = `
     <div style="margin-bottom:16px">
       ${lists.map(l => {
-        const itemCount = groceryItems.filter(i => (i.listId||'default') === l.id && !i.checked).length;
-        const checked   = groceryItems.filter(i => (i.listId||'default') === l.id &&  i.checked).length;
+        const allListItems = groceryItems.filter(i => (i.listId||'default') === l.id);
+        const itemCount = allListItems.filter(i => !i.checked).length;
+        const checked   = allListItems.filter(i =>  i.checked).length;
+
+        // When searching, show matching items inline under the list card
+        let matchingItemsHTML = '';
+        if (query) {
+          const matchingItems = allListItems.filter(i =>
+            i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query)
+          );
+          if (matchingItems.length) {
+            matchingItemsHTML = `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+              ${matchingItems.slice(0,5).map(i =>
+                `<div style="font-size:12px;color:var(--muted);padding:2px 0;display:flex;align-items:center;gap:6px">
+                  <span style="color:${i.checked?'var(--ok)':'var(--text)'}">${i.checked?'☑':'☐'}</span>
+                  <span style="${i.checked?'text-decoration:line-through':''}">${esc(i.name)}</span>
+                  ${i.notes?`<span style="color:var(--muted);font-style:italic">— ${esc(i.notes)}</span>`:''}
+                </div>`
+              ).join('')}
+              ${matchingItems.length > 5 ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">+${matchingItems.length - 5} more</div>` : ''}
+            </div>`;
+          }
+        }
+
         return `
-        <div onclick="switchGroceryList('${l.id}')" style="display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;cursor:pointer;transition:border-color 0.15s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-          <div style="flex:1;min-width:0">
-            <div style="font-size:16px;font-weight:700;margin-bottom:3px">${esc(l.name)}</div>
-            <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">
-              ${l.store ? `🏪 ${esc(l.store)} · ` : ''}${itemCount} item${itemCount!==1?'s':''} remaining${checked ? ` · ${checked} done` : ''} · ${fmt(l.updatedAt)}
+        <div onclick="switchGroceryList('${l.id}')" style="display:flex;flex-direction:column;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;cursor:pointer;transition:border-color 0.15s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+          <div style="display:flex;align-items:center;gap:14px">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:16px;font-weight:700;margin-bottom:3px">${esc(l.name)}</div>
+              <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">
+                ${l.store ? `🏪 ${esc(l.store)} · ` : ''}${itemCount} item${itemCount!==1?'s':''} remaining${checked ? ` · ${checked} done` : ''} · ${fmt(l.updatedAt)}
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0">
+              <button onclick="event.stopPropagation();editGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:13px;cursor:pointer">✏️</button>
+              ${groceryLists.length > 1 ? `<button onclick="event.stopPropagation();deleteGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--danger);font-size:13px;cursor:pointer">🗑️</button>` : ''}
             </div>
           </div>
-          <div style="display:flex;gap:6px;flex-shrink:0">
-            <button onclick="event.stopPropagation();editGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:13px;cursor:pointer">✏️</button>
-            ${groceryLists.length > 1 ? `<button onclick="event.stopPropagation();deleteGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--danger);font-size:13px;cursor:pointer">🗑️</button>` : ''}
-          </div>
+          ${matchingItemsHTML}
         </div>`; }).join('')}
     </div>`;
 
   // Update subtitle
   const sub = document.getElementById('grocery-subtitle');
-  if (sub) sub.textContent = `${groceryLists.length} list${groceryLists.length!==1?'s':''} · tap to open`;
+  if (sub) sub.textContent = query
+    ? `${lists.length} list${lists.length!==1?'s':''} match`
+    : `${groceryLists.length} list${groceryLists.length!==1?'s':''} · tap to open`;
 }
 
 function switchGroceryList(id) {
@@ -12142,17 +12233,11 @@ function _updateGroceryItemDOM(id, checked) {
 
 async function clearCheckedGrocery() {
   if (!canWrite('groceries')) { showLockBanner('groceries'); return; }
-  groceryItems = groceryItems.filter(item => {
-    // Only touch items in the active list
-    if ((item.listId || 'default') !== activeGroceryListId) return true;
-    if (!item.checked) return true;
-    if (item.recurring) {
-      item.checked   = false;
-      item.checkedAt = null;
-      item.addedAt   = new Date().toISOString();
-      return true;
-    }
-    return false;
+  groceryItems = groceryItems.map(item => {
+    if ((item.listId || 'default') !== activeGroceryListId) return item;
+    if (!item.checked) return item;
+    // Uncheck all checked items (recurring and non-recurring alike)
+    return { ...item, checked: false, checkedAt: null };
   });
   await _saveGroceryLocal();
   _smartSync.enqueueGrocery();
@@ -13835,6 +13920,7 @@ async function init() {
   scheduleRender(...RENDER_REGIONS);
   loadNotifSettings();
   initHouseholdSettingsUI();
+  updateHeaderGreeting();
   await loadReminders();
   await loadNotes();
   await loadGrocery();
