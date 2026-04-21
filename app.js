@@ -14837,7 +14837,7 @@ async function openNoteEditor(noteId) {
     _noteUndoStack.set(n.id, []);
     _noteRedoStack.set(n.id, []);
     _renderNoteEditor(n, false);
-    overlay.classList.add('open');
+    overlay.style.display = 'flex';
     document.getElementById('note-title-input')?.focus();
     return;
   }
@@ -14858,7 +14858,7 @@ async function openNoteEditor(noteId) {
 
   const isUnlocked = _noteUnlocked.has(noteId);
   _renderNoteEditor(n, n.locked && !isUnlocked);
-  overlay.classList.add('open');
+  overlay.style.display = 'flex';
 
   if (n.locked && !isUnlocked) {
     // Show lock screen, hide body
@@ -14902,7 +14902,7 @@ function _renderNoteEditor(n, showLock) {
 
 function _showNoteLockScreen(n) {
   document.getElementById('note-editor-body').style.display  = 'none';
-  document.getElementById('note-lock-screen').classList.add('open');
+  document.getElementById('note-lock-screen').style.display = 'flex';
   document.getElementById('note-lock-title').textContent = n.title;
   document.getElementById('note-lock-error').textContent = '';
   document.getElementById('note-otp-section').style.display = 'none';
@@ -14911,7 +14911,7 @@ function _showNoteLockScreen(n) {
 }
 
 function _showNoteBody(n) {
-  document.getElementById('note-lock-screen').classList.remove('open');
+  document.getElementById('note-lock-screen').style.display = 'none';
   document.getElementById('note-editor-body').style.display = 'flex';
 
   const unlocked = _noteUnlocked.get(n.id);
@@ -14929,7 +14929,7 @@ function _showNoteBody(n) {
 
 function _closeNoteEditorImmediate() {
   const overlay = document.getElementById('note-editor-overlay');
-  if (overlay) overlay.classList.remove('open');
+  if (overlay) overlay.style.display = 'none';
   _editingNoteId = null;
   _noteBodyDirty = false;
   clearTimeout(_noteAutoSaveTimer);

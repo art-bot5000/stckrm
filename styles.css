@@ -838,7 +838,4 @@
 .note-swatch:hover, .note-swatch.active { border-color:var(--accent); }
 .notes-section-label { font-size:11px; font-weight:700; color:var(--accent); font-family:var(--mono);
   letter-spacing:1.5px; text-transform:uppercase; margin-bottom:10px; }
-#note-editor-overlay.open { display:flex; }
-#note-lock-screen.open { display:flex; }
-#note-editor-overlay { display:none; }
-#note-lock-screen { display:none; }
+/* note overlay display controlled via JS inline style */
