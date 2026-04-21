@@ -792,149 +792,6 @@
   </div>
 
   <!-- REMINDERS VIEW -->
-  <!-- NOTES VIEW -->
-  <div class="view" id="view-notes">
-    <div id="notes-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-      <div>
-        <h2 style="font-size:18px;font-weight:700">📝 Notes</h2>
-        <p style="font-size:12px;color:var(--muted);margin-top:3px">Personal encrypted notes</p>
-      </div>
-      <button class="btn btn-primary btn-sm" onclick="openNoteEditor(null)">+ New note</button>
-    </div>
-    <!-- Search -->
-    <div style="position:relative;margin-bottom:12px">
-      <input type="text" id="notes-search" class="grocery-search" placeholder="Search notes…" oninput="filterNotes(this.value)" autocomplete="off" style="padding-left:36px">
-      <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:14px;pointer-events:none">🔍</span>
-    </div>
-    <!-- Filter chips -->
-    <div id="notes-chips" style="display:flex;gap:8px;margin-bottom:16px;overflow-x:auto;padding-bottom:2px">
-      <button class="note-chip active" onclick="setNotesFilter('all',this)">All</button>
-      <button class="note-chip" onclick="setNotesFilter('pinned',this)">📌 Pinned</button>
-      <button class="note-chip" onclick="setNotesFilter('archived',this)">📦 Archived</button>
-      <button class="note-chip" onclick="setNotesFilter('trash',this)">🗑️ Trash</button>
-    </div>
-    <!-- 2FA settings banner (shown when notes2fa is enabled) -->
-    <div id="notes-2fa-banner" style="display:none;background:rgba(76,187,138,0.1);border:1px solid rgba(76,187,138,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;display:none;align-items:center;justify-content:space-between;gap:8px">
-      <span style="color:var(--ok)">🔐 2-factor authentication active for secure notes</span>
-      <button class="btn btn-ghost btn-sm" onclick="toggleNotes2fa()" style="font-size:11px">Disable</button>
-    </div>
-    <!-- Notes grid -->
-    <div id="notes-grid"></div>
-    <!-- Empty state -->
-    <div id="notes-empty" style="display:none;text-align:center;padding:60px 20px;color:var(--muted)">
-      <div style="font-size:48px;margin-bottom:12px">📝</div>
-      <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--text)">No notes yet</div>
-      <p style="font-size:13px;line-height:1.6;margin-bottom:20px">Jot down anything — shopping info, instructions, ideas. Mark a note as secure to require authentication before the content loads.</p>
-      <button class="btn btn-primary" onclick="openNoteEditor(null)">+ Add your first note</button>
-    </div>
-  </div>
-
-  <!-- NOTES 2FA PROMPT MODAL (shown on first visit to notes if 2FA not configured) -->
-  <div class="modal-backdrop" id="notes-2fa-prompt-modal">
-    <div class="modal" style="text-align:center">
-      <div style="font-size:40px;margin-bottom:12px">🔐</div>
-      <h3 style="font-size:16px;font-weight:700;margin-bottom:8px">Secure your notes further?</h3>
-      <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px">Enable 2-step unlock to require an email code in addition to your passphrase or passkey when opening a secure note. Recommended for sensitive content.</p>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <button class="btn btn-primary" onclick="enableNotes2faFromPrompt()">Enable 2-step unlock</button>
-        <button class="btn btn-ghost" onclick="dismissNotes2faPrompt()">Skip for now</button>
-        <p style="font-size:11px;color:var(--muted)">You can enable this later in Settings → Preferences</p>
-      </div>
-    </div>
-  </div>
-
-  <!-- NOTE EDITOR (full-screen overlay) -->
-  <div id="note-editor-overlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:400;flex-direction:column;overflow:hidden">
-    <!-- Top bar: back + meta actions -->
-    <div id="note-editor-toolbar" style="display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0">
-      <button class="btn btn-ghost btn-sm" onclick="closeNoteEditor()" style="margin-right:4px;flex-shrink:0">← Back</button>
-      <div style="flex:1"></div>
-      <button class="note-tool-btn" id="note-btn-pin"     onclick="toggleNotePin()"          title="Pin">📌</button>
-      <button class="note-tool-btn" id="note-btn-archive" onclick="toggleNoteArchive()"       title="Archive">📦</button>
-      <button class="note-tool-btn" id="note-btn-lock"    onclick="toggleNoteLock()"          title="Secure note">🔓</button>
-      <button class="note-tool-btn" id="note-btn-tick"    onclick="toggleNoteTicks()"         title="Tick boxes">☑️</button>
-      <button class="note-tool-btn" id="note-btn-reminder" onclick="openNoteReminder()"       title="Reminder">🔔</button>
-      <div id="note-colour-wrap" style="position:relative">
-        <button class="note-tool-btn" id="note-btn-colour" onclick="toggleNoteColourPicker()" title="Colour">🎨</button>
-        <div id="note-colour-picker" style="display:none;position:absolute;top:38px;right:0;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px;gap:6px;z-index:10;flex-wrap:wrap;width:132px">
-          <div class="note-swatch" data-colour="" style="background:var(--surface2)" onclick="setNoteColour('')" title="Default"></div>
-          <div class="note-swatch" style="background:#3a2e10" data-colour="#3a2e10" onclick="setNoteColour('#3a2e10')" title="Amber"></div>
-          <div class="note-swatch" style="background:#3a1010" data-colour="#3a1010" onclick="setNoteColour('#3a1010')" title="Red"></div>
-          <div class="note-swatch" style="background:#0e3020" data-colour="#0e3020" onclick="setNoteColour('#0e3020')" title="Green"></div>
-          <div class="note-swatch" style="background:#0e2040" data-colour="#0e2040" onclick="setNoteColour('#0e2040')" title="Blue"></div>
-          <div class="note-swatch" style="background:#2a1040" data-colour="#2a1040" onclick="setNoteColour('#2a1040')" title="Purple"></div>
-          <div class="note-swatch" style="background:#0e3030" data-colour="#0e3030" onclick="setNoteColour('#0e3030')" title="Teal"></div>
-        </div>
-      </div>
-      <button class="note-tool-btn" onclick="copyNoteBody()"    title="Copy">📋</button>
-      <button class="note-tool-btn" onclick="deleteCurrentNote()" title="Delete" style="color:var(--danger)">🗑️</button>
-    </div>
-    <!-- Formatting toolbar -->
-    <div id="note-fmt-toolbar" style="display:flex;align-items:center;gap:2px;padding:6px 12px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0;flex-wrap:wrap">
-      <button class="note-fmt-btn" onmousedown="event.preventDefault();noteFmt('bold')"          title="Bold"><b>B</b></button>
-      <button class="note-fmt-btn" onmousedown="event.preventDefault();noteFmt('italic')"        title="Italic"><i>I</i></button>
-      <button class="note-fmt-btn" onmousedown="event.preventDefault();noteFmt('underline')"     title="Underline"><u>U</u></button>
-      <button class="note-fmt-btn" onmousedown="event.preventDefault();noteFmt('strikeThrough')" title="Strikethrough"><s>S</s></button>
-      <div style="width:1px;height:18px;background:var(--border);margin:0 4px;flex-shrink:0"></div>
-      <button class="note-fmt-btn" onmousedown="event.preventDefault();noteFmt('insertUnorderedList')" title="Bullet list">• ≡</button>
-      <button class="note-fmt-btn" onmousedown="event.preventDefault();noteFmt('insertOrderedList')"   title="Numbered list">1 ≡</button>
-      <div style="width:1px;height:18px;background:var(--border);margin:0 4px;flex-shrink:0"></div>
-      <button class="note-fmt-btn" id="note-undo-btn" onmousedown="event.preventDefault();document.execCommand('undo')"  title="Undo">↩</button>
-      <button class="note-fmt-btn" id="note-redo-btn" onmousedown="event.preventDefault();document.execCommand('redo')"  title="Redo">↪</button>
-    </div>
-    <!-- Lock screen (shown for locked notes before auth) -->
-    <div id="note-lock-screen" style="display:none;flex:1;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:32px">
-      <div style="font-size:48px">🔒</div>
-      <div id="note-lock-title" style="font-size:18px;font-weight:700;color:var(--text);text-align:center"></div>
-      <p style="font-size:13px;color:var(--muted);text-align:center;max-width:280px;line-height:1.6">This note requires authentication to view.</p>
-      <button class="btn btn-primary" onclick="unlockCurrentNote()" id="note-unlock-btn">🔑 Unlock note</button>
-      <!-- 2FA OTP entry (shown after first factor) -->
-      <div id="note-otp-section" style="display:none;flex-direction:column;align-items:center;gap:10px;width:100%;max-width:280px">
-        <p style="font-size:13px;color:var(--muted);text-align:center">Enter the 6-digit code sent to your email.</p>
-        <input type="text" id="note-otp-input" inputmode="numeric" maxlength="6" placeholder="000000"
-          style="font-family:var(--mono);font-size:28px;letter-spacing:10px;text-align:center;padding:14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);width:100%"
-          oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,6)"
-          onkeydown="if(event.key==='Enter')verifyNoteOtp()">
-        <button class="btn btn-primary" onclick="verifyNoteOtp()">Verify code →</button>
-        <button class="btn btn-ghost btn-sm" onclick="resendNoteOtp()">Resend code</button>
-        <div id="note-otp-error" style="font-size:12px;color:var(--danger)"></div>
-      </div>
-      <div id="note-lock-error" style="font-size:12px;color:var(--danger)"></div>
-    </div>
-    <!-- Editor body -->
-    <div id="note-editor-body" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
-      <input type="text" id="note-title-input" placeholder="Title (required)" maxlength="120"
-        style="font-size:18px;font-weight:700;padding:16px 16px 8px;background:transparent;border:none;border-bottom:1px solid var(--border);color:var(--text);outline:none;width:100%;font-family:var(--sans)"
-        oninput="onNoteTitleInput()">
-      <!-- Tick-boxes body -->
-      <div id="note-ticks-body" style="display:none;flex:1;overflow-y:auto;padding:12px 16px"></div>
-      <!-- Rich text contenteditable body -->
-      <div id="note-body-input" contenteditable="true" spellcheck="true"
-        data-placeholder="Write your note here…"
-        style="flex:1;padding:14px 16px;background:transparent;color:var(--text);font-size:15px;line-height:1.7;outline:none;font-family:var(--sans);overflow-y:auto;min-height:0;word-break:break-word"
-        oninput="onNoteBodyInput()"></div>
-    </div>
-    <!-- Secure badge -->
-    <div id="note-secure-badge" style="display:none;position:absolute;bottom:16px;right:16px;background:rgba(232,168,56,0.15);border:1px solid rgba(232,168,56,0.3);border-radius:8px;padding:4px 10px;font-size:11px;color:var(--accent);font-family:var(--mono)">🔒 SECURE NOTE</div>
-  </div>
-
-  <!-- NOTE REMINDER MODAL -->
-  <div class="modal-backdrop" id="note-reminder-modal">
-    <div class="modal">
-      <div style="font-size:16px;font-weight:700;margin-bottom:16px">🔔 Note Reminder</div>
-      <label class="form-label">Remind me on</label>
-      <input class="form-input" type="datetime-local" id="note-reminder-datetime" style="margin-bottom:16px">
-      <label class="form-label">Notes (optional)</label>
-      <input class="form-input" type="text" id="note-reminder-notes" placeholder="What to do…" style="margin-bottom:20px">
-      <div id="note-reminder-existing" style="display:none;margin-bottom:16px;padding:10px;background:var(--surface2);border-radius:8px;font-size:12px;color:var(--muted)"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-primary" onclick="saveNoteReminder()">Save reminder</button>
-        <button class="btn btn-danger btn-sm" id="note-reminder-delete-btn" style="display:none" onclick="deleteNoteReminder()">Remove</button>
-        <button class="btn btn-ghost" onclick="closeModal('note-reminder-modal')">Cancel</button>
-      </div>
-    </div>
-  </div>
-
   <div class="view" id="view-reminders">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:10px">
       <div>
@@ -1327,14 +1184,15 @@
           style="width:140px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-family:var(--sans);font-size:13px"
           oninput="saveDisplayName(this.value)">
       </div>
+      <div class="setting-row">
+        <div class="setting-info"><h4>Notes 2-step unlock</h4><p>Require an email code when unlocking a secure note</p></div>
+        <button id="notes-2fa-settings-btn" class="btn btn-ghost btn-sm" onclick="toggleNotes2fa()">Enable</button>
+      </div>
+      <div class="setting-row">
         <div class="setting-info"><h4>Low stock warning</h4><p>Warn when stock drops below this %</p></div>
         <select id="setting-threshold" onchange="saveSettings()" style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
           <option value="10">10%</option><option value="15">15%</option><option value="20" selected>20%</option><option value="25">25%</option><option value="33">33%</option>
         </select>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info"><h4>Notes 2-step unlock</h4><p>Require an email code when unlocking a secure note</p></div>
-        <button id="notes-2fa-settings-btn" class="btn btn-ghost btn-sm" onclick="toggleNotes2fa()">Enable</button>
       </div>
       <div class="setting-row">
         <div class="setting-info"><h4>Country / Region</h4><p>Sets which stores appear in the price checker</p></div>
@@ -1872,8 +1730,7 @@
   </div>
 </div>
 
-<!-- Share Target Modal -->
-<div class="modal-backdrop" id="share-target-modal">
+<!-- Share Target Modal -->\n<div class="modal-backdrop" id="share-target-modal">
   <div class="modal" style="max-width:420px;max-height:80vh;overflow-y:auto">
     <h2 id="share-target-modal-title">👤 Add Person</h2>
     <input type="hidden" id="share-target-code">
@@ -2231,5 +2088,134 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
   +
 </button>
 
+
+<!-- NOTES VIEW -->
+<div class="view" id="view-notes">
+  <div id="notes-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+    <div>
+      <h2 style="font-size:18px;font-weight:700">📝 Notes</h2>
+      <p style="font-size:12px;color:var(--muted);margin-top:3px">Personal encrypted notes</p>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="openNoteEditor(null)">+ New note</button>
+  </div>
+  <div style="position:relative;margin-bottom:12px">
+    <input type="text" id="notes-search" class="grocery-search" placeholder="Search notes…" oninput="filterNotes(this.value)" autocomplete="off" style="padding-left:36px">
+    <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:14px;pointer-events:none">🔍</span>
+  </div>
+  <div id="notes-chips" style="display:flex;gap:8px;margin-bottom:16px;overflow-x:auto;padding-bottom:2px">
+    <button class="note-chip active" onclick="setNotesFilter('all',this)">All</button>
+    <button class="note-chip" onclick="setNotesFilter('pinned',this)">📌 Pinned</button>
+    <button class="note-chip" onclick="setNotesFilter('archived',this)">📦 Archived</button>
+    <button class="note-chip" onclick="setNotesFilter('trash',this)">🗑️ Trash</button>
+  </div>
+  <div id="notes-grid"></div>
+  <div id="notes-empty" style="display:none;text-align:center;padding:60px 20px;color:var(--muted)">
+    <div style="font-size:48px;margin-bottom:12px">📝</div>
+    <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--text)">No notes yet</div>
+    <p style="font-size:13px;line-height:1.6;margin-bottom:20px">Jot down anything — shopping info, instructions, ideas. Mark a note as secure to require authentication before the content loads.</p>
+    <button class="btn btn-primary" onclick="openNoteEditor(null)">+ Add your first note</button>
+  </div>
+</div>
+
+<!-- NOTES 2FA PROMPT MODAL -->
+<div class="modal-backdrop" id="notes-2fa-prompt-modal">
+  <div class="modal" style="text-align:center">
+    <div style="font-size:40px;margin-bottom:12px">🔐</div>
+    <h3 style="font-size:16px;font-weight:700;margin-bottom:8px">Secure your notes further?</h3>
+    <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px">Enable 2-step unlock to require an email code in addition to your passphrase or passkey when opening a secure note.</p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn btn-primary" onclick="enableNotes2faFromPrompt()">Enable 2-step unlock</button>
+      <button class="btn btn-ghost" onclick="dismissNotes2faPrompt()">Skip for now</button>
+      <p style="font-size:11px;color:var(--muted)">You can enable this later in Settings → Preferences</p>
+    </div>
+  </div>
+</div>
+
+<!-- NOTE EDITOR (full-screen overlay, placed at body level to escape stacking contexts) -->
+<div id="note-editor-overlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:400;flex-direction:column;overflow:hidden">
+  <!-- Top bar -->
+  <div id="note-editor-toolbar" style="display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0">
+    <button class="btn btn-ghost btn-sm" onclick="closeNoteEditor()" style="margin-right:4px;flex-shrink:0">← Back</button>
+    <div style="flex:1"></div>
+    <button class="note-tool-btn" id="note-btn-pin"      onclick="toggleNotePin()"         title="Pin">📌</button>
+    <button class="note-tool-btn" id="note-btn-archive"  onclick="toggleNoteArchive()"      title="Archive">📦</button>
+    <button class="note-tool-btn" id="note-btn-lock"     onclick="toggleNoteLock()"         title="Secure note">🔓</button>
+    <button class="note-tool-btn" id="note-btn-tick"     onclick="toggleNoteTicks()"        title="Tick boxes">☑️</button>
+    <button class="note-tool-btn" id="note-btn-reminder" onclick="openNoteReminder()"       title="Reminder">🔔</button>
+    <div id="note-colour-wrap" style="position:relative">
+      <button class="note-tool-btn" id="note-btn-colour" onclick="toggleNoteColourPicker()" title="Colour">🎨</button>
+      <div id="note-colour-picker" style="display:none;position:absolute;top:38px;right:0;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px;gap:6px;z-index:10;flex-wrap:wrap;width:132px">
+        <div class="note-swatch" data-colour="" style="background:var(--surface2)" onclick="setNoteColour('')"       title="Default"></div>
+        <div class="note-swatch" data-colour="#3a2e10" style="background:#3a2e10"  onclick="setNoteColour('#3a2e10')" title="Amber"></div>
+        <div class="note-swatch" data-colour="#3a1010" style="background:#3a1010"  onclick="setNoteColour('#3a1010')" title="Red"></div>
+        <div class="note-swatch" data-colour="#0e3020" style="background:#0e3020"  onclick="setNoteColour('#0e3020')" title="Green"></div>
+        <div class="note-swatch" data-colour="#0e2040" style="background:#0e2040"  onclick="setNoteColour('#0e2040')" title="Blue"></div>
+        <div class="note-swatch" data-colour="#2a1040" style="background:#2a1040"  onclick="setNoteColour('#2a1040')" title="Purple"></div>
+        <div class="note-swatch" data-colour="#0e3030" style="background:#0e3030"  onclick="setNoteColour('#0e3030')" title="Teal"></div>
+      </div>
+    </div>
+    <button class="note-tool-btn" onclick="copyNoteBody()"     title="Copy">📋</button>
+    <button class="note-tool-btn" onclick="deleteCurrentNote()" title="Delete" style="color:var(--danger)">🗑️</button>
+  </div>
+  <!-- Formatting toolbar -->
+  <div id="note-fmt-toolbar" style="display:flex;align-items:center;gap:2px;padding:6px 12px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0;flex-wrap:wrap">
+    <button class="note-fmt-btn" onmousedown="event.preventDefault();noteFmt('bold')"               title="Bold"><b>B</b></button>
+    <button class="note-fmt-btn" onmousedown="event.preventDefault();noteFmt('italic')"             title="Italic"><i>I</i></button>
+    <button class="note-fmt-btn" onmousedown="event.preventDefault();noteFmt('underline')"          title="Underline"><u>U</u></button>
+    <button class="note-fmt-btn" onmousedown="event.preventDefault();noteFmt('strikeThrough')"      title="Strikethrough"><s>S</s></button>
+    <div style="width:1px;height:18px;background:var(--border);margin:0 4px;flex-shrink:0"></div>
+    <button class="note-fmt-btn" onmousedown="event.preventDefault();noteFmt('insertUnorderedList')" title="Bullet list">• ≡</button>
+    <button class="note-fmt-btn" onmousedown="event.preventDefault();noteFmt('insertOrderedList')"   title="Numbered list">1 ≡</button>
+    <div style="width:1px;height:18px;background:var(--border);margin:0 4px;flex-shrink:0"></div>
+    <button class="note-fmt-btn" id="note-undo-btn" onmousedown="event.preventDefault();document.execCommand('undo')" title="Undo">↩</button>
+    <button class="note-fmt-btn" id="note-redo-btn" onmousedown="event.preventDefault();document.execCommand('redo')" title="Redo">↪</button>
+  </div>
+  <!-- Lock screen -->
+  <div id="note-lock-screen" style="display:none;flex:1;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:32px">
+    <div style="font-size:48px">🔒</div>
+    <div id="note-lock-title" style="font-size:18px;font-weight:700;color:var(--text);text-align:center"></div>
+    <p style="font-size:13px;color:var(--muted);text-align:center;max-width:280px;line-height:1.6">This note requires authentication to view.</p>
+    <button class="btn btn-primary" onclick="unlockCurrentNote()" id="note-unlock-btn">🔑 Unlock note</button>
+    <div id="note-otp-section" style="display:none;flex-direction:column;align-items:center;gap:10px;width:100%;max-width:280px">
+      <p style="font-size:13px;color:var(--muted);text-align:center">Enter the 6-digit code sent to your email.</p>
+      <input type="text" id="note-otp-input" inputmode="numeric" maxlength="6" placeholder="000000"
+        style="font-family:var(--mono);font-size:28px;letter-spacing:10px;text-align:center;padding:14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);width:100%"
+        oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,6)"
+        onkeydown="if(event.key==='Enter')verifyNoteOtp()">
+      <button class="btn btn-primary" onclick="verifyNoteOtp()">Verify code →</button>
+      <button class="btn btn-ghost btn-sm" onclick="resendNoteOtp()">Resend code</button>
+      <div id="note-otp-error" style="font-size:12px;color:var(--danger)"></div>
+    </div>
+    <div id="note-lock-error" style="font-size:12px;color:var(--danger)"></div>
+  </div>
+  <!-- Editor body -->
+  <div id="note-editor-body" style="flex:1;display:none;flex-direction:column;overflow:hidden">
+    <input type="text" id="note-title-input" placeholder="Title (required)" maxlength="120"
+      style="font-size:18px;font-weight:700;padding:14px 16px 10px;background:transparent;border:none;border-bottom:1px solid var(--border);color:var(--text);outline:none;width:100%;font-family:var(--sans);flex-shrink:0;box-sizing:border-box"
+      oninput="onNoteTitleInput()">
+    <div id="note-ticks-body" style="display:none;flex:1;overflow-y:auto;padding:12px 16px"></div>
+    <div id="note-body-input" contenteditable="true" spellcheck="true" data-placeholder="Write your note here…"
+      style="flex:1;padding:14px 16px;background:transparent;color:var(--text);font-size:15px;line-height:1.7;outline:none;font-family:var(--sans);overflow-y:auto;min-height:0;word-break:break-word"
+      oninput="onNoteBodyInput()"></div>
+  </div>
+  <div id="note-secure-badge" style="display:none;position:absolute;bottom:16px;right:16px;background:rgba(232,168,56,0.15);border:1px solid rgba(232,168,56,0.3);border-radius:8px;padding:4px 10px;font-size:11px;color:var(--accent);font-family:var(--mono)">🔒 SECURE NOTE</div>
+</div>
+
+<!-- NOTE REMINDER MODAL -->
+<div class="modal-backdrop" id="note-reminder-modal">
+  <div class="modal">
+    <div style="font-size:16px;font-weight:700;margin-bottom:16px">🔔 Note Reminder</div>
+    <label class="form-label">Remind me on</label>
+    <input class="form-input" type="datetime-local" id="note-reminder-datetime" style="margin-bottom:16px">
+    <label class="form-label">Notes (optional)</label>
+    <input class="form-input" type="text" id="note-reminder-notes" placeholder="What to do…" style="margin-bottom:20px">
+    <div id="note-reminder-existing" style="display:none;margin-bottom:16px;padding:10px;background:var(--surface2);border-radius:8px;font-size:12px;color:var(--muted)"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="saveNoteReminder()">Save reminder</button>
+      <button class="btn btn-danger btn-sm" id="note-reminder-delete-btn" style="display:none" onclick="deleteNoteReminder()">Remove</button>
+      <button class="btn btn-ghost" onclick="closeModal('note-reminder-modal')">Cancel</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

@@ -5124,7 +5124,8 @@ function showView(name, btn) {
   if (section && !canView(section)) { showLockBanner(section); return; }
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.getElementById('view-'+name).classList.add('active');
+  const targetView = document.getElementById('view-'+name);
+  if (targetView) targetView.classList.add('active');
   if (btn) btn.classList.add('active');
   // Sync sidebar active state
   document.querySelectorAll('.app-nav-link').forEach(a => {
@@ -14699,9 +14700,6 @@ async function renderNotes() {
   const empty = document.getElementById('notes-empty');
   if (!grid) return;
 
-  // Show 2FA prompt on first visit if not configured
-  _maybeShowNotes2faPrompt();
-
   const q = (_notesSearch || '').toLowerCase().trim();
   const now = Date.now();
   const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
@@ -14944,8 +14942,17 @@ function _closeNoteEditorImmediate() {
 }
 
 async function closeNoteEditor() {
+  const id = _editingNoteId;
   if (_noteBodyDirty) await _autoSaveNote();
   _closeNoteEditorImmediate();
+  // Discard untitled empty notes — don't litter the grid with blank cards
+  if (id) {
+    const n = notes.find(x => x.id === id);
+    if (n && !n.title?.trim() && !n.body?.trim() && !(document.getElementById('note-body-input')?.innerHTML?.trim())) {
+      notes = notes.filter(x => x.id !== id);
+      await saveNotes();
+    }
+  }
   renderNotes();
 }
 
@@ -15065,6 +15072,10 @@ async function toggleNoteArchive() {
 
 async function toggleNoteLock() {
   const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  if (!n.locked) {
+    // Suggest 2FA when first securing a note (after a short delay so editor is visible)
+    setTimeout(_maybeShowNotes2faPrompt, 800);
+  }
   if (n.locked) {
     // Unlocking — pull body from server and embed locally
     if (!confirm('Remove security from this note? The body will be stored with your other data.')) return;
