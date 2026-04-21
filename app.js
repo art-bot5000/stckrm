@@ -373,9 +373,6 @@ async function saveSettings() {
   updateLastSentUI();
   pushScheduleToWorker();
   scheduleRender('settings-ui', 'sns');
-  // Keep Account & Security view in sync
-  const accSec = document.getElementById('view-account-security');
-  if (accSec && accSec.classList.contains('active')) renderAccountSecurity();
 }
 
 function _capitaliseFirst(str) {
@@ -408,28 +405,7 @@ function updateHeaderGreeting() {
   }
 }
 
-function renderAccountSecurity() {
-  // Populate display name
-  const nameEl = document.getElementById('setting-display-name-sec');
-  if (nameEl && settings.displayName) nameEl.value = settings.displayName;
-  // Populate country
-  const countryEl = document.getElementById('setting-country-sec');
-  if (countryEl) {
-    COUNTRIES.forEach(c => {
-      if (!countryEl.querySelector(`option[value="${c.code}"]`)) {
-        const opt = document.createElement('option');
-        opt.value = c.code; opt.textContent = `${c.flag} ${c.name}`;
-        countryEl.appendChild(opt);
-      }
-    });
-    countryEl.value = settings.country || 'GB';
-  }
-  // Email
-  const emailEl = document.getElementById('acc-sec-email');
-  if (emailEl) emailEl.textContent = settings.email || _kvEmail || '—';
-  // MFA status
-  _updateMfaSettingsUI();
-}
+// renderAccountSecurity moved to Account & Security section below
 
 function saveSettingsCountry(val) {
   settings.country = val;
@@ -5170,7 +5146,7 @@ function showView(name, btn) {
   if (name === 'shopping')  renderShoppingList();
   if (name === 'savings')   renderSavingsView();
   if (name === 'grocery')   renderGrocery();
-  if (name === 'notes')     { renderNotes(); setTimeout(_maybeShowMfaPrompt, 400); }
+  if (name === 'notes')     renderNotes();
   if (name === 'account-security') renderAccountSecurity();
   if (name === 'stock') {
     updateStockShoppingHeader('stock');
@@ -10262,7 +10238,9 @@ function renderSettingsForUser() {
   // Populate display name field
   const nameEl = document.getElementById('setting-display-name');
   if (nameEl && settings.displayName) nameEl.value = settings.displayName;
-  _updateMfaSettingsUI();
+  // Notes 2FA button state
+  const n2faBtn = document.getElementById('notes-2fa-settings-btn');
+  if (n2faBtn) n2faBtn.textContent = settings.notes2fa ? 'Disable' : 'Enable';
   updateHeaderGreeting();
   _updateSidebarProfile();
   renderAccountSecurity();
@@ -14787,6 +14765,9 @@ async function renderNotes() {
   const empty = document.getElementById('notes-empty');
   if (!grid) return;
 
+  // Prompt to enable MFA on first visit to notes
+  _maybeShowMfaPrompt();
+
   const q = (_notesSearch || '').toLowerCase().trim();
   const now = Date.now();
   const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
@@ -15233,9 +15214,9 @@ async function unlockCurrentNote() {
   requireReauth(
     `Unlock "${n.title}"`,
     async () => {
-      // First factor passed — check if MFA needed
-      if (_mfaEnabled()) {
-        await _mfaIntercept(() => _fetchAndUnlockNote(n));
+      // First factor passed — check if 2FA needed
+      if (settings.notes2fa) {
+        await _sendNoteOtp();
       } else {
         await _fetchAndUnlockNote(n);
       }
@@ -15633,9 +15614,19 @@ async function deleteNoteReminder() {
   toast('Reminder removed');
 }
 
-// ── 2FA toggle (delegated to MFA system) ──────────────────────────
+// ── 2FA toggle ────────────────────────────
 async function toggleNotes2fa() {
-  if (_mfaEnabled()) { await mfaDisable(); } else { openMfaSetup(); }
+  if (!kvConnected) { toast('Sign in to change this setting'); return; }
+  if (settings.notes2fa) {
+    if (!confirm('Disable 2-step unlock for secure notes?')) return;
+    settings.notes2fa = false;
+  } else {
+    settings.notes2fa = true;
+    toast('2-step unlock enabled — you\'ll receive an email code when unlocking secure notes');
+  }
+  await _saveSettings();
+  await _syncNoteIfConnected();
+  renderNotes();
 }
 
 // ── Keyboard shortcuts ────────────────────
@@ -15689,6 +15680,36 @@ function _updateFmtBtnStates() {
   });
 }
 
+// ── 2FA prompt modal ──────────────────────
+const _NOTES_2FA_DISMISSED_KEY = 'stockroom_notes2fa_dismissed';
+
+function _maybeShowNotes2faPrompt() {
+  if (settings.notes2fa) return; // already on
+  if (localStorage.getItem(_NOTES_2FA_DISMISSED_KEY)) return; // dismissed before
+  // Only prompt if signed in (no point offering 2FA to local-only users)
+  if (!kvConnected) return;
+  openModal('notes-2fa-prompt-modal');
+}
+
+function enableNotes2faFromPrompt() {
+  settings.notes2fa = true;
+  _saveSettings().catch(() => {});
+  closeModal('notes-2fa-prompt-modal');
+  toast('2-step unlock enabled ✓');
+}
+
+function dismissNotes2faPrompt() {
+  localStorage.setItem(_NOTES_2FA_DISMISSED_KEY, '1');
+  closeModal('notes-2fa-prompt-modal');
+}
+
+// Also expose toggleNotes2fa for Settings
+async function toggleNotes2fa() {
+  if (!kvConnected) { toast('Sign in to change this setting'); return; }
+  settings.notes2fa = !settings.notes2fa;
+  await _saveSettings();
+  toast(settings.notes2fa ? '2-step unlock enabled ✓' : '2-step unlock disabled');
+}
 
 
 // ═══════════════════════════════════════════
@@ -15718,8 +15739,15 @@ function _updateFmtBtnStates() {
   }, { passive: true });
 
   window.addEventListener('popstate', e => {
-    if (window._allowExit) { window._allowExit = false; return; }
     if (e.state?.stockroom) return; // our own push — ignore
+    // Re-push so we stay in app
+    history.pushState({ stockroom: true }, '');
+    _showBackInterstitial();
+  });
+
+  window.addEventListener('popstate', e => {
+    // If the user navigated via our interstitial "Exit" button we cleared _allowExit
+    if (window._allowExit) { window._allowExit = false; return; }
     history.pushState({ stockroom: true }, '');
     _showBackInterstitial();
   });
@@ -15756,7 +15784,6 @@ function backInterstitialExit() {
 const _MFA_DISMISSED_KEY = 'stockroom_mfa_prompt_dismissed';
 let _pendingMfaCallback = null;
 let _mfaOtpSent = false;
-let _mfaVerifyAltMode = false;
 
 function _mfaEnabled() {
   return !!(settings.mfa?.enabled);
@@ -15770,15 +15797,6 @@ function _mfaMethod() {
 async function _mfaIntercept(callback) {
   if (!_mfaEnabled()) { callback(); return; }
   _pendingMfaCallback = callback;
-  _mfaVerifyAltMode = false;
-  // Show correct hint on open
-  const totpHint  = document.getElementById('mfa-totp-hint');
-  const emailHint = document.getElementById('mfa-email-hint');
-  const altBtn    = document.getElementById('mfa-alt-method');
-  const isPrimaryTotp = _mfaMethod() === 'totp';
-  if (totpHint)  totpHint.style.display  = isPrimaryTotp ? 'block' : 'none';
-  if (emailHint) emailHint.style.display = isPrimaryTotp ? 'none'  : 'block';
-  if (altBtn)    altBtn.textContent = isPrimaryTotp ? 'Use email code instead' : 'Use authenticator app instead';
   if (_mfaMethod() === 'email') {
     await _mfaSendEmailOtp();
   }
@@ -15804,9 +15822,7 @@ async function _mfaSendEmailOtp() {
 }
 
 async function mfaVerifySubmit() {
-  // Effective method: if alt mode active, use the opposite of primary
-  const primary = _mfaMethod();
-  const method  = _mfaVerifyAltMode ? (primary === 'totp' ? 'email' : 'totp') : primary;
+  const method = _mfaMethod();
   const codeEl = document.getElementById('mfa-verify-code');
   const errEl  = document.getElementById('mfa-otp-error');
   const code   = codeEl?.value.trim().replace(/\s/g,'');
@@ -15823,13 +15839,12 @@ async function mfaVerifySubmit() {
     // TOTP verify client-side
     const secret = settings.mfa?.totpSecret;
     if (!secret) { if(errEl) errEl.textContent = 'TOTP not configured'; return; }
-    const valid = await _totpVerify(secret, code);
+    const valid = _totpVerify(secret, code);
     if (!valid) { if(errEl) errEl.textContent = 'Incorrect code — check your authenticator app'; return; }
   }
 
   closeModal('mfa-verify-modal');
   if (codeEl) codeEl.value = '';
-  _mfaVerifyAltMode = false;
   if (_pendingMfaCallback) { const cb = _pendingMfaCallback; _pendingMfaCallback = null; cb(); }
 }
 
@@ -15839,20 +15854,17 @@ async function mfaResendCode() {
 }
 
 function mfaSwitchMethod() {
-  _mfaVerifyAltMode = !_mfaVerifyAltMode;
-  const primary = _mfaMethod();
-  // After toggle: effective method is opposite of primary when alt active
-  const effectiveTotp = _mfaVerifyAltMode ? (primary !== 'totp') : (primary === 'totp');
-  const totpHint  = document.getElementById('mfa-totp-hint');
+  const el = document.getElementById('mfa-alt-method');
+  if (!el) return;
+  const isTotp = _mfaMethod() === 'totp';
+  el.textContent = isTotp ? 'Use email code instead' : 'Use authenticator app instead';
+  // Toggle display of TOTP vs email instructions
+  const totpHint = document.getElementById('mfa-totp-hint');
   const emailHint = document.getElementById('mfa-email-hint');
-  const altBtn    = document.getElementById('mfa-alt-method');
-  if (totpHint)  totpHint.style.display  = effectiveTotp ? 'block' : 'none';
-  if (emailHint) emailHint.style.display = effectiveTotp ? 'none'  : 'block';
-  if (altBtn)    altBtn.textContent = effectiveTotp ? 'Use email code instead' : 'Use authenticator app instead';
-  // If switching to email in alt mode, send the OTP now
-  if (_mfaVerifyAltMode && !effectiveTotp) {
-    _mfaSendEmailOtp();
-  }
+  if (totpHint) totpHint.style.display = isTotp ? 'block' : 'none';
+  if (emailHint) emailHint.style.display = isTotp ? 'none' : 'block';
+  // Temp switch — don't save preference
+  el.dataset.altActive = el.dataset.altActive === '1' ? '' : '1';
 }
 
 // ── TOTP (RFC 6238) pure JS implementation ──
@@ -15998,3 +16010,193 @@ const _origReauthWithPassphrase = reauthWithPassphrase;
 // (reauthWithPassphrase is async and defined earlier; we wrap its callback dispatch)
 // Instead of monkey-patching, we intercept at _reauthCallback dispatch level:
 // Patch: after reauthWithPassphrase verifies, if MFA enabled, show MFA modal before running callback
+
+// ═══════════════════════════════════════════
+//  ACCOUNT & SECURITY VIEW
+// ═══════════════════════════════════════════
+
+// Override renderAccountSecurity to populate all the new fields
+function renderAccountSecurity() {
+  // Your Details
+  const nameEl = document.getElementById('setting-display-name-sec');
+  if (nameEl && settings.displayName) nameEl.value = settings.displayName;
+  const emailEl = document.getElementById('acc-sec-email');
+  if (emailEl) emailEl.textContent = settings.email || _kvEmail || '—';
+
+  // Country
+  const countryEl = document.getElementById('setting-country-sec');
+  if (countryEl && COUNTRIES) {
+    if (!countryEl.options.length) {
+      COUNTRIES.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.code; opt.textContent = `${c.flag} ${c.name}`;
+        countryEl.appendChild(opt);
+      });
+    }
+    countryEl.value = settings.country || 'GB';
+  }
+
+  // MFA status
+  _updateMfaSettingsUI();
+
+  // Passkeys (reuse existing passkey list if available)
+  const pkListSec = document.getElementById('passkey-list-sec');
+  const pkListMain = document.getElementById('passkey-list');
+  if (pkListSec && pkListMain && pkListMain.innerHTML !== pkListSec.innerHTML) {
+    pkListSec.innerHTML = pkListMain.innerHTML || '<p style="font-size:12px;color:var(--muted)">Sign in to manage passkeys.</p>';
+  }
+
+  // Trusted devices
+  const tdListSec = document.getElementById('trusted-devices-list-sec');
+  const tdListMain = document.getElementById('trusted-devices-list');
+  if (tdListSec && tdListMain) tdListSec.innerHTML = tdListMain.innerHTML;
+}
+
+function toggleTrustedDevicesPanel() {
+  const panel = document.getElementById('trusted-devices-panel-sec') || document.getElementById('trusted-devices-panel');
+  if (!panel) return;
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+// ── Deactivate Account ────────────────────
+function openDeactivateAccount() {
+  openModal('deactivate-account-modal');
+}
+
+async function confirmDeactivateAccount() {
+  closeModal('deactivate-account-modal');
+  try {
+    const res = await fetchKV(`${WORKER_URL}/user/deactivate`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        emailHash: _kvEmailHash,
+        ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+      }),
+    });
+    if (!res.ok) {
+      const d = await res.json();
+      toast('Could not deactivate: ' + (d.error || 'Unknown error'));
+      return;
+    }
+    toast('Account deactivated. You will be signed out.');
+    setTimeout(() => kvSignOut(), 2000);
+  } catch(e) {
+    toast('Error: ' + e.message);
+  }
+}
+
+// ── Delete Account Flow ───────────────────
+function openDeleteAccountFlow() {
+  const inp = document.getElementById('delete-confirm-input');
+  const err = document.getElementById('delete-confirm-error');
+  const btn = document.getElementById('delete-confirm-btn');
+  if (inp) inp.value = '';
+  if (err) err.textContent = '';
+  if (btn) btn.disabled = true;
+  openModal('delete-account-step1-modal');
+}
+
+function deleteAccountStep2() {
+  closeModal('delete-account-step1-modal');
+  openModal('delete-account-step2-modal');
+  setTimeout(() => document.getElementById('delete-confirm-input')?.focus(), 200);
+}
+
+function checkDeleteConfirmInput() {
+  const val = document.getElementById('delete-confirm-input')?.value || '';
+  const btn = document.getElementById('delete-confirm-btn');
+  if (btn) btn.disabled = val !== 'Delete';
+}
+
+function deleteAccountStep3() {
+  const val = document.getElementById('delete-confirm-input')?.value;
+  if (val !== 'Delete') {
+    const err = document.getElementById('delete-confirm-error');
+    if (err) err.textContent = 'Type exactly: Delete';
+    return;
+  }
+  closeModal('delete-account-step2-modal');
+  const ppErr = document.getElementById('delete-passphrase-error');
+  const ppInp = document.getElementById('delete-passphrase-input');
+  if (ppErr) ppErr.textContent = '';
+  if (ppInp) ppInp.value = '';
+  openModal('delete-account-step3-modal');
+  setTimeout(() => ppInp?.focus(), 200);
+}
+
+async function deleteAccountFinal() {
+  const pass = document.getElementById('delete-passphrase-input')?.value;
+  const errEl = document.getElementById('delete-passphrase-error');
+  if (!pass) { if (errEl) errEl.textContent = 'Enter your passphrase'; return; }
+  try {
+    const verifier = await kvMakeVerifier(pass, _kvEmailHash);
+    const res = await fetchKV(`${WORKER_URL}/user/delete-confirm-send`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash: _kvEmailHash, verifier }),
+    });
+    if (!res.ok) {
+      const d = await res.json();
+      if (errEl) errEl.textContent = d.error || 'Incorrect passphrase';
+      return;
+    }
+    closeModal('delete-account-step3-modal');
+    openModal('delete-email-sent-modal');
+  } catch(e) {
+    if (errEl) errEl.textContent = 'Error: ' + e.message;
+  }
+}
+
+// Called when user lands on app after clicking "Delete Account" in email
+async function handleDeleteAccountConfirmation(token) {
+  try {
+    const res = await fetchKV(`${WORKER_URL}/user/delete-execute`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    if (res.ok) {
+      // Clear all local data
+      try { localStorage.clear(); } catch(e) {}
+      openModal('account-deleted-modal');
+      // Hide the rest of the app
+      document.getElementById('main')?.style && (document.getElementById('main').style.display = 'none');
+    } else {
+      const d = await res.json();
+      toast('Could not complete deletion: ' + (d.error || 'Link may have expired'));
+    }
+  } catch(e) {
+    toast('Error: ' + e.message);
+  }
+}
+
+// Check URL for delete confirmation token on load
+(function _checkDeleteToken() {
+  const params = new URLSearchParams(location.search);
+  const deleteToken = params.get('delete_token');
+  if (deleteToken) {
+    history.replaceState(null, '', location.pathname);
+    // Wait for app to init before showing modal
+    setTimeout(() => handleDeleteAccountConfirmation(deleteToken), 1000);
+  }
+  const reactivateToken = params.get('reactivate_token');
+  if (reactivateToken) {
+    history.replaceState(null, '', location.pathname);
+    setTimeout(() => handleReactivation(reactivateToken), 1000);
+  }
+})();
+
+async function handleReactivation(token) {
+  try {
+    const res = await fetchKV(`${WORKER_URL}/user/reactivate`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    if (res.ok) {
+      toast('Your account has been reactivated! Please sign in.');
+    } else {
+      const d = await res.json();
+      toast('Reactivation failed: ' + (d.error || 'Link may have expired'));
+    }
+  } catch(e) {
+    toast('Error: ' + e.message);
+  }
+}

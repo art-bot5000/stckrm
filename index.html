@@ -624,8 +624,10 @@
 <!-- ═══ APP SIDEBAR (desktop only) ═══ -->
 <nav id="app-nav">
   <div class="app-nav-logo">
-    <div class="logo" style="font-size:11px;letter-spacing:3px;cursor:pointer" onclick="openProfilePicker()">STOCKROOM</div>
-    <span id="app-nav-profile" style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:2px;cursor:pointer" onclick="openProfilePicker()"></span>
+    <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+      <div class="logo" style="font-size:11px;letter-spacing:3px;cursor:pointer;flex-shrink:0" onclick="openProfilePicker()">STOCKROOM</div>
+      <span id="app-nav-profile" style="font-size:12px;color:var(--muted);font-family:var(--sans);cursor:pointer;white-space:nowrap" onclick="openProfilePicker()"></span>
+    </div>
   </div>
   <div class="app-nav-links">
     <button class="app-nav-link active" data-view="stock"      onclick="navTo('stock')">📦 <span>Stockroom</span></button>
@@ -880,65 +882,171 @@
   <!-- SETTINGS VIEW -->
   <!-- ACCOUNT & SECURITY VIEW (desktop sidebar only) -->
   <div class="view" id="view-account-security">
-    <h2 style="font-size:18px;font-weight:700;margin-bottom:20px">🛡️ Account &amp; Security</h2>
+    <h2 style="font-size:20px;font-weight:700;margin-bottom:24px">🛡️ Account &amp; Security</h2>
 
-    <!-- Your Name -->
-    <div class="settings-card" style="margin-bottom:16px">
-      <h3 style="font-size:14px;font-weight:700;margin-bottom:14px;color:var(--text)">👤 Your Name</h3>
-      <div class="setting-row">
-        <div class="setting-info"><h4>Display name</h4><p>Shown as a greeting throughout the app</p></div>
-        <input type="text" id="setting-display-name-sec" placeholder="First name" maxlength="40"
-          style="width:140px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-family:var(--sans);font-size:13px"
-          oninput="saveDisplayName(this.value)">
-      </div>
-    </div>
-
-    <!-- Email / Country -->
-    <div class="settings-card" style="margin-bottom:16px">
-      <h3 style="font-size:14px;font-weight:700;margin-bottom:14px;color:var(--text)">🌍 Region</h3>
-      <div class="setting-row">
-        <div class="setting-info"><h4>Country / Region</h4><p>Sets which stores appear in the price checker</p></div>
-        <select id="setting-country-sec" onchange="saveSettingsCountry(this.value)" style="width:190px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px"></select>
-      </div>
-    </div>
-
-    <!-- Account & Sync (mirrors settings-account-body) -->
-    <div class="settings-card full-width" id="account-security-account-body" style="margin-bottom:16px">
-      <h3 style="font-size:14px;font-weight:700;margin-bottom:14px;color:var(--text)">☁️ Account &amp; Sync</h3>
-      <div class="setting-row">
-        <div class="setting-info"><h4>Signed in as</h4><p id="acc-sec-email" style="font-family:var(--mono);font-size:11px">—</p></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-ghost btn-sm" onclick="kvSyncNow()">Sync Now</button>
-          <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="kvSignOut()">Sign Out</button>
+    <!-- ── YOUR DETAILS ───────────────────────────────── -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title">👤 Your Details</div>
+      <div class="acc-sec-card">
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Display name</div>
+            <div class="acc-sec-p">Shown as a greeting — first name preferred</div>
+          </div>
+          <input type="text" id="setting-display-name-sec" placeholder="First name" maxlength="40"
+            class="acc-sec-input" oninput="saveDisplayName(this.value)">
+        </div>
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Signed in as</div>
+            <div id="acc-sec-email" class="acc-sec-p" style="font-family:var(--mono)">—</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-shrink:0">
+            <button class="btn btn-ghost acc-sec-btn" onclick="kvSyncNow()">Sync Now</button>
+            <button class="btn btn-ghost acc-sec-btn" style="color:var(--danger)" onclick="kvSignOut()">Sign Out</button>
+          </div>
+        </div>
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Country / Region</div>
+            <div class="acc-sec-p">Sets which stores appear in the price checker</div>
+          </div>
+          <select id="setting-country-sec" onchange="saveSettingsCountry(this.value)" class="acc-sec-select"></select>
         </div>
       </div>
-      <div class="setting-row">
-        <div class="setting-info"><h4>Change passphrase</h4><p>Re-encrypts all your data with a new passphrase</p></div>
-        <button class="btn btn-ghost btn-sm" onclick="changePassphrase()">Change</button>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info"><h4>🔑 Passkeys</h4><p>Sign in with Face ID / fingerprint</p></div>
-        <button class="btn btn-ghost btn-sm" onclick="addPasskeyToAccount()">+ Add passkey</button>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info"><h4>🔐 Recovery Codes</h4><p>10 one-time codes for account recovery</p></div>
-        <button class="btn btn-ghost btn-sm" onclick="generateNewRecoveryCodes()">Generate</button>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info"><h4>Delete account</h4><p>Permanently deletes all your data</p></div>
-        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteAccount()">Delete</button>
+    </div>
+
+    <!-- ── ACCOUNT PROTECTION ─────────────────────────── -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title">🔐 Account Protection</div>
+      <div class="acc-sec-card">
+
+        <!-- Passphrase -->
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Change passphrase</div>
+            <div class="acc-sec-p">Re-encrypts all your data with a new passphrase</div>
+          </div>
+          <button class="btn btn-ghost acc-sec-btn" onclick="openChangePassphrase()">Change</button>
+        </div>
+
+        <!-- Passkeys -->
+        <div class="acc-sec-row acc-sec-row-block">
+          <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:8px">
+            <div class="acc-sec-label">
+              <div class="acc-sec-h">🔑 Passkeys (Face ID / Fingerprint)</div>
+              <div class="acc-sec-p">Sign in instantly without typing a password. Each device registers its own passkey.</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-shrink:0">
+              <button class="btn btn-ghost acc-sec-btn" onclick="loadPasskeys()">Refresh</button>
+              <button class="btn btn-ghost acc-sec-btn" onclick="addPasskeyToAccount()" id="add-passkey-btn-sec">+ Add</button>
+            </div>
+          </div>
+          <div id="passkey-list-sec" style="font-size:12px;color:var(--muted)">Sign in to manage passkeys.</div>
+        </div>
+
+        <!-- Recovery Codes -->
+        <div class="acc-sec-row acc-sec-row-block">
+          <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:8px">
+            <div class="acc-sec-label">
+              <div class="acc-sec-h">🔐 Recovery Codes</div>
+              <div class="acc-sec-p">10 one-time codes — your master recovery method. Generating new codes invalidates all previous ones.</div>
+            </div>
+            <button class="btn btn-ghost acc-sec-btn" onclick="generateNewRecoveryCodes()">Generate</button>
+          </div>
+          <div id="recovery-codes-status-sec" style="font-size:12px;color:var(--muted)">Sign in to manage recovery codes.</div>
+        </div>
+
+        <!-- Multifactor Authentication -->
+        <div class="acc-sec-row acc-sec-row-block">
+          <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:10px">
+            <div class="acc-sec-label">
+              <div class="acc-sec-h">🛡️ Multifactor Authentication</div>
+              <div class="acc-sec-p">Second factor on all devices after passphrase or passkey. Replaces 2-step unlock.</div>
+            </div>
+            <button id="mfa-settings-toggle" class="btn btn-ghost acc-sec-btn" onclick="_mfaEnabled()?mfaDisable():openMfaSetup()">Enable</button>
+          </div>
+          <div id="mfa-settings-status" style="font-size:12px;color:var(--muted);margin-bottom:8px">Disabled</div>
+          <p style="font-size:12px;color:var(--muted);line-height:1.5">
+            <strong style="color:var(--text)">With passkey:</strong> Passkey is primary. Email code or OTP app as second factor.<br>
+            <strong style="color:var(--text)">Without passkey:</strong> Passphrase is primary. Passkey, email code, or OTP app as second factor.<br>
+            Recovery codes can be used alongside email code for account recovery.
+          </p>
+        </div>
+
+        <!-- Trusted Devices -->
+        <div class="acc-sec-row acc-sec-row-block">
+          <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:8px">
+            <div class="acc-sec-label">
+              <div class="acc-sec-h">📱 Trusted Devices</div>
+              <div class="acc-sec-p">Devices where you ticked "Stay signed in". Remove to sign out and require re-authentication.</div>
+            </div>
+            <button class="btn btn-ghost acc-sec-btn" onclick="toggleTrustedDevicesPanel()">Show devices</button>
+          </div>
+          <div id="trusted-devices-panel-sec" style="display:none">
+            <div id="trusted-devices-list-sec" style="font-size:12px;color:var(--muted);margin-bottom:8px">Sign in to manage trusted devices.</div>
+            <div id="trust-this-device-row-sec" style="display:none">
+              <button class="btn btn-ghost acc-sec-btn" onclick="trustThisDevice()">+ Trust this device</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
-    <!-- Notes 2-step -->
-    <div class="settings-card" style="margin-bottom:16px">
-      <h3 style="font-size:14px;font-weight:700;margin-bottom:14px;color:var(--text)">📝 Notes Security</h3>
-      <div class="setting-row">
-        <div class="setting-info"><h4>2-step unlock for secure notes</h4><p>Sends an email code after passphrase/passkey when unlocking a secure note</p></div>
-        <button id="notes-2fa-acc-btn" class="btn btn-ghost btn-sm" onclick="toggleNotes2fa()">Enable</button>
+    <!-- ── DATA ───────────────────────────────────────── -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title">📦 Data</div>
+      <div class="acc-sec-card">
+        <div class="acc-sec-row">
+          <div class="acc-sec-label"><div class="acc-sec-h">Export data (JSON)</div><div class="acc-sec-p">Download all items as a backup file</div></div>
+          <button class="btn btn-ghost acc-sec-btn" onclick="exportData()">Export</button>
+        </div>
+        <div class="acc-sec-row">
+          <div class="acc-sec-label"><div class="acc-sec-h">Import data</div><div class="acc-sec-p">Restore from a previously exported file</div></div>
+          <button class="btn btn-ghost acc-sec-btn" onclick="document.getElementById('import-file-sec').click()">Import</button>
+          <input type="file" id="import-file-sec" style="display:none" accept=".json" onchange="importData(event)">
+        </div>
+        <div class="acc-sec-row">
+          <div class="acc-sec-label"><div class="acc-sec-h">Clear all data</div><div class="acc-sec-p">Remove all items and history from this household</div></div>
+          <button class="btn btn-danger acc-sec-btn" onclick="clearAll()">Clear All</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── DANGER ZONE ────────────────────────────────── -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title" style="color:var(--danger)">⚠️ Danger Zone</div>
+      <div class="acc-sec-card" style="border-color:rgba(224,92,92,0.3)">
+
+        <!-- Deactivate -->
+        <div class="acc-sec-row acc-sec-row-block">
+          <div style="margin-bottom:10px">
+            <div class="acc-sec-h">Deactivate account</div>
+            <div class="acc-sec-p" style="margin-top:4px;line-height:1.6">
+              Disables your account for up to 3 months. You'll receive email reminders with options to reactivate or delete.
+              If no action is taken after 3 months you'll receive a final warning period before the account is marked for deletion.
+              <br><strong style="color:var(--text)">Export your data below before deactivating.</strong>
+            </div>
+          </div>
+          <button class="btn acc-sec-btn" style="background:rgba(224,92,92,0.15);border:1px solid rgba(224,92,92,0.4);color:var(--danger)" onclick="openDeactivateAccount()">Deactivate account</button>
+        </div>
+
+        <!-- Delete -->
+        <div class="acc-sec-row acc-sec-row-block" style="border-top:1px solid rgba(224,92,92,0.2);padding-top:16px;margin-top:4px">
+          <div style="margin-bottom:10px">
+            <div class="acc-sec-h">Delete account</div>
+            <div class="acc-sec-p" style="margin-top:4px;line-height:1.6">
+              Permanently and irreversibly deletes your account and all associated data.
+              A confirmation email will be sent before deletion completes.
+              <strong style="color:var(--danger)">This cannot be undone.</strong>
+            </div>
+          </div>
+          <button class="btn btn-danger acc-sec-btn" onclick="openDeleteAccountFlow()">Delete account</button>
+        </div>
       </div>
     </div>
   </div>
+
 
   <div class="view" id="view-settings">
     <!-- Fly.io-style: left nav sidebar + right scrollable content -->
@@ -994,7 +1102,7 @@
 
     <!-- 2. Account (replaces Cloud Sync) -->
     <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-account-body',this)">
-      <span>☁️ Account &amp; Sync</span>
+      <span>☁️ Account &amp; Sync</span><!-- mobile only -->
       <span class="settings-chevron">▾</span>
     </div>
     <div id="settings-account-body" class="settings-collapsible-body settings-card full-width">
@@ -1235,34 +1343,24 @@
       </div>
     </div>
 
-    <!-- 5+6. Preferences & Data — one collapsible section -->
+    <!-- Data section (renamed from Preferences & Data) -->
     <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-prefs-body',this)">
-      <span>⚙️ Preferences &amp; Data</span>
+      <span>📦 Data</span>
       <span class="settings-chevron">▾</span>
     </div>
     <div id="settings-prefs-body" class="settings-collapsible-body">
     <div class="settings-card">
-      <h3 style="display:none">⚙️ Preferences</h3>
-      <div class="setting-row">
-        <div class="setting-info"><h4>Your name</h4><p>Shown as a greeting — first name preferred</p></div>
-        <input type="text" id="setting-display-name" placeholder="First name" maxlength="40"
-          style="width:140px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-family:var(--sans);font-size:13px"
-          oninput="saveDisplayName(this.value)">
-      </div>
-      <div class="setting-row">
-        <div class="setting-info"><h4>Notes 2-step unlock</h4><p>Require an email code when unlocking a secure note</p></div>
-        <button id="notes-2fa-settings-btn" class="btn btn-ghost btn-sm" onclick="toggleNotes2fa()">Enable</button>
-      </div>
+      <h3 style="display:none">📦 Data</h3>
       <div class="setting-row">
         <div class="setting-info"><h4>Low stock warning</h4><p>Warn when stock drops below this %</p></div>
         <select id="setting-threshold" onchange="saveSettings()" style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
           <option value="10">10%</option><option value="15">15%</option><option value="20" selected>20%</option><option value="25">25%</option><option value="33">33%</option>
         </select>
       </div>
-      <div class="setting-row">
-        <div class="setting-info"><h4>Country / Region</h4><p>Sets which stores appear in the price checker</p></div>
-        <select id="setting-country" onchange="saveSettings()" style="width:190px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px"></select>
-      </div>
+      <!-- hidden inputs kept for JS compatibility -->
+      <input type="hidden" id="setting-display-name">
+      <input type="hidden" id="setting-country" value="GB">
+      <input type="hidden" id="notes-2fa-settings-btn">
     </div>
 
     <!-- 6. Data -->
@@ -1795,7 +1893,8 @@
   </div>
 </div>
 
-<!-- Share Target Modal -->\n<div class="modal-backdrop" id="share-target-modal">
+<!-- Share Target Modal -->
+<div class="modal-backdrop" id="share-target-modal">
   <div class="modal" style="max-width:420px;max-height:80vh;overflow-y:auto">
     <h2 id="share-target-modal-title">👤 Add Person</h2>
     <input type="hidden" id="share-target-code">
@@ -2152,8 +2251,6 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
   style="display:none;position:fixed;bottom:88px;right:20px;z-index:1100;width:84px;height:84px;border-radius:50%;border:none;background:var(--accent);color:#111;font-size:36px;font-weight:700;cursor:pointer;box-shadow:0 4px 24px rgba(232,168,56,0.55);transition:transform 0.2s,background 0.2s;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;outline:none;user-select:none">
   +
 </button>
-
-
 <!-- NOTES VIEW -->
 <div class="view" id="view-notes">
   <div id="notes-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
@@ -2282,5 +2379,204 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     </div>
   </div>
 </div>
+
+<!-- BACK BUTTON / SWIPE INTERSTITIAL MODAL -->
+<div class="modal-backdrop" id="back-interstitial-modal">
+  <div class="modal" style="max-width:360px">
+    <div style="font-size:28px;text-align:center;margin-bottom:8px">📦</div>
+    <h3 style="font-size:16px;font-weight:700;text-align:center;margin-bottom:6px">Leave STOCKROOM?</h3>
+    <p style="font-size:13px;color:var(--muted);text-align:center;line-height:1.5;margin-bottom:20px">Back gesture detected. Go to a section or exit the app.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+      <button class="btn btn-ghost" onclick="backInterstitialGoTo('stock')"   style="justify-content:flex-start;gap:8px">📦 Stockroom</button>
+      <button class="btn btn-ghost" onclick="backInterstitialGoTo('grocery')" style="justify-content:flex-start;gap:8px">🛒 Groceries</button>
+      <button class="btn btn-ghost" onclick="backInterstitialGoTo('notes')"   style="justify-content:flex-start;gap:8px">📝 Notes</button>
+      <button class="btn btn-ghost" onclick="backInterstitialGoTo('reminders')" style="justify-content:flex-start;gap:8px">🔔 Reminders</button>
+    </div>
+    <button class="btn btn-danger" style="width:100%;margin-bottom:8px" onclick="backInterstitialExit()">Exit app →</button>
+    <button class="btn btn-ghost" style="width:100%" onclick="closeModal('back-interstitial-modal')">Stay here</button>
+  </div>
+</div>
+
+
+<!-- MFA PROMPT MODAL (first visit to Notes) -->
+<div class="modal-backdrop" id="mfa-prompt-modal">
+  <div class="modal" style="text-align:center;max-width:380px">
+    <div style="font-size:40px;margin-bottom:10px">🛡️</div>
+    <h3 style="font-size:16px;font-weight:700;margin-bottom:8px">Enable Multifactor Authentication?</h3>
+    <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px">Add a second verification step to protect your account across the whole app — not just notes. Choose between an email code or an authenticator app.</p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn btn-primary" onclick="closeModal('mfa-prompt-modal');openMfaSetup()">🛡️ Enable MFA</button>
+      <button class="btn btn-ghost" onclick="dismissMfaPrompt()">Skip for now</button>
+      <p style="font-size:11px;color:var(--muted)">You can enable this later in Account &amp; Security settings</p>
+    </div>
+  </div>
+</div>
+
+<!-- MFA SETUP MODAL -->
+<div class="modal-backdrop" id="mfa-setup-modal">
+  <div class="modal" style="max-width:420px;max-height:90vh;overflow-y:auto">
+    <h3 style="font-size:16px;font-weight:700;margin-bottom:16px">🛡️ Set Up Multifactor Authentication</h3>
+    <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:16px">Choose your second factor. You can use either as an alternative if you lose access to your primary method.</p>
+    <!-- Method selector -->
+    <div style="display:flex;gap:8px;margin-bottom:20px">
+      <button class="btn btn-ghost mfa-method-btn active" data-method="email" onclick="_mfaSetupSelectMethod('email')" style="flex:1">📧 Email code</button>
+      <button class="btn btn-ghost mfa-method-btn" data-method="totp" onclick="_mfaSetupSelectMethod('totp')" style="flex:1">📱 Authenticator</button>
+    </div>
+    <!-- Email method -->
+    <div id="mfa-setup-email-section">
+      <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:16px">A 6-digit code will be sent to your email address each time you authenticate. No app required.</p>
+      <div style="background:var(--surface2);border-radius:10px;padding:12px;font-size:12px;color:var(--muted);margin-bottom:16px">
+        📧 Codes sent to: <strong style="color:var(--text)" id="mfa-setup-email-display"></strong>
+      </div>
+    </div>
+    <!-- TOTP method -->
+    <div id="mfa-setup-totp-section" style="display:none">
+      <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:12px">Scan this QR code with an authenticator app (Google Authenticator, Authy, 1Password, etc.), then enter the code it shows.</p>
+      <div style="text-align:center;margin-bottom:12px">
+        <img id="mfa-totp-qr" src="" alt="QR Code" style="width:180px;height:180px;border-radius:10px;background:#fff;padding:8px">
+      </div>
+      <details style="margin-bottom:12px">
+        <summary style="font-size:12px;color:var(--muted);cursor:pointer">Can't scan? Enter code manually</summary>
+        <div style="font-family:var(--mono);font-size:13px;letter-spacing:2px;background:var(--surface2);border-radius:8px;padding:10px;margin-top:8px;text-align:center;word-break:break-all" id="mfa-totp-secret-display"></div>
+      </details>
+      <label class="form-label">Enter the 6-digit code from your app</label>
+      <input class="form-input" type="text" id="mfa-setup-totp-code" inputmode="numeric" maxlength="6" placeholder="000000"
+        style="font-family:var(--mono);font-size:20px;letter-spacing:6px;text-align:center"
+        oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,6)"
+        onkeydown="if(event.key==='Enter')mfaSetupConfirm()">
+    </div>
+    <p id="mfa-setup-error" style="font-size:12px;color:var(--danger);margin-bottom:12px;min-height:16px"></p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="mfaSetupConfirm()" style="flex:2">Enable MFA ✓</button>
+      <button class="btn btn-ghost" onclick="closeModal('mfa-setup-modal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- MFA VERIFY MODAL (shown after passphrase/passkey when MFA enabled) -->
+<div class="modal-backdrop" id="mfa-verify-modal" style="z-index:320">
+  <div class="modal" style="max-width:340px;text-align:center">
+    <div style="font-size:32px;margin-bottom:8px">🛡️</div>
+    <h3 style="font-size:16px;font-weight:700;margin-bottom:6px">Second factor required</h3>
+    <div id="mfa-email-hint">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Enter the code sent to your email.</p>
+    </div>
+    <div id="mfa-totp-hint" style="display:none">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Enter the code from your authenticator app.</p>
+    </div>
+    <input class="form-input" type="text" id="mfa-verify-code" inputmode="numeric" maxlength="6" placeholder="000000"
+      style="font-family:var(--mono);font-size:28px;letter-spacing:10px;text-align:center;margin-bottom:12px"
+      oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,6)"
+      onkeydown="if(event.key==='Enter')mfaVerifySubmit()">
+    <p id="mfa-otp-error" style="font-size:12px;color:var(--danger);margin-bottom:10px;min-height:16px"></p>
+    <button class="btn btn-primary" style="width:100%;margin-bottom:8px" onclick="mfaVerifySubmit()">Verify →</button>
+    <button class="btn btn-ghost btn-sm" id="mfa-alt-method" onclick="mfaSwitchMethod()" style="width:100%;margin-bottom:6px">Use alternative method</button>
+    <button class="btn btn-ghost btn-sm" onclick="mfaResendCode()" style="width:100%">Resend email code</button>
+  </div>
+</div>
+
+<!-- EXPORT SECURE NOTES MODAL -->
+<div class="modal-backdrop" id="export-secure-notes-modal">
+  <div class="modal" style="max-width:380px">
+    <div style="font-size:32px;text-align:center;margin-bottom:10px">🔒</div>
+    <h3 style="font-size:16px;font-weight:700;margin-bottom:8px;text-align:center">Secure notes found</h3>
+    <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px">Your export contains secure notes. How would you like to handle them?</p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn btn-primary" onclick="exportDataWithSecureChoice(true)">🔓 Unlock &amp; export as plain text</button>
+      <button class="btn btn-ghost" onclick="exportDataWithSecureChoice(false)">Skip secure notes (titles only)</button>
+      <button class="btn btn-ghost" onclick="closeModal('export-secure-notes-modal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- DEACTIVATE ACCOUNT MODAL -->
+<div class="modal-backdrop" id="deactivate-account-modal">
+  <div class="modal" style="max-width:400px">
+    <div style="font-size:32px;text-align:center;margin-bottom:10px">⏸️</div>
+    <h3 style="font-size:16px;font-weight:700;margin-bottom:8px;text-align:center">Deactivate your account?</h3>
+    <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:16px">
+      Your account will be disabled for up to 3 months. During this time:
+    </p>
+    <ul style="font-size:13px;color:var(--muted);line-height:1.8;margin-bottom:16px;padding-left:18px">
+      <li>You will not be able to sign in</li>
+      <li>Your data is preserved on our servers</li>
+      <li>You'll receive a reminder email 1 week before the 3 months is up</li>
+      <li>If no action is taken, a final warning period begins before the account is marked for deletion</li>
+    </ul>
+    <div style="background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:var(--muted)">
+      💡 <strong style="color:var(--text)">Tip:</strong> Export your data in the Data section before deactivating.
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn acc-sec-btn" style="background:rgba(224,92,92,0.15);border:1px solid rgba(224,92,92,0.4);color:var(--danger);width:100%" onclick="confirmDeactivateAccount()">Yes, deactivate my account</button>
+      <button class="btn btn-ghost acc-sec-btn" style="width:100%" onclick="closeModal('deactivate-account-modal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- DELETE ACCOUNT FLOW — STEP 1: ARE YOU SURE? -->
+<div class="modal-backdrop" id="delete-account-step1-modal">
+  <div class="modal" style="max-width:400px">
+    <div style="font-size:32px;text-align:center;margin-bottom:10px">🗑️</div>
+    <h3 style="font-size:16px;font-weight:700;margin-bottom:8px;text-align:center">Delete your account?</h3>
+    <p style="font-size:13px;color:var(--danger);font-weight:600;margin-bottom:8px;text-align:center">This is permanent and cannot be undone.</p>
+    <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:16px">All your items, notes, groceries, reminders, and household data will be permanently erased from our servers.</p>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn btn-danger acc-sec-btn" style="width:100%" onclick="deleteAccountStep2()">I understand, continue →</button>
+      <button class="btn btn-ghost acc-sec-btn" style="width:100%" onclick="closeModal('delete-account-step1-modal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- DELETE ACCOUNT FLOW — STEP 2: TYPE "Delete" -->
+<div class="modal-backdrop" id="delete-account-step2-modal">
+  <div class="modal" style="max-width:400px">
+    <h3 style="font-size:16px;font-weight:700;margin-bottom:12px">Confirm deletion</h3>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Type <strong style="color:var(--text);font-family:var(--mono)">Delete</strong> to confirm you want to permanently delete your account.</p>
+    <input class="form-input" type="text" id="delete-confirm-input" placeholder="Type Delete here"
+      style="margin-bottom:8px;font-size:16px" oninput="checkDeleteConfirmInput()">
+    <p id="delete-confirm-error" style="font-size:12px;color:var(--danger);margin-bottom:12px;min-height:16px"></p>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn btn-danger acc-sec-btn" style="width:100%" id="delete-confirm-btn" onclick="deleteAccountStep3()" disabled>Delete my account →</button>
+      <button class="btn btn-ghost acc-sec-btn" style="width:100%" onclick="closeModal('delete-account-step2-modal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- DELETE ACCOUNT FLOW — STEP 3: PASSPHRASE CONFIRM -->
+<div class="modal-backdrop" id="delete-account-step3-modal">
+  <div class="modal" style="max-width:400px">
+    <h3 style="font-size:16px;font-weight:700;margin-bottom:12px">Enter your passphrase</h3>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Enter your passphrase to confirm your identity. A final warning email will be sent before your account is deleted.</p>
+    <input class="form-input" type="password" id="delete-passphrase-input" placeholder="Your passphrase"
+      style="margin-bottom:8px" autocomplete="current-password"
+      onkeydown="if(event.key==='Enter')deleteAccountFinal()">
+    <p id="delete-passphrase-error" style="font-size:12px;color:var(--danger);margin-bottom:12px;min-height:16px"></p>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn btn-danger acc-sec-btn" style="width:100%" onclick="deleteAccountFinal()">Send confirmation email →</button>
+      <button class="btn btn-ghost acc-sec-btn" style="width:100%" onclick="closeModal('delete-account-step3-modal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- DELETE ACCOUNT — EMAIL SENT CONFIRMATION -->
+<div class="modal-backdrop" id="delete-email-sent-modal">
+  <div class="modal" style="max-width:400px;text-align:center">
+    <div style="font-size:40px;margin-bottom:10px">📧</div>
+    <h3 style="font-size:16px;font-weight:700;margin-bottom:8px">Check your email</h3>
+    <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:16px">A final warning email has been sent to your address. Click the <strong style="color:var(--text)">Delete Account</strong> button in that email to complete deletion.</p>
+    <button class="btn btn-ghost acc-sec-btn" style="width:100%" onclick="closeModal('delete-email-sent-modal')">OK</button>
+  </div>
+</div>
+
+<!-- ACCOUNT DELETED CONFIRMATION (shown after clicking email link) -->
+<div class="modal-backdrop" id="account-deleted-modal">
+  <div class="modal" style="max-width:400px;text-align:center">
+    <div style="font-size:40px;margin-bottom:10px">✅</div>
+    <h3 style="font-size:16px;font-weight:700;margin-bottom:8px">Account deleted</h3>
+    <p style="font-size:13px;color:var(--muted);line-height:1.6">Your account and all associated data has been permanently deleted from our servers. Thank you for using STOCKROOM.</p>
+  </div>
+</div>
+
 </body>
 </html>

@@ -871,3 +871,43 @@
   #header-greeting { margin-left:6px !important; }
   #app-header { gap:4px; }
 }
+
+/* ── Note list single-column row layout ── */
+#notes-grid { display:flex; flex-direction:column; gap:0; }
+@media (min-width:600px) { #notes-grid { gap:0; } }
+.note-row { padding:12px 14px; border-bottom:1px solid var(--border); cursor:pointer; position:relative; transition:background 0.12s; }
+.note-row:active { background:rgba(255,255,255,0.03); }
+.note-row:first-child { border-top:1px solid var(--border); border-radius:10px 10px 0 0; }
+.note-row:last-child { border-radius:0 0 10px 10px; }
+.note-row:only-child { border-radius:10px; }
+.note-row-preview { font-size:12px; color:var(--muted); line-height:1.4; margin-top:3px; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; word-break:break-word; }
+.note-row .note-card-title { font-size:14px; font-weight:600; color:var(--text); line-height:1.3; word-break:break-word; }
+.note-secure-now-btn { font-size:11px; color:var(--accent); background:rgba(232,168,56,0.1); border:1px solid rgba(232,168,56,0.3); border-radius:6px; padding:2px 8px; cursor:pointer; margin-top:6px; }
+.note-secure-now-btn:hover { background:rgba(232,168,56,0.2); }
+/* Multi-select indicator */
+.note-select-indicator { width:20px; height:20px; min-width:20px; border-radius:50%; border:2px solid var(--border); background:transparent; cursor:pointer; transition:all 0.12s; margin-top:2px; }
+.note-select-indicator.checked { background:var(--accent); border-color:var(--accent); }
+.note-select-indicator.checked::after { content:'✓'; display:flex; align-items:center; justify-content:center; font-size:12px; color:#111; font-weight:700; width:100%; height:100%; }
+.note-selected { background:rgba(232,168,56,0.06) !important; }
+/* MFA method buttons */
+.mfa-method-btn.active { background:rgba(232,168,56,0.15); border-color:var(--accent); color:var(--accent); }
+
+/* ── Account & Security view ── */
+#view-account-security { max-width:680px; }
+.acc-sec-section-title { font-size:11px; font-weight:700; color:var(--muted); font-family:var(--mono); letter-spacing:1.5px; text-transform:uppercase; margin-bottom:10px; padding-left:2px; }
+.acc-sec-card { background:var(--surface); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+.acc-sec-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 18px; border-bottom:1px solid var(--border); }
+.acc-sec-row:last-child { border-bottom:none; }
+.acc-sec-row-block { flex-direction:column; align-items:flex-start; }
+.acc-sec-label { flex:1; min-width:0; }
+.acc-sec-h { font-size:13px; font-weight:600; color:var(--text); margin-bottom:2px; }
+.acc-sec-p { font-size:12px; color:var(--muted); line-height:1.4; }
+.acc-sec-btn { min-width:110px; justify-content:center; flex-shrink:0; }
+.acc-sec-input { width:160px; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:7px 10px; font-family:var(--sans); font-size:13px; flex-shrink:0; }
+.acc-sec-input:focus { border-color:var(--accent); outline:none; }
+.acc-sec-select { width:190px; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:7px 24px 7px 10px; font-family:var(--sans); font-size:13px; flex-shrink:0; }
+/* Desktop: hide Account & Sync from settings (it lives in Account & Security sidebar) */
+@media (min-width:900px) {
+  #settings-account-body, #settings-account-body + .settings-section-header,
+  [onclick="toggleSettings('settings-account-body',this)"] { display:none !important; }
+}
