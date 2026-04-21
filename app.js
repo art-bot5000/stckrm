@@ -14832,13 +14832,16 @@ async function openNoteEditor(noteId) {
       deletedAt: null,
     };
     notes.push(n);
-    await saveNotes();
     _editingNoteId = n.id;
     _noteUndoStack.set(n.id, []);
     _noteRedoStack.set(n.id, []);
-    _renderNoteEditor(n, false);
+    // Show overlay first so elements are visible, then render into them
     overlay.style.display = 'flex';
+    document.getElementById('note-editor-body').style.display = 'flex';
+    document.getElementById('note-lock-screen').style.display = 'none';
+    _renderNoteEditor(n, false);
     document.getElementById('note-title-input')?.focus();
+    saveNotes().catch(e => console.warn('saveNotes:', e));
     return;
   }
 
@@ -14857,11 +14860,11 @@ async function openNoteEditor(noteId) {
   }
 
   const isUnlocked = _noteUnlocked.has(noteId);
-  _renderNoteEditor(n, n.locked && !isUnlocked);
+  // Show overlay before rendering so all child elements are accessible
   overlay.style.display = 'flex';
+  _renderNoteEditor(n, n.locked && !isUnlocked);
 
   if (n.locked && !isUnlocked) {
-    // Show lock screen, hide body
     _showNoteLockScreen(n);
   } else {
     _showNoteBody(n);
@@ -14874,9 +14877,11 @@ function _renderNoteEditor(n, showLock) {
   document.getElementById('note-btn-pin')?.classList.toggle('active', !!n.pinned);
   document.getElementById('note-btn-archive')?.classList.toggle('active', !!n.archived);
   document.getElementById('note-btn-lock')?.classList.toggle('active', !!n.locked);
-  document.getElementById('note-btn-lock').textContent = n.locked ? '🔒' : '🔓';
+  const lockBtn = document.getElementById('note-btn-lock');
+  if (lockBtn) lockBtn.textContent = n.locked ? '🔒' : '🔓';
   document.getElementById('note-btn-tick')?.classList.toggle('active', !!n.tickBoxesVisible);
-  document.getElementById('note-secure-badge').style.display = n.locked ? 'block' : 'none';
+  const secureBadge = document.getElementById('note-secure-badge');
+  if (secureBadge) secureBadge.style.display = n.locked ? 'block' : 'none';
 
   // Colour swatches
   document.querySelectorAll('.note-swatch').forEach(s => {
@@ -14885,7 +14890,7 @@ function _renderNoteEditor(n, showLock) {
 
   // Editor background
   const overlay = document.getElementById('note-editor-overlay');
-  overlay.style.background = n.colour || 'var(--bg)';
+  if (overlay) overlay.style.background = n.colour || 'var(--bg)';
 
   // Undo/redo buttons
   _updateNoteUndoRedoBtns(n.id);
@@ -14912,7 +14917,8 @@ function _showNoteLockScreen(n) {
 
 function _showNoteBody(n) {
   document.getElementById('note-lock-screen').style.display = 'none';
-  document.getElementById('note-editor-body').style.display = 'flex';
+  const editorBody = document.getElementById('note-editor-body');
+  if (editorBody) editorBody.style.display = 'flex';
 
   const unlocked = _noteUnlocked.get(n.id);
   const body = unlocked ? unlocked.body : (n.body || '');
@@ -14920,10 +14926,10 @@ function _showNoteBody(n) {
   if (n.tickBoxesVisible) {
     _renderTickBody(n, body);
   } else {
-    document.getElementById('note-ticks-body').style.display = 'none';
+    const ticksBody = document.getElementById('note-ticks-body');
+    if (ticksBody) ticksBody.style.display = 'none';
     const ta = document.getElementById('note-body-input');
-    ta.style.display = '';
-    ta.value = body;
+    if (ta) { ta.style.display = ''; ta.value = body; }
   }
 }
 
@@ -14934,7 +14940,8 @@ function _closeNoteEditorImmediate() {
   _noteBodyDirty = false;
   clearTimeout(_noteAutoSaveTimer);
   _noteColourPickerOpen = false;
-  document.getElementById('note-colour-picker').style.display = 'none';
+  const picker = document.getElementById('note-colour-picker');
+  if (picker) picker.style.display = 'none';
 }
 
 async function closeNoteEditor() {
