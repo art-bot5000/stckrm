@@ -849,3 +849,25 @@
 #note-body-input ul { padding-left:1.4em; list-style:disc; }
 #note-body-input ol { padding-left:1.4em; list-style:decimal; }
 #note-body-input li { margin:2px 0; }
+
+/* ── Desktop stock toolbar: show Add Item + ⚡ buttons ── */
+@media (min-width:900px) {
+  .stock-desktop-actions { display:inline-flex !important; }
+  /* Cap inline search width */
+  #stock-search-inline { flex:0 1 320px !important; max-width:320px; }
+  /* Sort select height matches filter button */
+  #sort-select { padding:8px 24px 8px 10px !important; height:36px; box-sizing:border-box; }
+  /* Grocery: hide Edit button + Add Item in multi-list picker view */
+  body.grocery-multilist #grocery-edit-toggle { display:none !important; }
+  body.grocery-multilist .grocery-toolbar .btn-primary { display:none !important; }
+  /* Notes view on desktop - cap width and center */
+  #view-notes.active { display:block; max-width:800px; }
+  #view-account-security.active { display:block; }
+  /* Account & Security view */
+  #view-account-security { max-width: 720px; }
+}
+/* Mobile: Hi greeting flush with logo */
+@media (max-width:899px) {
+  #header-greeting { margin-left:6px !important; }
+  #app-header { gap:4px; }
+}

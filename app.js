@@ -405,6 +405,38 @@ function updateHeaderGreeting() {
   }
 }
 
+function renderAccountSecurity() {
+  // Populate display name
+  const nameEl = document.getElementById('setting-display-name-sec');
+  if (nameEl && settings.displayName) nameEl.value = settings.displayName;
+  // Populate country
+  const countryEl = document.getElementById('setting-country-sec');
+  if (countryEl) {
+    COUNTRIES.forEach(c => {
+      if (!countryEl.querySelector(`option[value="${c.code}"]`)) {
+        const opt = document.createElement('option');
+        opt.value = c.code; opt.textContent = `${c.flag} ${c.name}`;
+        countryEl.appendChild(opt);
+      }
+    });
+    countryEl.value = settings.country || 'GB';
+  }
+  // Email
+  const emailEl = document.getElementById('acc-sec-email');
+  if (emailEl) emailEl.textContent = settings.email || _kvEmail || '—';
+  // 2FA button
+  const n2faBtn = document.getElementById('notes-2fa-acc-btn');
+  if (n2faBtn) n2faBtn.textContent = settings.notes2fa ? 'Disable' : 'Enable';
+}
+
+function saveSettingsCountry(val) {
+  settings.country = val;
+  // Sync to other country selects
+  const other = document.getElementById('setting-country');
+  if (other) other.value = val;
+  _saveSettings();
+}
+
 function openSettingsSection(sectionId) {
   const tab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Settings'));
   if (tab) showView('settings', tab);
@@ -5054,7 +5086,7 @@ function updateStockShoppingHeader(mode) {
 }
 
 // ── View Transitions helpers ──────────────────────────────
-const TAB_ORDER = ['stock', 'grocery', 'notes', 'reminders', 'savings', 'report', 'settings'];
+const TAB_ORDER = ['stock', 'grocery', 'notes', 'reminders', 'savings', 'report', 'account-security', 'settings'];
 let _currentView = 'stock';
 
 function _vtSupported() { return !!document.startViewTransition; }
@@ -5137,6 +5169,7 @@ function showView(name, btn) {
   if (name === 'savings')   renderSavingsView();
   if (name === 'grocery')   renderGrocery();
   if (name === 'notes')     renderNotes();
+  if (name === 'account-security') renderAccountSecurity();
   if (name === 'stock') {
     updateStockShoppingHeader('stock');
     setStockOnlyUI(true);
@@ -10200,6 +10233,8 @@ function renderSettingsForUser() {
   const n2faBtn = document.getElementById('notes-2fa-settings-btn');
   if (n2faBtn) n2faBtn.textContent = settings.notes2fa ? 'Disable' : 'Enable';
   updateHeaderGreeting();
+  _updateSidebarProfile();
+  renderAccountSecurity();
 }
 
 function updateSyncPill(state, provider) {
@@ -10732,7 +10767,11 @@ function renderGroceryListPicker() {
         </div>`; }).join('')}
     </div>`;
 
-  // Update subtitle
+  // Switch sort button labels for multi-list view
+  const _deptBtn = document.getElementById('grocery-sort-dept');
+  const _alphaBtn = document.getElementById('grocery-sort-alpha');
+  if (_deptBtn) _deptBtn.textContent = 'By Store';
+  if (_alphaBtn) _alphaBtn.textContent = 'A–Z';
   const sub = document.getElementById('grocery-subtitle');
   if (sub) sub.textContent = query
     ? `${lists.length} list${lists.length!==1?'s':''} match`
@@ -10740,9 +10779,14 @@ function renderGroceryListPicker() {
 }
 
 function switchGroceryList(id) {
+  groceryEditMode = false;
   activeGroceryListId = id;
   try { localStorage.setItem('stockroom_active_grocery_list', id); } catch(e) {}
-  // Update the active list's updatedAt
+  // Restore per-list sort labels
+  const _db = document.getElementById('grocery-sort-dept');
+  const _ab = document.getElementById('grocery-sort-alpha');
+  if (_db) _db.textContent = 'By Dept';
+  if (_ab) _ab.textContent = 'A–Z';
   const list = groceryLists.find(l => l.id === id);
   if (list) { list.updatedAt = new Date().toISOString(); _saveGroceryLists(); }
   renderGrocery();
@@ -11298,7 +11342,7 @@ function renderGrocery() {
       backBtn.id = 'grocery-back-to-lists';
       backBtn.className = 'btn btn-ghost btn-sm';
       backBtn.textContent = '← All lists';
-      backBtn.onclick = () => { activeGroceryListId = ''; renderGrocery(); };
+      backBtn.onclick = () => { groceryEditMode = false; activeGroceryListId = ''; renderGrocery(); };
       backBtn.style.cssText = 'margin-bottom:12px;display:block';
       body.parentNode.insertBefore(backBtn, body);
     }
@@ -11309,12 +11353,24 @@ function renderGrocery() {
 
   // Show list picker if no active list or browsing mode
   if (multiList && !activeGroceryListId) {
+    document.body.classList.add('grocery-multilist');
+    // Hide single-list-only controls
+    const editToggle = document.getElementById('grocery-edit-toggle');
+    const addItem    = document.querySelector('#view-grocery .btn-primary[onclick*="openAddGroceryItem"]');
+    if (editToggle) editToggle.style.display = 'none';
+    if (addItem)    addItem.style.display    = 'none';
     renderGroceryListPicker();
     const sub = document.getElementById('grocery-subtitle');
     if (sub) sub.textContent = `${groceryLists.length} lists · tap to open`;
     if (infoEl) infoEl.textContent = '';
     return;
   }
+  // Single list mode — restore controls
+  document.body.classList.remove('grocery-multilist');
+  const _editToggle = document.getElementById('grocery-edit-toggle');
+  const _addItem    = document.querySelector('#view-grocery .btn-primary[onclick*="openAddGroceryItem"]');
+  if (_editToggle) _editToggle.style.display = '';
+  if (_addItem)    _addItem.style.display    = '';
 
   cleanGroceryOrder();
   // Hide multi-select bar whenever we re-render
@@ -14816,8 +14872,9 @@ function filterNotes(q) {
 
 // ── Editor open/close ─────────────────────
 async function openNoteEditor(noteId) {
+  try {
   const overlay = document.getElementById('note-editor-overlay');
-  if (!overlay) return;
+  if (!overlay) { console.error('note-editor-overlay not found'); return; }
 
   if (!noteId) {
     // New note
@@ -14867,6 +14924,7 @@ async function openNoteEditor(noteId) {
     _showNoteBody(n);
     if (isUnlocked) _resetNoteActivity(noteId);
   }
+  } catch(err) { console.error('openNoteEditor failed:', err); }
 }
 
 function _renderNoteEditor(n, showLock) {

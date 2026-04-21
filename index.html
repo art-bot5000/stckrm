@@ -590,7 +590,7 @@
     <div class="logo">STOCKROOM <span id="profile-label">/ HOUSEHOLD TRACKER</span></div>
     <button class="btn btn-ghost btn-sm" style="margin-left:6px;font-size:12px;padding:4px 8px;border-radius:8px;opacity:0.7" title="Add or switch household" onclick="event.stopPropagation();openProfilePicker()">🏠+</button>
   </div>
-  <div id="header-greeting" style="font-size:12px;color:var(--muted);display:none;align-items:center;gap:4px"></div>
+  <div id="header-greeting" style="font-size:12px;color:var(--muted);display:none;align-items:center;gap:4px;margin-left:8px"></div>
   <div style="display:flex;align-items:center;gap:8px">
     <div id="presence-bar" style="display:none"></div>
     <div id="sync-pill" class="sync-pill pending" onclick="handleSyncPillTap()">
@@ -640,6 +640,7 @@
       <div class="sync-dot"></div>
       <span class="sync-label-nav">Syncing…</span>
     </div>
+    <button class="app-nav-link" data-view="account-security" onclick="navTo('account-security')">🛡️ <span>Account &amp; Security</span></button>
     <button class="app-nav-link" data-view="settings" onclick="navTo('settings')">⚙️ <span>Settings</span></button>
   </div>
 </nav>
@@ -680,6 +681,8 @@
         <span style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-left:2px">days</span>
       </div>
       <span id="item-count" style="font-size:12px;color:var(--muted)">0 items</span>
+      <button class="btn btn-ghost btn-sm stock-desktop-actions" onclick="openQuickAdd()" title="Quick add" style="display:none">⚡</button>
+      <button class="btn btn-primary btn-sm stock-desktop-actions" onclick="openAddModal()" style="display:none">+ Add Item</button>
     </div>
   </div>
 
@@ -796,7 +799,7 @@
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:10px">
       <div>
         <h2 style="font-size:18px;font-weight:700">🔔 Reminders</h2>
-        <p style="font-size:12px;color:var(--muted);margin-top:3px">Scheduled replacements — independent of stock levels</p>
+        <p style="font-size:12px;color:var(--muted);margin-top:3px">Set reminders for Stockroom items or anything else</p>
       </div>
       <button class="btn btn-primary btn-sm" onclick="openAddReminderModal()">+ Add Reminder</button>
     </div>
@@ -875,6 +878,68 @@
   </div>
 
   <!-- SETTINGS VIEW -->
+  <!-- ACCOUNT & SECURITY VIEW (desktop sidebar only) -->
+  <div class="view" id="view-account-security">
+    <h2 style="font-size:18px;font-weight:700;margin-bottom:20px">🛡️ Account &amp; Security</h2>
+
+    <!-- Your Name -->
+    <div class="settings-card" style="margin-bottom:16px">
+      <h3 style="font-size:14px;font-weight:700;margin-bottom:14px;color:var(--text)">👤 Your Name</h3>
+      <div class="setting-row">
+        <div class="setting-info"><h4>Display name</h4><p>Shown as a greeting throughout the app</p></div>
+        <input type="text" id="setting-display-name-sec" placeholder="First name" maxlength="40"
+          style="width:140px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-family:var(--sans);font-size:13px"
+          oninput="saveDisplayName(this.value)">
+      </div>
+    </div>
+
+    <!-- Email / Country -->
+    <div class="settings-card" style="margin-bottom:16px">
+      <h3 style="font-size:14px;font-weight:700;margin-bottom:14px;color:var(--text)">🌍 Region</h3>
+      <div class="setting-row">
+        <div class="setting-info"><h4>Country / Region</h4><p>Sets which stores appear in the price checker</p></div>
+        <select id="setting-country-sec" onchange="saveSettingsCountry(this.value)" style="width:190px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px"></select>
+      </div>
+    </div>
+
+    <!-- Account & Sync (mirrors settings-account-body) -->
+    <div class="settings-card full-width" id="account-security-account-body" style="margin-bottom:16px">
+      <h3 style="font-size:14px;font-weight:700;margin-bottom:14px;color:var(--text)">☁️ Account &amp; Sync</h3>
+      <div class="setting-row">
+        <div class="setting-info"><h4>Signed in as</h4><p id="acc-sec-email" style="font-family:var(--mono);font-size:11px">—</p></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" onclick="kvSyncNow()">Sync Now</button>
+          <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="kvSignOut()">Sign Out</button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info"><h4>Change passphrase</h4><p>Re-encrypts all your data with a new passphrase</p></div>
+        <button class="btn btn-ghost btn-sm" onclick="changePassphrase()">Change</button>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info"><h4>🔑 Passkeys</h4><p>Sign in with Face ID / fingerprint</p></div>
+        <button class="btn btn-ghost btn-sm" onclick="addPasskeyToAccount()">+ Add passkey</button>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info"><h4>🔐 Recovery Codes</h4><p>10 one-time codes for account recovery</p></div>
+        <button class="btn btn-ghost btn-sm" onclick="generateNewRecoveryCodes()">Generate</button>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info"><h4>Delete account</h4><p>Permanently deletes all your data</p></div>
+        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteAccount()">Delete</button>
+      </div>
+    </div>
+
+    <!-- Notes 2-step -->
+    <div class="settings-card" style="margin-bottom:16px">
+      <h3 style="font-size:14px;font-weight:700;margin-bottom:14px;color:var(--text)">📝 Notes Security</h3>
+      <div class="setting-row">
+        <div class="setting-info"><h4>2-step unlock for secure notes</h4><p>Sends an email code after passphrase/passkey when unlocking a secure note</p></div>
+        <button id="notes-2fa-acc-btn" class="btn btn-ghost btn-sm" onclick="toggleNotes2fa()">Enable</button>
+      </div>
+    </div>
+  </div>
+
   <div class="view" id="view-settings">
     <!-- Fly.io-style: left nav sidebar + right scrollable content -->
     <div class="settings-layout">
