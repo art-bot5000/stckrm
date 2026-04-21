@@ -10195,6 +10195,9 @@ function renderSettingsForUser() {
   // Populate display name field
   const nameEl = document.getElementById('setting-display-name');
   if (nameEl && settings.displayName) nameEl.value = settings.displayName;
+  // Notes 2FA button state
+  const n2faBtn = document.getElementById('notes-2fa-settings-btn');
+  if (n2faBtn) n2faBtn.textContent = settings.notes2fa ? 'Disable' : 'Enable';
   updateHeaderGreeting();
 }
 
@@ -14692,16 +14695,12 @@ function _resetNoteActivity(noteId) {
 // ── Render notes grid ─────────────────────
 async function renderNotes() {
   await loadNotes();
-  const grid    = document.getElementById('notes-grid');
-  const empty   = document.getElementById('notes-empty');
-  const banner  = document.getElementById('notes-2fa-banner');
-  const toggleBtn = document.getElementById('notes-2fa-toggle-btn');
+  const grid  = document.getElementById('notes-grid');
+  const empty = document.getElementById('notes-empty');
   if (!grid) return;
 
-  // 2FA banner
-  const has2fa = !!settings.notes2fa;
-  if (banner)    { banner.style.display = has2fa ? 'flex' : 'none'; }
-  if (toggleBtn) { toggleBtn.textContent = has2fa ? 'Disable 2-step' : 'Enable 2-step'; }
+  // Show 2FA prompt on first visit if not configured
+  _maybeShowNotes2faPrompt();
 
   const q = (_notesSearch || '').toLowerCase().trim();
   const now = Date.now();
@@ -14769,9 +14768,9 @@ function _noteCardHTML(n) {
   const isUnlocked = _noteUnlocked.has(n.id);
   const bgStyle    = n.colour ? `background:${n.colour};` : '';
   const unlocked   = _noteUnlocked.get(n.id);
-  const preview    = n.locked && !isUnlocked
-    ? ''
-    : (unlocked?.body || n.body || '').slice(0, 200);
+  const rawPreview = n.locked && !isUnlocked ? '' : (unlocked?.body || n.body || '');
+  const _tmpDiv = document.createElement('div'); _tmpDiv.innerHTML = rawPreview;
+  const preview = (_tmpDiv.innerText || _tmpDiv.textContent || '').slice(0, 200);
 
   // Reminder badge
   const linkedReminder = reminders.find(r => r.linkedNoteId === n.id);
@@ -15038,7 +15037,7 @@ async function _fetchAndUnlockNote(n) {
     const { ciphertext } = await res.json();
     if (!await kvEnsureKey()) { errEl.textContent = 'Encryption key unavailable'; return; }
     const body = await kvDecrypt(_kvKey, ciphertext);
-    // Cache in memory
+    // Cache in memory (body stored as innerHTML)
     _noteUnlocked.set(n.id, { body, lastActivity: Date.now(), inactivityTimer: null });
     _startNoteInactivityTimer(n.id);
     _showNoteBody(n);
@@ -15071,7 +15070,7 @@ async function toggleNoteLock() {
     if (!confirm('Remove security from this note? The body will be stored with your other data.')) return;
     const unlocked = _noteUnlocked.get(n.id);
     if (!unlocked) { toast('Unlock the note first before removing security'); return; }
-    n.body   = unlocked.body;
+    n.body   = unlocked.body; // stored as innerHTML
     n.locked = false;
     _noteUnlocked.delete(n.id);
     // Delete the server-side body
@@ -15116,13 +15115,14 @@ async function toggleNoteTicks() {
   if (!n.tickBoxes) n.tickBoxes = {};
   document.getElementById('note-btn-tick')?.classList.toggle('active', n.tickBoxesVisible);
   const body = _getCurrentEditorBody(n);
+  const bodyEl = document.getElementById('note-body-input');
+  const ticksEl = document.getElementById('note-ticks-body');
   if (n.tickBoxesVisible) {
-    _renderTickBody(n, body);
-    document.getElementById('note-body-input').style.display = 'none';
+    _renderTickBody(n, body.replace(/<[^>]+>/g, '').trim());
+    if (bodyEl) bodyEl.style.display = 'none';
   } else {
-    document.getElementById('note-ticks-body').style.display = 'none';
-    const ta = document.getElementById('note-body-input');
-    ta.style.display = ''; ta.value = body;
+    if (ticksEl) ticksEl.style.display = 'none';
+    if (bodyEl) { bodyEl.style.display = ''; bodyEl.innerHTML = body; }
   }
   n.updatedAt = new Date().toISOString();
   await saveNotes();
@@ -15176,7 +15176,10 @@ async function setNoteColour(colour) {
 
 function copyNoteBody() {
   const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
-  const body = _getCurrentEditorBody(n);
+  const rawBody = _getCurrentEditorBody(n);
+  // Strip HTML for plain text clipboard
+  const tmp = document.createElement('div'); tmp.innerHTML = rawBody;
+  const body = tmp.innerText || tmp.textContent || '';
   const text = `${n.title}\n\n${body}`;
   navigator.clipboard?.writeText(text).then(() => toast('Copied ✓')).catch(() => {
     const ta = document.createElement('textarea');
@@ -15215,11 +15218,10 @@ async function deleteCurrentNote() {
 // ── Body editing ──────────────────────────
 function _getCurrentEditorBody(n) {
   if (n.tickBoxesVisible) {
-    // Reconstruct from tick body labels
     const labels = document.querySelectorAll('#note-ticks-body label span');
     return [...labels].map(s => s.textContent).join('\n');
   }
-  return document.getElementById('note-body-input')?.value || '';
+  return document.getElementById('note-body-input')?.innerHTML || '';
 }
 
 function onNoteTitleInput() {
@@ -15232,8 +15234,8 @@ function onNoteTitleInput() {
 
 function onNoteBodyInput() {
   const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
-  const ta   = document.getElementById('note-body-input');
-  const body = ta?.value || '';
+  const el   = document.getElementById('note-body-input');
+  const body = el?.innerHTML || '';
 
   // Push undo snapshot
   const stack = _noteUndoStack.get(n.id) || [];
@@ -15267,7 +15269,7 @@ async function _autoSaveNote() {
     // Update in-memory cache only; push to server
     const state = _noteUnlocked.get(n.id);
     if (state) {
-      state.body = body;
+      state.body = body; // body is already innerHTML
       if (!await kvEnsureKey()) return;
       const ciphertext = await kvEncrypt(_kvKey, body);
       await fetchKV(`${WORKER_URL}/note/body/push`, {
@@ -15289,38 +15291,8 @@ async function _autoSaveNote() {
 }
 
 // ── Undo / Redo ───────────────────────────
-function noteUndo() {
-  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
-  const stack = _noteUndoStack.get(n.id) || [];
-  if (stack.length < 2) return;
-  const current = stack.pop();
-  (_noteRedoStack.get(n.id) || []).push(current);
-  _noteRedoStack.set(n.id, _noteRedoStack.get(n.id) || []);
-  const prev = stack[stack.length - 1] || '';
-  const ta = document.getElementById('note-body-input');
-  if (ta) { ta.value = prev; }
-  _noteBodyDirty = true; clearTimeout(_noteAutoSaveTimer); _noteAutoSaveTimer = setTimeout(_autoSaveNote, 800);
-  _updateNoteUndoRedoBtns(n.id);
-}
-
-function noteRedo() {
-  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
-  const redoStack = _noteRedoStack.get(n.id) || [];
-  if (!redoStack.length) return;
-  const next = redoStack.pop();
-  (_noteUndoStack.get(n.id) || []).push(next);
-  const ta = document.getElementById('note-body-input');
-  if (ta) { ta.value = next; }
-  _noteBodyDirty = true; clearTimeout(_noteAutoSaveTimer); _noteAutoSaveTimer = setTimeout(_autoSaveNote, 800);
-  _updateNoteUndoRedoBtns(n.id);
-}
-
-function _updateNoteUndoRedoBtns(noteId) {
-  const undoBtn = document.getElementById('note-undo-btn');
-  const redoBtn = document.getElementById('note-redo-btn');
-  if (undoBtn) undoBtn.disabled = (_noteUndoStack.get(noteId) || []).length < 2;
-  if (redoBtn) redoBtn.disabled = (_noteRedoStack.get(noteId) || []).length === 0;
-}
+// Undo/redo delegated to browser execCommand — no manual stacks needed
+function _updateNoteUndoRedoBtns(noteId) { /* browser handles undo/redo */ }
 
 // ── Reminder ──────────────────────────────
 function openNoteReminder() {
@@ -15402,18 +15374,23 @@ async function toggleNotes2fa() {
 // ── Keyboard shortcuts ────────────────────
 document.addEventListener('keydown', e => {
   if (!_editingNoteId) return;
-  const ctrl = e.ctrlKey || e.metaKey;
-  if (ctrl && !e.shiftKey && e.key === 'z') { e.preventDefault(); noteUndo(); }
-  if (ctrl && (e.shiftKey && e.key === 'z' || e.key === 'y')) { e.preventDefault(); noteRedo(); }
   if (e.key === 'Escape') {
-    // Close colour picker first, then editor
     if (_noteColourPickerOpen) {
       _noteColourPickerOpen = false;
-      document.getElementById('note-colour-picker').style.display = 'none';
+      const cp = document.getElementById('note-colour-picker');
+      if (cp) cp.style.display = 'none';
     } else {
       closeNoteEditor();
     }
   }
+});
+
+// Update format button active states when selection changes
+document.addEventListener('selectionchange', () => {
+  if (!_editingNoteId) return;
+  const active = document.activeElement;
+  const bodyEl = document.getElementById('note-body-input');
+  if (active === bodyEl || bodyEl?.contains(active)) _updateFmtBtnStates();
 });
 
 // ── Sync helper ───────────────────────────
@@ -15421,6 +15398,59 @@ async function _syncNoteIfConnected() {
   if (kvConnected && !_shareState) {
     kvPush().catch(e => console.warn('notes kvPush:', e.message));
   }
+}
+
+// ── Rich text formatting ─────────────────
+function noteFmt(cmd) {
+  const el = document.getElementById('note-body-input');
+  if (!el) return;
+  el.focus();
+  document.execCommand(cmd, false, null);
+  // Update active state on format buttons
+  _updateFmtBtnStates();
+  onNoteBodyInput();
+}
+
+function _updateFmtBtnStates() {
+  const cmds = { bold:'bold', italic:'italic', underline:'underline', strikeThrough:'strikeThrough' };
+  Object.entries(cmds).forEach(([cmd, title]) => {
+    document.querySelectorAll('.note-fmt-btn').forEach(btn => {
+      if (btn.title === title.charAt(0).toUpperCase() + title.slice(1)) {
+        btn.classList.toggle('active', document.queryCommandState(cmd));
+      }
+    });
+  });
+}
+
+// ── 2FA prompt modal ──────────────────────
+const _NOTES_2FA_DISMISSED_KEY = 'stockroom_notes2fa_dismissed';
+
+function _maybeShowNotes2faPrompt() {
+  if (settings.notes2fa) return; // already on
+  if (localStorage.getItem(_NOTES_2FA_DISMISSED_KEY)) return; // dismissed before
+  // Only prompt if signed in (no point offering 2FA to local-only users)
+  if (!kvConnected) return;
+  openModal('notes-2fa-prompt-modal');
+}
+
+function enableNotes2faFromPrompt() {
+  settings.notes2fa = true;
+  _saveSettings().catch(() => {});
+  closeModal('notes-2fa-prompt-modal');
+  toast('2-step unlock enabled ✓');
+}
+
+function dismissNotes2faPrompt() {
+  localStorage.setItem(_NOTES_2FA_DISMISSED_KEY, '1');
+  closeModal('notes-2fa-prompt-modal');
+}
+
+// Also expose toggleNotes2fa for Settings
+async function toggleNotes2fa() {
+  if (!kvConnected) { toast('Sign in to change this setting'); return; }
+  settings.notes2fa = !settings.notes2fa;
+  await _saveSettings();
+  toast(settings.notes2fa ? '2-step unlock enabled ✓' : '2-step unlock disabled');
 }
 
 // Render note reminder cards in the Reminders tab
