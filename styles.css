@@ -840,3 +840,5 @@
   letter-spacing:1.5px; text-transform:uppercase; margin-bottom:10px; }
 #note-editor-overlay.open { display:flex; }
 #note-lock-screen.open { display:flex; }
+#note-editor-overlay { display:none; }
+#note-lock-screen { display:none; }

@@ -524,8 +524,14 @@
     <!-- Step 2: Country -->
     <div class="wizard-step" id="wizard-step-2">
       <div style="font-size:48px;margin-bottom:12px">🌍</div>
-      <h2 style="font-size:22px;font-weight:700;margin-bottom:8px">Where are you based?</h2>
-      <p style="color:var(--muted);font-size:14px;line-height:1.6;margin-bottom:24px">We'll show you the right stores for price comparison — Amazon, supermarkets, and bulk retailers for your region.</p>
+      <h2 style="font-size:22px;font-weight:700;margin-bottom:8px">Almost there!</h2>
+      <p style="color:var(--muted);font-size:14px;line-height:1.6;margin-bottom:20px">Tell us your name and where you're based so we can personalise your experience.</p>
+      <div class="form-group" style="margin-bottom:20px;text-align:left">
+        <label class="form-label">Your first name <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+        <input class="form-input" id="wizard-display-name" type="text" placeholder="e.g. Alex" autocomplete="given-name" maxlength="40"
+          oninput="wizardNameInput(this.value)">
+      </div>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:16px;font-weight:600">Where are you based?</p>
       <div class="country-grid" id="country-grid">
         <button class="country-btn" id="cbtn-GB" onclick="selectCountry('GB')"><span style="font-size:22px">🇬🇧</span><span>United Kingdom</span><span class="check">✓</span></button>
         <button class="country-btn" id="cbtn-US" onclick="selectCountry('US')"><span style="font-size:22px">🇺🇸</span><span>United States</span><span class="check">✓</span></button>
@@ -584,6 +590,7 @@
     <div class="logo">STOCKROOM <span id="profile-label">/ HOUSEHOLD TRACKER</span></div>
     <button class="btn btn-ghost btn-sm" style="margin-left:6px;font-size:12px;padding:4px 8px;border-radius:8px;opacity:0.7" title="Add or switch household" onclick="event.stopPropagation();openProfilePicker()">🏠+</button>
   </div>
+  <div id="header-greeting" style="font-size:12px;color:var(--muted);display:none;align-items:center;gap:4px"></div>
   <div style="display:flex;align-items:center;gap:8px">
     <div id="presence-bar" style="display:none"></div>
     <div id="sync-pill" class="sync-pill pending" onclick="handleSyncPillTap()">
@@ -830,7 +837,7 @@
   </div>
 
   <!-- NOTE EDITOR (full-screen overlay) -->
-  <div id="note-editor-overlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:400;flex-direction:column;overflow:hidden">
+  <div id="note-editor-overlay" style="position:fixed;inset:0;background:var(--bg);z-index:400;flex-direction:column;overflow:hidden">
     <!-- Toolbar -->
     <div id="note-editor-toolbar" style="display:flex;align-items:center;gap:6px;padding:12px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;background:var(--surface)">
       <button class="btn btn-ghost btn-sm" onclick="closeNoteEditor()" style="margin-right:4px">← Back</button>
@@ -1298,6 +1305,11 @@
     <div class="settings-card">
       <h3 style="display:none">⚙️ Preferences</h3>
       <div class="setting-row">
+        <div class="setting-info"><h4>Your name</h4><p>Shown as a greeting — first name preferred</p></div>
+        <input type="text" id="setting-display-name" placeholder="First name" maxlength="40"
+          style="width:140px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-family:var(--sans);font-size:13px"
+          oninput="saveDisplayName(this.value)">
+      </div>
         <div class="setting-info"><h4>Low stock warning</h4><p>Warn when stock drops below this %</p></div>
         <select id="setting-threshold" onchange="saveSettings()" style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
           <option value="10">10%</option><option value="15">15%</option><option value="20" selected>20%</option><option value="25">25%</option><option value="33">33%</option>
@@ -1839,7 +1851,8 @@
   </div>
 </div>
 
-<!-- Share Target Modal -->\n<div class="modal-backdrop" id="share-target-modal">
+<!-- Share Target Modal -->
+<div class="modal-backdrop" id="share-target-modal">
   <div class="modal" style="max-width:420px;max-height:80vh;overflow-y:auto">
     <h2 id="share-target-modal-title">👤 Add Person</h2>
     <input type="hidden" id="share-target-code">
