@@ -173,6 +173,8 @@ async function _deleteAllUserData(kv: Deno.Kv, emailHash: string): Promise<void>
     ['email_verify',     emailHash],   // email verification OTPs
     ['note_body',        emailHash],   // secure note bodies
     ['notes_session',    emailHash],   // notes 2FA session tokens
+    ['deactivation',     emailHash],   // deactivation state
+    ['delete_token',     emailHash],   // pending deletion token
   ];
 
   for (const prefix of prefixesToScan) {
@@ -1220,18 +1222,22 @@ Deno.serve(async (request) => {
         const emailHash = key[1];
         if (seen.has(emailHash)) continue;
         seen.add(emailHash);
-        const [emailR, createdR, versionR, migratedR] = await Promise.all([
+        const [emailR, createdR, versionR, migratedR, pendingDelR, deactivationR] = await Promise.all([
           kvGet(['user', emailHash, 'email']),
           kvGet(['user', emailHash, 'created']),
           kvGet(['user', emailHash, 'crypto_version']),
           kvGet(['user', emailHash, 'migrated_at']),
+          kvGet(['user', emailHash, 'pending_deletion']),
+          kvGet(['deactivation', emailHash]),
         ]);
         accounts.push({
           emailHash,
-          email:         emailR.value   as string | null || null,
-          created:       createdR.value as string | null || null,
-          cryptoVersion: versionR.value as string        || 'v1',
-          migrated:      migratedR.value as string | null || null,
+          email:          emailR.value   as string | null || null,
+          created:        createdR.value as string | null || null,
+          cryptoVersion:  versionR.value as string        || 'v1',
+          migrated:       migratedR.value as string | null || null,
+          pendingDeletion: pendingDelR.value ? JSON.parse(pendingDelR.value as string) : null,
+          deactivated:    deactivationR.value ? JSON.parse(deactivationR.value as string) : null,
         });
       }
       accounts.sort((a, b) => (a.created || '').localeCompare(b.created || ''));
@@ -2227,7 +2233,252 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
+  // ── User: deactivate account ──────────────────────────
+  if (url.pathname === '/user/deactivate' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else if (verifier) {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else return json({ error: 'Missing credentials' }, corsHeaders, 400);
+
+      const emailRec = await kvGet(['user', emailHash, 'email']);
+      const emailAddr = emailRec.value || '';
+      const deactivatedAt = new Date().toISOString();
+      // Generate reactivation token
+      const reactivateToken = Array.from(crypto.getRandomValues(new Uint8Array(24))).map(b => b.toString(16).padStart(2,'0')).join('');
+      await kvSet(['deactivation', emailHash], JSON.stringify({
+        deactivatedAt, reactivateToken, remindSent: false, warningSent: false, markedForDeletion: false
+      }));
+      await kvSet(['deactivation_reactivate', reactivateToken], emailHash, { expireIn: 120 * 24 * 60 * 60 * 1000 });
+
+      const appUrl = env.APP_URL || 'https://stckrm.fly.dev';
+      if (emailAddr && env.RESEND_API_KEY) {
+        const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;background:#f5f5f5;padding:32px">
+          <div style="max-width:500px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden">
+            <div style="background:#111;padding:20px 28px"><div style="color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px">STOCKROOM</div></div>
+            <div style="padding:28px">
+              <h2 style="margin:0 0 12px;color:#111">Your account has been deactivated</h2>
+              <p style="color:#555;margin:0 0 20px;font-size:14px;line-height:1.6">Your STOCKROOM account has been deactivated. Your data is preserved for up to 3 months.</p>
+              <div style="display:flex;gap:12px;flex-wrap:wrap">
+                <a href="${appUrl}?reactivate_token=${reactivateToken}" style="display:inline-block;background:#e8a838;color:#111;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px">Reactivate account</a>
+              </div>
+              <p style="color:#999;margin:20px 0 0;font-size:12px">If you did not deactivate your account, contact support immediately.</p>
+            </div>
+          </div>
+        </body></html>`;
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ from: env.FROM_EMAIL, to: [emailAddr], subject: 'Your STOCKROOM account has been deactivated', html }),
+        });
+      }
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── User: reactivate account ───────────────────────────
+  if (url.pathname === '/user/reactivate' && request.method === 'POST') {
+    try {
+      const { token } = await request.json();
+      if (!token) return json({ error: 'Missing token' }, corsHeaders, 400);
+      const emailHashRec = await kvGet(['deactivation_reactivate', token]);
+      if (!emailHashRec.value) return json({ error: 'Invalid or expired reactivation link' }, corsHeaders, 410);
+      const emailHash = emailHashRec.value as string;
+      await kvDel(['deactivation', emailHash]);
+      await kvDel(['deactivation_reactivate', token]);
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── User: send delete confirmation email ───────────────
+  if (url.pathname === '/user/delete-confirm-send' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier } = await request.json();
+      if (!emailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const stored = await kvGet(['user', emailHash, 'verifier']);
+      if (!stored.value || stored.value !== verifier) return json({ error: 'Incorrect passphrase' }, corsHeaders, 401);
+      const emailRec = await kvGet(['user', emailHash, 'email']);
+      const emailAddr = emailRec.value || '';
+      if (!emailAddr) return json({ error: 'No email address on record' }, corsHeaders, 400);
+      // Generate delete token (24h TTL)
+      const deleteToken = Array.from(crypto.getRandomValues(new Uint8Array(24))).map(b => b.toString(16).padStart(2,'0')).join('');
+      await kvSet(['delete_token', emailHash], deleteToken, { expireIn: 24 * 60 * 60 * 1000 });
+      const appUrl = env.APP_URL || 'https://stckrm.fly.dev';
+      const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;background:#f5f5f5;padding:32px">
+        <div style="max-width:500px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden">
+          <div style="background:#111;padding:20px 28px"><div style="color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px">STOCKROOM</div></div>
+          <div style="padding:28px">
+            <h2 style="margin:0 0 12px;color:#e05c5c">⚠️ Final warning — account deletion</h2>
+            <p style="color:#555;margin:0 0 16px;font-size:14px;line-height:1.6">You have requested permanent deletion of your STOCKROOM account. <strong>This cannot be undone.</strong> All your data will be permanently erased.</p>
+            <p style="color:#555;margin:0 0 20px;font-size:14px;line-height:1.6">This link expires in 24 hours. If you change your mind, simply ignore this email.</p>
+            <a href="${appUrl}?delete_token=${deleteToken}" style="display:inline-block;background:#e05c5c;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px">Delete Account Permanently</a>
+            <p style="color:#999;margin:20px 0 0;font-size:12px">If you did not request this, your account is safe — ignore this email.</p>
+          </div>
+        </div>
+      </body></html>`;
+      if (!env.RESEND_API_KEY) return json({ error: 'Email not configured' }, corsHeaders, 500);
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: env.FROM_EMAIL, to: [emailAddr], subject: '⚠️ STOCKROOM account deletion — final warning', html }),
+      });
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── User: execute deletion (from email link) ───────────
+  if (url.pathname === '/user/delete-execute' && request.method === 'POST') {
+    try {
+      const { token } = await request.json();
+      if (!token) return json({ error: 'Missing token' }, corsHeaders, 400);
+      // Find which user this token belongs to
+      const iter = kv.list({ prefix: ['delete_token'] });
+      let targetEmailHash = '';
+      for await (const entry of iter) {
+        if (entry.value === token) { targetEmailHash = entry.key[1] as string; break; }
+      }
+      if (!targetEmailHash) return json({ error: 'Invalid or expired deletion link' }, corsHeaders, 410);
+      // Get email before deleting
+      const emailRec = await kvGet(['user', targetEmailHash, 'email']);
+      const emailAddr = emailRec.value || '';
+      await _deleteAllUserData(kv, targetEmailHash);
+      // Send farewell email
+      if (emailAddr && env.RESEND_API_KEY) {
+        const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;background:#f5f5f5;padding:32px">
+          <div style="max-width:500px;margin:0 auto;background:#fff;border-radius:12px;padding:28px">
+            <div style="color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px;margin-bottom:16px">STOCKROOM</div>
+            <h2 style="margin:0 0 12px;color:#111">Your account has been deleted</h2>
+            <p style="color:#555;font-size:14px;line-height:1.6">Your STOCKROOM account and all associated data has been permanently deleted. Thank you for using STOCKROOM.</p>
+          </div>
+        </body></html>`;
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ from: env.FROM_EMAIL, to: [emailAddr], subject: 'Your STOCKROOM account has been deleted', html }),
+        });
+      }
+      console.log(`User executed self-deletion: ${targetEmailHash}`);
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
   return new Response('Not found', { status: 404 });
+});
+
+// ── Deactivation cron (runs daily at 10am) ───────────────
+Deno.cron('stockroom-deactivation-check', '0 10 * * *', async () => {
+  const appUrl = Deno.env.get('APP_URL') || 'https://stckrm.fly.dev';
+  const resendKey = Deno.env.get('RESEND_API_KEY') || '';
+  const fromEmail = Deno.env.get('FROM_EMAIL') || 'onboarding@resend.dev';
+  if (!resendKey) return;
+
+  const iter = kv.list({ prefix: ['deactivation'] });
+  for await (const entry of iter) {
+    if ((entry.key as string[]).length !== 2) continue;
+    const emailHash = (entry.key as string[])[1];
+    try {
+      const data = JSON.parse(entry.value as string);
+      const deactivatedAt = new Date(data.deactivatedAt).getTime();
+      const now = Date.now();
+      const daysSince = (now - deactivatedAt) / 86400000;
+      const emailRec = await kvGet(['user', emailHash, 'email']);
+      const emailAddr = (emailRec.value as string) || '';
+      if (!emailAddr) continue;
+
+      // 1-week-before-3-months reminder (day ~83)
+      if (!data.remindSent && daysSince >= 83 && daysSince < 90) {
+        const daysLeft = Math.max(0, Math.round(90 - daysSince));
+        const html = `<div style="font-family:-apple-system,sans-serif;padding:28px;max-width:500px">
+          <div style="color:#e8a838;font-weight:800;letter-spacing:2px;margin-bottom:16px">STOCKROOM</div>
+          <h2>Your deactivated account expires in ${daysLeft} days</h2>
+          <p style="color:#555;line-height:1.6">Your STOCKROOM account was deactivated ${Math.round(daysSince)} days ago. In ${daysLeft} days it will enter a final warning period before being marked for deletion.</p>
+          <p style="color:#555;line-height:1.6">To keep your account, reactivate it now. To delete it immediately, use the link below.</p>
+          <div style="display:flex;gap:12px;margin-top:20px;flex-wrap:wrap">
+            <a href="${appUrl}?reactivate_token=${data.reactivateToken}" style="background:#e8a838;color:#111;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Reactivate account</a>
+            <a href="${appUrl}?action=delete-start" style="background:#e05c5c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Delete account</a>
+          </div>
+        </div>`;
+        await fetch('https://api.resend.com/emails', {
+          method:'POST', headers:{'Authorization':`Bearer ${resendKey}`,'Content-Type':'application/json'},
+          body: JSON.stringify({ from: fromEmail, to: [emailAddr], subject: `⚠️ STOCKROOM: your account expires in ${daysLeft} days`, html }),
+        });
+        data.remindSent = true;
+        await kvSet(['deactivation', emailHash], JSON.stringify(data));
+      }
+
+      // After 90 days — enter final warning period (30 more days)
+      if (!data.warningSent && daysSince >= 90 && daysSince < 91) {
+        const html = `<div style="font-family:-apple-system,sans-serif;padding:28px;max-width:500px">
+          <div style="color:#e8a838;font-weight:800;letter-spacing:2px;margin-bottom:16px">STOCKROOM</div>
+          <h2>⚠️ Final warning — account marked for deletion in 30 days</h2>
+          <p style="color:#555;line-height:1.6">Your STOCKROOM account deactivation period has expired. Your account and all data will be marked for deletion in 30 days if no action is taken.</p>
+          <div style="display:flex;gap:12px;margin-top:20px;flex-wrap:wrap">
+            <a href="${appUrl}?reactivate_token=${data.reactivateToken}" style="background:#e8a838;color:#111;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Reactivate now</a>
+            <a href="${appUrl}?action=delete-start" style="background:#e05c5c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Delete account</a>
+          </div>
+        </div>`;
+        await fetch('https://api.resend.com/emails', {
+          method:'POST', headers:{'Authorization':`Bearer ${resendKey}`,'Content-Type':'application/json'},
+          body: JSON.stringify({ from: fromEmail, to: [emailAddr], subject: '⚠️ STOCKROOM: final warning — account deletion in 30 days', html }),
+        });
+        data.warningSent = true;
+        await kvSet(['deactivation', emailHash], JSON.stringify(data));
+      }
+
+      // 5-day warning (day ~115)
+      if (data.warningSent && !data.fiveDaySent && daysSince >= 115 && daysSince < 116) {
+        const html = `<div style="font-family:-apple-system,sans-serif;padding:28px;max-width:500px">
+          <div style="color:#e8a838;font-weight:800;letter-spacing:2px;margin-bottom:16px">STOCKROOM</div>
+          <h2>⚠️ 5 days until your account is marked for deletion</h2>
+          <p style="color:#555;line-height:1.6">This is your 5-day notice. If you take no action, your account will be marked for deletion by an administrator.</p>
+          <div style="display:flex;gap:12px;margin-top:20px;flex-wrap:wrap">
+            <a href="${appUrl}?reactivate_token=${data.reactivateToken}" style="background:#e8a838;color:#111;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Reactivate now</a>
+            <a href="${appUrl}?action=delete-start" style="background:#e05c5c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Delete account</a>
+          </div>
+        </div>`;
+        await fetch('https://api.resend.com/emails', {
+          method:'POST', headers:{'Authorization':`Bearer ${resendKey}`,'Content-Type':'application/json'},
+          body: JSON.stringify({ from: fromEmail, to: [emailAddr], subject: '⚠️ STOCKROOM: 5 days until your account is marked for deletion', html }),
+        });
+        data.fiveDaySent = true;
+        await kvSet(['deactivation', emailHash], JSON.stringify(data));
+      }
+
+      // 2-day final notice (day ~118)
+      if (data.fiveDaySent && !data.twoDaySent && daysSince >= 118 && daysSince < 119) {
+        const html = `<div style="font-family:-apple-system,sans-serif;padding:28px;max-width:500px">
+          <div style="color:#e8a838;font-weight:800;letter-spacing:2px;margin-bottom:16px">STOCKROOM</div>
+          <h2>⚠️ 2 days — final notice before deletion mark</h2>
+          <p style="color:#555;line-height:1.6">This is your final notice. In 2 days your account will be marked as "Can be deleted" for administrator review.</p>
+          <div style="display:flex;gap:12px;margin-top:20px;flex-wrap:wrap">
+            <a href="${appUrl}?reactivate_token=${data.reactivateToken}" style="background:#e8a838;color:#111;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Reactivate now</a>
+            <a href="${appUrl}?action=delete-start" style="background:#e05c5c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Delete account</a>
+          </div>
+        </div>`;
+        await fetch('https://api.resend.com/emails', {
+          method:'POST', headers:{'Authorization':`Bearer ${resendKey}`,'Content-Type':'application/json'},
+          body: JSON.stringify({ from: fromEmail, to: [emailAddr], subject: '⚠️ STOCKROOM: 2-day final notice', html }),
+        });
+        data.twoDaySent = true;
+        await kvSet(['deactivation', emailHash], JSON.stringify(data));
+      }
+
+      // Day 120 — mark for deletion
+      if (!data.markedForDeletion && daysSince >= 120) {
+        data.markedForDeletion = true;
+        data.markedAt = new Date().toISOString();
+        await kvSet(['deactivation', emailHash], JSON.stringify(data));
+        // This will appear in admin panel as "Can be deleted"
+        await kvSet(['user', emailHash, 'pending_deletion'], JSON.stringify({ markedAt: data.markedAt, reason: 'deactivation_expired' }));
+      }
+
+    } catch(e) { console.error('Deactivation cron error for', emailHash, e); }
+  }
 });
 
 // ── Cron ──────────────────────────────────────────────────
