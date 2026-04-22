@@ -173,6 +173,7 @@ async function _deleteAllUserData(kv: Deno.Kv, emailHash: string): Promise<void>
     ['email_verify',     emailHash],   // email verification OTPs
     ['note_body',        emailHash],   // secure note bodies
     ['notes_session',    emailHash],   // notes 2FA session tokens
+    ['mfa_otp',          emailHash],   // MFA login OTP
     ['deactivation',     emailHash],   // deactivation state
     ['delete_token',     emailHash],   // pending deletion token
   ];
@@ -273,14 +274,16 @@ Deno.serve(async (request) => {
   // ── Device: list trusted devices ─────────────────────
   if (url.pathname === '/device/list' && request.method === 'POST') {
     try {
-      const { emailHash, verifier } = await request.json();
-      if (!emailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', emailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const authed = sessionToken
+        ? !!(await kvGet(['passkey_session', emailHash, sessionToken])).value
+        : verifier && (await kvGet(['user', emailHash, 'verifier'])).value === verifier;
+      if (!authed) return json({ error: 'Unauthorised' }, corsHeaders, 401);
       const devices = [];
       const entries = kv.list({ prefix: ['device', emailHash] });
       for await (const entry of entries) {
-        try { devices.push(JSON.parse(entry.value)); } catch(e) {}
+        try { devices.push(JSON.parse(entry.value as string)); } catch(e) {}
       }
       return json({ devices }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
@@ -305,11 +308,28 @@ Deno.serve(async (request) => {
   // ── Device: remove trusted device ────────────────────
   if (url.pathname === '/device/remove' && request.method === 'POST') {
     try {
-      const { emailHash, verifier, deviceId } = await request.json();
-      if (!emailHash || !verifier || !deviceId) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', emailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { emailHash, verifier, sessionToken, deviceId } = await request.json();
+      if (!emailHash || !deviceId) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const authed = sessionToken
+        ? !!(await kvGet(['passkey_session', emailHash, sessionToken])).value
+        : verifier && (await kvGet(['user', emailHash, 'verifier'])).value === verifier;
+      if (!authed) return json({ error: 'Unauthorised' }, corsHeaders, 401);
       await kvDel(['device', emailHash, deviceId]);
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Device: clear all trusted devices ────────────────
+  if (url.pathname === '/device/clear-all' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const authed = sessionToken
+        ? !!(await kvGet(['passkey_session', emailHash, sessionToken])).value
+        : verifier && (await kvGet(['user', emailHash, 'verifier'])).value === verifier;
+      if (!authed) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const entries = kv.list({ prefix: ['device', emailHash] });
+      for await (const entry of entries) await kv.delete(entry.key);
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
@@ -2090,6 +2110,86 @@ Deno.serve(async (request) => {
       const stored = await kvGet(['share_ecdh_key', code.toUpperCase(), guestEmailHash]);
       if (!stored.value) return json({ error: 'No ECDH key found for this share' }, corsHeaders, 404);
       return json({ ok: true, ...JSON.parse(stored.value) }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── MFA: send OTP (login / reauth second factor) ────────
+  if (url.pathname === '/mfa/otp/send' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      // Accept verifier OR sessionToken
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — please sign in again' }, corsHeaders, 401);
+      } else if (verifier) {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else {
+        return json({ error: 'Missing credentials' }, corsHeaders, 400);
+      }
+      // Rate limit: 1 OTP per 30 seconds (shorter than notes OTP for login UX)
+      const last = await kvGet(['mfa_otp', emailHash]);
+      if (last.value) {
+        const d = JSON.parse(last.value as string);
+        if (Date.now() - new Date(d.sentAt).getTime() < 30000) {
+          return json({ error: 'Please wait 30 seconds before requesting another code' }, corsHeaders, 429);
+        }
+      }
+      const emailRec = await kvGet(['user', emailHash, 'email']);
+      const emailAddr = (emailRec.value as string) || '';
+      if (!emailAddr) return json({ error: 'No email address on record for this account' }, corsHeaders, 400);
+      if (!env.RESEND_API_KEY) return json({ error: 'Email service not configured' }, corsHeaders, 500);
+      const otp = Array.from(crypto.getRandomValues(new Uint8Array(6))).map(b => b % 10).join('');
+      await kvSet(['mfa_otp', emailHash], JSON.stringify({ otp, sentAt: new Date().toISOString(), attempts: 0 }), { expireIn: 5 * 60 * 1000 });
+      const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;background:#f5f5f5;padding:32px">
+        <div style="max-width:480px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
+          <div style="background:#111;padding:20px 28px;display:flex;align-items:center;gap:12px">
+            <span style="font-size:24px">🛡️</span>
+            <div style="color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px">STOCKROOM</div>
+          </div>
+          <div style="padding:28px">
+            <h2 style="margin:0 0 8px;color:#111">Your sign-in verification code</h2>
+            <p style="color:#666;margin:0 0 24px;font-size:14px;line-height:1.6">Enter this code in the STOCKROOM app to complete your sign-in. Valid for 5 minutes.</p>
+            <div style="background:#f5f5f5;border-radius:8px;padding:24px;text-align:center">
+              <div style="font-size:44px;font-weight:800;letter-spacing:10px;color:#111;font-family:monospace">${otp}</div>
+            </div>
+            <p style="color:#999;margin:20px 0 0;font-size:12px">If you didn't attempt to sign in to STOCKROOM, your account may be at risk — change your passphrase immediately.</p>
+          </div>
+        </div>
+      </body></html>`;
+      const sendRes = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: env.FROM_EMAIL, to: [emailAddr], subject: '🛡️ STOCKROOM — Your sign-in code', html }),
+      });
+      if (!sendRes.ok) {
+        const errData = await sendRes.json().catch(() => ({}));
+        return json({ error: 'Failed to send email: ' + (errData.message || sendRes.status) }, corsHeaders, 500);
+      }
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── MFA: verify OTP ──────────────────────────────────────
+  if (url.pathname === '/mfa/otp/verify' && request.method === 'POST') {
+    try {
+      const { emailHash, otp } = await request.json();
+      if (!emailHash || !otp) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const stored = await kvGet(['mfa_otp', emailHash]);
+      if (!stored.value) return json({ error: 'Code expired — request a new one' }, corsHeaders, 410);
+      const data = JSON.parse(stored.value as string);
+      data.attempts = (data.attempts || 0) + 1;
+      if (data.attempts > 5) {
+        await kvDel(['mfa_otp', emailHash]);
+        return json({ error: 'Too many attempts — request a new code' }, corsHeaders, 429);
+      }
+      if (String(data.otp) !== String(otp).trim()) {
+        await kvSet(['mfa_otp', emailHash], JSON.stringify(data), { expireIn: 5 * 60 * 1000 });
+        return json({ error: 'Incorrect code' }, corsHeaders, 401);
+      }
+      await kvDel(['mfa_otp', emailHash]);
+      return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
