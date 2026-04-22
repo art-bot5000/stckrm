@@ -860,8 +860,9 @@
   /* Grocery: hide Edit button + Add Item in multi-list picker view */
   body.grocery-multilist #grocery-edit-toggle { display:none !important; }
   body.grocery-multilist .grocery-toolbar .btn-primary { display:none !important; }
-  /* Notes view on desktop - cap width and center */
-  #view-notes.active { display:block; max-width:800px; }
+  /* Notes view on desktop - must clear the 220px sidebar since it is at body level */
+  #view-notes { position:fixed; top:0; right:0; bottom:0; left:220px; overflow-y:auto; padding:28px 36px; display:none; background:var(--bg); z-index:10; }
+  #view-notes.active { display:block; }
   #view-account-security.active { display:block; }
   /* Account & Security view */
   #view-account-security { max-width: 720px; }
@@ -894,6 +895,10 @@
 
 /* ── Account & Security view ── */
 #view-account-security { max-width:680px; }
+#view-account-security.active { display:block !important; }
+/* Ensure acc-sec rows use flex regardless of any settings overrides */
+.acc-sec-card .acc-sec-row { display:flex !important; }
+.acc-sec-card .acc-sec-row.acc-sec-row-block { flex-direction:column !important; }
 .acc-sec-section-title { font-size:11px; font-weight:700; color:var(--muted); font-family:var(--mono); letter-spacing:1.5px; text-transform:uppercase; margin-bottom:10px; padding-left:2px; }
 .acc-sec-card { background:var(--surface); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
 .acc-sec-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 18px; border-bottom:1px solid var(--border); }

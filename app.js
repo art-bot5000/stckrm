@@ -407,6 +407,20 @@ function updateHeaderGreeting() {
 
 // renderAccountSecurity moved to Account & Security section below
 
+function _updateSidebarProfile() {
+  const el = document.getElementById('app-nav-profile');
+  if (!el) return;
+  const name = settings.displayName ? _capitaliseFirst(settings.displayName) : '';
+  if (name) {
+    el.textContent = 'Hi, ' + name;
+    el.style.color = 'var(--muted)';
+    el.style.cursor = 'default';
+    el.onclick = null;
+  } else {
+    el.textContent = '';
+  }
+}
+
 function saveSettingsCountry(val) {
   settings.country = val;
   // Sync to other country selects
@@ -5146,7 +5160,7 @@ function showView(name, btn) {
   if (name === 'shopping')  renderShoppingList();
   if (name === 'savings')   renderSavingsView();
   if (name === 'grocery')   renderGrocery();
-  if (name === 'notes')     renderNotes();
+  if (name === 'notes')     { renderNotes(); setTimeout(_maybeShowMfaPrompt, 600); }
   if (name === 'account-security') renderAccountSecurity();
   if (name === 'stock') {
     updateStockShoppingHeader('stock');
@@ -5178,13 +5192,7 @@ function navTo(name) {
 }
 
 // Update sidebar profile label and sync state
-function _updateSidebarProfile() {
-  const el = document.getElementById('app-nav-profile');
-  if (el) {
-    const name = _householdName || settings?.email?.split('@')[0] || 'Home';
-    el.textContent = name;
-  }
-}
+
 
 function getShoppingItems() {
   return items.filter(item => {
@@ -7711,6 +7719,21 @@ async function postLoginWizardRoute(recoveryCodes = []) {
         return;
       }
     }
+    // MFA intercept — if enabled, require second factor before entering app
+    if (_mfaEnabled()) {
+      await _mfaLoginIntercept(async () => {
+        showDataLoadingOverlay('Syncing your data…');
+        document.body.classList.remove('wizard-active');
+        document.getElementById('wizard').style.display = 'none';
+        localStorage.setItem('stockroom_seen', '1');
+        await setProtectSeenForDevice();
+        const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
+        if (stockTab) showView('stock', stockTab);
+        scheduleRender(...RENDER_REGIONS);
+        try { await kvSyncNow(true); } finally { hideDataLoadingOverlay(); }
+      });
+      return;
+    }
     showDataLoadingOverlay('Syncing your data…');
     document.body.classList.remove('wizard-active');
     document.getElementById('wizard').style.display = 'none';
@@ -8903,11 +8926,17 @@ async function loadPasskeys() {
     const body = _kvSessionToken
       ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken }
       : { emailHash: _kvEmailHash, verifier: _kvVerifier };
-    const res  = await fetch(`${WORKER_URL}/passkey/list`, {
+    const res  = await fetchKV(`${WORKER_URL}/passkey/list`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error('Server returned ' + res.status);
+    if (!res.ok) {
+      if (res.status === 400 || res.status === 404) {
+        container.innerHTML = '<p style="font-size:12px;color:var(--muted)">No passkeys registered on this account yet.</p>';
+        return;
+      }
+      throw new Error('Server returned ' + res.status);
+    }
     const { credentials } = await res.json();
     if (!credentials || !credentials.length) {
       container.innerHTML = '<p style="font-size:12px;color:var(--muted)">No passkeys registered yet. Add one below.</p>';
@@ -9279,7 +9308,7 @@ function toggleTrustedDevicesPanel() {
 }
 
 async function loadTrustedDevices() {
-  if (!kvConnected || !_kvEmailHash || !_kvVerifier) return;
+  if (!kvConnected || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
   const list = document.getElementById('trusted-devices-list');
   const trustRow = document.getElementById('trust-this-device-row');
   if (!list) return;
@@ -9287,7 +9316,7 @@ async function loadTrustedDevices() {
   try {
     const res  = await fetchKV(`${WORKER_URL}/device/list`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash, verifier: _kvVerifier }),
+      body: JSON.stringify({ emailHash: _kvEmailHash, ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier } }),
     });
     const data = await res.json();
     const devices = data.devices || [];
@@ -9319,11 +9348,11 @@ async function loadTrustedDevices() {
 }
 
 async function removeTrustedDevice(deviceId) {
-  if (!confirm('Remove this device? It will need to sign in with a passphrase next time.')) return;
+  if (!confirm('Remove this device? It will need to sign in with a passphrase or passkey next time.')) return;
   try {
     await fetchKV(`${WORKER_URL}/device/remove`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash, verifier: _kvVerifier, deviceId }),
+      body: JSON.stringify({ emailHash: _kvEmailHash, ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }, deviceId }),
     });
     // If removing this device, clear local trust data too
     if (deviceId === getOrCreateDeviceId()) {
@@ -9333,6 +9362,31 @@ async function removeTrustedDevice(deviceId) {
     toast('Device removed ✓');
     loadTrustedDevices();
   } catch(e) { toast('Could not remove device'); }
+}
+
+async function clearAllTrustedDevices() {
+  if (!confirm('Remove all trusted devices? All devices will need to sign in again.')) return;
+  const list = document.getElementById('trusted-devices-list');
+  if (list) list.querySelectorAll('[data-device-id]').forEach(el => {});
+  try {
+    const res = await fetchKV(`${WORKER_URL}/device/clear-all`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash: _kvEmailHash, ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier } }),
+    });
+    if (!res.ok) throw new Error('Could not clear devices');
+    // Clear local trust data for this device too
+    const myDeviceId = getOrCreateDeviceId();
+    await removeWrappedKey(myDeviceId).catch(() => {});
+    localStorage.removeItem('stockroom_device_secret');
+    toast('All trusted devices removed ✓');
+    loadTrustedDevices();
+    // Sync to acc-sec panel
+    setTimeout(() => {
+      const tdListSec = document.getElementById('trusted-devices-list-sec');
+      const tdListMain = document.getElementById('trusted-devices-list');
+      if (tdListSec && tdListMain) tdListSec.innerHTML = tdListMain.innerHTML;
+    }, 600);
+  } catch(e) { toast('Could not clear devices: ' + e.message); }
 }
 
 async function kvStoreSession(email, emailHash, verifier, key) {
@@ -14765,9 +14819,6 @@ async function renderNotes() {
   const empty = document.getElementById('notes-empty');
   if (!grid) return;
 
-  // Prompt to enable MFA on first visit to notes
-  _maybeShowMfaPrompt();
-
   const q = (_notesSearch || '').toLowerCase().trim();
   const now = Date.now();
   const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
@@ -15739,15 +15790,8 @@ async function toggleNotes2fa() {
   }, { passive: true });
 
   window.addEventListener('popstate', e => {
-    if (e.state?.stockroom) return; // our own push — ignore
-    // Re-push so we stay in app
-    history.pushState({ stockroom: true }, '');
-    _showBackInterstitial();
-  });
-
-  window.addEventListener('popstate', e => {
-    // If the user navigated via our interstitial "Exit" button we cleared _allowExit
     if (window._allowExit) { window._allowExit = false; return; }
+    if (e.state?.stockroom) return; // our own push — ignore
     history.pushState({ stockroom: true }, '');
     _showBackInterstitial();
   });
@@ -15793,6 +15837,24 @@ function _mfaMethod() {
   return settings.mfa?.method || 'email';
 }
 
+// Called at LOGIN time (not reauth) — intercept if MFA enabled
+// Shows MFA verify before the app opens
+async function _mfaLoginIntercept(callback) {
+  _pendingMfaCallback = callback;
+  // Open modal FIRST so user sees the sending status feedback
+  const hint = document.getElementById('mfa-email-hint');
+  if (hint) hint.innerHTML = '<p style="font-size:13px;color:var(--muted);margin-bottom:12px">Sending a verification code to your email…</p>';
+  const totpHint = document.getElementById('mfa-totp-hint');
+  if (totpHint) totpHint.innerHTML = '<p style="font-size:13px;color:var(--muted);margin-bottom:12px">Enter the 6-digit code from your authenticator app to complete sign-in.</p>';
+  openModal('mfa-verify-modal');
+  // Send OTP after modal is open
+  if (_mfaMethod() === 'email') {
+    await _mfaSendEmailOtp();
+    // Update hint text now that code is sent
+    if (hint) hint.innerHTML = '<p style="font-size:13px;color:var(--muted);margin-bottom:12px">A verification code has been sent to your email. Enter it below to complete sign-in.</p>';
+  }
+}
+
 // Called after first-factor (passphrase/passkey) succeeds — intercept if MFA enabled
 async function _mfaIntercept(callback) {
   if (!_mfaEnabled()) { callback(); return; }
@@ -15804,20 +15866,28 @@ async function _mfaIntercept(callback) {
 }
 
 async function _mfaSendEmailOtp() {
+  // Show sending state in modal
   const errEl = document.getElementById('mfa-otp-error');
+  const sendingEl = document.getElementById('mfa-sending-status');
   if (errEl) errEl.textContent = '';
+  if (sendingEl) { sendingEl.textContent = 'Sending code…'; sendingEl.style.display = 'block'; }
   try {
-    const res = await fetchKV(`${WORKER_URL}/note/otp/send`, {
+    const res = await fetchKV(`${WORKER_URL}/mfa/otp/send`, {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ emailHash:_kvEmailHash, ..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier} }),
     });
+    const d = await res.json();
     if (!res.ok) {
-      const d = await res.json();
-      if (errEl) errEl.textContent = d.error || 'Could not send code';
+      if (errEl) errEl.textContent = d.error || 'Could not send verification code';
+      if (sendingEl) sendingEl.style.display = 'none';
+      return;
     }
+    if (sendingEl) { sendingEl.textContent = 'Code sent ✓ — check your email'; }
+    setTimeout(() => { if (sendingEl) sendingEl.style.display = 'none'; }, 3000);
     _mfaOtpSent = true;
   } catch(e) {
-    if (errEl) errEl.textContent = 'Error: ' + e.message;
+    if (errEl) errEl.textContent = 'Could not send code: ' + e.message;
+    if (sendingEl) sendingEl.style.display = 'none';
   }
 }
 
@@ -15829,7 +15899,7 @@ async function mfaVerifySubmit() {
   if (!code || code.length < 6) { if(errEl) errEl.textContent='Enter your 6-digit code'; return; }
 
   if (method === 'email') {
-    const res = await fetchKV(`${WORKER_URL}/note/otp/verify`, {
+    const res = await fetchKV(`${WORKER_URL}/mfa/otp/verify`, {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ emailHash:_kvEmailHash, otp:code }),
     });
@@ -15839,7 +15909,7 @@ async function mfaVerifySubmit() {
     // TOTP verify client-side
     const secret = settings.mfa?.totpSecret;
     if (!secret) { if(errEl) errEl.textContent = 'TOTP not configured'; return; }
-    const valid = _totpVerify(secret, code);
+    const valid = await _totpVerify(secret, code);
     if (!valid) { if(errEl) errEl.textContent = 'Incorrect code — check your authenticator app'; return; }
   }
 
@@ -15916,10 +15986,41 @@ function _totpOtpauthUrl(secret) {
   return `otpauth://totp/${label}?secret=${secret}&issuer=${issuer}&digits=6&period=30`;
 }
 
-// Simple QR code via Google Charts API (no external lib needed)
+// QR code rendered to canvas using pure JS (no external dependency)
+// Uses a minimal QR encoder for otpauth URLs
 function _totpQrUrl(secret) {
-  const data = encodeURIComponent(_totpOtpauthUrl(secret));
-  return `https://chart.googleapis.com/chart?cht=qr&chs=220x220&chl=${data}&choe=UTF-8`;
+  // Returns otpauth URL — canvas is rendered in openMfaSetup
+  return _totpOtpauthUrl(secret);
+}
+
+async function _renderTotpQr(secret) {
+  const canvas = document.getElementById('mfa-totp-qr-canvas');
+  if (!canvas) return;
+  const uri = _totpOtpauthUrl(secret);
+  // Use the QRious library loaded from CDN, or fall back to a text display
+  try {
+    // Attempt to dynamically load QRious
+    if (!window.QRious) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js';
+        s.onload = resolve; s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+    canvas.style.display = 'block';
+    const qr = new window.QRious({ element: canvas, value: uri, size: 200, background: '#ffffff', foreground: '#000000' });
+    const imgEl = document.getElementById('mfa-totp-qr-img');
+    if (imgEl) imgEl.style.display = 'none';
+  } catch(e) {
+    // QRious failed — show otpauth URI as text fallback
+    canvas.style.display = 'none';
+    const fallback = document.getElementById('mfa-totp-qr-fallback');
+    if (fallback) {
+      fallback.style.display = 'block';
+      fallback.textContent = 'Could not load QR code. Use the manual code below.';
+    }
+  }
 }
 
 // ── MFA setup flow ──────────────────────────
@@ -15929,8 +16030,8 @@ async function openMfaSetup() {
   // Pre-generate TOTP secret
   const secret = _totpNewSecret();
   window._pendingTotpSecret = secret;
-  const qrImg = document.getElementById('mfa-totp-qr');
-  if (qrImg) qrImg.src = _totpQrUrl(secret);
+  // Render QR code to canvas
+  _renderTotpQr(secret).catch(() => {});
   const secretEl = document.getElementById('mfa-totp-secret-display');
   if (secretEl) secretEl.textContent = secret.match(/.{1,4}/g).join(' ');
   // Default to email method
@@ -16039,17 +16140,20 @@ function renderAccountSecurity() {
   // MFA status
   _updateMfaSettingsUI();
 
-  // Passkeys (reuse existing passkey list if available)
-  const pkListSec = document.getElementById('passkey-list-sec');
-  const pkListMain = document.getElementById('passkey-list');
-  if (pkListSec && pkListMain && pkListMain.innerHTML !== pkListSec.innerHTML) {
-    pkListSec.innerHTML = pkListMain.innerHTML || '<p style="font-size:12px;color:var(--muted)">Sign in to manage passkeys.</p>';
-  }
+  // Load passkeys into account security list
+  if (kvConnected) {
+    loadPasskeys().then(() => {
+      const pkListSec = document.getElementById('passkey-list-sec');
+      const pkListMain = document.getElementById('passkey-list');
+      if (pkListSec && pkListMain) pkListSec.innerHTML = pkListMain.innerHTML;
+    }).catch(() => {});
 
-  // Trusted devices
-  const tdListSec = document.getElementById('trusted-devices-list-sec');
-  const tdListMain = document.getElementById('trusted-devices-list');
-  if (tdListSec && tdListMain) tdListSec.innerHTML = tdListMain.innerHTML;
+    loadTrustedDevices().then(() => {
+      const tdListSec = document.getElementById('trusted-devices-list-sec');
+      const tdListMain = document.getElementById('trusted-devices-list');
+      if (tdListSec && tdListMain) tdListSec.innerHTML = tdListMain.innerHTML;
+    }).catch(() => {});
+  }
 }
 
 function toggleTrustedDevicesPanel() {

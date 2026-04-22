@@ -954,7 +954,7 @@
             </div>
             <button class="btn btn-ghost acc-sec-btn" onclick="generateNewRecoveryCodes()">Generate</button>
           </div>
-          <div id="recovery-codes-status-sec" style="font-size:12px;color:var(--muted)">Sign in to manage recovery codes.</div>
+          <div id="recovery-codes-status-sec" style="font-size:12px;color:var(--muted)"></div>
         </div>
 
         <!-- Multifactor Authentication -->
@@ -962,15 +962,13 @@
           <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:10px">
             <div class="acc-sec-label">
               <div class="acc-sec-h">🛡️ Multifactor Authentication</div>
-              <div class="acc-sec-p">Second factor on all devices after passphrase or passkey. Replaces 2-step unlock.</div>
+              <div class="acc-sec-p">Second factor on all devices after passphrase or passkey.</div>
             </div>
             <button id="mfa-settings-toggle" class="btn btn-ghost acc-sec-btn" onclick="_mfaEnabled()?mfaDisable():openMfaSetup()">Enable</button>
           </div>
           <div id="mfa-settings-status" style="font-size:12px;color:var(--muted);margin-bottom:8px">Disabled</div>
           <p style="font-size:12px;color:var(--muted);line-height:1.5">
-            <strong style="color:var(--text)">With passkey:</strong> Passkey is primary. Email code or OTP app as second factor.<br>
-            <strong style="color:var(--text)">Without passkey:</strong> Passphrase is primary. Passkey, email code, or OTP app as second factor.<br>
-            Recovery codes can be used alongside email code for account recovery.
+            Adds a second verification step after your passphrase or passkey — across the whole app. Choose email code or authenticator app.
           </p>
         </div>
 
@@ -985,8 +983,11 @@
           </div>
           <div id="trusted-devices-panel-sec" style="display:none">
             <div id="trusted-devices-list-sec" style="font-size:12px;color:var(--muted);margin-bottom:8px">Sign in to manage trusted devices.</div>
-            <div id="trust-this-device-row-sec" style="display:none">
-              <button class="btn btn-ghost acc-sec-btn" onclick="trustThisDevice()">+ Trust this device</button>
+            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+              <div id="trust-this-device-row-sec" style="display:none">
+                <button class="btn btn-ghost acc-sec-btn" onclick="trustThisDevice()">+ Trust this device</button>
+              </div>
+              <button class="btn btn-ghost acc-sec-btn" style="color:var(--danger)" onclick="clearAllTrustedDevices()">🗑 Clear all devices</button>
             </div>
           </div>
         </div>
@@ -1025,7 +1026,7 @@
             <div class="acc-sec-p" style="margin-top:4px;line-height:1.6">
               Disables your account for up to 3 months. You'll receive email reminders with options to reactivate or delete.
               If no action is taken after 3 months you'll receive a final warning period before the account is marked for deletion.
-              <br><strong style="color:var(--text)">Export your data below before deactivating.</strong>
+              <br><strong style="color:var(--accent)">Recommended: Export your data before deactivating.</strong>
             </div>
           </div>
           <button class="btn acc-sec-btn" style="background:rgba(224,92,92,0.15);border:1px solid rgba(224,92,92,0.4);color:var(--danger)" onclick="openDeactivateAccount()">Deactivate account</button>
@@ -1170,8 +1171,11 @@
         <div id="trusted-devices-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
           <p style="font-size:12px;color:var(--muted)">Sign in to manage trusted devices.</p>
         </div>
-        <div id="trust-this-device-row" style="display:none">
-          <button class="btn btn-ghost btn-sm" onclick="trustThisDevice()">+ Trust this device</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+          <div id="trust-this-device-row" style="display:none">
+            <button class="btn btn-ghost btn-sm" onclick="trustThisDevice()">+ Trust this device</button>
+          </div>
+          <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="clearAllTrustedDevices()">🗑 Clear all devices</button>
         </div>
       </div>
     </div>
@@ -2433,7 +2437,8 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     <div id="mfa-setup-totp-section" style="display:none">
       <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:12px">Scan this QR code with an authenticator app (Google Authenticator, Authy, 1Password, etc.), then enter the code it shows.</p>
       <div style="text-align:center;margin-bottom:12px">
-        <img id="mfa-totp-qr" src="" alt="QR Code" style="width:180px;height:180px;border-radius:10px;background:#fff;padding:8px">
+        <canvas id="mfa-totp-qr-canvas" width="200" height="200" style="border-radius:10px;background:#fff;display:none"></canvas>
+        <div id="mfa-totp-qr-fallback" style="display:none;font-size:12px;color:var(--muted);padding:8px"></div>
       </div>
       <details style="margin-bottom:12px">
         <summary style="font-size:12px;color:var(--muted);cursor:pointer">Can't scan? Enter code manually</summary>
@@ -2457,21 +2462,22 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 <div class="modal-backdrop" id="mfa-verify-modal" style="z-index:320">
   <div class="modal" style="max-width:340px;text-align:center">
     <div style="font-size:32px;margin-bottom:8px">🛡️</div>
-    <h3 style="font-size:16px;font-weight:700;margin-bottom:6px">Second factor required</h3>
+    <h3 style="font-size:16px;font-weight:700;margin-bottom:6px">Verify your identity</h3>
     <div id="mfa-email-hint">
-      <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Enter the code sent to your email.</p>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:8px">Enter the code sent to your email.</p>
     </div>
     <div id="mfa-totp-hint" style="display:none">
-      <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Enter the code from your authenticator app.</p>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:8px">Enter the code from your authenticator app.</p>
     </div>
+    <div id="mfa-sending-status" style="display:none;font-size:12px;color:var(--ok);margin-bottom:8px;font-weight:600"></div>
     <input class="form-input" type="text" id="mfa-verify-code" inputmode="numeric" maxlength="6" placeholder="000000"
-      style="font-family:var(--mono);font-size:28px;letter-spacing:10px;text-align:center;margin-bottom:12px"
+      style="font-family:var(--mono);font-size:28px;letter-spacing:10px;text-align:center;margin-bottom:8px"
       oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,6)"
       onkeydown="if(event.key==='Enter')mfaVerifySubmit()">
-    <p id="mfa-otp-error" style="font-size:12px;color:var(--danger);margin-bottom:10px;min-height:16px"></p>
+    <p id="mfa-otp-error" style="font-size:12px;color:var(--danger);margin-bottom:8px;min-height:16px"></p>
     <button class="btn btn-primary" style="width:100%;margin-bottom:8px" onclick="mfaVerifySubmit()">Verify →</button>
     <button class="btn btn-ghost btn-sm" id="mfa-alt-method" onclick="mfaSwitchMethod()" style="width:100%;margin-bottom:6px">Use alternative method</button>
-    <button class="btn btn-ghost btn-sm" onclick="mfaResendCode()" style="width:100%">Resend email code</button>
+    <button class="btn btn-ghost btn-sm" onclick="mfaResendCode()" style="width:100%">Resend code</button>
   </div>
 </div>
 
