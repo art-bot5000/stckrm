@@ -9768,6 +9768,7 @@ async function kvPush() {
   const payload = JSON.stringify({
     items, settings, lastSynced: settings.lastSynced || new Date().toISOString(),
     groceries: groceryItems, departments: groceryDepts,
+    groceryLists,
     reminders, deletedIds: [...tombstones],
     householdDir, activeProfile,
     shareTargets: _shareTargets,
@@ -9913,6 +9914,22 @@ async function kvSyncNow(silent = false) {
         if (remoteWins || localDeptsEmpty || remote.departments.length > groceryDepts.length) {
           groceryDepts = remote.departments;
           await saveGroceryDepts();
+        }
+      }
+      // Restore grocery lists (named lists per store)
+      if (remote.groceryLists && Array.isArray(remote.groceryLists)) {
+        const localListsEmpty = groceryLists.length <= 1 && groceryLists[0]?.id === 'default';
+        if (remoteWins || localListsEmpty || remote.groceryLists.length > groceryLists.length) {
+          groceryLists = remote.groceryLists;
+          await _saveGroceryLists();
+        } else {
+          // Merge: add any lists not present locally
+          const localListIds = new Set(groceryLists.map(l => l.id));
+          const newLists = remote.groceryLists.filter(l => !localListIds.has(l.id));
+          if (newLists.length) {
+            groceryLists = [...groceryLists, ...newLists];
+            await _saveGroceryLists();
+          }
         }
       }
       if (remote.reminders && Array.isArray(remote.reminders)) {
@@ -10676,7 +10693,9 @@ let groceryItems    = [];
 let groceryDepts    = [];
 let grocerySort     = 'dept'; // 'dept' | 'alpha'
 let groceryEditMode    = false;  // unlock/lock toggle
+let groceryHideChecked = false;  // hide ticked items toggle
 let groceryLists    = [];    // [{ id, name, store, createdAt, updatedAt }]
+try { groceryHideChecked = localStorage.getItem('stockroom_hide_checked') === '1'; } catch(e) {}
 let activeGroceryListId = 'default'; // currently viewed list
 let grocerySelected   = new Set(); // IDs selected in edit mode multi-select
 
@@ -11121,8 +11140,9 @@ function openChangeSelectedStore() {
 // Save groceries to IDB and profile only — no sync trigger.
 // Used internally (e.g. from within a sync) to avoid re-entrant sync loops.
 async function _saveGroceryLocal() {
-  // Strip any blank entries (e.g. inline-added items left unnamed)
-  groceryItems = groceryItems.filter(i => i.name && i.name.trim().length > 0);
+  // Strip blank entries that are NOT currently being edited inline
+  // Items with _isNew flag are mid-creation and must not be stripped
+  groceryItems = groceryItems.filter(i => i._isNew || (i.name && i.name.trim().length > 0));
   await dbPut('groceries', 'items', groceryItems);
   await _saveGroceryLists();
   if (activeProfile) await saveCurrentProfile();
@@ -11465,14 +11485,25 @@ function renderGrocery() {
 
   let filtered = listItems.filter(i => !query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query));
   const unchecked = filtered.filter(i => !i.checked);
-  const checked   = filtered.filter(i =>  i.checked);
+  // If hideChecked: hide checked items from main render (they can still be cleared)
+  const checked   = groceryHideChecked ? [] : filtered.filter(i => i.checked);
 
   const checkedCount = groceryItems.filter(i => i.checked).length;
   if (checkedBar) {
-    const checkedCount = listItems.filter(i => i.checked).length;
-    checkedBar.style.display = !groceryEditMode && checkedCount > 0 ? 'flex' : 'none';
+    const actualCheckedCount = listItems.filter(i => i.checked).length;
+    checkedBar.style.display = !groceryEditMode && actualCheckedCount > 0 && activeGroceryListId ? 'flex' : 'none';
     const cc = document.getElementById('grocery-checked-count');
-    if (cc) cc.textContent = `${checkedCount} item${checkedCount===1?'':'s'} checked`;
+    if (cc) cc.textContent = `${actualCheckedCount} item${actualCheckedCount===1?'':'s'} checked`;
+  }
+  // Update hide-checked button state
+  const hcBtn = document.getElementById('grocery-hide-checked-btn');
+  if (hcBtn) {
+    const hasChecked = listItems.some(i => i.checked);
+    hcBtn.style.display = hasChecked && !groceryEditMode && activeGroceryListId ? 'inline-flex' : 'none';
+    hcBtn.textContent = groceryHideChecked ? '👁 Show ticked' : '🙈 Hide ticked';
+    hcBtn.style.color = groceryHideChecked ? 'var(--accent)' : '';
+    hcBtn.style.borderColor = groceryHideChecked ? 'rgba(232,168,56,0.4)' : '';
+    hcBtn.style.background = groceryHideChecked ? 'rgba(232,168,56,0.08)' : '';
   }
 
   if (listItems.length === 0) {
@@ -11677,11 +11708,17 @@ async function _groceryNewItemBlur(id) {
   const item = groceryItems.find(i => i.id === id);
   if (!item) return;
   if (item._isNew && !item.name.trim()) {
-    // Never named — remove it silently
+    // Never named — remove it silently, no sync needed
     groceryItems = groceryItems.filter(i => i.id !== id);
     const order = getGroceryManualOrder().filter(oid => oid !== id);
     saveGroceryManualOrder(order);
-    await saveGrocery();
+    await _saveGroceryLocal(); // local only — don't push a blank item delete
+    renderGrocery();
+  } else if (item._isNew && item.name.trim()) {
+    // Named successfully — clear _isNew flag and do a real save+sync
+    delete item._isNew;
+    item.updatedAt = new Date().toISOString();
+    await saveGrocery(); // now safe to sync — item has a name
     renderGrocery();
   }
 }
@@ -11813,31 +11850,43 @@ async function _deleteSelected() {
 
 // ── Inline add (+ button) ────────────────────────────────────────────
 
-async function addGroceryItemToDept(deptId) {
-  // Enable edit mode if not already
-  if (!groceryEditMode) {
-    groceryEditMode = true;
-    renderGrocery();
+function toggleGroceryHideChecked() {
+  groceryHideChecked = !groceryHideChecked;
+  try { localStorage.setItem('stockroom_hide_checked', groceryHideChecked ? '1' : '0'); } catch(e) {}
+  const btn = document.getElementById('grocery-hide-checked-btn');
+  if (btn) {
+    btn.textContent = groceryHideChecked ? '👁 Show ticked' : '🙈 Hide ticked';
+    btn.style.color = groceryHideChecked ? 'var(--accent)' : '';
+    btn.style.borderColor = groceryHideChecked ? 'rgba(232,168,56,0.4)' : '';
+    btn.style.background = groceryHideChecked ? 'rgba(232,168,56,0.08)' : '';
   }
+  renderGrocery();
+}
+
+async function addGroceryItemToDept(deptId) {
+  // Enable edit mode if not already — don't re-render yet, do it once after item is created
+  groceryEditMode = true;
   // Create a blank item and insert at the top of that dept
   const newId = 'g_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
   const newItem = {
     id: newId, name: '', department: deptId || 'other',
+    listId: activeGroceryListId || 'default',
     notes: '', recurring: false, intervalDays: 0,
     checked: false, addedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     _isNew: true,
   };
-  groceryItems.unshift(newItem); // put at start so it sorts to top of dept after order rebuild
-  // Put at top of manual order for this dept
+  groceryItems.unshift(newItem);
   const order = getGroceryManualOrder();
   saveGroceryManualOrder([newId, ...order]);
-  await saveGrocery();
+  // Save without triggering sync yet — item is still blank
+  await _saveGroceryLocal();
+  // Single render with edit mode already on
   renderGrocery();
   // Focus the new item's name input
   setTimeout(() => {
     const input = document.getElementById(`gi-name-${newId}`);
     if (input) { input.focus(); input.select(); }
-  }, 60);
+  }, 80);
 }
 
 // ── Settings collapsible sections ────────────────────────────────

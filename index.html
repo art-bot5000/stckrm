@@ -1431,6 +1431,12 @@
   <div class="grocery-interval-info" id="grocery-interval-info"></div>
   </div><!-- /grocery-sticky-header -->
   <div id="grocery-list-body"></div>
+  <div style="display:flex;align-items:center;gap:8px;padding:0 2px;margin-top:4px;flex-wrap:wrap">
+    <button id="grocery-hide-checked-btn" onclick="toggleGroceryHideChecked()"
+      style="display:none;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--border);border-radius:20px;background:transparent;color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;transition:all 0.15s;font-family:var(--sans)">
+      🙈 Hide ticked
+    </button>
+  </div>
   <div id="grocery-checked-bar" style="display:none" class="grocery-checked-bar">
     <span id="grocery-checked-count" style="font-size:13px;color:var(--muted)"></span>
     <button class="btn btn-ghost btn-sm" onclick="clearCheckedGrocery()">Clear checked</button>
