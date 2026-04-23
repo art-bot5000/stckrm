@@ -373,6 +373,8 @@ async function saveSettings() {
   updateLastSentUI();
   pushScheduleToWorker();
   scheduleRender('settings-ui', 'sns');
+  // Keep Account & Security view in sync if it's visible
+  renderAccountSecurity();
 }
 
 function _capitaliseFirst(str) {
@@ -6874,14 +6876,14 @@ window.stockroomDiag = async function() {
   out.push(`_kvSessionToken: ${_kvSessionToken ? 'SET' : 'null'}`);
   out.push(`device_secret:   ${localStorage.getItem('stockroom_device_secret') ? 'SET' : 'absent'}`);
   try {
-    const sk = JSON.parse(localStorage.getItem('stockroom_kv_session_key') || 'null');
+    const sk = await lsGetEncrypted('stockroom_kv_session_key');
     out.push(`session_key cache: ${sk ? `SET (expires ${new Date(sk.expiry).toISOString()}, emailHash match: ${sk.emailHash === _kvEmailHash})` : 'absent'}`);
   } catch(e) { out.push('session_key cache: parse error'); }
   out.push(`local items: ${items?.length ?? 'undefined'}`);
   out.push(`_shareState: ${_shareState ? JSON.stringify({code:_shareState.code,type:_shareState.type,ownerName:_shareState.ownerName}) : 'null'}`);
   out.push(`_shareKey:   ${_shareKey ? 'SET' : 'null'}`);
   try {
-    const sk = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+    const sk = await _getShareKeys();
     out.push(`share_keys local: ${Object.keys(sk).length ? Object.keys(sk).join(', ') : 'none'}`);
   } catch(e) { out.push('share_keys local: parse error'); }
   // Check what the server has for this account
@@ -7619,10 +7621,10 @@ async function reauthWithPassphrase() {
             // Cache it
             const exported = await crypto.subtle.exportKey('raw', _kvKey);
             const keyB64   = btoa(String.fromCharCode(...new Uint8Array(exported)));
-            localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
+            await lsSetEncrypted('stockroom_kv_session_key', {
               keyData: keyB64, emailHash: _kvEmailHash,
               expiry: Date.now() + 4 * 60 * 60 * 1000,
-            }));
+            });
           }
         }
       } catch(keyErr) {
@@ -8267,10 +8269,10 @@ async function dismissDecryptErrorAndReauth() {
     try {
       const exported = await crypto.subtle.exportKey('raw', _kvKey);
       const keyB64   = btoa(String.fromCharCode(...new Uint8Array(exported)));
-      localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
+      await lsSetEncrypted('stockroom_kv_session_key', {
         keyData: keyB64, emailHash: _kvEmailHash,
         expiry: Date.now() + 4 * 60 * 60 * 1000,
-      }));
+      });
     } catch(e) {}
     if (trust) await trustThisDeviceWith(_kvEmail, _kvEmailHash, _kvVerifier, _kvKey);
     updateSyncPill('syncing');
@@ -8432,13 +8434,13 @@ async function showMobileDiag() {
   lines.push(`local items: ${items?.length ?? '?'}`);
 
   try {
-    const sk = JSON.parse(localStorage.getItem('stockroom_kv_session_key') || 'null');
+    const sk = await lsGetEncrypted('stockroom_kv_session_key');
     lines.push(`session_key: ${sk ? `SET (exp ${new Date(sk.expiry).toLocaleTimeString()}, match: ${sk.emailHash === _kvEmailHash})` : 'absent'}`);
   } catch(e) { lines.push('session_key: parse error'); }
 
   lines.push(`device_secret: ${localStorage.getItem('stockroom_device_secret') ? 'SET' : 'absent'}`);
 
-  const localKeys = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+  const localKeys = await _getShareKeys();
   lines.push(`share_keys: ${Object.keys(localKeys).join(', ') || 'none'}`);
 
   // Server checks if we have credentials
@@ -8528,9 +8530,9 @@ async function _fetchPasskeyWrappedKey(emailHash, sessionToken, credentialId) {
     const key = await crypto.subtle.importKey('raw', rawBytes, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
     // Cache locally for 24h so page refreshes don't hit the server
     const keyB64 = btoa(String.fromCharCode(...rawBytes));
-    localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
+    await lsSetEncrypted('stockroom_kv_session_key', {
       keyData: keyB64, emailHash, expiry: Date.now() + 24 * 60 * 60 * 1000,
-    }));
+    });
     return key;
   } catch(e) {
     console.warn('_fetchPasskeyWrappedKey failed:', e.message);
@@ -8600,9 +8602,9 @@ async function _getKeyViaPassphrase(emailHash, sessionToken, credentialId, errEl
         body: JSON.stringify({ emailHash, sessionToken, credentialId, prfEnvelope: deviceEnv, deviceBound: true }),
       });
       // Cache session key
-      localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
+      await lsSetEncrypted('stockroom_kv_session_key', {
         keyData: rawKeyB64, emailHash, expiry: Date.now() + 24 * 60 * 60 * 1000,
-      }));
+      });
       console.log('Passkey device key stored in IDB + localStorage — future logins will not need passphrase ✓');
     } catch(e) {
       console.warn('Could not store passkey-wrapped key:', e.message);
@@ -8631,10 +8633,10 @@ async function kvStorePasskeySession(email, emailHash, sessionToken, dataKey) {
     // Cache key for 24h
     const exported = await crypto.subtle.exportKey('raw', _kvKey);
     const keyData  = btoa(String.fromCharCode(...new Uint8Array(exported)));
-    localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
+    await lsSetEncrypted('stockroom_kv_session_key', {
       keyData, emailHash,
       expiry: Date.now() + 24 * 60 * 60 * 1000,
-    }));
+    });
   } catch(e) {}
   const el = document.getElementById('kv-account-email');
   if (el) el.textContent = email;
@@ -9069,6 +9071,92 @@ async function buildRecoveryEnvelopes(codes, dataKey, emailHash) {
 const DEVICE_DB_NAME    = 'stockroom-kv-device';
 const DEVICE_STORE_NAME = 'keys';
 
+// ── localStorage encryption helpers ──────────────────────────────────────────
+// Sensitive blobs (session key, share keys) are encrypted with a device-bound
+// secret before being written to localStorage. Falls back to a session secret
+// stored in sessionStorage if no device secret exists yet (passkey-only users
+// who never ticked "Stay signed in").
+//
+// Format stored: base64( iv[12] || AES-GCM-ciphertext )
+// The wrap key is derived via PBKDF2 from the secret so it's 256-bit AES-GCM.
+
+async function _lsWrapKey(secret) {
+  const enc  = new TextEncoder();
+  const base = await crypto.subtle.importKey('raw', enc.encode(secret), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: enc.encode('stockroom-ls-v1'), iterations: 100000, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
+  );
+}
+
+function _getLsSecret() {
+  // Prefer the long-lived device secret; fall back to a session-scoped secret.
+  let s = localStorage.getItem('stockroom_device_secret');
+  if (s) return s;
+  let ss = sessionStorage.getItem('stockroom_ls_session_secret');
+  if (!ss) {
+    ss = Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2,'0')).join('');
+    try { sessionStorage.setItem('stockroom_ls_session_secret', ss); } catch(e) {}
+  }
+  return ss;
+}
+
+async function lsEncrypt(value) {
+  try {
+    const secret  = _getLsSecret();
+    const wk      = await _lsWrapKey(secret);
+    const iv      = crypto.getRandomValues(new Uint8Array(12));
+    const enc     = new TextEncoder();
+    const ct      = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, wk, enc.encode(JSON.stringify(value)));
+    const combined = new Uint8Array(12 + ct.byteLength);
+    combined.set(iv);
+    combined.set(new Uint8Array(ct), 12);
+    return btoa(String.fromCharCode(...combined));
+  } catch(e) {
+    // Fallback: store plaintext if crypto unavailable (should never happen)
+    return JSON.stringify(value);
+  }
+}
+
+async function lsDecrypt(blob) {
+  try {
+    const secret  = _getLsSecret();
+    const wk      = await _lsWrapKey(secret);
+    const combined = Uint8Array.from(atob(blob), c => c.charCodeAt(0));
+    const iv      = combined.slice(0, 12);
+    const ct      = combined.slice(12);
+    const plain   = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wk, ct);
+    return JSON.parse(new TextDecoder().decode(plain));
+  } catch(e) {
+    // Attempt legacy plaintext parse (for upgrading existing stored values)
+    try { return JSON.parse(blob); } catch(e2) { return null; }
+  }
+}
+
+// Encrypted get/set wrappers for the two sensitive keys
+async function lsSetEncrypted(key, value) {
+  try {
+    const blob = await lsEncrypt(value);
+    localStorage.setItem(key, blob);
+  } catch(e) {}
+}
+
+async function lsGetEncrypted(key) {
+  try {
+    const blob = localStorage.getItem(key);
+    if (!blob) return null;
+    return await lsDecrypt(blob);
+  } catch(e) { return null; }
+}
+
+// Share key helpers — always encrypted at rest
+async function _getShareKeys() {
+  return (await lsGetEncrypted('stockroom_share_keys')) || {};
+}
+async function _setShareKeys(obj) {
+  await lsSetEncrypted('stockroom_share_keys', obj);
+}
+
 async function openDeviceDb() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DEVICE_DB_NAME, 1);
@@ -9404,10 +9492,10 @@ async function kvStoreSession(email, emailHash, verifier, key) {
     try {
       const exported = await crypto.subtle.exportKey('raw', key);
       const keyData  = btoa(String.fromCharCode(...new Uint8Array(exported)));
-      localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
+      await lsSetEncrypted('stockroom_kv_session_key', {
         keyData, emailHash,
         expiry: Date.now() + 4 * 60 * 60 * 1000,
-      }));
+      });
     } catch(e) {}
   }
   const el = document.getElementById('kv-account-email');
@@ -9489,9 +9577,9 @@ async function kvRestoreSession() {
       } catch(e) { console.warn('LS key fallback failed:', e.message); }
     }
 
-    // 2. 4-hour session key — stored in localStorage with expiry
+    // 2. 4-hour session key — stored encrypted in localStorage with expiry
     try {
-      const cached = JSON.parse(localStorage.getItem('stockroom_kv_session_key') || 'null');
+      const cached = await lsGetEncrypted('stockroom_kv_session_key');
       if (cached && cached.emailHash === emailHash && Date.now() < cached.expiry) {
         const raw2 = Uint8Array.from(atob(cached.keyData), c => c.charCodeAt(0));
         const key  = await crypto.subtle.importKey('raw', raw2, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
@@ -9587,9 +9675,9 @@ async function kvEnsureKey() {
     localStorage.removeItem('stockroom_device_secret');
   }
 
-  // 2. 4-hour session — localStorage (survives page refresh and tab close)
+  // 2. 4-hour session — localStorage encrypted (survives page refresh and tab close)
   try {
-    const cached = JSON.parse(localStorage.getItem('stockroom_kv_session_key') || 'null');
+    const cached = await lsGetEncrypted('stockroom_kv_session_key');
     if (cached && cached.emailHash === _kvEmailHash && Date.now() < cached.expiry) {
       const raw = Uint8Array.from(atob(cached.keyData), c => c.charCodeAt(0));
       _kvKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
@@ -9676,10 +9764,10 @@ async function kvEnsureKey() {
     try {
       const exported = await crypto.subtle.exportKey('raw', _kvKey);
       const keyData2 = btoa(String.fromCharCode(...new Uint8Array(exported)));
-      localStorage.setItem('stockroom_kv_session_key', JSON.stringify({
+      await lsSetEncrypted('stockroom_kv_session_key', {
         keyData: keyData2, emailHash: _kvEmailHash,
         expiry: Date.now() + 4 * 60 * 60 * 1000,
-      }));
+      });
     } catch(e) {}
 
     if (trust) await trustThisDeviceWith(_kvEmail, _kvEmailHash, _kvVerifier, _kvKey);
@@ -9825,9 +9913,9 @@ async function kvPull() {
         _shareKey     = null;
         saveShareState();
         try {
-          const stored = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+          const stored = await _getShareKeys();
           delete stored[code];
-          localStorage.setItem('stockroom_share_keys', JSON.stringify(stored));
+          await _setShareKeys(stored);
         } catch(e) {}
         applyTabPermissions();
         items = [];
@@ -10309,9 +10397,9 @@ function renderSettingsForUser() {
   // Populate display name field
   const nameEl = document.getElementById('setting-display-name');
   if (nameEl && settings.displayName) nameEl.value = settings.displayName;
-  // Notes 2FA button state
+  // Notes 2FA button state (compat — kept for old settings UI buttons if present)
   const n2faBtn = document.getElementById('notes-2fa-settings-btn');
-  if (n2faBtn) n2faBtn.textContent = settings.notes2fa ? 'Disable' : 'Enable';
+  if (n2faBtn) n2faBtn.textContent = _mfaEnabled() ? 'Disable' : 'Enable';
   updateHeaderGreeting();
   _updateSidebarProfile();
   renderAccountSecurity();
@@ -12822,7 +12910,7 @@ async function loadShareState() {
     _sharedFileId = stored._sharedFileId || null;
     // Restore share key from local cache (ECDH system — key is never stored in state)
     try {
-      const localKeys = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+      const localKeys = await _getShareKeys();
       const keyB64    = localKeys[stored.code];
       if (keyB64) {
         const keyBytes = Uint8Array.from(atob(keyB64), c => c.charCodeAt(0));
@@ -12880,7 +12968,7 @@ async function joinViaShareCode(code) {
   if (typeof handleShareJoinLink === 'function') await handleShareJoinLink(code);
 }
 
-function leaveShare() {
+async function leaveShare() {
   if (!confirm('Leave this shared household?\n\nYou can rejoin with the same link. Your own households are unaffected.')) return;
   const code = _shareState?.code;
   _shareState   = null;
@@ -12890,9 +12978,9 @@ function leaveShare() {
   // Clear cached share key
   if (code) {
     try {
-      const stored = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+      const stored = await _getShareKeys();
       delete stored[code];
-      localStorage.setItem('stockroom_share_keys', JSON.stringify(stored));
+      await _setShareKeys(stored);
     } catch(e) {}
   }
   applyTabPermissions();
@@ -13369,9 +13457,9 @@ async function saveShareTarget() {
 
       // 8. Cache share key locally and back it up (for owner cross-device recovery)
       try {
-        const stored = JSON.parse(localStorage.getItem('stockroom_share_keys')||'{}');
+        const stored = await _getShareKeys();
         stored[data.code] = shareKeyB64;
-        localStorage.setItem('stockroom_share_keys', JSON.stringify(stored));
+        await _setShareKeys(stored);
       } catch(e) {}
       await backupShareKey(data.code, shareKey).catch(e => console.warn('Share key backup failed:', e.message));
 
@@ -13418,9 +13506,9 @@ async function saveShareTarget() {
 // Recover a share key using a specific data key (used during migration
 // when _kvKey has already been updated to v2 but server backup is v1-encrypted).
 async function recoverShareKeyWithOldKey(code, dataKey) {
-  // 1. Try localStorage cache first — no decryption needed
+  // 1. Try local cache first — no decryption needed
   try {
-    const stored = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+    const stored = await _getShareKeys();
     const keyB64 = stored[code];
     if (keyB64) {
       const raw = Uint8Array.from(atob(keyB64), c => c.charCodeAt(0));
@@ -13473,9 +13561,9 @@ async function recoverShareKey(code) {
     const sk     = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
     // Cache locally so subsequent pushes don't need a round-trip
     try {
-      const stored = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+      const stored = await _getShareKeys();
       stored[code] = keyB64;
-      localStorage.setItem('stockroom_share_keys', JSON.stringify(stored));
+      await _setShareKeys(stored);
     } catch(e) {}
     return sk;
   } catch(e) {
@@ -13491,7 +13579,7 @@ async function pushSharedData(code, shareKey) {
   let sk = shareKey;
   if (!sk) {
     try {
-      const stored = JSON.parse(localStorage.getItem('stockroom_share_keys')||'{}');
+      const stored = await _getShareKeys();
       const keyB64 = stored[code];
       if (keyB64) {
         const raw = Uint8Array.from(atob(keyB64), c => c.charCodeAt(0));
@@ -13583,7 +13671,7 @@ async function _fulfilPendingRewraps(code) {
     // Recover the share key for this code
     const sk = await (async () => {
       try {
-        const stored = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+        const stored = await _getShareKeys();
         const b64 = stored[code];
         if (b64) {
           const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
@@ -13630,7 +13718,7 @@ window.shareDiag = async function(code) {
   out.push(`_kvVerifier:  ${_kvVerifier ? _kvVerifier.slice(0,8)+'…' : '(empty)'}`);
   out.push(`_shareTargets: ${JSON.stringify((_shareTargets||[]).map(t=>({code:t.code,households:Object.keys(t.households||{})})))}`);
 
-  const localKeys = JSON.parse(localStorage.getItem('stockroom_share_keys')||'{}');
+  const localKeys = await _getShareKeys();
   out.push(`local share keys: ${Object.keys(localKeys).join(', ') || 'none'}`);
 
   const codes = code ? [code] : (_shareTargets||[]).map(t=>t.code);
@@ -13696,9 +13784,9 @@ window.clearBrokenShare = async function(code) {
     if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Delete failed'); }
     // Remove from local share keys
     try {
-      const stored = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+      const stored = await _getShareKeys();
       delete stored[code];
-      localStorage.setItem('stockroom_share_keys', JSON.stringify(stored));
+      await _setShareKeys(stored);
     } catch(e) {}
     await loadShareTargets();
     console.log(`Share ${code} deleted. Go to Settings → Households → Add person to create a new share.`);
@@ -13734,9 +13822,9 @@ async function deleteShareTarget(code) {
     if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || 'Could not delete'); }
     // Remove local share key
     try {
-      const stored = JSON.parse(localStorage.getItem('stockroom_share_keys')||'{}');
+      const stored = await _getShareKeys();
       delete stored[code];
-      localStorage.setItem('stockroom_share_keys', JSON.stringify(stored));
+      await _setShareKeys(stored);
     } catch(e) {}
     toast('Access removed ✓');
     await loadShareTargets();
@@ -14735,9 +14823,9 @@ async function completePendingJoin() {
     const shareKey    = await ecdhUnwrapShareKey(guestPrivKey, ownerPublicKeyJwk, wrappedKey);
     const shareKeyB64 = await exportShareKey(shareKey);
     try {
-      const stored = JSON.parse(localStorage.getItem('stockroom_share_keys') || '{}');
+      const stored = await _getShareKeys();
       stored[code] = shareKeyB64;
-      localStorage.setItem('stockroom_share_keys', JSON.stringify(stored));
+      await _setShareKeys(stored);
     } catch(e) {}
     _shareState = { ...data, code };
     _shareKey   = shareKey;
@@ -15314,8 +15402,8 @@ async function unlockCurrentNote() {
   requireReauth(
     `Unlock "${n.title}"`,
     async () => {
-      // First factor passed — check if 2FA needed
-      if (settings.notes2fa) {
+      // First factor passed — check if MFA needed
+      if (_mfaEnabled()) {
         await _sendNoteOtp();
       } else {
         await _fetchAndUnlockNote(n);
@@ -15714,21 +15802,6 @@ async function deleteNoteReminder() {
   toast('Reminder removed');
 }
 
-// ── 2FA toggle ────────────────────────────
-async function toggleNotes2fa() {
-  if (!kvConnected) { toast('Sign in to change this setting'); return; }
-  if (settings.notes2fa) {
-    if (!confirm('Disable 2-step unlock for secure notes?')) return;
-    settings.notes2fa = false;
-  } else {
-    settings.notes2fa = true;
-    toast('2-step unlock enabled — you\'ll receive an email code when unlocking secure notes');
-  }
-  await _saveSettings();
-  await _syncNoteIfConnected();
-  renderNotes();
-}
-
 // ── Keyboard shortcuts ────────────────────
 document.addEventListener('keydown', e => {
   if (!_editingNoteId) return;
@@ -15780,37 +15853,7 @@ function _updateFmtBtnStates() {
   });
 }
 
-// ── 2FA prompt modal ──────────────────────
-const _NOTES_2FA_DISMISSED_KEY = 'stockroom_notes2fa_dismissed';
-
-function _maybeShowNotes2faPrompt() {
-  if (settings.notes2fa) return; // already on
-  if (localStorage.getItem(_NOTES_2FA_DISMISSED_KEY)) return; // dismissed before
-  // Only prompt if signed in (no point offering 2FA to local-only users)
-  if (!kvConnected) return;
-  openModal('notes-2fa-prompt-modal');
-}
-
-function enableNotes2faFromPrompt() {
-  settings.notes2fa = true;
-  _saveSettings().catch(() => {});
-  closeModal('notes-2fa-prompt-modal');
-  toast('2-step unlock enabled ✓');
-}
-
-function dismissNotes2faPrompt() {
-  localStorage.setItem(_NOTES_2FA_DISMISSED_KEY, '1');
-  closeModal('notes-2fa-prompt-modal');
-}
-
-// Also expose toggleNotes2fa for Settings
-async function toggleNotes2fa() {
-  if (!kvConnected) { toast('Sign in to change this setting'); return; }
-  settings.notes2fa = !settings.notes2fa;
-  await _saveSettings();
-  toast(settings.notes2fa ? '2-step unlock enabled ✓' : '2-step unlock disabled');
-}
-
+// ── 2FA prompt (MFA system) ───────────────
 
 // ═══════════════════════════════════════════
 //  BACK BUTTON / SWIPE INTERSTITIAL
@@ -15895,6 +15938,7 @@ async function _mfaLoginIntercept(callback) {
   if (hint) hint.innerHTML = '<p style="font-size:13px;color:var(--muted);margin-bottom:12px">Sending a verification code to your email…</p>';
   const totpHint = document.getElementById('mfa-totp-hint');
   if (totpHint) totpHint.innerHTML = '<p style="font-size:13px;color:var(--muted);margin-bottom:12px">Enter the 6-digit code from your authenticator app to complete sign-in.</p>';
+  _mfaVerifyAltMode = false;
   openModal('mfa-verify-modal');
   // Send OTP after modal is open
   if (_mfaMethod() === 'email') {
@@ -15911,6 +15955,7 @@ async function _mfaIntercept(callback) {
   if (_mfaMethod() === 'email') {
     await _mfaSendEmailOtp();
   }
+  _mfaVerifyAltMode = false;
   openModal('mfa-verify-modal');
 }
 
@@ -15940,8 +15985,15 @@ async function _mfaSendEmailOtp() {
   }
 }
 
+let _mfaVerifyAltMode = false;
+
 async function mfaVerifySubmit() {
-  const method = _mfaMethod();
+  // Determine effective method: primary or alt-switched
+  const primaryMethod = _mfaMethod();
+  const method = _mfaVerifyAltMode
+    ? (primaryMethod === 'totp' ? 'email' : 'totp')
+    : primaryMethod;
+
   const codeEl = document.getElementById('mfa-verify-code');
   const errEl  = document.getElementById('mfa-otp-error');
   const code   = codeEl?.value.trim().replace(/\s/g,'');
@@ -15962,6 +16014,7 @@ async function mfaVerifySubmit() {
     if (!valid) { if(errEl) errEl.textContent = 'Incorrect code — check your authenticator app'; return; }
   }
 
+  _mfaVerifyAltMode = false;
   closeModal('mfa-verify-modal');
   if (codeEl) codeEl.value = '';
   if (_pendingMfaCallback) { const cb = _pendingMfaCallback; _pendingMfaCallback = null; cb(); }
@@ -15972,18 +16025,25 @@ async function mfaResendCode() {
   toast('Code sent ✓');
 }
 
-function mfaSwitchMethod() {
+async function mfaSwitchMethod() {
+  _mfaVerifyAltMode = !_mfaVerifyAltMode;
+  const primaryMethod = _mfaMethod();
+  const effectiveMethod = _mfaVerifyAltMode
+    ? (primaryMethod === 'totp' ? 'email' : 'totp')
+    : primaryMethod;
+
   const el = document.getElementById('mfa-alt-method');
-  if (!el) return;
-  const isTotp = _mfaMethod() === 'totp';
-  el.textContent = isTotp ? 'Use email code instead' : 'Use authenticator app instead';
-  // Toggle display of TOTP vs email instructions
-  const totpHint = document.getElementById('mfa-totp-hint');
+  if (el) el.textContent = effectiveMethod === 'totp' ? 'Use email code instead' : 'Use authenticator app instead';
+
+  const totpHint  = document.getElementById('mfa-totp-hint');
   const emailHint = document.getElementById('mfa-email-hint');
-  if (totpHint) totpHint.style.display = isTotp ? 'block' : 'none';
-  if (emailHint) emailHint.style.display = isTotp ? 'none' : 'block';
-  // Temp switch — don't save preference
-  el.dataset.altActive = el.dataset.altActive === '1' ? '' : '1';
+  if (totpHint)  totpHint.style.display  = effectiveMethod === 'totp'  ? 'block' : 'none';
+  if (emailHint) emailHint.style.display = effectiveMethod === 'email' ? 'block' : 'none';
+
+  // If switching to email in alt mode, send OTP now
+  if (_mfaVerifyAltMode && effectiveMethod === 'email') {
+    await _mfaSendEmailOtp();
+  }
 }
 
 // ── TOTP (RFC 6238) pure JS implementation ──
