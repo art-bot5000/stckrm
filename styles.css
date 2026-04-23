@@ -916,3 +916,35 @@
   #settings-account-body, #settings-account-body + .settings-section-header,
   [onclick="toggleSettings('settings-account-body',this)"] { display:none !important; }
 }
+
+/* ── Profile label: hide subtitle at medium widths to prevent wrapping ── */
+@media (max-width: 899px) and (min-width: 480px) {
+  .profile-label-subtitle { display: none; }
+}
+
+/* ── Header greeting: left-aligned on mobile ── */
+@media (max-width: 899px) {
+  #header-greeting { margin-left: 0 !important; }
+}
+
+/* ── Settings Preferences: match Account & Security card width on desktop ── */
+@media (min-width: 900px) {
+  #settings-prefs-body .settings-card { max-width: none; width: 100%; }
+  #settings-prefs-body .setting-row input[type="text"],
+  #settings-prefs-body .setting-row select { min-width: 160px; }
+}
+
+/* ── Notes view: constrain width on desktop to match stockroom items ── */
+@media (min-width: 900px) {
+  #notes-list { max-width: 860px; margin: 0 auto; }
+  .note-card  { max-width: none; }
+}
+
+/* ── Stock toolbar: Filters and Sort equal height always ── */
+#stock-toolbar-row .btn,
+#stock-toolbar-row select {
+  box-sizing: border-box;
+}
+
+/* ── Remove stale Account & Sync selector (section removed from HTML) ── */
+#settings-account-body, [onclick="toggleSettings('settings-account-body',this)"] { display:none !important; }

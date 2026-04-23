@@ -199,11 +199,6 @@
           </div>
         </div>
 
-        <!-- Passkey hint — shown when this device has a registered passkey -->
-        <div id="login-passkey-hint" style="display:none;background:rgba(91,141,238,0.08);border:1px solid rgba(91,141,238,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--muted)">
-          🔑 This device has a passkey — you'll be prompted to use Face ID / Fingerprint after entering your email.
-        </div>
-
         <button type="button" class="btn btn-primary btn-xl full" style="width:100%;margin-bottom:0"
           onclick="(function(){
             var e=document.getElementById('kv-login-email');
@@ -586,12 +581,13 @@
 
 <!-- ═══ HEADER ═══ -->
 <div id="app-header">
-  <div style="display:flex;align-items:center;gap:0;cursor:pointer" onclick="openProfilePicker()" title="Switch or add household">
-    <div class="logo">STOCKROOM <span id="profile-label">/ HOUSEHOLD TRACKER</span></div>
-    <button class="btn btn-ghost btn-sm" style="margin-left:6px;font-size:12px;padding:4px 8px;border-radius:8px;opacity:0.7" title="Add or switch household" onclick="event.stopPropagation();openProfilePicker()">🏠+</button>
+  <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+    <div style="cursor:pointer;flex-shrink:0" onclick="openProfilePicker()" title="Switch or add household">
+      <div class="logo">STOCKROOM <span id="profile-label" class="profile-label-subtitle">/ HOUSEHOLD TRACKER</span></div>
+    </div>
+    <div id="header-greeting" style="font-size:12px;color:var(--muted);display:none;align-items:center;gap:4px"></div>
   </div>
-  <div id="header-greeting" style="font-size:12px;color:var(--muted);display:none;align-items:center;gap:4px;margin-left:8px"></div>
-  <div style="display:flex;align-items:center;gap:8px">
+  <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
     <div id="presence-bar" style="display:none"></div>
     <div id="sync-pill" class="sync-pill pending" onclick="handleSyncPillTap()">
       <div class="sync-dot"></div>
@@ -719,20 +715,23 @@
     <div id="health-dashboard" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px"></div>
 
     <!-- Stockroom search — shown on mobile; on desktop it moves inline with filters -->
-    <div id="stock-search-mobile" style="margin-bottom:12px">
+    <!-- Search always first, full width -->
+    <div style="margin-bottom:8px">
       <input id="stock-search" type="search" placeholder="🔍 Search items…" autocomplete="off"
         class="grocery-search" style="width:100%;box-sizing:border-box"
-        oninput="document.getElementById('stock-search-inline').value=this.value;renderGrid()">
+        oninput="renderGrid()">
     </div>
 
     <div style="margin-bottom:18px">
-      <div id="stock-toolbar-row" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
-        <button class="btn btn-ghost btn-sm" id="filter-toggle-btn" onclick="toggleFilters()" style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+      <!-- Filters + Sort on same line, equal width -->
+      <div id="stock-toolbar-row" style="display:flex;align-items:stretch;gap:8px;margin-bottom:8px">
+        <button class="btn btn-ghost btn-sm" id="filter-toggle-btn" onclick="toggleFilters()"
+          style="display:flex;align-items:center;justify-content:center;gap:6px;flex:1;height:36px">
           <span id="filter-toggle-icon">▸</span> Filters
           <span id="filter-active-badge" style="display:none;background:var(--accent);color:#111;font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;font-family:var(--mono)"></span>
         </button>
         <select id="sort-select" onchange="setSort(this.value)"
-          style="font-size:12px;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:5px 24px 5px 8px;font-family:var(--sans);cursor:pointer;outline:none;flex-shrink:0">
+          style="flex:1;height:36px;font-size:12px;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:5px 8px;font-family:var(--sans);cursor:pointer;outline:none">
           <option value="status">↕ Sort: Status</option>
           <option value="name">↕ Sort: Name</option>
           <option value="days">↕ Sort: Days left</option>
@@ -740,10 +739,6 @@
           <option value="rating">↕ Sort: Rating</option>
           <option value="added">↕ Sort: Date added</option>
         </select>
-        <!-- Search inline with filters on desktop (hidden on mobile where it lives above) -->
-        <input id="stock-search-inline" type="search" placeholder="🔍 Search…" autocomplete="off"
-          class="grocery-search" style="flex:1;min-width:120px;display:none"
-          oninput="document.getElementById('stock-search').value=this.value;renderGrid()">
       </div>
 
       <div id="filter-panel" style="display:none;flex-direction:column;gap:8px;margin-bottom:10px;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:10px">
@@ -1101,86 +1096,6 @@
       <div id="household-status" style="margin-top:12px;font-size:12px;color:var(--muted);font-family:var(--mono)"></div>
     </div>
 
-    <!-- 2. Account (replaces Cloud Sync) -->
-    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-account-body',this)">
-      <span>☁️ Account &amp; Sync</span><!-- mobile only -->
-      <span class="settings-chevron">▾</span>
-    </div>
-    <div id="settings-account-body" class="settings-collapsible-body settings-card full-width">
-      <h3 style="display:none">☁️ Account &amp; Sync</h3>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:14px">Your data is encrypted on this device before being stored. We cannot read it.</p>
-      <div class="setting-row">
-        <div class="setting-info">
-          <h4>Signed in as</h4>
-          <p id="kv-account-email" style="font-family:var(--mono);font-size:12px">—</p>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn btn-ghost btn-sm" onclick="kvSyncNow()">Sync Now</button>
-          <button class="btn btn-danger btn-sm" onclick="kvSignOut()">Sign Out</button>
-        </div>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info">
-          <h4>Delete account</h4>
-          <p>Permanently deletes all your data from the server</p>
-        </div>
-        <button class="btn btn-danger btn-sm" onclick="kvDeleteAccount()">Delete</button>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info">
-          <h4>Change passphrase</h4>
-          <p>Re-encrypts all your data with a new passphrase</p>
-        </div>
-        <button class="btn btn-ghost btn-sm" onclick="openChangePassphrase()">Change</button>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info">
-          <h4>🛡️ Security checklist</h4>
-          <p>Review passkeys, recovery codes, and export reminders</p>
-        </div>
-        <button class="btn btn-ghost btn-sm" onclick="openSecurityChecklist()">Review →</button>
-      </div>
-      <div style="border-top:1px solid var(--glass-border);margin:12px 0"></div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-        <h4 style="font-size:13px;font-weight:700">🔐 Recovery Codes</h4>
-        <button class="btn btn-ghost btn-sm" onclick="generateNewRecoveryCodes()">Generate new codes</button>
-      </div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.5">10 one-time codes for account recovery. Generating new codes invalidates all previous ones.</p>
-      <div id="recovery-codes-status" style="font-size:12px;color:var(--muted)">Sign in to manage recovery codes.</div>
-
-      <div style="border-top:1px solid var(--glass-border);margin:12px 0"></div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-        <h4 style="font-size:13px;font-weight:700">🔑 Passkeys (Face ID / Fingerprint)</h4>
-        <button class="btn btn-ghost btn-sm" onclick="loadPasskeys()">Refresh</button>
-      </div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.5">Sign in instantly without typing a password. Each device registers its own passkey.</p>
-      <div id="passkey-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
-        <p style="font-size:12px;color:var(--muted)">Sign in to manage passkeys.</p>
-      </div>
-      <button class="btn btn-ghost btn-sm" onclick="addPasskeyToAccount()" id="add-passkey-btn">+ Add passkey for this device</button>
-
-      <div style="border-top:1px solid var(--glass-border);margin:12px 0"></div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-        <h4 style="font-size:13px;font-weight:700">🔑 Trusted Devices</h4>
-        <button class="btn btn-ghost btn-sm" onclick="toggleTrustedDevicesPanel()">Show devices</button>
-      </div>
-      <div id="trusted-devices-panel" style="display:none">
-        <p style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.5">
-          Devices where you ticked <strong style="color:var(--text)">Stay signed in</strong> at sign-in. These stay signed in automatically. Remove a device to sign it out and require re-authentication.
-        </p>
-        <div id="trusted-devices-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
-          <p style="font-size:12px;color:var(--muted)">Sign in to manage trusted devices.</p>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
-          <div id="trust-this-device-row" style="display:none">
-            <button class="btn btn-ghost btn-sm" onclick="trustThisDevice()">+ Trust this device</button>
-          </div>
-          <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="clearAllTrustedDevices()">🗑 Clear all devices</button>
-        </div>
-      </div>
-    </div>
-
-
     <!-- 3. Alerts — push + email reports merged -->
     <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-alerts-body',this)">
       <span>🔔 Alerts &amp; Reports</span>
@@ -1349,39 +1264,61 @@
 
     <!-- Data section (renamed from Preferences & Data) -->
     <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-prefs-body',this)">
-      <span>📦 Data</span>
+      <span>⚙️ Preferences</span>
       <span class="settings-chevron">▾</span>
     </div>
     <div id="settings-prefs-body" class="settings-collapsible-body">
-    <div class="settings-card">
-      <h3 style="display:none">📦 Data</h3>
+    <div class="settings-card full-width">
+      <h3 style="display:none">⚙️ Preferences</h3>
+
+      <!-- Display Name -->
+      <div class="setting-row">
+        <div class="setting-info"><h4>Display Name</h4><p>Shown as a greeting — first name preferred</p></div>
+        <input type="text" id="setting-display-name" placeholder="First name" maxlength="40"
+          style="width:140px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none"
+          oninput="saveDisplayName(this.value)">
+      </div>
+
+      <!-- Country / Region -->
+      <div class="setting-row">
+        <div class="setting-info"><h4>Country / Region</h4><p>Sets which stores appear in the price checker</p></div>
+        <select id="setting-country" onchange="saveSettingsCountry(this.value)"
+          style="width:140px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 12px;font-family:var(--sans);font-size:13px;outline:none"></select>
+      </div>
+
+      <!-- Signed in as -->
+      <div class="setting-row">
+        <div class="setting-info"><h4>Signed in as</h4><p id="kv-account-email" style="font-family:var(--mono);font-size:12px">—</p></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-ghost acc-sec-btn" onclick="kvSyncNow()">Sync Now</button>
+          <button class="btn btn-danger acc-sec-btn" onclick="kvSignOut()">Sign Out</button>
+        </div>
+      </div>
+
+      <!-- Low stock warning -->
       <div class="setting-row">
         <div class="setting-info"><h4>Low stock warning</h4><p>Warn when stock drops below this %</p></div>
         <select id="setting-threshold" onchange="saveSettings()" style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
           <option value="10">10%</option><option value="15">15%</option><option value="20" selected>20%</option><option value="25">25%</option><option value="33">33%</option>
         </select>
       </div>
-      <!-- hidden inputs kept for JS compatibility -->
-      <input type="hidden" id="setting-display-name">
-      <input type="hidden" id="setting-country" value="GB">
-      <input type="hidden" id="notes-2fa-settings-btn">
     </div>
 
-    <!-- 6. Data -->
-    <div class="settings-card">
+    <!-- Data -->
+    <div class="settings-card full-width">
       <h3>📦 Data</h3>
       <div class="setting-row">
         <div class="setting-info"><h4>Export data (JSON)</h4><p>Download all items as a backup file</p></div>
-        <button class="btn btn-ghost btn-sm" onclick="exportData()">Export</button>
+        <button class="btn btn-ghost acc-sec-btn" onclick="exportData()">Export</button>
       </div>
       <div class="setting-row">
         <div class="setting-info"><h4>Import data</h4><p>Restore from a previously exported file</p></div>
-        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('import-file').click()">Import</button>
+        <button class="btn btn-ghost acc-sec-btn" onclick="document.getElementById('import-file').click()">Import</button>
         <input type="file" id="import-file" style="display:none" accept=".json" onchange="importData(event)">
       </div>
       <div class="setting-row">
         <div class="setting-info"><h4>Clear all data</h4><p>Remove all items and history from this household</p></div>
-        <button class="btn btn-danger btn-sm" onclick="clearAll()">Clear All</button>
+        <button class="btn btn-danger acc-sec-btn" onclick="clearAll()">Clear All</button>
       </div>
     </div>
     </div><!-- /settings-prefs-body -->
@@ -2144,7 +2081,7 @@
 </div>
 
 <!-- ═══ RE-AUTH MODAL ═══ -->
-<div class="modal-backdrop" id="reauth-modal" style="z-index:310">
+<div class="modal-backdrop" id="reauth-modal" style="z-index:450">
   <div class="modal" style="max-width:400px;text-align:center">
     <div style="font-size:40px;margin-bottom:8px">🔒</div>
     <h2 style="font-size:18px;margin-bottom:4px">Confirm your identity</h2>
@@ -2175,18 +2112,6 @@
 
 <script src="app.js" defer></script>
 <script>
-// Show passkey hint immediately if device has a registered passkey (before app.js loads)
-(function() {
-  try {
-    var hasPk = localStorage.getItem('stockroom_device_has_passkey') === 'true'
-             || localStorage.getItem('stockroom_remembered_passkey')  === 'true';
-    if (hasPk) {
-      var hint = document.getElementById('login-passkey-hint');
-      if (hint) hint.style.display = 'block';
-    }
-  } catch(e) {}
-})();
-
 // selectCountry stub — works before app.js loads so country buttons are immediately clickable
 if (typeof selectCountry === 'undefined') {
   window.selectCountry = function(code) {
@@ -2374,7 +2299,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 </div>
 
 <!-- NOTE REMINDER MODAL -->
-<div class="modal-backdrop" id="note-reminder-modal">
+<div class="modal-backdrop" id="note-reminder-modal" style="z-index:450">
   <div class="modal">
     <div style="font-size:16px;font-weight:700;margin-bottom:16px">🔔 Note Reminder</div>
     <label class="form-label">Remind me on</label>
@@ -2465,7 +2390,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 </div>
 
 <!-- MFA VERIFY MODAL (shown after passphrase/passkey when MFA enabled) -->
-<div class="modal-backdrop" id="mfa-verify-modal" style="z-index:320">
+<div class="modal-backdrop" id="mfa-verify-modal" style="z-index:460">
   <div class="modal" style="max-width:340px;text-align:center">
     <div style="font-size:32px;margin-bottom:8px">🛡️</div>
     <h3 style="font-size:16px;font-weight:700;margin-bottom:6px">Verify your identity</h3>

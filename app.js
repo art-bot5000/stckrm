@@ -295,23 +295,22 @@ function calcStock(item) {
   if (!deliveredLogs.length) return null;
   const last = deliveredLogs[deliveredLogs.length - 1];
 
-  // If a manual stock count has been recorded, use actual consumption rate
+  // If a manual stock count has been recorded, project from that count
   if (item.stockCount != null && item.stockCountDate) {
-    const totalPurchased     = last.qty || 1;
-    const daysSincePurchase  = (Date.now() - new Date(last.date+'T12:00:00')) / 86400000;
-    const used               = totalPurchased - item.stockCount;
-    const totalDays          = (item.months||1) * 30.5 * totalPurchased;
-
+    const daysSinceCount  = (Date.now() - new Date(item.stockCountDate+'T12:00:00')) / 86400000;
+    const unitsRemaining  = item.stockCount;
+    const daysPerUnit     = (item.months || 1) * 30.5;
+    const totalDays       = daysPerUnit * Math.max(1, unitsRemaining);
     let daysLeft;
-    if (used <= 0 || daysSincePurchase <= 0) {
-      daysLeft = Math.round(Math.max(0, totalDays - daysSincePurchase));
-    } else {
+    const daysSincePurchase = (Date.now() - new Date(last.date+'T12:00:00')) / 86400000;
+    const used = (last.qty || 1) - unitsRemaining;
+    if (used > 0 && daysSincePurchase > 1) {
       const ratePerDay = used / daysSincePurchase;
-      daysLeft = ratePerDay > 0 ? Math.round(Math.max(0, item.stockCount / ratePerDay)) : 9999;
+      daysLeft = Math.round(Math.max(0, unitsRemaining / ratePerDay));
+    } else {
+      daysLeft = Math.round(Math.max(0, daysPerUnit * unitsRemaining - daysSinceCount));
     }
-
-    // pct = time remaining vs total expected lifespan
-    const pct = Math.round(Math.max(0, Math.min(100, (daysLeft / totalDays) * 100)));
+    const pct = Math.round(Math.max(0, Math.min(100, (daysLeft / Math.max(1, totalDays)) * 100)));
     return { pct, daysLeft, referenceDate: item.stockCountDate, fromStockCount: true };
   }
 
@@ -338,6 +337,20 @@ const STATUS_LABEL = { critical:'🔴 Critical', warn:'🟡 Low', ok:'🟢 Good'
 //  PERSISTENCE — IndexedDB backed
 // ═══════════════════════════════════════════
 async function loadData() {
+  // Detect user switch — if emailHash changed, wipe stale local data before sync
+  const storedHash = await dbGet('settings', '_activeUserHash');
+  const currentHash = _kvEmailHash || null;
+  if (currentHash && storedHash && storedHash !== currentHash) {
+    await dbPut('items',    'items',    []);
+    await dbPut('settings', 'settings', {});
+    await dbPut('profiles', 'profiles', {});
+    await dbPut('settings', '_activeUserHash', currentHash);
+    items    = [];
+    settings = { threshold:20, country:'GB', email:'', emailInterval:7, emailStartDate:null, emailStartTime:'09:00', displayName:'', mfa:{ enabled:false, method:'email', totpSecret:null }, customTags:[], lastSynced:'' };
+    return;
+  }
+  if (currentHash) await dbPut('settings', '_activeUserHash', currentHash);
+
   // Try IndexedDB first
   let loadedItems    = await dbGet('items',    'items');
   let loadedSettings = await dbGet('settings', 'settings');
@@ -752,13 +765,12 @@ function buildStoreFilterBar() {
   const bar = document.getElementById('store-filter-bar');
   const storeSet = new Set();
   items.forEach(item => {
-    // Primary: item-level store name
     if (item.store && item.store.trim()) storeSet.add(item.store.trim());
-    // Also collect from log entries (for legacy data)
     (item.logs||[]).forEach(l => { if (l.store && l.store.trim()) storeSet.add(l.store.trim()); });
   });
   const stores = [...storeSet].sort();
-
+  // Reset stale filter if selected store no longer exists
+  if (activeStore !== 'all' && !storeSet.has(activeStore)) activeStore = 'all';
   bar.innerHTML = `<span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase">Store:</span>
     <button class="filter-chip${activeStore==='all'?' active':''}" onclick="setStoreFilter('all',this)">All Stores</button>
     ${stores.map(s => `<button class="filter-chip${activeStore===s?' active':''}" onclick="setStoreFilter('${s.replace(/'/g,"\\'")}',this)">${esc(s)}</button>`).join('')}`;
@@ -2254,7 +2266,10 @@ async function updateProfileLabel() {
   const name     = profile?.name || (activeProfile === 'default' ? 'Home' : activeProfile);
   const colour   = profile?.colour || '#e8a838';
   const label    = document.getElementById('profile-label');
-  if (label) label.innerHTML = `/ <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${colour};margin-right:4px;vertical-align:middle"></span>${name.toUpperCase()}`;
+  if (label) {
+    label.className = 'profile-label-subtitle';
+    label.innerHTML = `/ <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${colour};margin-right:4px;vertical-align:middle"></span>${name.toUpperCase()}`;
+  }
 }
 
 function openProfilePicker() {
@@ -5095,7 +5110,7 @@ function _doTransition(direction, fn) {
 }
 
 function setStockOnlyUI(visible) {
-  const ids = ['health-dashboard', 'filter-toggle-btn', 'sort-select', 'tag-filter-bar', 'sns-banner', 'pending-deliveries-section', 'incomplete-section', 'stock-search-mobile'];
+  const ids = ['health-dashboard', 'filter-toggle-btn', 'sort-select', 'tag-filter-bar', 'sns-banner', 'pending-deliveries-section', 'incomplete-section'];
   ids.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = visible ? '' : 'none';
@@ -5142,6 +5157,37 @@ function switchToShopping() {
 }
 
 function showShoppingListInline() { switchToShopping(); }
+
+// Session-only tick-off for shopping items (doesn't affect stock data)
+const _shoppingTicked = new Set();
+function toggleShoppingTick(id, labelEl) {
+  const ticked = _shoppingTicked.has(id);
+  if (ticked) {
+    _shoppingTicked.delete(id);
+  } else {
+    _shoppingTicked.add(id);
+  }
+  const box     = document.getElementById(`sl-tick-${id}`);
+  const name    = document.getElementById(`sl-name-${id}`);
+  const bar     = document.getElementById(`sl-bar-${id}`);
+  const actions = document.getElementById(`sl-actions-${id}`);
+  const card    = document.getElementById(`si-${id}`);
+  if (!ticked) {
+    // Now ticked
+    if (box)     { box.style.background = 'var(--ok)'; box.style.borderColor = 'var(--ok)'; box.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>'; }
+    if (name)    { name.style.textDecoration = 'line-through'; name.style.color = 'var(--muted)'; }
+    if (bar)     { bar.style.opacity = '0.3'; }
+    if (actions) { actions.style.display = 'none'; }
+    if (card)    { card.style.opacity = '0.55'; }
+  } else {
+    // Unticked
+    if (box)     { box.style.background = ''; box.style.borderColor = 'var(--border)'; box.innerHTML = ''; }
+    if (name)    { name.style.textDecoration = ''; name.style.color = ''; }
+    if (bar)     { bar.style.opacity = ''; }
+    if (actions) { actions.style.display = ''; }
+    if (card)    { card.style.opacity = ''; }
+  }
+}
 
 function showView(name, btn) {
   _currentViewName = name;
@@ -5387,15 +5433,18 @@ function renderShoppingList() {
 
       return `<div class="sl-item${item.ordered?' sl-ordered':''}" id="si-${item.id}" style="border-left:3px solid ${color}">
         <div class="sl-item-top">
-          <span class="sl-item-name">${esc(item.name)}</span>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:0" onclick="toggleShoppingTick('${item.id}',this)">
+            <span class="sl-tick-box" id="sl-tick-${item.id}" style="flex-shrink:0;width:20px;height:20px;border-radius:5px;border:2px solid var(--border);display:inline-flex;align-items:center;justify-content:center;transition:all .15s"></span>
+            <span class="sl-item-name" id="sl-name-${item.id}">${esc(item.name)}</span>
+          </label>
           ${orderedBadge}
           <span class="sl-days" style="color:${urgencyColor}">${daysLeft}d · ${runOutDate}</span>
         </div>
-        <div class="sl-bar-wrap">
+        <div class="sl-bar-wrap" id="sl-bar-${item.id}">
           <div class="sl-bar"><div class="sl-bar-fill" style="width:${pct??0}%;background:${fillColor}"></div></div>
           <span class="sl-pct" style="color:${color}">${pct ?? '?'}%</span>
         </div>
-        <div class="sl-actions">
+        <div class="sl-actions" id="sl-actions-${item.id}">
           ${buyLink}${altLinks}${orderedBtn}${deliveredBtn}
         </div>
       </div>`;
@@ -7727,6 +7776,7 @@ async function postLoginWizardRoute(recoveryCodes = []) {
         showDataLoadingOverlay('Syncing your data…');
         document.body.classList.remove('wizard-active');
         document.getElementById('wizard').style.display = 'none';
+        window.scrollTo(0, 0);
         localStorage.setItem('stockroom_seen', '1');
         await setProtectSeenForDevice();
         const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
@@ -7739,6 +7789,7 @@ async function postLoginWizardRoute(recoveryCodes = []) {
     showDataLoadingOverlay('Syncing your data…');
     document.body.classList.remove('wizard-active');
     document.getElementById('wizard').style.display = 'none';
+    window.scrollTo(0, 0);
     localStorage.setItem('stockroom_seen', '1');
     await setProtectSeenForDevice(); // stored in IDB — survives cookie clears
     const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
@@ -8917,7 +8968,8 @@ async function exportDataAndDismiss() {
 const _origExportData = typeof exportData !== 'undefined' ? exportData : null;
 
 async function loadPasskeys() {
-  const container = document.getElementById('passkey-list');
+  // Primary target is Account & Security; passkey-list (Settings) was removed
+  const container = document.getElementById('passkey-list-sec') || document.getElementById('passkey-list');
   if (!container) return;
   if (!kvConnected) {
     container.innerHTML = '<p style="font-size:12px;color:var(--muted)">Sign in to view and manage passkeys.</p>';
@@ -8979,7 +9031,7 @@ async function initPasskeyUI() {
   const supported = await passkeyPlatformSupported().catch(() => false);
   const regOption   = document.getElementById('passkey-register-option');
   const loginOption = document.getElementById('passkey-login-option');
-  const addBtn      = document.getElementById('add-passkey-btn');
+  const addBtn = document.getElementById('add-passkey-btn') || document.getElementById('add-passkey-btn-sec');
   if (!supported) {
     if (regOption)   regOption.style.display   = 'none';
     if (loginOption) loginOption.style.display  = 'none';
@@ -9200,37 +9252,48 @@ function getOrCreateDeviceId() {
   } catch(e) {}
 })();
 
-// ── Per-device setup flags (survive localStorage/cookie clears) ────────────
-// Stored in IDB (keyed by deviceId) so they persist even after the user
-// clears cookies or localStorage. Falls back to localStorage for speed.
+// ── Per-user, per-device setup flags ────────────────────────────────────────
+// Keyed by emailHash so multiple users share a device without interfering.
+// Flags also stored in settings blob so they follow the user to new devices.
+function _setupFlagKey(flagName) {
+  const hash = _kvEmailHash || '';
+  return hash ? `device_setup_${getOrCreateDeviceId()}_${hash}_${flagName}`
+              : `device_setup_${getOrCreateDeviceId()}_${flagName}`;
+}
 async function _getDeviceSetupFlag(flagName) {
-  const key = `device_setup_${getOrCreateDeviceId()}_${flagName}`;
+  const key = _setupFlagKey(flagName);
   try { if (localStorage.getItem(key) === '1') return true; } catch(e) {}
   try { if ((await dbGet('settings', key)) === '1') {
-    try { localStorage.setItem(key, '1'); } catch(e) {} // backfill
+    try { localStorage.setItem(key, '1'); } catch(e) {}
     return true;
   }} catch(e) {}
+  // Legacy fallback — non-user-scoped key
+  const legacyKey = `device_setup_${getOrCreateDeviceId()}_${flagName}`;
+  try { if (localStorage.getItem(legacyKey) === '1') return true; } catch(e) {}
   return false;
 }
 async function _setDeviceSetupFlag(flagName) {
-  const key = `device_setup_${getOrCreateDeviceId()}_${flagName}`;
+  const key = _setupFlagKey(flagName);
   try { localStorage.setItem(key, '1'); } catch(e) {}
   try { await dbPut('settings', key, '1'); } catch(e) {}
 }
 async function getProtectSeenForDevice() {
-  if (localStorage.getItem('stockroom_protect_seen') === '1') return true;
+  // Server setting takes priority — stored in encrypted blob so it follows user to new devices
+  if (settings._setupProtectSeen) return true;
   return _getDeviceSetupFlag('protect_seen');
 }
 async function setProtectSeenForDevice() {
-  localStorage.setItem('stockroom_protect_seen', '1');
+  settings._setupProtectSeen = true;
+  await dbPut('settings', 'settings', settings);
   await _setDeviceSetupFlag('protect_seen');
 }
 async function getCountrySetForDevice() {
-  if (localStorage.getItem('stockroom_country_set') === '1') return true;
+  if (settings._setupCountrySet) return true;
   return _getDeviceSetupFlag('country_set');
 }
 async function setCountrySetForDevice() {
-  localStorage.setItem('stockroom_country_set', '1');
+  settings._setupCountrySet = true;
+  await dbPut('settings', 'settings', settings);
   await _setDeviceSetupFlag('country_set');
 }
 
@@ -14134,7 +14197,7 @@ async function init() {
   wizardCountry = settings.country || 'GB';
   selectCountry(wizardCountry);
 
-  const seen        = localStorage.getItem('stockroom_seen');
+  const seen        = kvConnected; // signed-in users skip the wizard
   const wizardStep  = localStorage.getItem('stockroom_wizard_step');
   const countrySet  = await getCountrySetForDevice();
   const protectSeen = await getProtectSeenForDevice();
@@ -15361,7 +15424,11 @@ function _showNoteBody(n) {
     const ticksBody = document.getElementById('note-ticks-body');
     if (ticksBody) ticksBody.style.display = 'none';
     const ta = document.getElementById('note-body-input');
-    if (ta) { ta.style.display = ''; ta.value = body; }
+    if (ta) {
+      ta.style.display = '';
+      // contenteditable div — always set innerHTML to prevent leak between notes
+      ta.innerHTML = body ? body.replace(/\n/g, '<br>') : '';
+    }
   }
 }
 
@@ -15560,15 +15627,29 @@ async function toggleNoteTicks() {
   n.tickBoxesVisible = !n.tickBoxesVisible;
   if (!n.tickBoxes) n.tickBoxes = {};
   document.getElementById('note-btn-tick')?.classList.toggle('active', n.tickBoxesVisible);
-  const body = _getCurrentEditorBody(n);
-  const bodyEl = document.getElementById('note-body-input');
+  const bodyEl  = document.getElementById('note-body-input');
   const ticksEl = document.getElementById('note-ticks-body');
+
   if (n.tickBoxesVisible) {
-    _renderTickBody(n, body.replace(/<[^>]+>/g, '').trim());
+    // Switching to tick view — extract plain-text lines from current HTML body
+    const rawHTML = bodyEl ? bodyEl.innerHTML : (n.body || '');
+    // Convert <br> / block tags to newlines then strip remaining tags
+    const tmp = document.createElement('div'); tmp.innerHTML = rawHTML;
+    tmp.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+    tmp.querySelectorAll('p,div,li').forEach(el => { el.insertAdjacentText('afterend', '\n'); });
+    const plainText = (tmp.textContent || '').trim();
     if (bodyEl) bodyEl.style.display = 'none';
+    _renderTickBody(n, plainText);
   } else {
-    if (ticksEl) ticksEl.style.display = 'none';
-    if (bodyEl) { bodyEl.style.display = ''; bodyEl.innerHTML = body; }
+    // Switching back to rich text — collect tick labels back to text
+    if (ticksEl) {
+      const labels = ticksEl.querySelectorAll('label span');
+      const lines  = [...labels].map(s => s.textContent).join('\n');
+      if (bodyEl) { bodyEl.style.display = ''; bodyEl.innerHTML = lines.replace(/\n/g, '<br>'); }
+      ticksEl.style.display = 'none';
+    } else {
+      if (bodyEl) bodyEl.style.display = '';
+    }
   }
   n.updatedAt = new Date().toISOString();
   await saveNotes();
@@ -15623,16 +15704,31 @@ async function setNoteColour(colour) {
 function copyNoteBody() {
   const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
   const rawBody = _getCurrentEditorBody(n);
-  // Strip HTML for plain text clipboard
+  // Convert HTML to plain text preserving newlines
   const tmp = document.createElement('div'); tmp.innerHTML = rawBody;
-  const body = tmp.innerText || tmp.textContent || '';
-  const text = `${n.title}\n\n${body}`;
-  navigator.clipboard?.writeText(text).then(() => toast('Copied ✓')).catch(() => {
-    const ta = document.createElement('textarea');
-    ta.value = text; ta.style.cssText = 'position:fixed;opacity:0';
-    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
-    document.body.removeChild(ta); toast('Copied ✓');
+  // Replace <br> and block elements with newlines before extracting text
+  tmp.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+  tmp.querySelectorAll('p, div, li, h1, h2, h3, h4').forEach(el => {
+    el.insertAdjacentText('afterend', '\n');
   });
+  const plainBody = (tmp.textContent || tmp.innerText || '').replace(/\n{3,}/g, '\n\n').trim();
+  const plainText = n.title ? `${n.title}\n\n${plainBody}` : plainBody;
+
+  if (navigator.clipboard?.write) {
+    // Write both HTML and plain text so paste destination can choose
+    const htmlBlob  = new Blob([`<b>${n.title}</b><br><br>${rawBody}`], { type: 'text/html' });
+    const textBlob  = new Blob([plainText], { type: 'text/plain' });
+    navigator.clipboard.write([new ClipboardItem({ 'text/html': htmlBlob, 'text/plain': textBlob })])
+      .then(() => toast('Copied ✓'))
+      .catch(() => navigator.clipboard.writeText(plainText).then(() => toast('Copied ✓')).catch(() => {}));
+  } else {
+    navigator.clipboard?.writeText(plainText).then(() => toast('Copied ✓')).catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = plainText; ta.style.cssText = 'position:fixed;opacity:0';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+      document.body.removeChild(ta); toast('Copied ✓');
+    });
+  }
 }
 
 async function deleteCurrentNote() {
@@ -15968,7 +16064,7 @@ async function _mfaSendEmailOtp() {
   try {
     const res = await fetchKV(`${WORKER_URL}/mfa/otp/send`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ emailHash:_kvEmailHash, ..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier} }),
+      body: JSON.stringify({ emailHash:_kvEmailHash, email: _kvEmail || settings.email || '', ..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier} }),
     });
     const d = await res.json();
     if (!res.ok) {
@@ -16251,11 +16347,7 @@ function renderAccountSecurity() {
 
   // Load passkeys into account security list
   if (kvConnected) {
-    loadPasskeys().then(() => {
-      const pkListSec = document.getElementById('passkey-list-sec');
-      const pkListMain = document.getElementById('passkey-list');
-      if (pkListSec && pkListMain) pkListSec.innerHTML = pkListMain.innerHTML;
-    }).catch(() => {});
+    loadPasskeys().catch(() => {});
 
     loadTrustedDevices().then(() => {
       const tdListSec = document.getElementById('trusted-devices-list-sec');
@@ -16268,7 +16360,12 @@ function renderAccountSecurity() {
 function toggleTrustedDevicesPanel() {
   const panel = document.getElementById('trusted-devices-panel-sec') || document.getElementById('trusted-devices-panel');
   if (!panel) return;
-  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  const hidden = panel.style.display === 'none';
+  panel.style.display = hidden ? 'block' : 'none';
+  document.querySelectorAll('[onclick="toggleTrustedDevicesPanel()"]').forEach(btn => {
+    btn.textContent = hidden ? 'Hide devices' : 'Show devices';
+  });
+  if (hidden) loadTrustedDevices();
 }
 
 // ── Deactivate Account ────────────────────
