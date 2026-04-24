@@ -14216,9 +14216,18 @@ async function init() {
   } else if (seen || kvConnected) {
     if (kvConnected) {
       // On a new device, IDB is empty so settings.mfa hasn't loaded yet.
-      // Do a silent sync first to pull the latest encrypted blob (which includes MFA config),
-      // then check MFA before revealing the app.
+      // Ensure we have the data key first, then sync to pull encrypted blob (incl. MFA config).
       showDataLoadingOverlay('Loading your Stockroom…');
+      if (!_kvKey) {
+        // Try to restore key from cache before syncing
+        const keyOk = await kvEnsureKey().catch(() => false);
+        if (!keyOk) {
+          // Can't get key — can't decrypt MFA config. Show login.
+          hideDataLoadingOverlay();
+          showKvLogin();
+          return;
+        }
+      }
       try { await kvSyncNow(true); } catch(e) {}
       hideDataLoadingOverlay();
     }
@@ -16075,26 +16084,62 @@ function _mfaMethod() {
 // ── Login intercept ─────────────────────────────────────────────────────────
 async function _mfaLoginIntercept(callback) {
   _pendingMfaCallback = callback;
-  const primary = _mfaPrimaryMethod();
-  const hint    = document.getElementById('mfa-email-hint');
-  const totpHint = document.getElementById('mfa-totp-hint');
-  if (hint)     hint.innerHTML     = '<p style="font-size:13px;color:var(--muted);margin-bottom:12px">Sending a verification code to your email…</p>';
-  if (totpHint) totpHint.innerHTML = '<p style="font-size:13px;color:var(--muted);margin-bottom:12px">Enter the 6-digit code from your authenticator app.</p>';
-  _mfaVerifyAltMode = false;
+  _mfaVerifyAltMode   = false;
+
+  const primary     = _mfaPrimaryMethod();
+  const isTotp      = primary?.type === 'totp';
+  const hasBoth     = _mfaMethods().length > 1;
+
+  // Show the correct hint panel and hide the other
+  const emailHint = document.getElementById('mfa-email-hint');
+  const totpHint  = document.getElementById('mfa-totp-hint');
+  const altBtn    = document.getElementById('mfa-alt-method');
+  const resendBtn = document.getElementById('mfa-resend-btn');
+  const codeEl    = document.getElementById('mfa-verify-code');
+
+  if (emailHint) emailHint.style.display = isTotp ? 'none' : 'block';
+  if (totpHint)  totpHint.style.display  = isTotp ? 'block' : 'none';
+  // Alt button only shown when user has both methods
+  if (altBtn) {
+    altBtn.style.display = hasBoth ? '' : 'none';
+    altBtn.textContent   = isTotp ? 'Use email code instead' : 'Use authenticator app instead';
+  }
+  // Resend only relevant for email
+  if (resendBtn) resendBtn.style.display = isTotp ? 'none' : '';
+  if (codeEl) codeEl.value = '';
+
   openModal('mfa-verify-modal');
-  if (!primary || primary.type === 'email') {
+
+  if (!isTotp) {
+    // Email primary — send OTP immediately
+    if (emailHint) emailHint.innerHTML = '<p style="font-size:13px;color:var(--muted);margin-bottom:8px">Sending a code to your email…</p>';
     await _mfaSendEmailOtp();
-    if (hint) hint.innerHTML = '<p style="font-size:13px;color:var(--muted);margin-bottom:12px">A verification code has been sent to your email. Enter it below.</p>';
+    if (emailHint) emailHint.innerHTML = '<p style="font-size:13px;color:var(--muted);margin-bottom:8px">Enter the code sent to your email.</p>';
   }
 }
 
 async function _mfaIntercept(callback) {
   if (!_mfaEnabled()) { callback(); return; }
   _pendingMfaCallback = callback;
-  const primary = _mfaPrimaryMethod();
-  if (!primary || primary.type === 'email') await _mfaSendEmailOtp();
-  _mfaVerifyAltMode = false;
+  _mfaVerifyAltMode   = false;
+
+  const primary  = _mfaPrimaryMethod();
+  const isTotp   = primary?.type === 'totp';
+  const hasBoth  = _mfaMethods().length > 1;
+  const emailHint = document.getElementById('mfa-email-hint');
+  const totpHint  = document.getElementById('mfa-totp-hint');
+  const altBtn    = document.getElementById('mfa-alt-method');
+  const resendBtn = document.getElementById('mfa-resend-btn');
+  const codeEl    = document.getElementById('mfa-verify-code');
+
+  if (emailHint) emailHint.style.display = isTotp ? 'none' : 'block';
+  if (totpHint)  totpHint.style.display  = isTotp ? 'block' : 'none';
+  if (altBtn)    { altBtn.style.display  = hasBoth ? '' : 'none'; altBtn.textContent = isTotp ? 'Use email code instead' : 'Use authenticator app instead'; }
+  if (resendBtn) resendBtn.style.display = isTotp ? 'none' : '';
+  if (codeEl)    codeEl.value = '';
+
   openModal('mfa-verify-modal');
+  if (!isTotp) await _mfaSendEmailOtp();
 }
 
 async function _mfaSendEmailOtp() {
@@ -16163,14 +16208,18 @@ async function mfaResendCode() {
 
 async function mfaSwitchMethod() {
   _mfaVerifyAltMode = !_mfaVerifyAltMode;
-  const primaryMethod = _mfaMethod();
+  const primaryMethod   = _mfaMethod();
   const effectiveMethod = _mfaVerifyAltMode ? (primaryMethod === 'totp' ? 'email' : 'totp') : primaryMethod;
-  const el        = document.getElementById('mfa-alt-method');
+  const altBtn    = document.getElementById('mfa-alt-method');
   const totpHint  = document.getElementById('mfa-totp-hint');
   const emailHint = document.getElementById('mfa-email-hint');
-  if (el)        el.textContent        = effectiveMethod === 'totp' ? 'Use email code instead' : 'Use authenticator app instead';
-  if (totpHint)  totpHint.style.display  = effectiveMethod === 'totp'  ? 'block' : 'none';
-  if (emailHint) emailHint.style.display = effectiveMethod === 'email' ? 'block' : 'none';
+  const resendBtn = document.getElementById('mfa-resend-btn');
+  const codeEl    = document.getElementById('mfa-verify-code');
+  if (altBtn)    altBtn.textContent        = effectiveMethod === 'totp' ? 'Use email code instead' : 'Use authenticator app instead';
+  if (totpHint)  totpHint.style.display    = effectiveMethod === 'totp'  ? 'block' : 'none';
+  if (emailHint) emailHint.style.display   = effectiveMethod === 'email' ? 'block' : 'none';
+  if (resendBtn) resendBtn.style.display   = effectiveMethod === 'email' ? '' : 'none';
+  if (codeEl)    codeEl.value = '';
   if (_mfaVerifyAltMode && effectiveMethod === 'email') await _mfaSendEmailOtp();
 }
 
@@ -16287,8 +16336,6 @@ function _mfaSetupReset() {
   if (emailCodeEl) emailCodeEl.value = '';
   const testDiv = document.getElementById('mfa-setup-email-test');
   if (testDiv) testDiv.style.display = 'none';
-  const sendBtn = document.getElementById('mfa-setup-email-send-btn');
-  if (sendBtn) { sendBtn.textContent = '📨 Send test code to my email'; sendBtn.disabled = false; }
   const emailDisp = document.getElementById('mfa-setup-email-display');
   if (emailDisp) emailDisp.textContent = settings.email || _kvEmail || '(your email)';
   // Pre-generate TOTP secret
@@ -16302,77 +16349,108 @@ function _mfaSetupReset() {
 function _mfaSetupSelectMethod(method) {
   document.getElementById('mfa-setup-email-section').style.display = method === 'email' ? 'block' : 'none';
   document.getElementById('mfa-setup-totp-section').style.display  = method === 'totp'  ? 'block' : 'none';
-  document.querySelectorAll('.mfa-method-btn').forEach(b => b.classList.toggle('active', b.dataset.method === method));
+  // Tab styling
+  document.querySelectorAll('.mfa-method-btn').forEach(b => {
+    const active = b.dataset.method === method;
+    b.style.background = active ? 'var(--accent)' : 'var(--surface2)';
+    b.style.color      = active ? '#111' : 'var(--muted)';
+  });
   window._pendingMfaSetupMethod = method;
-}
-
-async function mfaSendTestEmail() {
-  const errEl   = document.getElementById('mfa-setup-error');
-  const sendBtn = document.getElementById('mfa-setup-email-send-btn');
-  if (errEl) errEl.textContent = '';
-  if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '⏳ Sending…'; }
-  try {
-    const res = await fetchKV(`${WORKER_URL}/mfa/otp/send`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash, email: _kvEmail || settings.email || '',
-        ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier } }),
-    });
-    const d = await res.json();
-    if (!res.ok) { if (errEl) errEl.textContent = d.error || 'Could not send test code'; if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📨 Send test code to my email'; } return; }
-    _mfaEmailTestSent = true;
-    if (sendBtn) { sendBtn.textContent = '📨 Resend test code'; sendBtn.disabled = false; }
+  // Button label depends on method — email needs send step, TOTP doesn't
+  const btn = document.getElementById('mfa-setup-confirm-btn');
+  if (btn) btn.textContent = method === 'email' ? 'Send code to my email →' : 'Enable authenticator app ✓';
+  // Reset email test state when switching tabs
+  if (method === 'email') {
+    _mfaEmailTestSent = false;
     const testDiv = document.getElementById('mfa-setup-email-test');
-    if (testDiv) testDiv.style.display = 'block';
-    document.getElementById('mfa-setup-email-code')?.focus();
-  } catch(e) {
-    if (errEl) errEl.textContent = 'Error: ' + e.message;
-    if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📨 Send test code to my email'; }
+    if (testDiv) testDiv.style.display = 'none';
+    const codeEl = document.getElementById('mfa-setup-email-code');
+    if (codeEl) codeEl.value = '';
   }
 }
 
 async function mfaSetupConfirm() {
-  const method = window._pendingMfaSetupMethod || 'email';
-  const errEl  = document.getElementById('mfa-setup-error');
+  const method  = window._pendingMfaSetupMethod || 'email';
+  const errEl   = document.getElementById('mfa-setup-error');
+  const btn     = document.getElementById('mfa-setup-confirm-btn');
   if (errEl) errEl.textContent = '';
 
-  if (method === 'totp') {
-    const codeEl = document.getElementById('mfa-setup-totp-code');
-    const code   = codeEl?.value.trim();
-    if (!code || code.length < 6) { if(errEl) errEl.textContent='Enter the 6-digit code from your authenticator app'; return; }
-    const valid = await _totpVerify(window._pendingTotpSecret, code);
-    if (!valid) { if(errEl) errEl.textContent='Code incorrect — check your device clock is accurate'; return; }
-  } else {
-    // Email: test code must have been sent and verified
-    if (!_mfaEmailTestSent) { if(errEl) errEl.textContent='Send a test code first to verify email MFA is working'; return; }
+  if (method === 'email') {
+    if (!_mfaEmailTestSent) {
+      // Stage 1: send the test code
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Sending…'; }
+      try {
+        const res = await fetchKV(`${WORKER_URL}/mfa/otp/send`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emailHash: _kvEmailHash, email: _kvEmail || settings.email || '',
+            ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier } }),
+        });
+        const d = await res.json();
+        if (!res.ok) {
+          if (errEl) errEl.textContent = d.error || 'Could not send code — check your email address';
+          if (btn) { btn.disabled = false; btn.textContent = 'Send code to my email →'; }
+          return;
+        }
+      } catch(e) {
+        if (errEl) errEl.textContent = 'Error: ' + e.message;
+        if (btn) { btn.disabled = false; btn.textContent = 'Send code to my email →'; }
+        return;
+      }
+      _mfaEmailTestSent = true;
+      // Reveal code input
+      const testDiv = document.getElementById('mfa-setup-email-test');
+      if (testDiv) testDiv.style.display = 'block';
+      setTimeout(() => document.getElementById('mfa-setup-email-code')?.focus(), 100);
+      if (btn) { btn.disabled = false; btn.textContent = 'Enable email MFA ✓'; }
+      return; // wait for user to enter code and press again
+    }
+
+    // Stage 2: verify the code and enable
     const codeEl = document.getElementById('mfa-setup-email-code');
     const code   = codeEl?.value.trim();
-    if (!code || code.length < 6) { if(errEl) errEl.textContent='Enter the 6-digit test code from your email'; return; }
-    // Verify the test code against the backend
-    const res = await fetchKV(`${WORKER_URL}/mfa/otp/verify`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash, otp: code }),
-    });
-    const d = await res.json();
-    if (!res.ok) { if(errEl) errEl.textContent = d.error || 'Incorrect code — request a new test code'; return; }
+    if (!code || code.length < 6) { if (errEl) errEl.textContent = 'Enter the 6-digit code from your email'; return; }
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Verifying…'; }
+    try {
+      const res = await fetchKV(`${WORKER_URL}/mfa/otp/verify`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash: _kvEmailHash, otp: code }),
+      });
+      const d = await res.json();
+      if (!res.ok) {
+        if (errEl) errEl.textContent = d.error || 'Incorrect code — request a new one';
+        if (btn) { btn.disabled = false; btn.textContent = 'Enable email MFA ✓'; }
+        return;
+      }
+    } catch(e) {
+      if (errEl) errEl.textContent = 'Error: ' + e.message;
+      if (btn) { btn.disabled = false; btn.textContent = 'Enable email MFA ✓'; }
+      return;
+    }
+    const newMethod = { type: 'email', primary: true };
+    _mfaFinishSetup(newMethod);
+
+  } else {
+    // TOTP — verify the code from the app
+    const codeEl = document.getElementById('mfa-setup-totp-code');
+    const code   = codeEl?.value.trim();
+    if (!code || code.length < 6) { if (errEl) errEl.textContent = 'Enter the 6-digit code from your authenticator app'; return; }
+    const valid = await _totpVerify(window._pendingTotpSecret, code);
+    if (!valid) { if (errEl) errEl.textContent = 'Code incorrect — make sure your device clock is accurate'; return; }
+    const newMethod = { type: 'totp', secret: window._pendingTotpSecret, primary: true };
+    _mfaFinishSetup(newMethod);
   }
+}
 
-  // Test passed — save the new method
-  const newMethod = method === 'totp'
-    ? { type: 'totp', secret: window._pendingTotpSecret, primary: false }
-    : { type: 'email', primary: false };
-
+function _mfaFinishSetup(newMethod) {
   if (_pendingMfaSetupMode === 'add') {
-    // Adding a second method — append to existing
     const existing = _mfaMethods();
+    newMethod.primary = false; // new methods added as backup
     existing.push(newMethod);
     settings.mfa = { enabled: true, methods: existing };
   } else {
-    // First-time enable — this method becomes primary
-    newMethod.primary = true;
     settings.mfa = { enabled: true, methods: [newMethod] };
   }
-
-  await _saveSettings();
+  _saveSettings();
   closeModal('mfa-setup-modal');
   closeModal('mfa-prompt-modal');
   localStorage.setItem(_MFA_DISMISSED_KEY, 'enabled');

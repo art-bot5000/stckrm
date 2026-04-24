@@ -2339,34 +2339,36 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     <h3 id="mfa-setup-title" style="font-size:16px;font-weight:700;margin-bottom:6px">🛡️ Set Up Multifactor Authentication</h3>
     <p id="mfa-setup-subtitle" style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:16px">Choose your second factor and verify it works before enabling.</p>
 
-    <!-- Step 1: method picker (hidden when adding a specific method) -->
+    <!-- Tab selector -->
     <div id="mfa-setup-step-method">
-      <div style="display:flex;gap:8px;margin-bottom:20px">
-        <button class="btn btn-ghost mfa-method-btn active" data-method="email" onclick="_mfaSetupSelectMethod('email')" style="flex:1">📧 Email code</button>
-        <button class="btn btn-ghost mfa-method-btn" data-method="totp" onclick="_mfaSetupSelectMethod('totp')" style="flex:1">📱 Authenticator</button>
+      <div style="display:flex;border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:20px">
+        <button class="mfa-method-btn active" data-method="email" onclick="_mfaSetupSelectMethod('email')"
+          style="flex:1;padding:10px;border:none;background:var(--accent);color:#111;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s">📧 Email code</button>
+        <button class="mfa-method-btn" data-method="totp" onclick="_mfaSetupSelectMethod('totp')"
+          style="flex:1;padding:10px;border:none;background:var(--surface2);color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s">📱 Authenticator app</button>
       </div>
     </div>
 
     <!-- Email method -->
     <div id="mfa-setup-email-section">
-      <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:16px">A 6-digit code will be sent to your email address each time you sign in.</p>
+      <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:12px">A 6-digit code will be sent to your email address each time you sign in.</p>
       <div style="background:var(--surface2);border-radius:10px;padding:12px;font-size:12px;color:var(--muted);margin-bottom:16px">
         📧 Codes sent to: <strong style="color:var(--text)" id="mfa-setup-email-display"></strong>
       </div>
-      <!-- Test step for email -->
-      <div id="mfa-setup-email-test" style="display:none">
-        <p style="font-size:13px;color:var(--accent);font-weight:600;margin-bottom:8px">📨 A test code has been sent — enter it to confirm email MFA is working:</p>
+      <!-- Code input — hidden until test code is sent -->
+      <div id="mfa-setup-email-test" style="display:none;margin-bottom:12px">
+        <label class="form-label" style="margin-bottom:6px">Enter the 6-digit code from your email</label>
         <input class="form-input" type="text" id="mfa-setup-email-code" inputmode="numeric" maxlength="6" placeholder="000000"
-          style="font-family:var(--mono);font-size:20px;letter-spacing:6px;text-align:center;margin-bottom:8px"
+          style="font-family:var(--mono);font-size:24px;letter-spacing:8px;text-align:center"
           oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,6)"
           onkeydown="if(event.key==='Enter')mfaSetupConfirm()">
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%" onclick="mfaSendTestEmail()">Resend code</button>
       </div>
-      <button id="mfa-setup-email-send-btn" class="btn btn-ghost" style="width:100%;margin-bottom:8px" onclick="mfaSendTestEmail()">📨 Send test code to my email</button>
     </div>
 
     <!-- TOTP method -->
     <div id="mfa-setup-totp-section" style="display:none">
-      <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:12px">Scan this QR code with an authenticator app (Google Authenticator, Authy, 1Password, etc.), then enter the code it shows to confirm it works.</p>
+      <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:12px">Scan this QR code with an authenticator app (Google Authenticator, Authy, 1Password, etc.), then enter the 6-digit code it shows.</p>
       <div style="text-align:center;margin-bottom:12px">
         <canvas id="mfa-totp-qr-canvas" width="200" height="200" style="border-radius:10px;background:#fff;display:none"></canvas>
         <div id="mfa-totp-qr-fallback" style="display:none;font-size:12px;color:var(--muted);padding:8px"></div>
@@ -2375,18 +2377,16 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
         <summary style="font-size:12px;color:var(--muted);cursor:pointer">Can't scan? Enter code manually</summary>
         <div style="font-family:var(--mono);font-size:13px;letter-spacing:2px;background:var(--surface2);border-radius:8px;padding:10px;margin-top:8px;text-align:center;word-break:break-all" id="mfa-totp-secret-display"></div>
       </details>
-      <label class="form-label">Enter the 6-digit code from your app to confirm it works</label>
+      <label class="form-label" style="margin-bottom:6px">Enter the 6-digit code from your app</label>
       <input class="form-input" type="text" id="mfa-setup-totp-code" inputmode="numeric" maxlength="6" placeholder="000000"
-        style="font-family:var(--mono);font-size:20px;letter-spacing:6px;text-align:center"
+        style="font-family:var(--mono);font-size:24px;letter-spacing:8px;text-align:center"
         oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,6)"
         onkeydown="if(event.key==='Enter')mfaSetupConfirm()">
     </div>
 
-    <p id="mfa-setup-error" style="font-size:12px;color:var(--danger);margin-bottom:12px;min-height:16px"></p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-primary" id="mfa-setup-confirm-btn" onclick="mfaSetupConfirm()" style="flex:2">Verify &amp; Enable ✓</button>
-      <button class="btn btn-ghost" onclick="closeModal('mfa-setup-modal')">Cancel</button>
-    </div>
+    <p id="mfa-setup-error" style="font-size:12px;color:var(--danger);margin-top:10px;margin-bottom:8px;min-height:16px"></p>
+    <button class="btn btn-primary" id="mfa-setup-confirm-btn" onclick="mfaSetupConfirm()" style="width:100%">Send code to my email →</button>
+    <button class="btn btn-ghost" onclick="closeModal('mfa-setup-modal')" style="width:100%;margin-top:8px">Cancel</button>
   </div>
 </div>
 
@@ -2422,7 +2422,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     <p id="mfa-otp-error" style="font-size:12px;color:var(--danger);margin-bottom:8px;min-height:16px"></p>
     <button class="btn btn-primary" style="width:100%;margin-bottom:8px" onclick="mfaVerifySubmit()">Verify →</button>
     <button class="btn btn-ghost btn-sm" id="mfa-alt-method" onclick="mfaSwitchMethod()" style="width:100%;margin-bottom:6px">Use alternative method</button>
-    <button class="btn btn-ghost btn-sm" onclick="mfaResendCode()" style="width:100%">Resend code</button>
+    <button class="btn btn-ghost btn-sm" id="mfa-resend-btn" onclick="mfaResendCode()" style="width:100%">Resend code</button>
   </div>
 </div>
 
