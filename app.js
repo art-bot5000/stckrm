@@ -365,6 +365,20 @@ async function loadData() {
 
   if (Array.isArray(loadedItems)) items = loadedItems;
   if (loadedSettings && typeof loadedSettings === 'object') settings = { ...settings, ...loadedSettings };
+
+  // Backfill localStorage from user settings so early-firing browser events (beforeinstallprompt)
+  // also see the dismissed flag without waiting for a network sync
+  if (settings._installDismissed) {
+    try { localStorage.setItem('stockroom_install_dismissed', '1'); } catch(e) {}
+    try { localStorage.setItem('stockroom_ios_banner_dismissed', '1'); } catch(e) {}
+  }
+  // Hide Amazon banner immediately if previously dismissed (avoid flash)
+  if (settings._amazonBannerDismissed) {
+    const desktop = document.getElementById('amazon-banner-desktop');
+    const mobile  = document.getElementById('amazon-banner-mobile');
+    if (desktop) desktop.style.display = 'none';
+    if (mobile)  mobile.style.display  = 'none';
+  }
 }
 
 async function saveData() {
@@ -2750,7 +2764,8 @@ if ('serviceWorker' in navigator) {
     });
 
     // Show iOS install banner if on iOS, not installed, and not dismissed
-    if (isIOS && !isInStandaloneMode && !localStorage.getItem('stockroom_ios_banner_dismissed')) {
+    const iosDismissed = settings._installDismissed || localStorage.getItem('stockroom_ios_banner_dismissed');
+    if (isIOS && !isInStandaloneMode && !iosDismissed) {
       setTimeout(() => {
         const banner = document.getElementById('ios-install-banner');
         if (banner) banner.style.display = 'block';
@@ -2775,7 +2790,8 @@ function applyUpdate() {
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
   deferredInstallPrompt = e;
-  if (!localStorage.getItem('stockroom_install_dismissed')) {
+  const dismissed = settings._installDismissed || localStorage.getItem('stockroom_install_dismissed');
+  if (!dismissed) {
     setTimeout(() => {
       const banner = document.getElementById('install-banner');
       if (banner) banner.classList.add('show');
@@ -2812,11 +2828,32 @@ async function installPWA() {
   if (banner) banner.classList.remove('show');
 }
 
+// ── Amazon Order History Import banner ───────────────────────────────────────
+function _showAmazonBanners() {
+  if (settings._amazonBannerDismissed) return;
+  const desktop = document.getElementById('amazon-banner-desktop');
+  const mobile  = document.getElementById('amazon-banner-mobile');
+  if (desktop) desktop.style.display = 'block';
+  if (mobile)  mobile.style.display  = 'block';
+}
+
+function dismissAmazonBanner() {
+  const desktop = document.getElementById('amazon-banner-desktop');
+  const mobile  = document.getElementById('amazon-banner-mobile');
+  if (desktop) desktop.style.display = 'none';
+  if (mobile)  mobile.style.display  = 'none';
+  settings._amazonBannerDismissed = true;
+  _saveSettings().then(() => kvPush().catch(() => {}));
+  setTimeout(() => toast('Amazon order import is available anytime in Account & Security → Data'), 400);
+}
+
 function dismissInstallBanner() {
   const banner = document.getElementById('install-banner');
   if (banner) banner.classList.remove('show');
   try { localStorage.setItem('stockroom_install_dismissed', '1'); } catch(e){}
-  // Brief hint so the user knows they can still install later
+  // Also save to user data so the choice persists across devices and cookie clears
+  settings._installDismissed = true;
+  _saveSettings().then(() => kvPush().catch(() => {}));
   setTimeout(() => toast('You can install STOCKROOM anytime from Settings'), 400);
 }
 
@@ -2824,6 +2861,9 @@ function dismissIOSBanner() {
   const banner = document.getElementById('ios-install-banner');
   if (banner) banner.style.display = 'none';
   try { localStorage.setItem('stockroom_ios_banner_dismissed', '1'); } catch(e){}
+  // Also save to user data
+  settings._installDismissed = true;
+  _saveSettings().then(() => kvPush().catch(() => {}));
 }
 
 // ═══════════════════════════════════════════
@@ -14247,6 +14287,7 @@ async function init() {
 
   updateSyncUI();
   renderSettingsForUser();
+  _showAmazonBanners();
   initPasskeyUI();
   loadCompactView();
   loadFilterPanelState();
@@ -15358,6 +15399,7 @@ async function openNoteEditor(noteId) {
     document.getElementById('note-editor-body').style.display = 'flex';
     document.getElementById('note-lock-screen').style.display = 'none';
     _renderNoteEditor(n, false);
+    _showNoteBody(n); // always set body (clears previous note's content from contenteditable)
     document.getElementById('note-title-input')?.focus();
     saveNotes().catch(e => console.warn('saveNotes:', e));
     return;
@@ -16837,4 +16879,799 @@ async function handleReactivation(token) {
   } catch(e) {
     toast('Error: ' + e.message);
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  AMAZON ORDER HISTORY IMPORTER
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Semantic anchor phrases for product clustering ─────────────────────────
+const _AZ_ANCHORS = [
+  'coffee beans','coffee bean','whole bean','ground coffee',
+  'nespresso compatible','nespresso capsule','nespresso pod',
+  'coffee pod','coffee capsule','tassimo','dolce gusto',
+  'espresso capsule','espresso pod','espresso beans',
+  'replacement blade','razor blade','shaving blade',
+  'shampoo','conditioner','shower gel','body wash',
+  'toothpaste','toothbrush head','electric toothbrush head',
+  'deodorant','moisturiser','moisturizer','face wash','hand wash',
+  'toilet roll','toilet paper','toilet tissue','bathroom tissue',
+  'kitchen roll','kitchen towel','paper towel',
+  'bin bag','bin liner','refuse sack',
+  'dishwasher tablet','dishwasher pod','dishwasher capsule',
+  'laundry capsule','laundry pod','washing capsule','washing pod',
+  'washing powder','washing liquid','fabric conditioner','fabric softener',
+  'surface spray','cleaning spray',
+  'cat food','dog food','cat litter','cat treat','dog treat',
+  'flea treatment','flea tablet',
+  'protein powder','protein shake','whey protein',
+  'vitamin d','vitamin c','omega 3','fish oil','cod liver oil',
+  'olive oil','coconut oil',
+  'printer ink','printer cartridge','toner cartridge',
+  'aa battery','aaa battery','9v battery','cr2032',
+  'water filter','filter cartridge','brita filter',
+];
+
+const _AZ_STOP = new Set([
+  'the','and','for','with','pack','packs','set','box','case','bundle',
+  'piece','pieces','count','units','unit','ml','litre','liter','liters',
+  'litres','gram','grams','100','200','250','500','1000','large',
+  'medium','small','extra','ultra','original','classic','new','pro',
+  'max','plus','mini','super','premium','value','natural','organic',
+  'free','made','each','per','size','type',
+]);
+
+function _azTokenise(str) {
+  return (str||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/)
+    .filter(t => t.length > 2 && !/^\d+$/.test(t) && !_AZ_STOP.has(t));
+}
+
+function _azAnchor(name) {
+  const n = (name||'').toLowerCase();
+  const sorted = [..._AZ_ANCHORS].sort((a,b) => b.length - a.length);
+  for (const a of sorted) if (n.includes(a)) return a;
+  return null;
+}
+
+function _azJaccard(a, b) {
+  const sa = new Set(a), sb = new Set(b);
+  const inter = [...sa].filter(t => sb.has(t)).length;
+  const union = new Set([...sa,...sb]).size;
+  return union ? inter/union : 0;
+}
+
+function _azPriceBand(pa, pb, pct=0.30) {
+  if (!pa || !pb) return true;
+  const mid = (pa+pb)/2;
+  return Math.abs(pa-pb)/mid <= pct;
+}
+
+function _azSharedKw(a, b, min=2) {
+  const ta = new Set(_azTokenise(a)), tb = new Set(_azTokenise(b));
+  return [...ta].filter(t => tb.has(t)).length >= min;
+}
+
+function _azShouldCluster(ga, gb) {
+  const pa = ga.avgPrice||0, pb = gb.avgPrice||0;
+  if (ga.anchor && ga.anchor === gb.anchor) return _azPriceBand(pa,pb,0.30);
+  if (_azJaccard(ga.tokens, gb.tokens) >= 0.35) return _azPriceBand(pa,pb,0.40);
+  if (_azSharedKw(ga.name, gb.name, 2)) return _azPriceBand(pa,pb,0.25);
+  return false;
+}
+
+function _azAvgInterval(dates) {
+  if (dates.length < 2) return null;
+  const sorted = [...dates].sort();
+  const dts = sorted.map(d => new Date(d).getTime());
+  const gaps = dts.slice(1).map((t,i) => (t-dts[i])/86400000);
+  return Math.round(gaps.reduce((a,b)=>a+b,0)/gaps.length);
+}
+
+function _azIntervalLabel(days) {
+  if (!days) return 'occasional';
+  if (days <= 21) return `every ~${days}d`;
+  if (days <= 45) return '~monthly';
+  if (days <= 75) return '~6 weekly';
+  if (days <= 100) return '~2 monthly';
+  if (days <= 130) return '~quarterly';
+  if (days <= 200) return '~4 monthly';
+  return `every ~${Math.round(days/30)}mo`;
+}
+
+function _azCategory(name) {
+  const n = (name||'').toLowerCase();
+  if (/coffee|tea|beans|espresso|capsule|pod|nescaf|latte|cappuccino|tassimo|dolce/i.test(n)) return '☕ Coffee & Tea';
+  if (/cat|dog|pet|kitten|puppy|paw|flea|collar|litter/i.test(n)) return '🐾 Pet Supplies';
+  if (/toilet|tissue|kitchen roll|paper towel|bathroom|hygiene|bin bag|bin liner/i.test(n)) return '🧻 Paper & Hygiene';
+  if (/shampoo|conditioner|soap|shower|gel|moistur|lotion|cream|deodor|razors?|blade|shav/i.test(n)) return '🛁 Personal Care';
+  if (/vitamin|supplement|protein|omega|tablet|capsule|health|cod liver/i.test(n)) return '💊 Health';
+  if (/clean|detergent|bleach|dishwash|laundry|fabric|mop|sponge|wipe/i.test(n)) return '🧹 Cleaning';
+  if (/battery|cable|charger|usb|bulb|light|led|smart|plug|adapter|filter|cartridge|ink|toner/i.test(n)) return '🔌 Electronics';
+  if (/food|snack|crisp|biscuit|sauce|seasoning|oil|pasta|rice|grain|cereal|curry/i.test(n)) return '🥫 Food & Drink';
+  return '📦 Other';
+}
+
+// ── State ─────────────────────────────────────────────────────────────────
+let _azStage       = 'upload';   // upload|privacy|preview|analyse|results|merge|done
+let _azAllRows     = [];         // all parsed CSV rows
+let _azRows        = [];         // last-year filtered rows
+let _azDeletedIds  = new Set();  // ids excluded from preview
+let _azGroups      = [];         // analysis result groups
+let _azDeletedGrps = new Set();  // group ids excluded from results
+let _azSplitAsins  = {};         // { groupId: Set<asin> } — ASINs to split out
+let _azExpandedSplit = new Set();// group ids with split panel expanded
+let _azMatches     = [];         // merge stage match objects
+let _azPickerOpen  = false;
+let _azPickerIdx   = null;
+let _azPickerSearch = '';
+
+const _AZ_ONE_YEAR_AGO = new Date(Date.now()-365*24*60*60*1000).toISOString().slice(0,10);
+const _AZ_STAGES = ['upload','privacy','preview','analyse','results','merge','done'];
+const _AZ_STAGE_LABELS = ['Upload','Privacy','Review','Analyse','Results','Merge','Done'];
+
+// ── Open / Close ──────────────────────────────────────────────────────────
+function openAmazonImporter() {
+  _azStage = 'upload'; _azAllRows=[]; _azRows=[]; _azDeletedIds=new Set();
+  _azGroups=[]; _azDeletedGrps=new Set(); _azSplitAsins={}; _azMatches=[];
+  const overlay = document.getElementById('amazon-import-overlay');
+  if (overlay) { overlay.style.display='flex'; _azRender(); }
+}
+
+function closeAmazonImporter() {
+  const overlay = document.getElementById('amazon-import-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+// ── CSV parse ─────────────────────────────────────────────────────────────
+function _azParseCSV(text) {
+  const lines = text.split('\n').filter(l=>l.trim());
+  const parseRow = line => {
+    const cols=[]; let cur='', inQ=false;
+    for (let i=0;i<line.length;i++) {
+      const c=line[i];
+      if (c==='"'&&!inQ){inQ=true;continue;}
+      if (c==='"'&&inQ&&line[i+1]==='"'){cur+='"';i++;continue;}
+      if (c==='"'&&inQ){inQ=false;continue;}
+      if (c===','&&!inQ){cols.push(cur.trim());cur='';continue;}
+      cur+=c;
+    }
+    cols.push(cur.trim()); return cols;
+  };
+  const headers = parseRow(lines[0]);
+  const required = ['ASIN','Product Name','Order Date','Total Amount'];
+  const missing = required.filter(r=>!headers.includes(r));
+  if (missing.length) throw new Error(`Missing columns: ${missing.join(', ')} — are you sure this is an Order_History.csv file?`);
+  return lines.slice(1).filter(l=>l.trim()).map((line,i)=>{
+    const vals=parseRow(line), obj={_id:i};
+    headers.forEach((h,j)=>{ obj[h]=(vals[j]||'').trim(); });
+    return obj;
+  });
+}
+
+function _azHandleFile(file) {
+  if (!file) return;
+  if (!file.name.endsWith('.csv')) { _azSetError('Please select a .csv file'); return; }
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const parsed = _azParseCSV(e.target.result);
+      _azAllRows = parsed;
+      _azRows = parsed
+        .filter(r => (r['Order Date']||'').slice(0,10) >= _AZ_ONE_YEAR_AGO)
+        .map(r => ({
+          _id: r._id,
+          ASIN: r['ASIN'],
+          name: r['Product Name'],
+          date: (r['Order Date']||'').slice(0,10),
+          price: parseFloat(r['Total Amount'])||0,
+        }));
+      _azDeletedIds = new Set();
+      _azStage = 'privacy';
+      _azRender();
+    } catch(err) { _azSetError(err.message); }
+  };
+  reader.readAsText(file);
+}
+
+function _azSetError(msg) {
+  const el = document.getElementById('az-upload-error');
+  if (el) el.textContent = msg;
+}
+
+// ── Analysis ─────────────────────────────────────────────────────────────
+function _azRunAnalysis() {
+  _azStage = 'analyse'; _azRender();
+  setTimeout(() => {
+    const active = _azRows.filter(r=>!_azDeletedIds.has(r._id));
+    const byAsin = {};
+    active.forEach(r=>{ if(!byAsin[r.ASIN]) byAsin[r.ASIN]=[]; byAsin[r.ASIN].push(r); });
+    const initial = Object.entries(byAsin).map(([asin,items])=>{
+      const name=items[0].name, anchor=_azAnchor(name);
+      const totalSpend=items.reduce((s,r)=>s+r.price,0);
+      return { id:asin, asins:[asin], name, anchor, items:items.sort((a,b)=>a.date.localeCompare(b.date)),
+               category:_azCategory(name), tokens:_azTokenise(name), avgPrice:totalSpend/items.length, clusterReasons:[] };
+    });
+    const merged=[], used=new Set();
+    for (let i=0;i<initial.length;i++) {
+      if (used.has(i)) continue;
+      const g={...initial[i],asins:[...initial[i].asins],items:[...initial[i].items],clusterReasons:[]};
+      for (let j=i+1;j<initial.length;j++) {
+        if (used.has(j)) continue;
+        if (_azShouldCluster(g,initial[j])) {
+          const ra=g.anchor, rb=initial[j].anchor;
+          if (ra&&ra===rb) g.clusterReasons.push(`"${ra}"`);
+          else if (_azJaccard(g.tokens,initial[j].tokens)>=0.35) g.clusterReasons.push('similar name');
+          else g.clusterReasons.push('shared keywords+price');
+          if (initial[j].items.length>g.items.length) g.name=initial[j].name;
+          g.asins.push(...initial[j].asins);
+          g.items.push(...initial[j].items);
+          if (g.anchor!==initial[j].anchor) g.anchor=g.anchor||initial[j].anchor;
+          used.add(j);
+        }
+      }
+      g.items.sort((a,b)=>a.date.localeCompare(b.date));
+      if (g.items.length>=2) {
+        g.avgInterval=_azAvgInterval(g.items.map(r=>r.date));
+        g.totalSpend=g.items.reduce((s,r)=>s+r.price,0);
+        g.avgPrice=g.totalSpend/g.items.length;
+        g.hasMerge=g.asins.length>1;
+        g.clusterLabel=g.anchor?`Grouped by "${g.anchor}"`:(g.hasMerge?'Similar name & price':'Repeat purchase');
+        merged.push(g);
+      }
+      used.add(i);
+    }
+    merged.sort((a,b)=>b.items.length-a.items.length);
+    _azGroups=merged; _azDeletedGrps=new Set(); _azSplitAsins={}; _azExpandedSplit=new Set();
+    _azStage='results'; _azRender();
+  }, 1200);
+}
+
+// ── Match against existing items ──────────────────────────────────────────
+function _azFindMatch(group) {
+  const gAnchor=group.anchor||_azAnchor(group.name);
+  const gTokens=group.tokens||_azTokenise(group.name);
+  const gAvg=group.avgPrice||0;
+  let best=null, bestScore=0, bestReason='', bestConf='';
+  for (const item of items) {
+    const iTokens=_azTokenise(item.name);
+    const iAnchor=_azAnchor(item.name);
+    const iAvg=item.logs?.length?item.logs.reduce((s,l)=>s+(l.price||0),0)/item.logs.length:0;
+    // A: ASIN exact
+    if (group.asins.includes(item.ASIN||'') && item.ASIN) return {item,confidence:'high',reason:'ASIN match'};
+    // B: anchor
+    if (gAnchor&&iAnchor&&gAnchor===iAnchor) {
+      const score=_azPriceBand(gAvg,iAvg,0.35)?0.9:0.55;
+      if (score>bestScore) { best=item; bestScore=score; bestConf=score>=0.9?'high':'low';
+        bestReason=score>=0.9?`same product type ("${gAnchor}")`:`same category, different price`; }
+      continue;
+    }
+    // C: Jaccard
+    const j=_azJaccard(gTokens,iTokens);
+    if (j>=0.35) {
+      const ok=_azPriceBand(gAvg,iAvg,0.40), score=j*(ok?1:0.6);
+      if (score>bestScore) { best=item; bestScore=score;
+        bestReason=ok?'similar product name':'similar name, different price';
+        bestConf=j>=0.55&&ok?'high':'medium'; }
+      continue;
+    }
+    // D: shared keywords
+    if (_azSharedKw(group.name,item.name,2)&&_azPriceBand(gAvg,iAvg,0.25)&&0.5>bestScore) {
+      best=item; bestScore=0.5; bestReason='shared keywords + similar price'; bestConf='medium';
+    }
+  }
+  return best?{item:best,confidence:bestConf,reason:bestReason}:null;
+}
+
+function _azGoToMerge() {
+  const active=_azGroups.filter(g=>!_azDeletedGrps.has(g.id));
+  const expanded=[];
+  for (const g of active) {
+    const toSplit=_azSplitAsins[g.id]||new Set();
+    if (!toSplit.size) { expanded.push(g); continue; }
+    for (const asin of toSplit) {
+      const sub=g.items.filter(r=>r.ASIN===asin);
+      if (!sub.length) continue;
+      const subName=sub[0].name;
+      expanded.push({...g,id:`${g.id}__${asin}`,asins:[asin],name:subName,items:sub,
+        anchor:_azAnchor(subName),tokens:_azTokenise(subName),
+        avgInterval:_azAvgInterval(sub.map(r=>r.date)),
+        totalSpend:sub.reduce((s,r)=>s+r.price,0),avgPrice:sub.reduce((s,r)=>s+r.price,0)/sub.length,
+        hasMerge:false,clusterLabel:'Split from group'});
+    }
+    const rem=g.asins.filter(a=>!toSplit.has(a));
+    if (rem.length) {
+      const remItems=g.items.filter(r=>rem.includes(r.ASIN));
+      expanded.push({...g,asins:rem,items:remItems,
+        avgInterval:_azAvgInterval(remItems.map(r=>r.date)),
+        totalSpend:remItems.reduce((s,r)=>s+r.price,0),avgPrice:remItems.reduce((s,r)=>s+r.price,0)/remItems.length,
+        hasMerge:rem.length>1});
+    }
+  }
+  _azMatches=expanded.map(g=>{
+    const f=_azFindMatch(g);
+    return {group:g,existingItem:f?.item||null,matchReason:f?.reason||null,confidence:f?.confidence||null,decision:f?.item?'merge':'add'};
+  });
+  _azStage='merge'; _azPickerOpen=false; _azRender();
+}
+
+// ── Commit import ─────────────────────────────────────────────────────────
+async function _azCommit() {
+  const now = new Date().toISOString();
+  for (const m of _azMatches) {
+    const amazonLogs = m.group.items.map(r=>({date:r.date,qty:1,price:r.price,store:'Amazon',_fromAmazon:true}));
+    if (m.decision==='merge' && m.existingItem) {
+      // Merge: append amazon logs, dedup by date
+      const existing = m.existingItem;
+      const existingDates = new Set((existing.logs||[]).map(l=>l.date));
+      const newLogs = amazonLogs.filter(l=>!existingDates.has(l.date));
+      existing.logs = [...(existing.logs||[]),...newLogs].sort((a,b)=>a.date.localeCompare(b.date));
+      existing.updatedAt = now;
+      if (!existing.store) existing.store = 'Amazon';
+      // Set ASIN if not already set
+      if (!existing.ASIN && m.group.asins.length===1) existing.ASIN = m.group.asins[0];
+    } else {
+      // Add new item
+      const newItem = {
+        id: uid(), name: m.group.name, category: m.group.category.replace(/^.*? /,'') || 'Other',
+        cadence: m.group.avgInterval && m.group.avgInterval<=45?'monthly':'monthly',
+        qty:1, months:1, url:'', store:'Amazon', notes:'', rating:null, imageUrl:null,
+        logs: amazonLogs, storePrices:[], quickAdded:false, updatedAt:now,
+        ASIN: m.group.asins.length===1?m.group.asins[0]:undefined,
+      };
+      items.push(newItem);
+    }
+  }
+  await saveData();
+  scheduleRender('grid','dashboard','filters','shopping');
+  setTimeout(syncAll, 400);
+  _azStage='done'; _azRender();
+}
+
+// ── CSV download ──────────────────────────────────────────────────────────
+function _azDownloadCSV() {
+  const active=_azRows.filter(r=>!_azDeletedIds.has(r._id));
+  const lines=['ASIN,Product Name,Order Date,Total Amount',
+    ...active.map(r=>`${r.ASIN},"${(r.name||'').replace(/"/g,'""')}",${r.date},${r.price}`)];
+  const blob=new Blob([lines.join('\n')],{type:'text/csv'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download='stockroom_amazon_import.csv'; a.click();
+}
+
+// ── Render ────────────────────────────────────────────────────────────────
+function _azRender() {
+  const body=document.getElementById('amazon-import-body');
+  const sub=document.getElementById('amazon-import-subtitle');
+  const prog=document.getElementById('amazon-import-progress');
+  if (!body) return;
+
+  // Progress bar
+  const si=_AZ_STAGES.indexOf(_azStage);
+  if (prog) prog.innerHTML=_AZ_STAGE_LABELS.map((l,i)=>`
+    <div style="display:flex;align-items:center;gap:4px">
+      ${i>0?`<div style="width:14px;height:2px;background:${i<=si?'var(--ok)':'var(--border)'}"></div>`:''}
+      <div style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;font-family:var(--mono);
+        background:${i<si?'var(--ok)':i===si?'var(--accent)':'var(--border)'};color:${i<=si?'#111':'var(--muted)'}">
+        ${i<si?'✓':i+1}</div>
+      <span style="font-size:10px;color:${i===si?'var(--text)':'var(--muted)'}">${l}</span>
+    </div>`).join('');
+
+  if (_azStage==='upload') { if(sub) sub.textContent='Step 1 of 7 — Upload your file'; body.innerHTML=_azHtmlUpload(); _azBindDropzone(); }
+  else if (_azStage==='privacy') { if(sub) sub.textContent='Step 2 — Privacy notice'; body.innerHTML=_azHtmlPrivacy(); }
+  else if (_azStage==='preview') { if(sub) sub.textContent='Step 3 — Review data'; body.innerHTML=_azHtmlPreview(); }
+  else if (_azStage==='analyse') { if(sub) sub.textContent='Analysing…'; body.innerHTML=_azHtmlAnalyse(); }
+  else if (_azStage==='results') { if(sub) sub.textContent='Step 5 — Review patterns found'; body.innerHTML=_azHtmlResults(); _azBindResults(); }
+  else if (_azStage==='merge')   { if(sub) sub.textContent='Step 6 — Match with your Stockroom'; body.innerHTML=_azHtmlMerge(); _azBindMerge(); }
+  else if (_azStage==='done')    { if(sub) sub.textContent='Import complete'; body.innerHTML=_azHtmlDone(); }
+}
+
+// ── Stage HTML builders ───────────────────────────────────────────────────
+function _azHtmlUpload() {
+  return `
+  <h2 style="font-size:22px;font-weight:700;margin-bottom:8px">Import your Amazon order history</h2>
+  <p style="color:var(--muted);font-size:14px;line-height:1.7;margin-bottom:24px">
+    Amazon lets you export your full order history. We'll use it to spot items you buy repeatedly so you can track them automatically — saving time on reorders and keeping you stocked up.
+  </p>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px">
+    <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:12px;font-family:var(--mono);letter-spacing:1px">HOW TO GET YOUR FILE</div>
+    <div style="display:flex;gap:12px;margin-bottom:10px;align-items:flex-start">
+      <div style="width:22px;height:22px;border-radius:50%;background:var(--accent);color:#111;font-weight:700;font-size:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0">1</div>
+      <div><strong>Go to Amazon's privacy page: </strong><a href="https://www.amazon.co.uk/hz/privacy-central/data-requests/preview.html" target="_blank" rel="noopener" style="color:var(--blue,#5b8dee);font-family:var(--mono);font-size:11px;word-break:break-all">amazon.co.uk/hz/privacy-central/data-requests/preview.html</a></div>
+    </div>
+    <div style="display:flex;gap:12px;margin-bottom:10px;align-items:flex-start">
+      <div style="width:22px;height:22px;border-radius:50%;background:var(--accent);color:#111;font-weight:700;font-size:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0">2</div>
+      <div><strong>Request your data: </strong><span style="color:var(--muted);font-size:13px">Select "Order History" and submit — Amazon will email when it's ready (usually minutes)</span></div>
+    </div>
+    <div style="display:flex;gap:12px;margin-bottom:10px;align-items:flex-start">
+      <div style="width:22px;height:22px;border-radius:50%;background:var(--accent);color:#111;font-weight:700;font-size:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0">3</div>
+      <div><strong>Download: </strong><span style="color:var(--muted);font-size:13px">Save as Order_History.csv from the same page</span></div>
+    </div>
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      <div style="width:22px;height:22px;border-radius:50%;background:var(--accent);color:#111;font-weight:700;font-size:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0">4</div>
+      <div><strong>Optional but recommended: </strong><span style="color:var(--muted);font-size:13px">Remove private columns before uploading — explained on the next screen</span></div>
+    </div>
+  </div>
+  <label id="az-dropzone" style="display:block;border:2px dashed var(--border);border-radius:16px;padding:48px 24px;text-align:center;cursor:pointer">
+    <div style="font-size:36px;margin-bottom:10px">📂</div>
+    <div style="font-weight:700;margin-bottom:6px">Drop Order_History.csv here</div>
+    <div style="color:var(--muted);font-size:13px">or click to browse</div>
+    <input type="file" accept=".csv" id="az-file-input" style="display:none" onchange="(e=>_azHandleFile(e.target.files[0]))(event)">
+  </label>
+  <div id="az-upload-error" style="color:var(--danger);font-size:13px;margin-top:10px;min-height:18px"></div>
+  <div style="margin-top:16px;padding:12px 16px;background:rgba(91,141,238,0.08);border:1px solid rgba(91,141,238,0.2);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.7">
+    🔒 <strong style="color:var(--text)">Your data stays private.</strong> All processing happens locally in your browser. Data is encrypted on your device before any upload to STOCKROOM.
+  </div>`;
+}
+
+function _azHtmlPrivacy() {
+  const private_cols=['Billing Address','Shipping Address','Payment Method Type'];
+  const keep_cols=['ASIN','Product Name','Order Date','Total Amount'];
+  const totalOrders=_azAllRows.length, recentOrders=_azRows.length, uniqueAsins=new Set(_azRows.map(r=>r.ASIN)).size;
+  return `
+  <h2 style="font-size:22px;font-weight:700;margin-bottom:8px">⚠️ Before we continue</h2>
+  <p style="color:var(--muted);font-size:14px;line-height:1.7;margin-bottom:20px">Your file contains sensitive personal information. We only need four columns — everything else is discarded locally. We recommend removing private columns first.</p>
+  <div style="background:rgba(224,92,92,0.08);border:1px solid rgba(224,92,92,0.25);border-radius:12px;padding:16px;margin-bottom:14px">
+    <div style="font-size:11px;font-weight:700;color:var(--danger);margin-bottom:10px;font-family:var(--mono);letter-spacing:1px">RECOMMENDED: REMOVE THESE COLUMNS FIRST</div>
+    ${private_cols.map(c=>`<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid rgba(224,92,92,0.12)">
+      <span style="color:var(--danger)">✕</span><span style="font-family:var(--mono);font-size:12px">${c}</span><span style="color:var(--muted);font-size:11px;margin-left:auto">personal data</span>
+    </div>`).join('')}
+    <p style="font-size:12px;color:var(--muted);margin-top:10px;line-height:1.6">Open <strong>Order_History.csv</strong> in Microsoft Excel, Google Sheets, or LibreOffice Calc. Select and delete these three columns, save, then re-upload.</p>
+  </div>
+  <div style="background:rgba(76,187,138,0.06);border:1px solid rgba(76,187,138,0.2);border-radius:12px;padding:16px;margin-bottom:20px">
+    <div style="font-size:11px;font-weight:700;color:var(--ok);margin-bottom:10px;font-family:var(--mono);letter-spacing:1px">ONLY THESE COLUMNS ARE USED</div>
+    ${keep_cols.map(c=>`<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid rgba(76,187,138,0.1)">
+      <span style="color:var(--ok)">✓</span><span style="font-family:var(--mono);font-size:12px">${c}</span>
+    </div>`).join('')}
+  </div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:20px;font-size:12px;color:var(--muted);line-height:1.8">
+    📊 <strong style="color:var(--text)">Found in your file:</strong>
+    ${totalOrders} total orders &nbsp;·&nbsp; <strong style="color:var(--text)">${recentOrders}</strong> in the last 12 months &nbsp;·&nbsp; ${uniqueAsins} unique products
+  </div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    <button onclick="_azStage='preview';_azRender()" style="flex:1;padding:12px 20px;background:var(--ok);color:#111;border:none;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer">Continue with this file →</button>
+    <button onclick="_azStage='upload';_azRender()" style="padding:12px 20px;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:10px;font-weight:600;font-size:13px;cursor:pointer">Re-upload cleaned file</button>
+  </div>`;
+}
+
+function _azHtmlPreview() {
+  const active=_azRows.filter(r=>!_azDeletedIds.has(r._id));
+  return `
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+    <div>
+      <h2 style="font-size:22px;font-weight:700;margin-bottom:4px">Review your order data</h2>
+      <p style="color:var(--muted);font-size:13px">${active.length} orders · last 12 months only · tap ✕ to exclude any</p>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button onclick="_azDownloadCSV()" style="padding:8px 14px;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;font-size:12px;cursor:pointer;font-weight:600">⬇ Download CSV</button>
+      <button onclick="_azRunAnalysis()" style="padding:8px 18px;background:var(--accent);color:#111;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-weight:700">Analyse →</button>
+    </div>
+  </div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+    <div style="display:grid;grid-template-columns:110px 1fr 90px 72px 30px;padding:8px 14px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;gap:8px">
+      <span>ASIN</span><span>Product</span><span>Date</span><span style="text-align:right">Price</span><span></span>
+    </div>
+    <div style="max-height:400px;overflow-y:auto" id="az-preview-list">
+      ${_azRows.filter(r=>!_azDeletedIds.has(r._id)).map(r=>`
+        <div class="az-preview-row" data-id="${r._id}" style="display:grid;grid-template-columns:110px 1fr 90px 72px 30px;padding:8px 14px;border-bottom:1px solid var(--border);font-size:12px;align-items:center;gap:8px">
+          <span style="font-family:var(--mono);font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.ASIN)}</span>
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span>
+          <span style="color:var(--muted);font-size:11px">${r.date}</span>
+          <span style="text-align:right;font-family:var(--mono);font-size:11px;color:var(--ok)">£${r.price.toFixed(2)}</span>
+          <button onclick="_azDeleteRow(${r._id},this)" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:2px">✕</button>
+        </div>`).join('')}
+    </div>
+  </div>
+  ${_azDeletedIds.size>0?`<p style="margin-top:8px;font-size:12px;color:var(--muted)">${_azDeletedIds.size} item${_azDeletedIds.size!==1?'s':''} excluded · <button onclick="_azDeletedIds=new Set();_azRender()" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:12px;text-decoration:underline;padding:0">Restore all</button></p>`:''}`;
+}
+
+function _azHtmlAnalyse() {
+  return `<div style="text-align:center;padding:60px 20px">
+    <div style="font-size:48px;margin-bottom:16px;display:inline-block;animation:az-spin 2s linear infinite">🔍</div>
+    <style>@keyframes az-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}@keyframes az-pulse{0%,100%{opacity:.4}50%{opacity:1}}</style>
+    <h2 style="font-size:20px;font-weight:700;margin-bottom:8px">Analysing your orders…</h2>
+    <p style="color:var(--muted);font-size:13px;line-height:1.7;max-width:360px;margin:0 auto 20px">Finding repeat purchases, matching ASINs, and detecting similar products — all locally on your device.</p>
+    ${['Filtering last 12 months','Grouping by ASIN','Detecting similar products','Calculating purchase intervals','Building recommendations'].map((s,i)=>`
+      <div style="display:flex;align-items:center;gap:8px;max-width:280px;margin:6px auto;animation:az-pulse 1.5s ease ${i*0.3}s infinite">
+        <div style="width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0"></div>
+        <span style="font-size:12px;color:var(--muted)">${s}</span>
+      </div>`).join('')}
+  </div>`;
+}
+
+function _azHtmlResults() {
+  const active=_azGroups.filter(g=>!_azDeletedGrps.has(g.id));
+  const cats=[...new Set(active.map(g=>g.category))];
+  return `
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+    <div>
+      <h2 style="font-size:22px;font-weight:700;margin-bottom:4px">${_azGroups.length} repeat purchase pattern${_azGroups.length!==1?'s':''} found</h2>
+      <p style="color:var(--muted);font-size:13px;line-height:1.6">Review items STOCKROOM could track. Expand multi-ASIN groups to split distinct products.</p>
+    </div>
+    <button onclick="_azGoToMerge()" style="padding:10px 20px;background:var(--accent);color:#111;border:none;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer">+ Add ${active.length} item${active.length!==1?'s':''} →</button>
+  </div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">
+    ${cats.map(cat=>`<div style="padding:3px 12px;background:var(--surface);border:1px solid var(--border);border-radius:99px;font-size:12px;color:var(--muted)">${cat} <strong style="color:var(--text)">${active.filter(g=>g.category===cat).length}</strong></div>`).join('')}
+  </div>
+  <div id="az-results-list">
+    ${active.map(g=>_azGroupCard(g)).join('')}
+  </div>
+  ${_azDeletedGrps.size>0?`<p style="font-size:12px;color:var(--muted);margin-top:8px">${_azDeletedGrps.size} removed · <button onclick="_azDeletedGrps=new Set();_azRender()" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:12px;text-decoration:underline;padding:0">Restore all</button></p>`:''}`;
+}
+
+function _azGroupCard(g) {
+  const isExpanded=_azExpandedSplit.has(g.id);
+  const splits=_azSplitAsins[g.id]||new Set();
+  const recent=g.items.slice(-6);
+  const projDate=(()=>{
+    if (!g.avgInterval) return null;
+    const last=new Date(g.items[g.items.length-1].date+'T12:00:00');
+    const next=new Date(last.getTime()+g.avgInterval*86400000);
+    return next>new Date()?next.toISOString().slice(0,10):null;
+  })();
+  return `
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;margin-bottom:12px;overflow:hidden">
+    <div style="padding:12px 16px;display:flex;gap:10px;align-items:flex-start;border-bottom:1px solid var(--border)">
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
+          <span style="font-size:10px;background:rgba(232,168,56,0.15);color:var(--accent);padding:2px 8px;border-radius:99px;font-family:var(--mono);font-weight:700">${esc(g.category)}</span>
+          <span style="font-size:10px;color:var(--muted);font-family:var(--mono)">${g.items.length} orders</span>
+          ${g.avgInterval?`<span style="font-size:10px;color:#5b8dee;font-family:var(--mono)">⟳ ${_azIntervalLabel(g.avgInterval)}</span>`:''}
+          ${g.hasMerge&&g.clusterLabel?`<span style="font-size:10px;color:var(--muted);background:var(--bg);padding:1px 7px;border-radius:99px;border:1px solid var(--border)" title="${esc(g.clusterReasons.join(', '))}">🔗 ${esc(g.clusterLabel)}</span>`:''}
+        </div>
+        <div style="font-weight:700;font-size:14px;line-height:1.3;margin-bottom:4px">${esc(g.name)}</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <span style="font-size:11px;color:var(--muted)">ASINs: ${g.asins.slice(0,3).map(a=>`<span style="font-family:var(--mono);background:var(--bg);padding:1px 5px;border-radius:4px;font-size:10px">${esc(a)}</span>`).join('')}${g.asins.length>3?`<span style="font-size:10px;color:var(--muted)"> +${g.asins.length-3}</span>`:''}</span>
+          <span style="font-size:11px;color:var(--ok);font-weight:600">£${g.totalSpend.toFixed(2)} spent</span>
+          ${g.avgPrice?`<span style="font-size:11px;color:var(--muted)">avg £${g.avgPrice.toFixed(2)}</span>`:''}
+        </div>
+      </div>
+      <button onclick="_azDeleteGroup('${g.id}',this)" style="background:none;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px;font-weight:600;flex-shrink:0">Remove</button>
+    </div>
+    <!-- Timeline -->
+    <div style="padding:10px 16px;display:flex;align-items:center;gap:5px;overflow-x:auto;padding-bottom:12px">
+      ${recent.map((item,i)=>`
+        ${i>0?'<div style="width:20px;height:1px;background:var(--border);flex-shrink:0"></div>':''}
+        <div style="text-align:center;flex-shrink:0">
+          <div style="width:8px;height:8px;border-radius:50%;background:var(--accent);margin:0 auto 3px"></div>
+          <div style="font-size:9px;color:var(--muted);font-family:var(--mono);white-space:nowrap">${item.date.slice(5)}</div>
+          <div style="font-size:9px;color:var(--ok);font-family:var(--mono)">£${item.price.toFixed(0)}</div>
+        </div>`).join('')}
+      ${projDate?`
+        <div style="width:20px;height:1px;border-top:1px dashed var(--border);flex-shrink:0"></div>
+        <div style="text-align:center;flex-shrink:0;opacity:.6">
+          <div style="width:8px;height:8px;border-radius:50%;border:2px dashed var(--accent);margin:0 auto 3px"></div>
+          <div style="font-size:9px;color:var(--accent);font-family:var(--mono);white-space:nowrap">${projDate.slice(5)}</div>
+          <div style="font-size:9px;color:var(--muted);font-family:var(--mono)">due</div>
+        </div>`:''}
+      ${g.items.length>6?`<div style="font-size:10px;color:var(--muted);font-family:var(--mono);flex-shrink:0">+${g.items.length-6} more</div>`:''}
+    </div>
+    <!-- ASIN split panel -->
+    ${g.hasMerge?`
+    <div style="border-top:1px solid var(--border);background:rgba(91,141,238,0.04)">
+      <div style="padding:9px 16px;display:flex;align-items:center;gap:10px">
+        <span style="font-size:12px;color:#5b8dee;flex:1">🔗 ${g.asins.length} ASINs grouped${splits.size>0?` · <strong style="color:var(--accent)">${splits.size} marked to split</strong>`:''}</span>
+        <button onclick="_azToggleSplitPanel('${g.id}')" style="padding:4px 12px;background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">${isExpanded?'▲ Hide':'▼ Review ASINs'}</button>
+      </div>
+      ${isExpanded?`
+      <div style="padding:4px 16px 12px">
+        <p style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">Tick any ASINs that are <em>distinct products</em> and should be tracked separately.</p>
+        ${g.asins.map(asin=>{
+          const asinItems=g.items.filter(r=>r.ASIN===asin);
+          const asinName=asinItems[0]?.name||asin;
+          const asinAvg=asinItems.reduce((s,r)=>s+r.price,0)/asinItems.length;
+          const isSplit=splits.has(asin);
+          return `<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;margin-bottom:6px;background:${isSplit?'rgba(232,168,56,0.08)':'rgba(255,255,255,0.02)'};border:1px solid ${isSplit?'var(--accent)':'var(--border)'};cursor:pointer">
+            <input type="checkbox" ${isSplit?'checked':''} onchange="_azToggleSplit('${g.id}','${asin}',this.checked)" style="accent-color:var(--accent);width:15px;height:15px;flex-shrink:0">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${isSplit?'var(--accent)':'var(--text)'}">${esc(asinName)}</div>
+              <div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:1px">${esc(asin)} · ${asinItems.length} orders · avg £${asinAvg.toFixed(2)}</div>
+            </div>
+            ${isSplit?'<span style="font-size:10px;color:var(--accent);font-family:var(--mono);font-weight:700;flex-shrink:0">SPLIT</span>':''}
+          </label>`;
+        }).join('')}
+        ${splits.size>0?`<div style="font-size:11px;color:var(--muted);margin-top:4px;padding:6px 8px;background:rgba(232,168,56,0.06);border-radius:6px">✓ ${splits.size} ASIN${splits.size!==1?'s':''} will become separate items.</div>`:''}
+      </div>`:''}
+    </div>`:''}
+  </div>`;
+}
+
+function _azHtmlMerge() {
+  const withMatch=_azMatches.filter(m=>m.existingItem);
+  const withoutMatch=_azMatches.filter(m=>!m.existingItem);
+  const merging=_azMatches.filter(m=>m.decision==='merge').length;
+  const adding=_azMatches.filter(m=>m.decision==='add').length;
+  const confColour=c=>c==='high'?'var(--ok)':c==='medium'?'var(--accent)':c==='manual'?'#5b8dee':'var(--muted)';
+  const confLabel=c=>c==='high'?'✓ High confidence':c==='medium'?'~ Medium confidence':c==='manual'?'✎ Manually matched':c==='low'?'? Low confidence':'';
+  return `
+  <!-- Manual picker (inline overlay) -->
+  ${_azPickerOpen?`
+  <div style="position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:600;display:flex;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this){_azPickerOpen=false;_azRender()}">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden" onclick="event.stopPropagation()">
+      <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:14px;margin-bottom:2px">Match to existing item</div>
+          <div style="font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">For: ${esc(_azPickerIdx!==null?(_azMatches[_azPickerIdx]?.group.name||'').slice(0,50):'')}</div>
+        </div>
+        <button onclick="_azPickerOpen=false;_azRender()" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:5px 12px;cursor:pointer;font-size:13px">Cancel</button>
+      </div>
+      <div style="padding:10px 20px;border-bottom:1px solid var(--border)">
+        <input type="text" placeholder="Search your STOCKROOM items…" value="${esc(_azPickerSearch)}" oninput="_azPickerSearch=this.value;_azRender()" autofocus
+          style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none">
+      </div>
+      <div style="overflow-y:auto;flex:1">
+        ${items.filter(it=>!_azPickerSearch||it.name.toLowerCase().includes(_azPickerSearch.toLowerCase())).map(it=>{
+          const avgP=it.logs?.length?it.logs.reduce((s,l)=>s+(l.price||0),0)/it.logs.length:null;
+          return `<button onclick="_azApplyMatch(${items.indexOf(it)})" style="display:flex;align-items:center;gap:12px;width:100%;padding:12px 20px;background:transparent;border:none;border-bottom:1px solid var(--border);cursor:pointer;text-align:left"
+            onmouseover="this.style.background='rgba(255,255,255,0.03)'" onmouseout="this.style.background='transparent'">
+            <div style="width:32px;height:32px;border-radius:8px;background:rgba(232,168,56,0.12);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">📦</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name)}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:1px">${it.logs?.length||0} log entries${it.store?` · ${esc(it.store)}`:''}${avgP?` · avg £${avgP.toFixed(2)}`:''}</div>
+            </div>
+            <span style="font-size:12px;color:var(--accent);font-weight:600;flex-shrink:0">Match →</span>
+          </button>`;
+        }).join('')}
+        ${items.filter(it=>!_azPickerSearch||it.name.toLowerCase().includes(_azPickerSearch.toLowerCase())).length===0?`<div style="padding:32px;text-align:center;color:var(--muted);font-size:13px">No items match "${esc(_azPickerSearch)}"</div>`:''}
+      </div>
+    </div>
+  </div>`:''}
+
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+    <div>
+      <h2 style="font-size:22px;font-weight:700;margin-bottom:4px">Match with existing items</h2>
+      <p style="color:var(--muted);font-size:13px;line-height:1.6">${withMatch.length} matched automatically · ${withoutMatch.length} added as new · use "Match manually" for anything missed.</p>
+    </div>
+    <button onclick="_azCommit()" style="padding:10px 22px;background:var(--ok);color:#111;border:none;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap">✓ Import (${merging} merge, ${adding} add)</button>
+  </div>
+
+  ${withMatch.length?`
+  <div style="font-size:10px;font-weight:700;color:var(--accent);font-family:var(--mono);letter-spacing:1px;margin:14px 0 8px">AUTO-MATCHED — ${withMatch.length}</div>
+  ${withMatch.map(m=>{
+    const idx=_azMatches.indexOf(m);
+    return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden">
+      <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center">
+        <div style="width:26px;height:26px;border-radius:7px;background:rgba(232,168,56,0.12);display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0">📦</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:10px;color:var(--accent);font-family:var(--mono);font-weight:700">FROM AMAZON</div>
+          <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.group.name)}</div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);text-align:right;flex-shrink:0"><div>${m.group.items.length} orders</div><div style="color:var(--ok)">£${m.group.totalSpend.toFixed(2)}</div></div>
+      </div>
+      <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center;background:rgba(76,187,138,0.03)">
+        <div style="width:26px;height:26px;border-radius:7px;background:rgba(76,187,138,0.12);display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0">🏠</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:10px;color:var(--ok);font-family:var(--mono);font-weight:700">IN STOCKROOM</div>
+          <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.existingItem.name)}</div>
+        </div>
+        <div style="flex-shrink:0;text-align:right">
+          <div style="font-size:10px;color:${confColour(m.confidence)};font-family:var(--mono);font-weight:700">${confLabel(m.confidence)}</div>
+          ${m.matchReason?`<div style="font-size:10px;color:var(--muted);margin-top:1px">${esc(m.matchReason)}</div>`:''}
+        </div>
+      </div>
+      <div style="padding:9px 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <button onclick="_azSetDecision(${idx},'merge')" style="padding:6px 14px;border:1px solid ${m.decision==='merge'?'var(--ok)':'var(--border)'};background:${m.decision==='merge'?'rgba(76,187,138,0.12)':'transparent'};color:${m.decision==='merge'?'var(--ok)':'var(--muted)'};border-radius:7px;font-size:12px;cursor:pointer;font-weight:600">↩ Merge history in</button>
+        <button onclick="_azSetDecision(${idx},'add')" style="padding:6px 14px;border:1px solid ${m.decision==='add'?'#5b8dee':'var(--border)'};background:${m.decision==='add'?'rgba(91,141,238,0.12)':'transparent'};color:${m.decision==='add'?'#5b8dee':'var(--muted)'};border-radius:7px;font-size:12px;cursor:pointer;font-weight:600">+ Add as new</button>
+        <div style="margin-left:auto;display:flex;gap:6px">
+          <button onclick="_azOpenPicker(${idx})" style="padding:5px 12px;background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:7px;font-size:11px;cursor:pointer">✎ Change match</button>
+          <button onclick="_azClearMatch(${idx})" title="Remove match — will add as new" style="padding:5px 10px;background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:7px;font-size:11px;cursor:pointer">✕</button>
+        </div>
+      </div>
+      ${m.decision==='merge'?`<div style="padding:6px 16px 10px;background:rgba(76,187,138,0.04);font-size:11px;color:var(--muted)">Will add ${m.group.items.length} Amazon purchase entries to <strong style="color:var(--text)">${esc(m.existingItem.name)}</strong>.</div>`:''}
+    </div>`;
+  }).join('')}`:''}
+
+  ${withoutMatch.length?`
+  <div style="font-size:10px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:1px;margin:18px 0 8px">NO MATCH FOUND — ADDING AS NEW · ${withoutMatch.length}</div>
+  ${withoutMatch.map(m=>{
+    const idx=_azMatches.indexOf(m);
+    return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:8px;padding:11px 16px;display:flex;gap:10px;align-items:center">
+      <div style="width:26px;height:26px;border-radius:7px;background:rgba(91,141,238,0.12);display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0">➕</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.group.name)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(m.group.category)} · ${m.group.items.length} orders · ${_azIntervalLabel(m.group.avgInterval)} · <span style="color:var(--ok)">£${m.group.totalSpend.toFixed(2)}</span></div>
+      </div>
+      <button onclick="_azOpenPicker(${idx})" style="padding:6px 14px;background:rgba(91,141,238,0.1);border:1px solid #5b8dee;color:#5b8dee;border-radius:7px;font-size:12px;cursor:pointer;font-weight:600;flex-shrink:0">✎ Match manually</button>
+    </div>`;
+  }).join('')}`:''}`;
+}
+
+function _azHtmlDone() {
+  const merged=_azMatches.filter(m=>m.decision==='merge');
+  const added=_azMatches.filter(m=>m.decision==='add');
+  return `<div style="text-align:center;padding:60px 20px">
+    <div style="font-size:52px;margin-bottom:16px">🎉</div>
+    <h2 style="font-size:24px;font-weight:700;margin-bottom:8px">Import complete</h2>
+    <p style="color:var(--muted);font-size:14px;line-height:1.7;max-width:400px;margin:0 auto 24px">Your Amazon order history has been imported. STOCKROOM will now track these items and alert you when stock is running low.</p>
+    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:28px">
+      ${merged.length?`<div style="background:var(--surface);border:1px solid var(--ok);border-radius:12px;padding:16px 24px;min-width:140px"><div style="font-size:32px;font-weight:800;color:var(--ok)">${merged.length}</div><div style="font-size:12px;color:var(--muted);margin-top:4px">merged into existing items</div></div>`:''}
+      ${added.length?`<div style="background:var(--surface);border:1px solid #5b8dee;border-radius:12px;padding:16px 24px;min-width:140px"><div style="font-size:32px;font-weight:800;color:#5b8dee">${added.length}</div><div style="font-size:12px;color:var(--muted);margin-top:4px">added as new items</div></div>`:''}
+    </div>
+    <button onclick="closeAmazonImporter()" style="padding:10px 24px;background:var(--accent);color:#111;border:none;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;margin-right:10px">Done ✓</button>
+    <button onclick="openAmazonImporter()" style="padding:10px 24px;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:10px;font-size:13px;cursor:pointer">Import another file</button>
+  </div>`;
+}
+
+// ── Event handlers ────────────────────────────────────────────────────────
+function _azDeleteRow(id, btn) {
+  _azDeletedIds.add(id);
+  const row = btn?.closest('.az-preview-row');
+  if (row) row.remove();
+  // Update header count
+  const active = _azRows.filter(r=>!_azDeletedIds.has(r._id));
+  const hdr = document.querySelector('#amazon-import-body p[style*="color:var(--muted)"]');
+  if (hdr) hdr.textContent = active.length + ' orders · last 12 months only · tap ✕ to exclude any';
+}
+
+function _azDeleteGroup(id, btn) {
+  _azDeletedGrps.add(id);
+  // Remove the card from the DOM immediately without full re-render
+  const card = btn?.closest('#az-results-list > div');
+  if (card) card.remove();
+  // Update the Add button count
+  const active = _azGroups.filter(g=>!_azDeletedGrps.has(g.id));
+  const addBtn = document.querySelector('#amazon-import-body button[onclick="_azGoToMerge()"]');
+  if (addBtn) addBtn.textContent = `+ Add ${active.length} item${active.length!==1?'s':''} →`;
+}
+
+function _azBindDropzone() {
+  const dz=document.getElementById('az-dropzone');
+  const fi=document.getElementById('az-file-input');
+  if (dz) {
+    dz.addEventListener('dragover',e=>{e.preventDefault();dz.style.borderColor='var(--accent)';dz.style.background='rgba(232,168,56,0.05)'});
+    dz.addEventListener('dragleave',()=>{dz.style.borderColor='var(--border)';dz.style.background='transparent'});
+    dz.addEventListener('drop',e=>{e.preventDefault();dz.style.borderColor='var(--border)';dz.style.background='transparent';_azHandleFile(e.dataTransfer.files[0])});
+    dz.addEventListener('click',()=>fi?.click());
+  }
+}
+
+function _azBindResults() {
+  // Results stage doesn't need extra binding — all in inline handlers
+}
+
+function _azBindMerge() {
+  // Merge stage rendered with inline handlers — autofocus picker search if open
+  if (_azPickerOpen) {
+    setTimeout(()=>{
+      const inp=document.querySelector('#amazon-import-body input[type="text"]');
+      if (inp) inp.focus();
+    },50);
+  }
+}
+
+function _azToggleSplitPanel(groupId) {
+  if (_azExpandedSplit.has(groupId)) _azExpandedSplit.delete(groupId);
+  else _azExpandedSplit.add(groupId);
+  _azRender();
+}
+
+function _azToggleSplit(groupId, asin, checked) {
+  if (!_azSplitAsins[groupId]) _azSplitAsins[groupId]=new Set();
+  const g=_azGroups.find(g=>g.id===groupId);
+  if (!g) return;
+  if (checked) {
+    // Don't allow splitting all ASINs
+    if (_azSplitAsins[groupId].size>=g.asins.length-1) return;
+    _azSplitAsins[groupId].add(asin);
+  } else {
+    _azSplitAsins[groupId].delete(asin);
+  }
+  _azRender();
+}
+
+function _azSetDecision(idx, decision) {
+  if (_azMatches[idx]) { _azMatches[idx].decision=decision; _azRender(); }
+}
+
+function _azOpenPicker(idx) {
+  _azPickerOpen=true; _azPickerIdx=idx; _azPickerSearch=''; _azRender();
+}
+
+function _azApplyMatch(itemIdx) {
+  const item=items[itemIdx];
+  if (!item||_azPickerIdx===null) return;
+  _azMatches[_azPickerIdx]={..._azMatches[_azPickerIdx],existingItem:item,matchReason:'manually matched',confidence:'manual',decision:'merge'};
+  _azPickerOpen=false; _azPickerIdx=null; _azRender();
+}
+
+function _azClearMatch(idx) {
+  if (_azMatches[idx]) { _azMatches[idx]={..._azMatches[idx],existingItem:null,matchReason:null,confidence:null,decision:'add'}; _azRender(); }
 }
