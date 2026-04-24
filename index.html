@@ -589,6 +589,9 @@
   </div>
   <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
     <div id="presence-bar" style="display:none"></div>
+    <button id="header-shield-btn" onclick="navTo('account-security')"
+      title="Account &amp; Security"
+      style="background:none;border:none;cursor:pointer;padding:4px 2px;font-size:17px;line-height:1;display:flex;align-items:center;color:var(--muted)">🛡️</button>
     <div id="sync-pill" class="sync-pill pending" onclick="handleSyncPillTap()">
       <div class="sync-dot"></div>
       <span id="sync-label">Local only</span>
@@ -1271,37 +1274,17 @@
     <div class="settings-card full-width">
       <h3 style="display:none">⚙️ Preferences</h3>
 
-      <!-- Display Name -->
-      <div class="setting-row">
-        <div class="setting-info"><h4>Display Name</h4><p>Shown as a greeting — first name preferred</p></div>
-        <input type="text" id="setting-display-name" placeholder="First name" maxlength="40"
-          style="width:140px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none"
-          oninput="saveDisplayName(this.value)">
-      </div>
-
-      <!-- Country / Region -->
-      <div class="setting-row">
-        <div class="setting-info"><h4>Country / Region</h4><p>Sets which stores appear in the price checker</p></div>
-        <select id="setting-country" onchange="saveSettingsCountry(this.value)"
-          style="width:140px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 12px;font-family:var(--sans);font-size:13px;outline:none"></select>
-      </div>
-
-      <!-- Signed in as -->
-      <div class="setting-row">
-        <div class="setting-info"><h4>Signed in as</h4><p id="kv-account-email" style="font-family:var(--mono);font-size:12px">—</p></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-ghost acc-sec-btn" onclick="kvSyncNow()">Sync Now</button>
-          <button class="btn btn-danger acc-sec-btn" onclick="kvSignOut()">Sign Out</button>
-        </div>
-      </div>
-
-      <!-- Low stock warning -->
+      <!-- Low stock warning — only preference not covered by Account & Security -->
       <div class="setting-row">
         <div class="setting-info"><h4>Low stock warning</h4><p>Warn when stock drops below this %</p></div>
         <select id="setting-threshold" onchange="saveSettings()" style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
           <option value="10">10%</option><option value="15">15%</option><option value="20" selected>20%</option><option value="25">25%</option><option value="33">33%</option>
         </select>
       </div>
+
+      <!-- Hidden inputs kept for JS compat — real inputs live in Account & Security -->
+      <input type="hidden" id="setting-display-name">
+      <input type="hidden" id="setting-country" value="GB">
     </div>
 
     <!-- Data -->

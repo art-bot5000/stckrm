@@ -948,3 +948,13 @@
 
 /* ── Remove stale Account & Sync selector (section removed from HTML) ── */
 #settings-account-body, [onclick="toggleSettings('settings-account-body',this)"] { display:none !important; }
+
+/* ── Shield button: mobile-only link to Account & Security ── */
+#header-shield-btn { display: inline-flex; }
+
+@media (min-width: 900px) {
+  /* On desktop the sidebar has the 🛡️ Account & Security nav link — hide header button */
+  #header-shield-btn { display: none !important; }
+}
+
+/* On mobile, clicking sync-pill now routes to Account & Security via shield — keep pill tap for sync */

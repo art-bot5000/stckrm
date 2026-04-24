@@ -377,7 +377,8 @@ async function saveData() {
 
 async function saveSettings() {
   settings.threshold      = parseInt(document.getElementById('setting-threshold').value);
-  settings.country        = document.getElementById('setting-country').value;
+  // Country: read from Account & Security select (the canonical visible one); hidden input is a fallback mirror
+  settings.country        = (document.getElementById('setting-country-sec') || document.getElementById('setting-country'))?.value || settings.country || 'GB';
   settings.email          = document.getElementById('setting-email').value.trim();
   settings.emailInterval  = parseInt(document.getElementById('setting-email-interval').value);
   settings.emailStartDate = document.getElementById('setting-email-start').value || null;
@@ -438,9 +439,11 @@ function _updateSidebarProfile() {
 
 function saveSettingsCountry(val) {
   settings.country = val;
-  // Sync to other country selects
-  const other = document.getElementById('setting-country');
-  if (other) other.value = val;
+  // Keep both selects in sync
+  const main = document.getElementById('setting-country');
+  const sec  = document.getElementById('setting-country-sec');
+  if (main) main.value = val;
+  if (sec)  sec.value  = val;
   _saveSettings();
 }
 
@@ -6108,11 +6111,14 @@ document.querySelectorAll('.modal-backdrop').forEach(b => {
 //  BUILD SETTINGS COUNTRY DROPDOWN
 // ═══════════════════════════════════════════
 function buildSettingsCountrySelect() {
-  const sel = document.getElementById('setting-country');
-  if (!sel) return;
-  sel.innerHTML = COUNTRIES.map(c => `<option value="${c.code}">${c.flag} ${c.name}</option>`).join('');
-  // Restore saved country — default to GB if not set
-  sel.value = settings.country || 'GB';
+  const options = COUNTRIES.map(c => `<option value="${c.code}">${c.flag} ${c.name}</option>`).join('');
+  const val = settings.country || 'GB';
+  ['setting-country', 'setting-country-sec'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    if (!sel.options.length) sel.innerHTML = options;
+    sel.value = val;
+  });
 }
 
 // ═══════════════════════════════════════════
@@ -10457,9 +10463,11 @@ function renderSettingsForUser() {
       card.style.display = signedIn ? '' : 'none';
     }
   });
-  // Populate display name field
-  const nameEl = document.getElementById('setting-display-name');
-  if (nameEl && settings.displayName) nameEl.value = settings.displayName;
+  // Populate display name — both hidden (Settings) and visible (Account & Security)
+  ['setting-display-name', 'setting-display-name-sec'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && settings.displayName) el.value = settings.displayName;
+  });
   // Notes 2FA button state (compat — kept for old settings UI buttons if present)
   const n2faBtn = document.getElementById('notes-2fa-settings-btn');
   if (n2faBtn) n2faBtn.textContent = _mfaEnabled() ? 'Disable' : 'Enable';
