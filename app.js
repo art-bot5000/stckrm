@@ -16333,15 +16333,19 @@ async function openMfaSetup() {
   _mfaSetupReset();
   document.getElementById('mfa-setup-title').textContent    = '🛡️ Set Up Multifactor Authentication';
   document.getElementById('mfa-setup-subtitle').textContent = 'Choose your second factor and verify it works before enabling.';
-  document.getElementById('mfa-setup-confirm-btn').textContent = 'Verify & Enable ✓';
-  document.getElementById('mfa-setup-step-method').style.display = '';
+  document.getElementById('mfa-setup-confirm-btn').textContent = 'Send code to my email →';
+  // Always show both tabs — fresh enable, no existing methods
+  const step = document.getElementById('mfa-setup-step-method');
+  if (step) {
+    step.style.display = '';
+    step.querySelectorAll('.mfa-method-btn').forEach(b => b.style.display = '');
+  }
   _mfaSetupSelectMethod('email');
   openModal('mfa-setup-modal');
 }
 
 function openMfaAddMethod() {
-  const existing = _mfaMethods().map(m => m.type);
-  // Only show methods not already added
+  const existing    = _mfaMethods().map(m => m.type);
   const canAddEmail = !existing.includes('email');
   const canAddTotp  = !existing.includes('totp');
   if (!canAddEmail && !canAddTotp) { toast('All available methods are already added'); return; }
@@ -16350,9 +16354,10 @@ function openMfaAddMethod() {
   _mfaSetupReset();
   document.getElementById('mfa-setup-title').textContent    = '➕ Add Authentication Method';
   document.getElementById('mfa-setup-subtitle').textContent = 'Verify the new method works before adding it.';
-  document.getElementById('mfa-setup-confirm-btn').textContent = 'Verify & Add ✓';
-  // Hide method picker and jump to the one that can be added
+  document.getElementById('mfa-setup-confirm-btn').textContent = canAddEmail ? 'Send code to my email →' : 'Enable authenticator app ✓';
   const step = document.getElementById('mfa-setup-step-method');
+  // Reset all tabs visible first, then hide the one that already exists
+  step.querySelectorAll('.mfa-method-btn').forEach(b => b.style.display = '');
   const emailBtn = step.querySelector('[data-method="email"]');
   const totpBtn  = step.querySelector('[data-method="totp"]');
   if (emailBtn) emailBtn.style.display = canAddEmail ? '' : 'none';
