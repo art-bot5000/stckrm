@@ -16179,6 +16179,70 @@ async function mfaSwitchMethod() {
 let _pendingMfaSetupMode = 'enable';
 let _mfaEmailTestSent    = false;
 
+// ── TOTP (RFC 6238) pure JS implementation ──────────────────────────────────
+function _totpGenerate(secret, time) {
+  const b32   = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const clean = secret.toUpperCase().replace(/[^A-Z2-7]/g,'');
+  let bits = '';
+  for (const c of clean) bits += b32.indexOf(c).toString(2).padStart(5,'0');
+  const bytes = new Uint8Array(bits.length >> 3);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(bits.slice(i*8,(i+1)*8),2);
+  const counter = Math.floor((time || Date.now()/1000) / 30);
+  const msg = new Uint8Array(8);
+  let c = counter;
+  for (let i = 7; i >= 0; i--) { msg[i] = c & 0xff; c >>>= 8; }
+  async function hmacSha1(key, data) {
+    const k = await crypto.subtle.importKey('raw', key, {name:'HMAC',hash:'SHA-1'}, false, ['sign']);
+    return new Uint8Array(await crypto.subtle.sign('HMAC', k, data));
+  }
+  return hmacSha1(bytes, msg).then(hash => {
+    const offset = hash[19] & 0xf;
+    const code = ((hash[offset]&0x7f)<<24|(hash[offset+1]&0xff)<<16|(hash[offset+2]&0xff)<<8|(hash[offset+3]&0xff)) % 1000000;
+    return code.toString().padStart(6,'0');
+  });
+}
+
+async function _totpVerify(secret, code) {
+  const t = Date.now()/1000;
+  for (const offset of [-30, 0, 30]) {
+    if (await _totpGenerate(secret, t + offset) === code) return true;
+  }
+  return false;
+}
+
+function _totpNewSecret() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  return Array.from(crypto.getRandomValues(new Uint8Array(20))).map(b => chars[b % 32]).join('');
+}
+
+function _totpOtpauthUrl(secret) {
+  const label  = encodeURIComponent(`STOCKROOM:${settings.email || _kvEmail || 'account'}`);
+  const issuer = encodeURIComponent('STOCKROOM');
+  return `otpauth://totp/${label}?secret=${secret}&issuer=${issuer}&digits=6&period=30`;
+}
+
+async function _renderTotpQr(secret) {
+  const canvas = document.getElementById('mfa-totp-qr-canvas');
+  if (!canvas) return;
+  const uri = _totpOtpauthUrl(secret);
+  try {
+    if (!window.QRious) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js';
+        s.onload = resolve; s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+    canvas.style.display = 'block';
+    new window.QRious({ element: canvas, value: uri, size: 200, background: '#ffffff', foreground: '#000000' });
+  } catch(e) {
+    canvas.style.display = 'none';
+    const fallback = document.getElementById('mfa-totp-qr-fallback');
+    if (fallback) { fallback.style.display = 'block'; fallback.textContent = 'Could not load QR code — use the manual code below.'; }
+  }
+}
+
 async function openMfaSetup() {
   _pendingMfaSetupMode = 'enable';
   _mfaEmailTestSent    = false;
