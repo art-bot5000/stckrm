@@ -16174,12 +16174,17 @@ async function mfaVerifySubmit() {
     const d = await res.json();
     if (!res.ok) { if(errEl) errEl.textContent = d.error || 'Incorrect code'; return; }
   } else {
-    const methods = _mfaMethods();
+    // TOTP — find secret from any stored location
+    const methods    = _mfaMethods();
     const totpMethod = methods.find(m => m.type === 'totp');
-    const secret = totpMethod?.secret || settings.mfa?.totpSecret;
-    if (!secret) { if(errEl) errEl.textContent = 'Authenticator app not configured'; return; }
+    const secret     = totpMethod?.secret || settings.mfa?.totpSecret || null;
+    if (!secret) {
+      if(errEl) errEl.textContent = 'Authenticator app not configured on this account';
+      console.error('TOTP verify: no secret found. settings.mfa =', JSON.stringify(settings.mfa));
+      return;
+    }
     const valid = await _totpVerify(secret, code);
-    if (!valid) { if(errEl) errEl.textContent = 'Incorrect code — check your authenticator app'; return; }
+    if (!valid) { if(errEl) errEl.textContent = 'Incorrect code — check your authenticator app and device clock'; return; }
   }
 
   _mfaVerifyAltMode = false;
@@ -16222,25 +16227,25 @@ let _mfaEmailTestSent    = false;
 //   3. If MFA is disabled, runs callback immediately
 // This is the ONLY place the app unlocks. All other paths call this.
 async function _mfaGate(callback) {
-  // Always pull fresh settings first — MFA state must come from server, never stale local
+  // Pull fresh settings from server — MFA state must be authoritative from server
   if (kvConnected && _kvKey) {
     try {
       const remote = await kvPull();
-      if (remote?.settings?.mfa !== undefined) {
-        // Apply only the MFA portion from remote — don't merge all settings here
-        settings.mfa = remote.settings.mfa;
-        await _saveSettings();
+      if (remote?.settings) {
+        const remoteMfa = remote.settings.mfa;
+        if (remoteMfa !== undefined) {
+          settings.mfa = remoteMfa;
+          await _saveSettings();
+        }
       }
     } catch(e) {
-      // If pull fails (offline etc.) — still enforce locally-known MFA state
-      console.warn('_mfaGate: pull failed, using local MFA state:', e.message);
+      console.warn('_mfaGate: pull failed, enforcing local MFA state:', e.message);
     }
   }
-
   if (kvConnected && _mfaEnabled()) {
     await _mfaLoginIntercept(callback);
   } else {
-    callback();
+    await callback();
   }
 }
 function _totpGenerate(secret, time) {
@@ -16465,8 +16470,10 @@ async function _mfaFinishSetup(newMethod) {
     settings.mfa = { enabled: true, methods: [newMethod], method: null, totpSecret: null };
   }
   await _saveSettings();
-  // Push to server and await — MFA must be on server before we show success
-  try { await kvSyncNow(true); } catch(e) { console.warn('_mfaFinishSetup sync failed:', e.message); }
+  // Push first so the server has the new MFA state — then pull to confirm
+  try {
+    await kvPush();
+  } catch(e) { console.warn('_mfaFinishSetup push failed:', e.message); }
   closeModal('mfa-setup-modal');
   closeModal('mfa-prompt-modal');
   localStorage.setItem(_MFA_DISMISSED_KEY, 'enabled');
@@ -16501,28 +16508,28 @@ function _renderMfaManageList() {
 async function mfaSetPrimary(idx) {
   const methods = _mfaMethods();
   methods.forEach((m, i) => { m.primary = (i === idx); });
-  settings.mfa = { ...settings.mfa, methods };
+  settings.mfa = { ...settings.mfa, methods, method: null, totpSecret: null };
   await _saveSettings();
+  try { await kvPush(); } catch(e) { console.warn('mfaSetPrimary push failed:', e.message); }
   _renderMfaManageList();
   _updateMfaSettingsUI();
 }
 
 async function mfaRemoveMethod(idx) {
-  const methods = _mfaMethods();
+  const methods  = _mfaMethods();
   const removing = methods[idx];
+  if (!removing) return;
   const label = removing.type === 'totp' ? 'authenticator app' : 'email code';
-  // If removing the last method, treat as full disable
   if (methods.length === 1) { mfaDisable(); return; }
-  // Gate: require passphrase/passkey + MFA before removing
+  // Snapshot updated list now before the reauth delay changes anything
+  const updatedMethods = methods.filter((_, i) => i !== idx);
+  if (!updatedMethods.some(m => m.primary)) updatedMethods[0].primary = true;
   requireReauth(
     `Confirm your identity to remove the ${label} from MFA.`,
     async () => {
-      const fresh = _mfaMethods();
-      fresh.splice(idx, 1);
-      if (!fresh.some(m => m.primary)) fresh[0].primary = true;
-      settings.mfa = { enabled: true, methods: fresh, method: null, totpSecret: null };
+      settings.mfa = { enabled: true, methods: updatedMethods, method: null, totpSecret: null };
       await _saveSettings();
-      kvSyncNow(true).catch(() => {});
+      try { await kvPush(); } catch(e) { console.warn('mfaRemoveMethod push failed:', e.message); }
       _renderMfaManageList();
       _updateMfaSettingsUI();
       toast('Method removed');
@@ -16537,8 +16544,7 @@ function mfaDisable() {
     async () => {
       settings.mfa = { enabled: false, methods: [], method: null, totpSecret: null };
       await _saveSettings();
-      // Push to server and await — must reach server before UI updates
-      try { await kvSyncNow(true); } catch(e) { console.warn('mfaDisable sync failed:', e.message); }
+      try { await kvPush(); } catch(e) { console.warn('mfaDisable push failed:', e.message); }
       closeModal('mfa-manage-modal');
       _updateMfaSettingsUI();
       toast('MFA disabled');
