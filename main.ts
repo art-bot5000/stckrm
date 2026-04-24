@@ -2116,7 +2116,7 @@ Deno.serve(async (request) => {
   // ── MFA: send OTP (login / reauth second factor) ────────
   if (url.pathname === '/mfa/otp/send' && request.method === 'POST') {
     try {
-      const { emailHash, verifier, sessionToken } = await request.json();
+      const { emailHash, email, verifier, sessionToken } = await request.json();
       if (!emailHash) return json({ error: 'Missing fields' }, corsHeaders, 400);
       // Accept verifier OR sessionToken
       if (sessionToken) {
@@ -2136,8 +2136,9 @@ Deno.serve(async (request) => {
           return json({ error: 'Please wait 30 seconds before requesting another code' }, corsHeaders, 429);
         }
       }
+      // Look up stored email — fall back to body param (sent by client for new devices)
       const emailRec = await kvGet(['user', emailHash, 'email']);
-      const emailAddr = (emailRec.value as string) || '';
+      const emailAddr = (emailRec.value as string) || email || '';
       if (!emailAddr) return json({ error: 'No email address on record for this account' }, corsHeaders, 400);
       if (!env.RESEND_API_KEY) return json({ error: 'Email service not configured' }, corsHeaders, 500);
       const otp = Array.from(crypto.getRandomValues(new Uint8Array(6))).map(b => b % 10).join('');
