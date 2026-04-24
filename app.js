@@ -16063,10 +16063,11 @@ function _mfaEnabled() {
 }
 
 function _mfaMethods() {
-  // Normalise v1 → v2
-  if (settings.mfa?.methods?.length) return settings.mfa.methods;
+  // v2 shape: methods array is the source of truth
+  if (Array.isArray(settings.mfa?.methods)) return settings.mfa.methods;
+  // Disabled or not configured
   if (!settings.mfa?.enabled) return [];
-  // v1 single-method fallback
+  // v1 single-method compat (legacy accounts that haven't been migrated yet)
   const m = settings.mfa?.method || 'email';
   return [{ type: m, primary: true, ...(m === 'totp' ? { secret: settings.mfa.totpSecret } : {}) }];
 }
@@ -16444,13 +16445,15 @@ async function mfaSetupConfirm() {
 function _mfaFinishSetup(newMethod) {
   if (_pendingMfaSetupMode === 'add') {
     const existing = _mfaMethods();
-    newMethod.primary = false; // new methods added as backup
+    newMethod.primary = false;
     existing.push(newMethod);
-    settings.mfa = { enabled: true, methods: existing };
+    settings.mfa = { enabled: true, methods: existing, method: null, totpSecret: null };
   } else {
-    settings.mfa = { enabled: true, methods: [newMethod] };
+    settings.mfa = { enabled: true, methods: [newMethod], method: null, totpSecret: null };
   }
   _saveSettings();
+  // Push to server immediately so other devices pick up the new MFA config
+  kvSyncNow(true).catch(() => {});
   closeModal('mfa-setup-modal');
   closeModal('mfa-prompt-modal');
   localStorage.setItem(_MFA_DISMISSED_KEY, 'enabled');
@@ -16501,11 +16504,12 @@ async function mfaRemoveMethod(idx) {
   requireReauth(
     `Confirm your identity to remove the ${label} from MFA.`,
     async () => {
-      const fresh = _mfaMethods(); // re-read in case state changed during auth
+      const fresh = _mfaMethods();
       fresh.splice(idx, 1);
       if (!fresh.some(m => m.primary)) fresh[0].primary = true;
-      settings.mfa = { ...settings.mfa, methods: fresh };
+      settings.mfa = { enabled: true, methods: fresh, method: null, totpSecret: null };
       await _saveSettings();
+      kvSyncNow(true).catch(() => {});
       _renderMfaManageList();
       _updateMfaSettingsUI();
       toast('Method removed');
@@ -16515,12 +16519,14 @@ async function mfaRemoveMethod(idx) {
 }
 
 function mfaDisable() {
-  // Gate: require passphrase/passkey + MFA before disabling
   requireReauth(
     'Confirm your identity to disable multifactor authentication.',
     async () => {
-      settings.mfa = { enabled: false, methods: [] };
+      // Wipe all v1 and v2 MFA fields completely
+      settings.mfa = { enabled: false, methods: [], method: null, totpSecret: null };
       await _saveSettings();
+      // Push to server immediately so other devices see the change
+      kvSyncNow(true).catch(() => {});
       closeModal('mfa-manage-modal');
       _updateMfaSettingsUI();
       toast('MFA disabled');
@@ -16534,8 +16540,8 @@ function _updateMfaSettingsUI() {
   const toggleBtn   = document.getElementById('mfa-settings-toggle');
   const actionBtns  = document.getElementById('mfa-action-btns');
   const methodsList = document.getElementById('mfa-methods-list');
-  const enabled     = _mfaEnabled();
-  const methods     = _mfaMethods();
+  const enabled  = _mfaEnabled() && _mfaMethods().length > 0;
+  const methods  = _mfaMethods();
 
   if (enabledEl) {
     if (!enabled) {
