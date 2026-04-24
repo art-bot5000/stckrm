@@ -14214,10 +14214,25 @@ async function init() {
   } else if (kvConnected && !protectSeen) {
     showProtectDataScreen([]);
   } else if (seen || kvConnected) {
-    document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
-    // Show loading overlay while first sync runs for returning users
     if (kvConnected) {
+      // On a new device, IDB is empty so settings.mfa hasn't loaded yet.
+      // Do a silent sync first to pull the latest encrypted blob (which includes MFA config),
+      // then check MFA before revealing the app.
       showDataLoadingOverlay('Loading your Stockroom…');
+      try { await kvSyncNow(true); } catch(e) {}
+      hideDataLoadingOverlay();
+    }
+    // MFA check — if enabled, block app access until second factor verified
+    if (kvConnected && _mfaEnabled()) {
+      await _mfaLoginIntercept(async () => {
+        document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
+        window.scrollTo(0, 0);
+        scheduleRender(...RENDER_REGIONS);
+      });
+    } else {
+      document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
+      window.scrollTo(0, 0);
+      scheduleRender(...RENDER_REGIONS);
     }
   } else if (wizardStep === '2') {
     localStorage.removeItem('stockroom_wizard_step');
