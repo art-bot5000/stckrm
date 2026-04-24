@@ -2391,12 +2391,9 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 <div class="modal-backdrop" id="mfa-manage-modal">
   <div class="modal" style="max-width:400px">
     <h3 style="font-size:16px;font-weight:700;margin-bottom:6px">🛡️ Manage MFA Methods</h3>
-    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Your active verification methods. The primary method is used by default. Removing or disabling MFA requires passphrase/passkey + MFA confirmation.</p>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">The primary method is used by default. Changes require passphrase/passkey + MFA confirmation.</p>
     <div id="mfa-manage-list" style="margin-bottom:16px"></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-ghost" style="flex:1" onclick="closeModal('mfa-manage-modal');openMfaAddMethod()">+ Add method</button>
-      <button class="btn btn-ghost" onclick="closeModal('mfa-manage-modal')">Done</button>
-    </div>
+    <div id="mfa-manage-footer" style="display:flex;gap:8px;flex-wrap:wrap"></div>
   </div>
 </div>
 

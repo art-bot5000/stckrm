@@ -10212,6 +10212,12 @@ async function _doDeleteAccount() {
 
 async function kvSignOut() {
   if (!confirm('Sign out?\n\nYour encrypted data stays safely on the server. Sign back in with your email and passphrase to access it.')) return;
+  // If MFA was active, record it so _mfaGate enforces it even offline on next login
+  if (_mfaEnabled()) {
+    localStorage.setItem('stockroom_mfa_was_active', _kvEmailHash || '1');
+  } else {
+    localStorage.removeItem('stockroom_mfa_was_active');
+  }
   // Dismiss any decrypt error banner — no need to show it after an intentional sign-out
   document.getElementById('kv-decrypt-error-banner')?.remove();
   // Clean up any grocery drag UI
@@ -16188,6 +16194,7 @@ async function mfaVerifySubmit() {
   }
 
   _mfaVerifyAltMode = false;
+  localStorage.removeItem('stockroom_mfa_was_active');
   closeModal('mfa-verify-modal');
   if (codeEl) codeEl.value = '';
   if (_pendingMfaCallback) { const cb = _pendingMfaCallback; _pendingMfaCallback = null; cb(); }
@@ -16236,13 +16243,22 @@ async function _mfaGate(callback) {
         if (remoteMfa !== undefined) {
           settings.mfa = remoteMfa;
           await _saveSettings();
+          // Clear the was-active flag now that we have fresh server state
+          localStorage.removeItem('stockroom_mfa_was_active');
         }
       }
     } catch(e) {
-      console.warn('_mfaGate: pull failed, enforcing local MFA state:', e.message);
+      console.warn('_mfaGate: pull failed, enforcing local/was-active MFA state:', e.message);
     }
   }
-  if (kvConnected && _mfaEnabled()) {
+
+  // Determine if MFA should fire:
+  // 1. settings.mfa says enabled (from server or local IDB)
+  // 2. OR the was-active flag is set (offline safety net from previous sign-out)
+  const mfaActive = (kvConnected && _mfaEnabled()) ||
+    (kvConnected && !!localStorage.getItem('stockroom_mfa_was_active'));
+
+  if (mfaActive) {
     await _mfaLoginIntercept(callback);
   } else {
     await callback();
@@ -16484,7 +16500,20 @@ async function _mfaFinishSetup(newMethod) {
 // ── Manage methods ──────────────────────────────────────────────────────────
 function openMfaManage() {
   _renderMfaManageList();
+  _renderMfaManageFooter();
   openModal('mfa-manage-modal');
+}
+
+function _renderMfaManageFooter() {
+  const footer  = document.getElementById('mfa-manage-footer');
+  if (!footer) return;
+  const methods  = _mfaMethods();
+  const canAdd   = methods.length < 2;
+  footer.innerHTML = `
+    ${canAdd ? '<button class="btn btn-ghost" style="flex:1" onclick="closeModal(\'mfa-manage-modal\');openMfaAddMethod()">+ Add method</button>' : ''}
+    <button class="btn btn-danger acc-sec-btn" onclick="closeModal(\'mfa-manage-modal\');mfaDisable()">Disable all MFA</button>
+    <button class="btn btn-ghost" onclick="closeModal(\'mfa-manage-modal\')">Done</button>
+  `;
 }
 
 function _renderMfaManageList() {
@@ -16580,7 +16609,7 @@ function _updateMfaSettingsUI() {
     } else {
       actionBtns.innerHTML = `
         <button class="btn btn-ghost acc-sec-btn" onclick="openMfaManage()">Manage</button>
-        <button class="btn btn-ghost acc-sec-btn" onclick="openMfaAddMethod()" ${methods.length >= 2 ? 'disabled title="Both methods are already added"' : ''}>Add method</button>`;
+        ${methods.length < 2 ? '<button class="btn btn-ghost acc-sec-btn" onclick="openMfaAddMethod()">Add method</button>' : ''}`;
     }
   }
 
