@@ -715,15 +715,17 @@ async function wizardFinish() {
     await _saveSettings();
     localStorage.setItem('stockroom_seen', '1');
     await setCountrySetForDevice();
-    document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
     const countrySel = document.getElementById('setting-country');
     if (countrySel) countrySel.value = settings.country;
     updateHeaderGreeting();
-    scheduleRender(...RENDER_REGIONS);
-    const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
-    if (stockTab) showView('stock', stockTab);
-    // Sync in background after wizard completes
-    if (kvConnected) setTimeout(() => kvSyncNow(true), 500);
+    await _mfaGate(async () => {
+      document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
+      window.scrollTo(0, 0);
+      scheduleRender(...RENDER_REGIONS);
+      const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
+      if (stockTab) showView('stock', stockTab);
+      if (kvConnected) setTimeout(() => kvSyncNow(true), 500);
+    });
   } catch(e) {
     console.error('wizardFinish error:', e);
     // Still try to dismiss wizard even if something failed
@@ -7776,36 +7778,19 @@ async function postLoginWizardRoute(recoveryCodes = []) {
         return;
       }
     }
-    // MFA intercept — if enabled, require second factor before entering app
-    if (_mfaEnabled()) {
-      await _mfaLoginIntercept(async () => {
-        showDataLoadingOverlay('Syncing your data…');
-        document.body.classList.remove('wizard-active');
-        document.getElementById('wizard').style.display = 'none';
-        window.scrollTo(0, 0);
-        localStorage.setItem('stockroom_seen', '1');
-        await setProtectSeenForDevice();
-        const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
-        if (stockTab) showView('stock', stockTab);
-        scheduleRender(...RENDER_REGIONS);
-        try { await kvSyncNow(true); } finally { hideDataLoadingOverlay(); }
-      });
-      return;
-    }
-    showDataLoadingOverlay('Syncing your data…');
-    document.body.classList.remove('wizard-active');
-    document.getElementById('wizard').style.display = 'none';
-    window.scrollTo(0, 0);
-    localStorage.setItem('stockroom_seen', '1');
-    await setProtectSeenForDevice(); // stored in IDB — survives cookie clears
-    const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
-    if (stockTab) showView('stock', stockTab);
-    scheduleRender(...RENDER_REGIONS);
-    try {
-      await kvSyncNow(true);
-    } finally {
-      hideDataLoadingOverlay();
-    }
+    // Single hard checkpoint — _mfaGate always fetches fresh MFA state from server
+    await _mfaGate(async () => {
+      showDataLoadingOverlay('Syncing your data…');
+      document.body.classList.remove('wizard-active');
+      document.getElementById('wizard').style.display = 'none';
+      window.scrollTo(0, 0);
+      localStorage.setItem('stockroom_seen', '1');
+      await setProtectSeenForDevice();
+      const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
+      if (stockTab) showView('stock', stockTab);
+      scheduleRender(...RENDER_REGIONS);
+      try { await kvSyncNow(true); } finally { hideDataLoadingOverlay(); }
+    });
   } else {
     // Need country selection
     document.body.classList.add('wizard-active');
@@ -7970,10 +7955,13 @@ async function protectContinue() {
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   const countrySet = await getCountrySetForDevice();
   if (countrySet) {
-    document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
-    localStorage.setItem('stockroom_seen', '1');
-    kvSyncNow();
-    scheduleRender(...RENDER_REGIONS);
+    await _mfaGate(async () => {
+      document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
+      localStorage.setItem('stockroom_seen', '1');
+      window.scrollTo(0, 0);
+      kvSyncNow();
+      scheduleRender(...RENDER_REGIONS);
+    });
   } else {
     document.getElementById('wizard-step-2')?.classList.add('active');
   }
@@ -10044,7 +10032,12 @@ async function kvSyncNow(silent = false) {
       await saveData();
       if (remote.settings) {
         const localTags = settings.customTags;
+        // Merge: remote wins for most settings, but local wins for user preferences
+        // EXCEPTION: MFA config always takes from remote — it's a security setting
+        // that must never be downgraded by stale local state.
+        const remoteMfa = remote.settings.mfa;
         settings = { ...remote.settings, ...settings };
+        if (remoteMfa !== undefined) settings.mfa = remoteMfa; // remote MFA always wins
         const remoteTags = remote.settings.customTags || [];
         settings.customTags = (localTags||[]).filter(t=>t&&t.trim()).length >= (remoteTags).filter(t=>t&&t.trim()).length ? (localTags||[]) : remoteTags;
         await _saveSettings();
@@ -14215,34 +14208,27 @@ async function init() {
     showProtectDataScreen([]);
   } else if (seen || kvConnected) {
     if (kvConnected) {
-      // On a new device, IDB is empty so settings.mfa hasn't loaded yet.
-      // Ensure we have the data key first, then sync to pull encrypted blob (incl. MFA config).
       showDataLoadingOverlay('Loading your Stockroom…');
       if (!_kvKey) {
-        // Try to restore key from cache before syncing
         const keyOk = await kvEnsureKey().catch(() => false);
         if (!keyOk) {
-          // Can't get key — can't decrypt MFA config. Show login.
           hideDataLoadingOverlay();
           showKvLogin();
           return;
         }
       }
-      try { await kvSyncNow(true); } catch(e) {}
       hideDataLoadingOverlay();
     }
-    // MFA check — if enabled, block app access until second factor verified
-    if (kvConnected && _mfaEnabled()) {
-      await _mfaLoginIntercept(async () => {
-        document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
-        window.scrollTo(0, 0);
-        scheduleRender(...RENDER_REGIONS);
-      });
-    } else {
-      document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
+    // Single hard checkpoint — _mfaGate always fetches fresh MFA state from server
+    await _mfaGate(async () => {
+      document.body.classList.remove('wizard-active');
+      document.getElementById('wizard').style.display = 'none';
       window.scrollTo(0, 0);
+      showDataLoadingOverlay('Loading your Stockroom…');
       scheduleRender(...RENDER_REGIONS);
-    }
+      try { await kvSyncNow(true); } catch(e) {}
+      hideDataLoadingOverlay();
+    });
   } else if (wizardStep === '2') {
     localStorage.removeItem('stockroom_wizard_step');
     wizardNext();
@@ -16229,7 +16215,34 @@ async function mfaSwitchMethod() {
 let _pendingMfaSetupMode = 'enable';
 let _mfaEmailTestSent    = false;
 
-// ── TOTP (RFC 6238) pure JS implementation ──────────────────────────────────
+// ── MFA gate — single hard checkpoint for all login paths ────────────────────
+// Every path into the app calls _mfaGate(callback). It:
+//   1. Pulls the latest settings from the server (so MFA state is always fresh)
+//   2. If MFA is enabled, shows the verify modal and only runs callback on success
+//   3. If MFA is disabled, runs callback immediately
+// This is the ONLY place the app unlocks. All other paths call this.
+async function _mfaGate(callback) {
+  // Always pull fresh settings first — MFA state must come from server, never stale local
+  if (kvConnected && _kvKey) {
+    try {
+      const remote = await kvPull();
+      if (remote?.settings?.mfa !== undefined) {
+        // Apply only the MFA portion from remote — don't merge all settings here
+        settings.mfa = remote.settings.mfa;
+        await _saveSettings();
+      }
+    } catch(e) {
+      // If pull fails (offline etc.) — still enforce locally-known MFA state
+      console.warn('_mfaGate: pull failed, using local MFA state:', e.message);
+    }
+  }
+
+  if (kvConnected && _mfaEnabled()) {
+    await _mfaLoginIntercept(callback);
+  } else {
+    callback();
+  }
+}
 function _totpGenerate(secret, time) {
   const b32   = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
   const clean = secret.toUpperCase().replace(/[^A-Z2-7]/g,'');
@@ -16442,7 +16455,7 @@ async function mfaSetupConfirm() {
   }
 }
 
-function _mfaFinishSetup(newMethod) {
+async function _mfaFinishSetup(newMethod) {
   if (_pendingMfaSetupMode === 'add') {
     const existing = _mfaMethods();
     newMethod.primary = false;
@@ -16451,9 +16464,9 @@ function _mfaFinishSetup(newMethod) {
   } else {
     settings.mfa = { enabled: true, methods: [newMethod], method: null, totpSecret: null };
   }
-  _saveSettings();
-  // Push to server immediately so other devices pick up the new MFA config
-  kvSyncNow(true).catch(() => {});
+  await _saveSettings();
+  // Push to server and await — MFA must be on server before we show success
+  try { await kvSyncNow(true); } catch(e) { console.warn('_mfaFinishSetup sync failed:', e.message); }
   closeModal('mfa-setup-modal');
   closeModal('mfa-prompt-modal');
   localStorage.setItem(_MFA_DISMISSED_KEY, 'enabled');
@@ -16522,11 +16535,10 @@ function mfaDisable() {
   requireReauth(
     'Confirm your identity to disable multifactor authentication.',
     async () => {
-      // Wipe all v1 and v2 MFA fields completely
       settings.mfa = { enabled: false, methods: [], method: null, totpSecret: null };
       await _saveSettings();
-      // Push to server immediately so other devices see the change
-      kvSyncNow(true).catch(() => {});
+      // Push to server and await — must reach server before UI updates
+      try { await kvSyncNow(true); } catch(e) { console.warn('mfaDisable sync failed:', e.message); }
       closeModal('mfa-manage-modal');
       _updateMfaSettingsUI();
       toast('MFA disabled');
