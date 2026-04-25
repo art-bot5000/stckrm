@@ -274,6 +274,17 @@ function closeModal(id) {
 //  UTILS
 // ═══════════════════════════════════════════
 const uid = () => 'id_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+
+// ── Lucide icon helper ────────────────────────────────────────────────────
+// ic('package')           → small inline icon (16px)
+// ic('package','md')      → 18px
+// ic('package','lg')      → 20px
+// ic('package','xl')      → 24px
+// ic('package','tab')     → 22px for nav tabs
+function ic(name, size='') {
+  const cls = size ? `icon icon-${size}` : 'icon';
+  return `<svg class="${cls}" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
+}
 const today = () => new Date().toISOString().split('T')[0];
 const fmtDate = d => d ? new Date(d+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—';
 
@@ -889,7 +900,7 @@ async function checkKVStatus() {
     const data = await res.json();
     // Deno KV backend: no Drive token needed — check schedule + kvSnapshot
     const hasSchedule = data.schedule && data.schedule !== '✗ missing';
-    const hasItems    = data.kvSnapshot === '✓';
+    const hasItems    = data.kvSnapshot === '<svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>';
     const allOk       = hasSchedule && hasItems && !!settings.email;
     const scheduleLabel = typeof data.schedule === 'object' && data.schedule ? '✓ set' : (data.schedule || '✗ missing');
     const lines = [
@@ -903,14 +914,14 @@ async function checkKVStatus() {
     if (status) {
       status.style.color = allOk ? 'var(--ok)' : 'var(--warn)';
       status.innerHTML = lines.map(l => {
-        const isOk  = l.includes('✓');
+        const isOk  = l.includes('<svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>');
         const isBad = l.includes('✗');
         const color = isOk ? 'var(--ok)' : isBad ? 'var(--danger)' : 'var(--muted)';
         return `<span style="color:${color}">${l}</span>`;
       }).join(' · ');
     }
     if (!allOk) {
-      toast('⚠️ Some server settings missing — tap Re-push');
+      toast('<svg class="icon" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> Some server settings missing — tap Re-push');
     }
   } catch(err) {
     if (status) { status.style.color = 'var(--danger)'; status.textContent = '✗ Could not reach server'; }
@@ -1412,8 +1423,8 @@ function renderIncompleteSection() {
           <div class="inc-meta">⚡ Quick added · no details yet</div>
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
-          <button class="btn-icon" title="Complete setup" onclick="openEditModal('${item.id}');enableItemEdit()">✏️</button>
-          <button class="btn-icon" title="Remove" onclick="deleteItem('${item.id}')">🗑️</button>
+          <button class="btn-icon" title="Complete setup" onclick="openEditModal('${item.id}');enableItemEdit()"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
+          <button class="btn-icon" title="Remove" onclick="deleteItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>
         </div>
       </div>`).join('');
   }
@@ -1633,7 +1644,7 @@ function reminderCardHTML(r) {
       <div style="font-size:11px;color:var(--muted);font-family:var(--mono);line-height:1.8">
         ${intervalLabel} · ${lastLabel}<br>${nextLabel}
       </div>
-      ${r.notes ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-top:6px">💬 ${esc(r.notes)}</div>` : ''}
+      ${r.notes ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-top:6px"><svg class="icon" aria-hidden="true"><use href="#i-message-square"></use></svg> ${esc(r.notes)}</div>` : ''}
       <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap" onclick="event.stopPropagation()">
         <button class="btn btn-primary btn-sm" onclick="openLogReplacementModal('${r.id}')">✅ Mark replaced</button>
         ${!isFromItem ? `<button class="btn btn-ghost btn-sm" onclick="openEditReminderModal('${r.id}')">✏️ Edit</button>` : `<button class="btn btn-ghost btn-sm" onclick="openEditModal('${r.fromItem}');enableItemEdit()">✏️ Edit item</button>`}
@@ -2328,8 +2339,8 @@ async function renderProfileList() {
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0">
         ${!isActive ? `<button class="btn btn-primary btn-sm" onclick="switchProfile('${key}')">Switch</button>` : '<span style="font-size:11px;color:var(--accent);font-weight:700">Active</span>'}
-        <button class="btn btn-ghost btn-sm" onclick="openHouseholdEdit('${key}')" title="Edit">✏️</button>
-        ${key !== 'default' ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteProfile('${key}')" title="Delete">✕</button>` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="openHouseholdEdit('${key}')" title="Edit"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
+        ${key !== 'default' ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteProfile('${key}')" title="Delete"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -2699,7 +2710,7 @@ function renderLogHistory(item) {
           ${l.price ? `<span style="color:${isCheapest?'var(--ok)':isMostExp?'var(--danger)':'var(--text)'};font-weight:700">${esc(l.price)}</span>${priceTrendEl}${isCheapest?'<span style="font-size:10px">🏷</span>':''}` : ''}
         </span>
       </div>
-      <button onclick="deleteLogEntry('${item.id}','${l.id}')" title="Delete this entry" style="background:none;border:none;cursor:pointer;font-size:14px;color:var(--muted);padding:2px 4px;border-radius:4px;flex-shrink:0" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--muted)'">✕</button>
+      <button onclick="deleteLogEntry('${item.id}','${l.id}')" title="Delete this entry" style="background:none;border:none;cursor:pointer;font-size:14px;color:var(--muted);padding:2px 4px;border-radius:4px;flex-shrink:0" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--muted)'"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
     </div>`;
   }).join('');
 
@@ -3684,10 +3695,10 @@ function cardHTML(item, threshold) {
         <button class="btn-icon" title="Usage analytics" onclick="openAnalyticsModal('${item.id}')">📊</button>
         <button class="btn-icon" title="Price history" onclick="openPriceHistoryModal('${item.id}')" ${getPriceHistory(item).length < 2 ? 'style="opacity:0.35;cursor:default"' : ''}>💰</button>
         <button class="btn-icon" title="Share item" onclick="shareItem('${item.id}')">↗️</button>
-        <button class="btn-icon" title="Edit" onclick="openEditModal('${item.id}');enableItemEdit()">✏️</button>
+        <button class="btn-icon" title="Edit" onclick="openEditModal('${item.id}');enableItemEdit()"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
         ${item._archived
-          ? `<button class="btn-icon" title="Restore from archive" onclick="restoreItem('${item.id}')">♻️</button>
-             <button class="btn-icon" title="Delete permanently" onclick="deleteItem('${item.id}')">🗑️</button>`
+          ? `<button class="btn-icon" title="Restore from archive" onclick="restoreItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-refresh-ccw"></use></svg></button>
+             <button class="btn-icon" title="Delete permanently" onclick="deleteItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>`
           : `<button class="btn-icon" title="Archive item" onclick="archiveItem('${item.id}')">📦</button>`}
       </div>
     </div>
@@ -3725,7 +3736,7 @@ function cardHTML(item, threshold) {
       </span>
     </div>
     ${cardTagsHTML(item)}
-    ${item.notes ? `<div class="card-notes">💬 ${esc(item.notes)}</div>` : ''}
+    ${item.notes ? `<div class="card-notes"><svg class="icon" aria-hidden="true"><use href="#i-message-square"></use></svg> ${esc(item.notes)}</div>` : ''}
     ${storePricesCardHTML(item)}
     ${item.url ? `<a class="card-link" href="${esc(item.url)}" target="_blank" rel="noopener">🛒 Buy now ↗</a>` : ''}
     ${item.logs?.some(l => l.pendingDelivery) && !item.startedUsing
@@ -3971,7 +3982,7 @@ async function fetchProductImage() {
     pendingImageUrl = imageUrl;
     preview.src = imageUrl;
     preview.onerror = () => {
-      status.textContent = '⚠️ Image loaded but may not display';
+      status.textContent = '<svg class="icon" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> Image loaded but may not display';
       status.style.color = 'var(--warn)';
     };
     status.textContent = '✓ Image found';
@@ -4009,7 +4020,7 @@ async function fetchProductImage() {
     pendingImageUrl = imageUrl;
     preview.src = imageUrl;
     preview.onerror = () => {
-      status.textContent = '⚠️ Image may not display cross-origin';
+      status.textContent = '<svg class="icon" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> Image may not display cross-origin';
       status.style.color = 'var(--warn)';
     };
     status.textContent = '✓ Image found';
@@ -4077,7 +4088,7 @@ function showImagePreview(imageUrl, statusText) {
   showModalImagePreview(imageUrl);
   if (statusText) {
     const status = document.getElementById('img-preview-status');
-    if (status) { status.textContent = '✓ ' + statusText; status.style.color = 'var(--ok)'; }
+    if (status) { status.textContent = '<svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> ' + statusText; status.style.color = 'var(--ok)'; }
   }
 }
 
@@ -5428,7 +5439,7 @@ function renderShoppingList() {
 
   if (shoppingItems.length === 0) {
     container.innerHTML = getShoppingPresenceBar() + `<div class="shopping-empty">
-      <div style="font-size:48px;margin-bottom:16px">🎉</div>
+      <div style="font-size:48px;margin-bottom:16px"><svg class="icon icon-xl" aria-hidden="true"><use href="#i-party-popper"></use></svg></div>
       <h3 style="font-size:18px;color:var(--text);margin-bottom:8px">You're all stocked up!</h3>
       <p style="font-size:14px;line-height:1.7">No items are running out within ${shoppingDays} days for the selected stores.</p>
       <button class="btn btn-ghost" style="margin-top:16px" onclick="openStorePickerModal()">Change filters</button>
@@ -8557,8 +8568,8 @@ async function showMobileDiag() {
   modal.innerHTML = `
     <div style="background:#1a1d27;border:1px solid #2a2d3a;border-radius:12px;padding:16px;max-width:500px;width:100%;margin:auto">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <span style="font-size:13px;font-weight:700;color:#e8a838">🔧 Diagnostic</span>
-        <button onclick="this.closest('[style*=fixed]').remove()" style="background:transparent;border:none;color:#6b7280;font-size:18px;cursor:pointer;padding:0 4px">✕</button>
+        <span style="font-size:13px;font-weight:700;color:#e8a838"><svg class="icon" aria-hidden="true"><use href="#i-wrench"></use></svg> Diagnostic</span>
+        <button onclick="this.closest('[style*=fixed]').remove()" style="background:transparent;border:none;color:#6b7280;font-size:18px;cursor:pointer;padding:0 4px"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
       </div>
       <pre style="font-family:monospace;font-size:11px;color:#e8e8f0;line-height:1.8;white-space:pre-wrap;word-break:break-all;margin:0 0 12px">${lines.join('\n')}</pre>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -8984,7 +8995,7 @@ function showExportReminder(level) {
   banner.innerHTML = `
     <span style="flex:1">${isUrgent ? '⚠️' : '📦'} <strong>${isUrgent ? 'Over 60 days' : 'Over 30 days'} since your last data export.</strong> Export your data regularly as a backup.</span>
     <button class="btn btn-sm" style="background:${isUrgent?'rgba(232,80,80,0.2)':'rgba(232,168,56,0.2)'};border:1px solid ${isUrgent?'rgba(232,80,80,0.4)':'rgba(232,168,56,0.4)'};color:${isUrgent?'var(--danger)':'var(--warn)'};white-space:nowrap" onclick="exportDataAndDismiss()">Export now</button>
-    <button class="btn btn-ghost btn-sm" onclick="this.closest('#export-reminder-banner').remove()">✕</button>
+    <button class="btn btn-ghost btn-sm" onclick="this.closest('#export-reminder-banner').remove()"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
   `;
   // Insert after update banner
   const updateBanner = document.getElementById('update-banner');
@@ -11019,7 +11030,7 @@ function renderGroceryListPicker() {
             matchingItemsHTML = `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
               ${matchingItems.slice(0,5).map(i =>
                 `<div style="font-size:12px;color:var(--muted);padding:2px 0;display:flex;align-items:center;gap:6px">
-                  <span style="color:${i.checked?'var(--ok)':'var(--text)'}">${i.checked?'☑':'☐'}</span>
+                  <span style="color:${i.checked?'var(--ok)':'var(--text)'}">${i.checked?'<svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg>':'<svg class="icon" aria-hidden="true"><use href="#i-square"></use></svg>'}</span>
                   <span style="${i.checked?'text-decoration:line-through':''}">${esc(i.name)}</span>
                   ${i.notes?`<span style="color:var(--muted);font-style:italic">— ${esc(i.notes)}</span>`:''}
                 </div>`
@@ -11039,8 +11050,8 @@ function renderGroceryListPicker() {
               </div>
             </div>
             <div style="display:flex;gap:6px;flex-shrink:0">
-              <button onclick="event.stopPropagation();editGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:13px;cursor:pointer">✏️</button>
-              ${groceryLists.length > 1 ? `<button onclick="event.stopPropagation();deleteGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--danger);font-size:13px;cursor:pointer">🗑️</button>` : ''}
+              <button onclick="event.stopPropagation();editGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:13px;cursor:pointer"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
+              ${groceryLists.length > 1 ? `<button onclick="event.stopPropagation();deleteGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--danger);font-size:13px;cursor:pointer"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>` : ''}
             </div>
           </div>
           ${matchingItemsHTML}
@@ -11548,7 +11559,7 @@ function renderGroceryImportList() {
           placeholder="Item name">
         <button onclick="removeGroceryImportRow(${i})"
           style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:18px;padding:2px 4px;flex-shrink:0"
-          title="Remove this item">✕</button>
+          title="Remove this item"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <select style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px"
@@ -11698,7 +11709,7 @@ function renderGrocery() {
   if (hcBtn) {
     const hasChecked = listItems.some(i => i.checked);
     hcBtn.style.display = hasChecked && !groceryEditMode && activeGroceryListId ? 'inline-flex' : 'none';
-    hcBtn.textContent = groceryHideChecked ? '👁 Show ticked' : '🙈 Hide ticked';
+    hcBtn.textContent = groceryHideChecked ? '👁 Show ticked' : '<svg class="icon" aria-hidden="true"><use href="#i-eye-off"></use></svg> Hide ticked';
     hcBtn.style.color = groceryHideChecked ? 'var(--accent)' : '';
     hcBtn.style.borderColor = groceryHideChecked ? 'rgba(232,168,56,0.4)' : '';
     hcBtn.style.background = groceryHideChecked ? 'rgba(232,168,56,0.08)' : '';
@@ -11721,7 +11732,7 @@ function renderGrocery() {
     const canDrag    = isDeptView; // drag only in dept view
 
     let editHtml = `<div id="grocery-drag-hint" style="font-size:12px;color:var(--muted);padding:6px 0 10px;text-align:center;position:sticky;top:0;z-index:10;background:var(--bg);margin:0 -2px;border-bottom:1px solid rgba(46,51,80,0.3);margin-bottom:8px">
-      ${canDrag ? '☰ Hold and drag to reorder within departments' : 'A–Z view — switch to By Dept to reorder'}
+      ${canDrag ? '<svg class="icon" aria-hidden="true"><use href="#i-grip-vertical"></use></svg> Hold and drag to reorder within departments' : 'A–Z view — switch to By Dept to reorder'}
     </div>`;
 
     const ordered = getGroceryItemsInOrder().filter(i => !i.checked && (!query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query)));
@@ -12053,7 +12064,7 @@ function toggleGroceryHideChecked() {
   try { localStorage.setItem('stockroom_hide_checked', groceryHideChecked ? '1' : '0'); } catch(e) {}
   const btn = document.getElementById('grocery-hide-checked-btn');
   if (btn) {
-    btn.textContent = groceryHideChecked ? '👁 Show ticked' : '🙈 Hide ticked';
+    btn.textContent = groceryHideChecked ? '👁 Show ticked' : '<svg class="icon" aria-hidden="true"><use href="#i-eye-off"></use></svg> Hide ticked';
     btn.style.color = groceryHideChecked ? 'var(--accent)' : '';
     btn.style.borderColor = groceryHideChecked ? 'rgba(232,168,56,0.4)' : '';
     btn.style.background = groceryHideChecked ? 'rgba(232,168,56,0.08)' : '';
@@ -12811,7 +12822,7 @@ function renderGroceryDeptsModal() {
       <div class="dept-manage-actions">
         ${idx > 0 ? `<button class="grocery-icon-btn" onclick="moveGroceryDept(${idx},-1)" title="Move up">↑</button>` : ''}
         ${idx < groceryDepts.length-1 ? `<button class="grocery-icon-btn" onclick="moveGroceryDept(${idx},1)" title="Move down">↓</button>` : ''}
-        <button class="grocery-icon-btn" style="color:var(--danger)" onclick="deleteGroceryDept('${d.id}')" title="Delete">✕</button>
+        <button class="grocery-icon-btn" style="color:var(--danger)" onclick="deleteGroceryDept('${d.id}')" title="Delete"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
       </div>
     </div>
   `).join('');
@@ -13290,7 +13301,7 @@ function renderShareTargetsList() {
       const colour    = t.colour || '#e8a838';
       const members   = t.members?.length || 0;
       const expired   = t.expiresAt && Date.now() > new Date(t.expiresAt).getTime();
-      const expiryStr = t.expiresAt ? (expired ? '⚠️ Link expired' : `Link valid until ${new Date(t.expiresAt).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`) : '';
+      const expiryStr = t.expiresAt ? (expired ? '<svg class="icon" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> Link expired' : `Link valid until ${new Date(t.expiresAt).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`) : '';
       return `
       <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border:1px solid ${expired?'var(--danger)':'var(--border)'};border-radius:10px">
         <div style="width:12px;height:12px;border-radius:50%;background:${colour};flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>
@@ -13299,13 +13310,13 @@ function renderShareTargetsList() {
           <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${t.type}${members?' · '+members+' member'+(members!==1?'s':''):''}</div>
           ${expiryStr?`<div style="font-size:10px;color:${expired?'var(--danger)':'var(--muted)'};margin-top:2px">${expiryStr}</div>`:''}
         </div>
-        <button class="btn btn-ghost btn-sm" onclick="openEditShareTarget('${t.code}')" title="Edit">✏️</button>
+        <button class="btn btn-ghost btn-sm" onclick="openEditShareTarget('${t.code}')" title="Edit"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
         ${expired
-          ? `<button class="btn btn-ghost btn-sm" onclick="refreshShareLink('${t.code}')" title="Refresh link (new 24h window)">🔄</button>`
+          ? `<button class="btn btn-ghost btn-sm" onclick="refreshShareLink('${t.code}')" title="Refresh link (new 24h window)"><svg class="icon" aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>`
           : `<button class="btn btn-ghost btn-sm" onclick="copyShareTargetLink('${t.code}')" title="Copy invite link">🔗</button>`
         }
-        <button class="btn btn-ghost btn-sm" onclick="resyncSharedData('${t.code}')" title="Re-sync data to guest">📤</button>
-        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteShareTarget('${t.code}')">✕</button>
+        <button class="btn btn-ghost btn-sm" onclick="resyncSharedData('${t.code}')" title="Re-sync data to guest"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg></button>
+        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteShareTarget('${t.code}')"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
       </div>`;
     }).join('');
   }
@@ -14019,8 +14030,8 @@ async function renderSettingsHouseholdList() {
         <span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:6px">${count} item${count!==1?'s':''}</span>
       </div>
       ${!isActive ? `<button class="btn btn-ghost btn-sm" onclick="switchProfileFromSettings('${key}')">Switch</button>` : ''}
-      <button class="btn btn-ghost btn-sm" onclick="openHouseholdEdit('${key}')" title="Edit">✏️</button>
-      ${key !== 'default' ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteProfile('${key}');renderSettingsHouseholdList()">✕</button>` : ''}
+      <button class="btn btn-ghost btn-sm" onclick="openHouseholdEdit('${key}')" title="Edit"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
+      ${key !== 'default' ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteProfile('${key}');renderSettingsHouseholdList()"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>` : ''}
     </div>`;
   }).join('');
 }
@@ -14350,7 +14361,7 @@ function renderStorePricesSection(item) {
         style="width:80px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px;font-family:var(--mono)"
         onchange="updateStorePrice(${i},'price',this.value)">
       <button onclick="removeStorePrice(${i})" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:2px 4px"
-        onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--muted)'">✕</button>
+        onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--muted)'"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
     </div>`).join('');
   if (prices.length > 1) {
     const parsed = prices.map((sp,i) => ({ i, val: parsePriceValue(sp.price) })).filter(x => x.val !== null);
@@ -14397,7 +14408,7 @@ function renderTempStorePrices() {
         style="width:90px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px;font-family:var(--mono)"
         oninput="updateStorePrice(${i},'price',this.value)">
       <button onclick="removeStorePrice(${i})" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:2px 4px"
-        onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--muted)'">✕</button>
+        onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--muted)'"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
     </div>`).join('');
 }
 
@@ -14763,7 +14774,7 @@ function showIncomingItemPrompt(payload) {
         ${priceStr         ? ` · ${esc(priceStr)}` : ''}
         ${payload.months   ? ` · ${payload.months}mo supply` : ''}
       </div>
-      ${payload.notes ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-bottom:14px;padding:8px;background:var(--surface2);border-radius:6px">💬 ${esc(payload.notes)}</div>` : ''}
+      ${payload.notes ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-bottom:14px;padding:8px;background:var(--surface2);border-radius:6px"><svg class="icon" aria-hidden="true"><use href="#i-message-square"></use></svg> ${esc(payload.notes)}</div>` : ''}
       ${domainStr ? `<div style="margin-bottom:14px"><a href="${esc(payload.url)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--accent2)">🛒 ${esc(domainStr)} ↗</a></div>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
         <button class="btn btn-primary" style="flex:1" id="incoming-add-btn">+ Add to my stockroom</button>
@@ -15279,7 +15290,7 @@ function _showNoteActionBar() {
       <button class="btn btn-ghost" onclick="_bulkNoteAction('pin')" style="flex:1;flex-direction:column;gap:4px;height:56px;font-size:12px">📌<br>Pin</button>
       <button class="btn btn-ghost" onclick="_bulkNoteAction('archive')" style="flex:1;flex-direction:column;gap:4px;height:56px;font-size:12px">📦<br>Archive</button>
       <button class="btn btn-danger" onclick="_bulkNoteAction('delete')" style="flex:1;flex-direction:column;gap:4px;height:56px;font-size:12px">🗑️<br>Delete</button>
-      <button class="btn btn-ghost" onclick="_cancelNoteSelect()" style="flex:1;flex-direction:column;gap:4px;height:56px;font-size:12px">✕<br>Cancel</button>
+      <button class="btn btn-ghost" onclick="_cancelNoteSelect()" style="flex:1;flex-direction:column;gap:4px;height:56px;font-size:12px"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg><br>Cancel</button>
     `;
     document.body.appendChild(bar);
   }
@@ -17251,7 +17262,7 @@ function _azRender() {
       ${i>0?`<div style="width:14px;height:2px;background:${i<=si?'var(--ok)':'var(--border)'}"></div>`:''}
       <div style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;font-family:var(--mono);
         background:${i<si?'var(--ok)':i===si?'var(--accent)':'var(--border)'};color:${i<=si?'#111':'var(--muted)'}">
-        ${i<si?'✓':i+1}</div>
+        ${i<si?'<svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>':i+1}</div>
       <span style="font-size:10px;color:${i===si?'var(--text)':'var(--muted)'}">${l}</span>
     </div>`).join('');
 
@@ -17312,7 +17323,7 @@ function _azHtmlPrivacy() {
   <div style="background:rgba(224,92,92,0.08);border:1px solid rgba(224,92,92,0.25);border-radius:12px;padding:16px;margin-bottom:14px">
     <div style="font-size:11px;font-weight:700;color:var(--danger);margin-bottom:10px;font-family:var(--mono);letter-spacing:1px">RECOMMENDED: REMOVE THESE COLUMNS FIRST</div>
     ${private_cols.map(c=>`<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid rgba(224,92,92,0.12)">
-      <span style="color:var(--danger)">✕</span><span style="font-family:var(--mono);font-size:12px">${c}</span><span style="color:var(--muted);font-size:11px;margin-left:auto">personal data</span>
+      <span style="color:var(--danger)"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></span><span style="font-family:var(--mono);font-size:12px">${c}</span><span style="color:var(--muted);font-size:11px;margin-left:auto">personal data</span>
     </div>`).join('')}
     <p style="font-size:12px;color:var(--muted);margin-top:10px;line-height:1.6">Open <strong>Order_History.csv</strong> in Microsoft Excel, Google Sheets, or LibreOffice Calc. Select and delete these three columns, save, then re-upload.</p>
   </div>
@@ -17356,7 +17367,7 @@ function _azHtmlPreview() {
           <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span>
           <span style="color:var(--muted);font-size:11px">${r.date}</span>
           <span style="text-align:right;font-family:var(--mono);font-size:11px;color:var(--ok)">£${r.price.toFixed(2)}</span>
-          <button onclick="_azDeleteRow(${r._id},this)" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:2px">✕</button>
+          <button onclick="_azDeleteRow(${r._id},this)" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:2px"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
         </div>`).join('')}
     </div>
   </div>
@@ -17552,7 +17563,7 @@ function _azHtmlMerge() {
         <button onclick="_azSetDecision(${idx},'add')" style="padding:6px 14px;border:1px solid ${m.decision==='add'?'#5b8dee':'var(--border)'};background:${m.decision==='add'?'rgba(91,141,238,0.12)':'transparent'};color:${m.decision==='add'?'#5b8dee':'var(--muted)'};border-radius:7px;font-size:12px;cursor:pointer;font-weight:600">+ Add as new</button>
         <div style="margin-left:auto;display:flex;gap:6px">
           <button onclick="_azOpenPicker(${idx})" style="padding:5px 12px;background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:7px;font-size:11px;cursor:pointer">✎ Change match</button>
-          <button onclick="_azClearMatch(${idx})" title="Remove match — will add as new" style="padding:5px 10px;background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:7px;font-size:11px;cursor:pointer">✕</button>
+          <button onclick="_azClearMatch(${idx})" title="Remove match — will add as new" style="padding:5px 10px;background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:7px;font-size:11px;cursor:pointer"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
         </div>
       </div>
       ${m.decision==='merge'?`<div style="padding:6px 16px 10px;background:rgba(76,187,138,0.04);font-size:11px;color:var(--muted)">Will add ${m.group.items.length} Amazon purchase entries to <strong style="color:var(--text)">${esc(m.existingItem.name)}</strong>.</div>`:''}
@@ -17578,7 +17589,7 @@ function _azHtmlDone() {
   const merged=_azMatches.filter(m=>m.decision==='merge');
   const added=_azMatches.filter(m=>m.decision==='add');
   return `<div style="text-align:center;padding:60px 20px">
-    <div style="font-size:52px;margin-bottom:16px">🎉</div>
+    <div style="font-size:52px;margin-bottom:16px"><svg class="icon icon-xl" aria-hidden="true"><use href="#i-party-popper"></use></svg></div>
     <h2 style="font-size:24px;font-weight:700;margin-bottom:8px">Import complete</h2>
     <p style="color:var(--muted);font-size:14px;line-height:1.7;max-width:400px;margin:0 auto 24px">Your Amazon order history has been imported. STOCKROOM will now track these items and alert you when stock is running low.</p>
     <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:28px">
