@@ -9425,12 +9425,19 @@ async function removeWrappedKey(deviceId) {
 // If the user ticked "Stay signed in", trust the device without any popup.
 // This replaces the old offerTrustDevice() confirm dialog entirely.
 async function _trustIfRemembered(email, emailHash, verifier, key) {
-  // Read checkbox state — check both the DOM element (if still present)
-  // AND the captured variable (set when checkbox changes, survives wizard teardown)
-  const cb = document.getElementById('remember-me-checkbox');
-  const remembered = cb?.checked || _rememberMeChecked || getCookieConsent() === 'granted';
+  // Check all possible sources of "stay signed in" intent:
+  // 1. The module-level flag (set by either checkbox via onchange)
+  // 2. The step-1b checkbox (email entry step, new users)
+  // 3. The step-1b-auth checkbox (passphrase step, returning users)
+  // 4. Previously granted cookie consent
+  const cb1 = document.getElementById('remember-me-checkbox');
+  const cb2 = document.getElementById('remember-me-checkbox-auth');
+  const remembered = _rememberMeChecked
+    || cb1?.checked
+    || cb2?.checked
+    || getCookieConsent() === 'granted';
   if (!remembered) return;
-  // Don't re-trust if already trusted
+  // Don't re-trust if already trusted with a valid key
   const secret = localStorage.getItem('stockroom_device_secret');
   if (secret) {
     const existing = await loadWrappedKey(getOrCreateDeviceId(), secret);
@@ -9604,7 +9611,9 @@ async function kvStoreSession(email, emailHash, verifier, key) {
     try {
       const exported = await crypto.subtle.exportKey('raw', key);
       const keyData  = btoa(String.fromCharCode(...new Uint8Array(exported)));
-      const staySignedIn = _rememberMeChecked || getCookieConsent() === 'granted';
+      const cb1 = document.getElementById('remember-me-checkbox');
+      const cb2 = document.getElementById('remember-me-checkbox-auth');
+      const staySignedIn = _rememberMeChecked || cb1?.checked || cb2?.checked || getCookieConsent() === 'granted';
       const expiry = Date.now() + (staySignedIn ? 30 : 4) * 24 * 60 * 60 * 1000;
       await lsSetEncrypted('stockroom_kv_session_key', { keyData, emailHash, expiry });
     } catch(e) {}
@@ -10845,15 +10854,28 @@ window.addEventListener('resize', () => {
 }, { passive: true });
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Capture "Stay signed in" checkbox state into a module variable immediately —
-  // the checkbox is in the login wizard which gets torn down before offerTrustDevice runs,
-  // so getElementById('remember-me-checkbox') returns null by then.
+  // Capture "Stay signed in" checkbox state into a module variable immediately.
+  // There are two checkboxes: one on the email step (new users) and one on the
+  // passphrase step (returning users). Both set _rememberMeChecked.
   const rememberCb = document.getElementById('remember-me-checkbox');
+  const rememberCbAuth = document.getElementById('remember-me-checkbox-auth');
+  const consentGranted = getCookieConsent() === 'granted';
+  // Pre-check both if consent was previously granted
+  if (consentGranted) {
+    _rememberMeChecked = true;
+    if (rememberCb) rememberCb.checked = true;
+    if (rememberCbAuth) rememberCbAuth.checked = true;
+  }
   if (rememberCb) {
-    // Pre-populate from cookie consent already granted
-    if (getCookieConsent() === 'granted') _rememberMeChecked = true;
     rememberCb.addEventListener('change', () => {
       _rememberMeChecked = rememberCb.checked;
+      if (rememberCbAuth) rememberCbAuth.checked = rememberCb.checked;
+    });
+  }
+  if (rememberCbAuth) {
+    rememberCbAuth.addEventListener('change', () => {
+      _rememberMeChecked = rememberCbAuth.checked;
+      if (rememberCb) rememberCb.checked = rememberCbAuth.checked;
     });
   }
 
