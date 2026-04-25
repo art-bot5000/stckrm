@@ -10295,7 +10295,10 @@ async function kvSignOut() {
     localStorage.removeItem('stockroom_mfa_was_active');
   }
   // Clear the per-session verified flag — next login must verify MFA again
-  try { sessionStorage.removeItem(_MFA_SESSION_KEY); } catch(e) {}
+  try {
+    sessionStorage.removeItem(_MFA_SESSION_KEY);
+    localStorage.removeItem(_MFA_SESSION_KEY);
+  } catch(e) {}
   // Dismiss any decrypt error banner — no need to show it after an intentional sign-out
   document.getElementById('kv-decrypt-error-banner')?.remove();
   // Clean up any grocery drag UI
@@ -16317,8 +16320,23 @@ async function mfaVerifySubmit() {
 
   _mfaVerifyAltMode = false;
   localStorage.removeItem('stockroom_mfa_was_active');
-  // Mark MFA as verified for this browser session (allows trusted devices to skip on reload)
-  try { sessionStorage.setItem(_MFA_SESSION_KEY, _kvEmailHash || '1'); } catch(e) {}
+  // Mark MFA as verified.
+  //  - On trusted devices ("Remember me" ticked → stockroom_trust_ts set):
+  //      persist for 30 days in localStorage, matching the key cache.
+  //  - On untrusted devices: fall back to sessionStorage (this tab only).
+  try {
+    const trusted = !!localStorage.getItem('stockroom_trust_ts');
+    if (trusted) {
+      const payload = {
+        emailHash: _kvEmailHash || '1',
+        expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+      };
+      localStorage.setItem(_MFA_SESSION_KEY, JSON.stringify(payload));
+      sessionStorage.removeItem(_MFA_SESSION_KEY);
+    } else {
+      sessionStorage.setItem(_MFA_SESSION_KEY, _kvEmailHash || '1');
+    }
+  } catch(e) {}
   closeModal('mfa-verify-modal');
   if (codeEl) codeEl.value = '';
   if (_pendingMfaCallback) { const cb = _pendingMfaCallback; _pendingMfaCallback = null; cb(); }
@@ -16393,7 +16411,24 @@ async function _mfaGate(callback) {
   // MFA is enabled — check if already verified this browser session
   // sessionStorage is wiped on tab/browser close AND on cookie clear,
   // so "stay signed in" users only verify once per session.
-  const alreadyVerified = sessionStorage.getItem(_MFA_SESSION_KEY) === _kvEmailHash;
+  // Verified can come from either localStorage (trusted device, 30-day) or
+  // sessionStorage (untrusted device, this tab only). Check both.
+  let alreadyVerified = false;
+  try {
+    const raw = localStorage.getItem(_MFA_SESSION_KEY);
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (data && data.emailHash === _kvEmailHash && Date.now() < data.expiresAt) {
+        alreadyVerified = true;
+      } else {
+        // Stale, expired, or wrong account — clear it
+        localStorage.removeItem(_MFA_SESSION_KEY);
+      }
+    }
+  } catch(e) { localStorage.removeItem(_MFA_SESSION_KEY); }
+  if (!alreadyVerified) {
+    alreadyVerified = sessionStorage.getItem(_MFA_SESSION_KEY) === _kvEmailHash;
+  }
   if (alreadyVerified) {
     await callback();
     return;
