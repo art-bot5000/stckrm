@@ -6686,6 +6686,8 @@ let _kvEmail         = '';
 let _kvEmailHash     = '';
 let _kvVerifier      = '';
 let _kvKey           = null;
+// Captured when the "Stay signed in" checkbox changes — survives wizard DOM teardown
+let _rememberMeChecked = false;
 let _kvSessionToken  = null;
 
 // Sentinel — thrown by kvPull when ciphertext exists but decryption fails.
@@ -9423,9 +9425,11 @@ async function removeWrappedKey(deviceId) {
 // If the user ticked "Stay signed in", trust the device without any popup.
 // This replaces the old offerTrustDevice() confirm dialog entirely.
 async function _trustIfRemembered(email, emailHash, verifier, key) {
+  // Read checkbox state — check both the DOM element (if still present)
+  // AND the captured variable (set when checkbox changes, survives wizard teardown)
   const cb = document.getElementById('remember-me-checkbox');
-  const remembered = cb?.checked || getCookieConsent() === 'granted';
-  if (!remembered) return; // user didn't ask to stay signed in
+  const remembered = cb?.checked || _rememberMeChecked || getCookieConsent() === 'granted';
+  if (!remembered) return;
   // Don't re-trust if already trusted
   const secret = localStorage.getItem('stockroom_device_secret');
   if (secret) {
@@ -9595,15 +9599,14 @@ async function kvStoreSession(email, emailHash, verifier, key) {
   try {
     localStorage.setItem('stockroom_kv_session', JSON.stringify({ email, emailHash, verifier }));
   } catch(e) {}
-  // Cache key for 4 hours so session survives refresh even without trusted device
+  // Cache key — 4 hours normally, 30 days if user asked to stay signed in
   if (key) {
     try {
       const exported = await crypto.subtle.exportKey('raw', key);
       const keyData  = btoa(String.fromCharCode(...new Uint8Array(exported)));
-      await lsSetEncrypted('stockroom_kv_session_key', {
-        keyData, emailHash,
-        expiry: Date.now() + 4 * 60 * 60 * 1000,
-      });
+      const staySignedIn = _rememberMeChecked || getCookieConsent() === 'granted';
+      const expiry = Date.now() + (staySignedIn ? 30 : 4) * 24 * 60 * 60 * 1000;
+      await lsSetEncrypted('stockroom_kv_session_key', { keyData, emailHash, expiry });
     } catch(e) {}
   }
   const el = document.getElementById('kv-account-email');
@@ -10842,6 +10845,18 @@ window.addEventListener('resize', () => {
 }, { passive: true });
 
 document.addEventListener('DOMContentLoaded', () => {
+  // Capture "Stay signed in" checkbox state into a module variable immediately —
+  // the checkbox is in the login wizard which gets torn down before offerTrustDevice runs,
+  // so getElementById('remember-me-checkbox') returns null by then.
+  const rememberCb = document.getElementById('remember-me-checkbox');
+  if (rememberCb) {
+    // Pre-populate from cookie consent already granted
+    if (getCookieConsent() === 'granted') _rememberMeChecked = true;
+    rememberCb.addEventListener('change', () => {
+      _rememberMeChecked = rememberCb.checked;
+    });
+  }
+
   document.querySelectorAll('.tab').forEach(btn => {
     const onclick = btn.getAttribute('onclick') || '';
     const match   = onclick.match(/showView\('(\w+)'/);
@@ -14278,11 +14293,13 @@ async function init() {
       }
       hideDataLoadingOverlay();
     }
+    // Hide the wizard/login screen immediately — MFA modal will gate access if needed,
+    // but the login screen should never be visible underneath the MFA prompt.
+    document.body.classList.remove('wizard-active');
+    document.getElementById('wizard').style.display = 'none';
+    window.scrollTo(0, 0);
     // Single hard checkpoint — _mfaGate always fetches fresh MFA state from server
     await _mfaGate(async () => {
-      document.body.classList.remove('wizard-active');
-      document.getElementById('wizard').style.display = 'none';
-      window.scrollTo(0, 0);
       showDataLoadingOverlay('Loading your Stockroom…');
       scheduleRender(...RENDER_REGIONS);
       try { await kvSyncNow(true); } catch(e) {}
