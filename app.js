@@ -7318,6 +7318,14 @@ function _showAuthStep(email, usePasskey) {
   }
   const errEl = document.getElementById('kv-login-error');
   if (errEl) errEl.style.display = 'none';
+
+  // Pre-check "Stay signed in" if consent was previously granted
+  const authCb = document.getElementById('remember-me-checkbox-auth');
+  if (authCb) {
+    const alreadyConsented = getCookieConsent() === 'granted';
+    authCb.checked = alreadyConsented;
+    _rememberMeChecked = alreadyConsented;
+  }
 }
 
 // Show passphrase section within auth step

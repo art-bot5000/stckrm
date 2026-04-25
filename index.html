@@ -427,7 +427,7 @@
           <!-- Stay signed in — shown on the auth step for returning users -->
           <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding:10px 12px;background:rgba(255,255,255,0.03);border-radius:8px">
             <input type="checkbox" id="remember-me-checkbox-auth" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;margin:2px 0 0;flex-shrink:0"
-              onchange="_rememberMeChecked=this.checked">
+              onchange="_rememberMeChecked=this.checked;if(this.checked){localStorage.setItem('stockroom_cookie_consent','granted');var e=document.getElementById('kv-login-email-display');if(e&&e.value)localStorage.setItem('stockroom_remembered_email',e.value);}else{localStorage.removeItem('stockroom_remembered_email');}">
             <div>
               <label for="remember-me-checkbox-auth" style="font-size:13px;color:var(--text);cursor:pointer;line-height:1.4;font-weight:600;display:block">Stay signed in on this device</label>
               <span style="font-size:11px;color:var(--muted);line-height:1.4">Keeps your session active for 30 days. Only use on your personal device.</span>
