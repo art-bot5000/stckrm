@@ -10269,6 +10269,8 @@ async function kvSignOut() {
   } else {
     localStorage.removeItem('stockroom_mfa_was_active');
   }
+  // Clear the per-session verified flag — next login must verify MFA again
+  try { sessionStorage.removeItem(_MFA_SESSION_KEY); } catch(e) {}
   // Dismiss any decrypt error banner — no need to show it after an intentional sign-out
   document.getElementById('kv-decrypt-error-banner')?.remove();
   // Clean up any grocery drag UI
@@ -16248,6 +16250,8 @@ async function mfaVerifySubmit() {
 
   _mfaVerifyAltMode = false;
   localStorage.removeItem('stockroom_mfa_was_active');
+  // Mark MFA as verified for this browser session (allows trusted devices to skip on reload)
+  try { sessionStorage.setItem(_MFA_SESSION_KEY, _kvEmailHash || '1'); } catch(e) {}
   closeModal('mfa-verify-modal');
   if (codeEl) codeEl.value = '';
   if (_pendingMfaCallback) { const cb = _pendingMfaCallback; _pendingMfaCallback = null; cb(); }
@@ -16283,9 +16287,16 @@ let _mfaEmailTestSent    = false;
 // ── MFA gate — single hard checkpoint for all login paths ────────────────────
 // Every path into the app calls _mfaGate(callback). It:
 //   1. Pulls the latest settings from the server (so MFA state is always fresh)
-//   2. If MFA is enabled, shows the verify modal and only runs callback on success
-//   3. If MFA is disabled, runs callback immediately
-// This is the ONLY place the app unlocks. All other paths call this.
+//   2. If MFA is enabled AND not already verified this session, shows verify modal
+//   3. If disabled OR already verified this session, runs callback immediately
+//
+// "Stay signed in" behaviour with MFA:
+//   - First load after sign-in: MFA fires, user verifies → flag set in sessionStorage
+//   - Subsequent page loads in same browser session: flag present → MFA skipped
+//   - Sign out or cookie/storage clear: sessionStorage wiped → MFA fires again next load
+//   - Explicit sign-out always clears the flag
+const _MFA_SESSION_KEY = 'stockroom_mfa_verified';
+
 async function _mfaGate(callback) {
   // Pull fresh settings from server — MFA state must be authoritative from server
   if (kvConnected && _kvKey) {
@@ -16296,7 +16307,6 @@ async function _mfaGate(callback) {
         if (remoteMfa !== undefined) {
           settings.mfa = remoteMfa;
           await _saveSettings();
-          // Clear the was-active flag now that we have fresh server state
           localStorage.removeItem('stockroom_mfa_was_active');
         }
       }
@@ -16305,17 +16315,24 @@ async function _mfaGate(callback) {
     }
   }
 
-  // Determine if MFA should fire:
-  // 1. settings.mfa says enabled (from server or local IDB)
-  // 2. OR the was-active flag is set (offline safety net from previous sign-out)
   const mfaActive = (kvConnected && _mfaEnabled()) ||
     (kvConnected && !!localStorage.getItem('stockroom_mfa_was_active'));
 
-  if (mfaActive) {
-    await _mfaLoginIntercept(callback);
-  } else {
+  if (!mfaActive) {
     await callback();
+    return;
   }
+
+  // MFA is enabled — check if already verified this browser session
+  // sessionStorage is wiped on tab/browser close AND on cookie clear,
+  // so "stay signed in" users only verify once per session.
+  const alreadyVerified = sessionStorage.getItem(_MFA_SESSION_KEY) === _kvEmailHash;
+  if (alreadyVerified) {
+    await callback();
+    return;
+  }
+
+  await _mfaLoginIntercept(callback);
 }
 function _totpGenerate(secret, time) {
   const b32   = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
