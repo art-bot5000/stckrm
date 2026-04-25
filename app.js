@@ -342,7 +342,7 @@ function getStatus(pct, threshold) {
 }
 
 const STATUS_COLOR = { critical:'#e85050', warn:'#e8a838', ok:'#4cbb8a', nodata:'#7880a0' };
-const STATUS_LABEL = { critical:'🔴 Critical', warn:'🟡 Low', ok:'🟢 Good', nodata:'⚪ No data' };
+const STATUS_LABEL = { critical:`<span class='status-dot status-critical'></span> Critical`, warn:`<span class='status-dot status-low'></span> Low`, ok:`<span class='status-dot status-ok'></span> Good`, nodata:`<span class='status-dot status-none'></span> No data` };
 
 // ═══════════════════════════════════════════
 //  PERSISTENCE — IndexedDB backed
@@ -1288,7 +1288,7 @@ function renderTemplateGrid() {
       <span style="font-size:22px;flex-shrink:0">${t.emoji}</span>
       <div style="min-width:0">
         <div style="font-size:12px;font-weight:600;color:var(--text);line-height:1.3">${esc(t.name)}</div>
-        <div style="font-size:10px;color:var(--muted);margin-top:2px">${t.months}mo supply${t.replacementInterval ? ' · 🔔 reminder' : ''}</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:2px">${t.months}mo supply${t.replacementInterval ? ' · <svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> reminder' : ''}</div>
       </div>
     </button>`;
   }).join('');
@@ -1354,7 +1354,7 @@ function renderPendingDeliveries() {
             <div class="inc-meta">Ordered ${orderedDate} · qty ${qty}${price ? ' · ' + esc(price) : ''}</div>
           </div>
           <button class="btn btn-sm" style="background:rgba(76,187,138,0.15);color:var(--ok);border:1px solid rgba(76,187,138,0.3);white-space:nowrap"
-            onclick="openDeliveredModal('${item.id}')">📦 Delivered</button>
+            onclick="openDeliveredModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-package-check"></use></svg> Delivered</button>
         </div>`;
       }).join('');
     }
@@ -1369,7 +1369,7 @@ function renderPendingDeliveries() {
       reportEl.style.display = 'block';
       reportEl.innerHTML = `
         <div style="background:rgba(91,141,238,0.08);border:1px solid rgba(91,141,238,0.25);border-radius:12px;padding:18px 20px">
-          <div style="font-size:13px;font-weight:700;color:#5b8dee;margin-bottom:12px">📦 Pending Deliveries — ${pending.length} item${pending.length!==1?'s':''}</div>
+          <div style="font-size:13px;font-weight:700;color:#5b8dee;margin-bottom:12px"><svg class="icon" aria-hidden="true"><use href="#i-truck"></use></svg> Pending Deliveries — ${pending.length} item${pending.length!==1?'s':''}</div>
           ${pending.map(item => {
             const pendingLog = [...item.logs].reverse().find(l => l.pendingDelivery);
             const orderedDate = pendingLog?.date ? fmtDate(pendingLog.date) : '—';
@@ -1381,7 +1381,7 @@ function renderPendingDeliveries() {
                 <div style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:2px">Ordered ${orderedDate} · qty ${qty}${price ? ' · ' + esc(price) : ''}</div>
               </div>
               <button class="btn btn-sm" style="background:rgba(76,187,138,0.15);color:var(--ok);border:1px solid rgba(76,187,138,0.3);white-space:nowrap"
-                onclick="openDeliveredModal('${item.id}')">📦 Delivered</button>
+                onclick="openDeliveredModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-package-check"></use></svg> Delivered</button>
             </div>`;
           }).join('')}
         </div>`;
@@ -1420,7 +1420,7 @@ function renderIncompleteSection() {
       <div class="incomplete-card">
         <div>
           <div class="inc-name">${esc(item.name)}</div>
-          <div class="inc-meta">⚡ Quick added · no details yet</div>
+          <div class="inc-meta"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg> Quick added · no details yet</div>
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
           <button class="btn-icon" title="Complete setup" onclick="openEditModal('${item.id}');enableItemEdit()"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
@@ -1577,7 +1577,7 @@ async function renderReminders() {
   const nudgeText = document.getElementById('reminders-nudge-text');
   if (nudge && overdue.length > 0) {
     nudge.style.display = 'flex';
-    nudgeText.textContent = `🔴 ${overdue.length} replacement${overdue.length !== 1 ? 's' : ''} overdue`;
+    nudgeText.innerHTML = `<svg class="icon icon-sm" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> ${overdue.length} replacement${overdue.length !== 1 ? 's' : ''} overdue`;
   } else if (nudge) {
     nudge.style.display = 'none';
   }
@@ -1638,7 +1638,7 @@ function reminderCardHTML(r) {
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
         <span style="font-size:15px;font-weight:700;color:var(--text)">${esc(r.name)}</span>
         ${isFromItem ? `<span style="font-size:10px;color:var(--muted);font-family:var(--mono);padding:1px 6px;border:1px solid var(--border);border-radius:99px">linked</span>` : ''}
-        <span style="font-size:10px;color:var(--muted);margin-left:auto;opacity:0.5">📊 Timeline</span>
+        <span style="font-size:10px;color:var(--muted);margin-left:auto;opacity:0.5"><svg class="icon" aria-hidden="true"><use href="#i-bar-chart-2"></use></svg> Timeline</span>
       </div>
       <div style="font-size:12px;font-weight:700;color:${statusColor};margin-bottom:4px">${timeLabel}</div>
       <div style="font-size:11px;color:var(--muted);font-family:var(--mono);line-height:1.8">
@@ -1646,9 +1646,9 @@ function reminderCardHTML(r) {
       </div>
       ${r.notes ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-top:6px"><svg class="icon" aria-hidden="true"><use href="#i-message-square"></use></svg> ${esc(r.notes)}</div>` : ''}
       <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap" onclick="event.stopPropagation()">
-        <button class="btn btn-primary btn-sm" onclick="openLogReplacementModal('${r.id}')">✅ Mark replaced</button>
-        ${!isFromItem ? `<button class="btn btn-ghost btn-sm" onclick="openEditReminderModal('${r.id}')">✏️ Edit</button>` : `<button class="btn btn-ghost btn-sm" onclick="openEditModal('${r.fromItem}');enableItemEdit()">✏️ Edit item</button>`}
-        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteReminder('${isFromItem ? 'item_' + r.fromItem : r.id}')">🗑️ Delete</button>
+        <button class="btn btn-primary btn-sm" onclick="openLogReplacementModal('${r.id}')"><svg class="icon" aria-hidden="true"><use href="#i-check-circle-2"></use></svg> Mark replaced</button>
+        ${!isFromItem ? `<button class="btn btn-ghost btn-sm" onclick="openEditReminderModal('${r.id}')"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit</button>` : `<button class="btn btn-ghost btn-sm" onclick="openEditModal('${r.fromItem}');enableItemEdit()"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit item</button>`}
+        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteReminder('${isFromItem ? 'item_' + r.fromItem : r.id}')"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
       </div>
     </div>
   </div>`;
@@ -1813,7 +1813,7 @@ function openReminderTimeline(reminderId) {
           return `in ${diff}d`;
         })();
 
-        const icon = isReorder ? '🛒' : isOverdue ? '⚠️' : isNext ? '🔔' : isAnchor ? '📌' : isPast ? '✅' : '○';
+        const icon = isReorder ? '<svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg>' : isOverdue ? '<svg class="icon" aria-hidden="true"><use href="#i-alert-triangle"></use></svg>' : isNext ? '<svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg>' : isAnchor ? '<svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg>' : isPast ? '<svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>' : '○';
         const chip = isReorder
           ? `<span style="font-size:10px;font-weight:700;background:rgba(232,168,56,0.15);color:#e8a838;border:1px solid rgba(232,168,56,0.3);border-radius:99px;padding:1px 7px;font-family:var(--mono)">REORDER</span>`
           : isNext
@@ -1872,7 +1872,7 @@ function updateRemindersBadge(count) {
 // ── Add / Edit ─────────────────────────────
 function openAddReminderModal(prefill) {
   editingReminderId = null;
-  document.getElementById('reminder-modal-title').textContent = '🔔 Add Reminder';
+  document.getElementById('reminder-modal-title').innerHTML = '<svg class="icon icon-md" aria-hidden="true"><use href="#i-bell"></use></svg> Add Reminder';
   document.getElementById('r-name').value          = prefill?.name     || '';
   document.getElementById('r-interval').value      = prefill?.interval || 3;
   document.getElementById('r-unit').value          = prefill?.unit     || 'months';
@@ -1907,7 +1907,7 @@ function openEditReminderModal(id) {
   const r = reminders.find(r => r.id === id);
   if (!r) return;
   editingReminderId = id;
-  document.getElementById('reminder-modal-title').textContent = '🔔 Edit Reminder';
+  document.getElementById('reminder-modal-title').innerHTML = '<svg class="icon icon-md" aria-hidden="true"><use href="#i-bell"></use></svg> Edit Reminder';
   document.getElementById('r-name').value          = r.name     || '';
   document.getElementById('r-interval').value      = r.interval || 3;
   document.getElementById('r-unit').value          = r.unit     || 'months';
@@ -2524,7 +2524,7 @@ function openAnalyticsModal(id) {
   const contentEl = document.getElementById('analytics-content');
   if (!titleEl || !contentEl) return;
 
-  titleEl.textContent = `📊 ${item.name}`;
+  titleEl.innerHTML = `<svg class="icon" aria-hidden="true"><use href="#i-bar-chart-2"></use></svg> ${esc(item.name)}`;
 
   if (!item.logs || item.logs.length < 2) {
     contentEl.innerHTML = `<p style="color:var(--muted);font-size:13px">Not enough purchase history yet. Log at least 2 purchases to see analytics.</p>`;
@@ -2578,7 +2578,7 @@ function openAnalyticsModal(id) {
     </div>` : ''}
     ${suggestion ? `
     <div style="background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.2);border-radius:10px;padding:12px;margin-bottom:12px">
-      <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:4px">💡 Smart Reorder Suggestion</div>
+      <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:4px"><svg class="icon" aria-hidden="true"><use href="#i-lightbulb"></use></svg> Smart Reorder Suggestion</div>
       <div style="font-size:13px;color:var(--text)">Buy <strong>×${suggestion.qty}</strong> — covers your typical ${suggestion.shopWindowDays}-day shop window</div>
       <div style="font-size:11px;color:var(--muted);margin-top:3px">Based on your avg restock interval of ${suggestion.avgGapDays} days</div>
     </div>` : ''}
@@ -2654,9 +2654,9 @@ function renderHealthDashboard() {
       ${label} <span style="font-size:14px;font-weight:800">${count}</span>
     </button>`;
   el.innerHTML =
-    pill(critical, '🔴 Critical', '#e85050', 'critical') +
-    pill(warn,     '🟡 Low',      '#e8a838', 'warn') +
-    pill(ok,       '🟢 Good',     '#4cbb8a', 'ok') +
+    pill(critical, `<span class='status-dot status-critical'></span> Critical`, '#e85050', 'critical') +
+    pill(warn,     `<span class='status-dot status-low'></span> Low`,      '#e8a838', 'warn') +
+    pill(ok,       `<span class='status-dot status-ok'></span> Good`,     '#4cbb8a', 'ok') +
     (nodata ? `<span style="font-size:12px;color:var(--muted);padding:5px 4px">${nodata} no data</span>` : '');
 }
 
@@ -2707,7 +2707,7 @@ function renderLogHistory(item) {
         <span style="color:var(--muted);font-family:var(--mono);font-size:11px">${fmtDate(l.date)}</span>
         <span style="font-family:var(--mono);font-size:12px;display:flex;align-items:center;gap:4px">
           ×${l.qty}
-          ${l.price ? `<span style="color:${isCheapest?'var(--ok)':isMostExp?'var(--danger)':'var(--text)'};font-weight:700">${esc(l.price)}</span>${priceTrendEl}${isCheapest?'<span style="font-size:10px">🏷</span>':''}` : ''}
+          ${l.price ? `<span style="color:${isCheapest?'var(--ok)':isMostExp?'var(--danger)':'var(--text)'};font-weight:700">${esc(l.price)}</span>${priceTrendEl}${isCheapest?'<svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg>':''}` : ''}
         </span>
       </div>
       <button onclick="deleteLogEntry('${item.id}','${l.id}')" title="Delete this entry" style="background:none;border:none;cursor:pointer;font-size:14px;color:var(--muted);padding:2px 4px;border-radius:4px;flex-shrink:0" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--muted)'"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
@@ -3679,27 +3679,27 @@ function cardHTML(item, threshold) {
 
   const fillColor = status === 'critical' ? '#e85050' : status === 'warn' ? '#e8a838' : '#4cbb8a';
   const cadenceBadge = item.cadence === 'bulk'
-    ? `<span class="cadence-badge badge-bulk">📦 Bulk</span>`
-    : `<span class="cadence-badge badge-monthly">🗓️ Monthly</span>`;
+    ? `<span class="cadence-badge badge-bulk"><svg class="icon" aria-hidden="true"><use href="#i-package"></use></svg> Bulk</span>`
+    : `<span class="cadence-badge badge-monthly"><svg class="icon" aria-hidden="true"><use href="#i-calendar-days"></use></svg> Monthly</span>`;
   const statusBadge = `<span class="status-badge" style="background:${color}22;color:${color}">${STATUS_LABEL[status]}</span>`;
 
   return `
   <div class="item-card" style="border-left:3px solid ${color}" data-id="${item.id}"
     ontouchstart="swipeStart(event,'${item.id}')" ontouchmove="swipeMove(event,'${item.id}')" ontouchend="swipeEnd(event,'${item.id}')">
-    <div class="swipe-hint" id="swipe-hint-${item.id}">📋</div>
+    <div class="swipe-hint" id="swipe-hint-${item.id}"><svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg></div>
     ${item.imageUrl ? `<img class="card-image" src="${esc(item.imageUrl)}" alt="${esc(item.name)}" onerror="this.style.display='none'">` : ''}
     <div class="card-top">
       <div class="card-category">${item.category||'Other'}</div>
       <div class="card-btns">
-        <button class="btn-icon" title="Update stock count" onclick="openStockCountModal('${item.id}')">🔢</button>
-        <button class="btn-icon" title="Usage analytics" onclick="openAnalyticsModal('${item.id}')">📊</button>
-        <button class="btn-icon" title="Price history" onclick="openPriceHistoryModal('${item.id}')" ${getPriceHistory(item).length < 2 ? 'style="opacity:0.35;cursor:default"' : ''}>💰</button>
+        <button class="btn-icon" title="Update stock count" onclick="openStockCountModal('${item.id}'"><svg class="icon" aria-hidden="true"><use href="#i-hash"></use></svg></button>
+        <button class="btn-icon" title="Usage analytics" onclick="openAnalyticsModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-bar-chart-2"></use></svg></button>
+        <button class="btn-icon" title="Price history" onclick="openPriceHistoryModal('${item.id}')" ${getPriceHistory(item).length < 2 ? 'style="opacity:0.35;cursor:default"' : ''}><svg class="icon" aria-hidden="true"><use href="#i-banknote"></use></svg></button>
         <button class="btn-icon" title="Share item" onclick="shareItem('${item.id}')">↗️</button>
         <button class="btn-icon" title="Edit" onclick="openEditModal('${item.id}');enableItemEdit()"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
         ${item._archived
           ? `<button class="btn-icon" title="Restore from archive" onclick="restoreItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-refresh-ccw"></use></svg></button>
              <button class="btn-icon" title="Delete permanently" onclick="deleteItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>`
-          : `<button class="btn-icon" title="Archive item" onclick="archiveItem('${item.id}')">📦</button>`}
+          : `<button class="btn-icon" title="Archive item" onclick="archiveItem('${item.id}'><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg></button>`}
       </div>
     </div>
     <div class="card-name" style="margin-bottom:12px">${esc(item.name)}</div>
@@ -3718,12 +3718,12 @@ function cardHTML(item, threshold) {
       <div class="meta-item"><strong>${item.startedUsing ? fmtDate(item.startedUsing) : '—'}</strong>Started using</div>
       <div class="meta-item"><strong>${item.months||1}mo</strong>Per purchase</div>
     </div>
-    ${item.stockCount != null ? `<div style="font-size:11px;color:var(--accent2);font-family:var(--mono);margin-bottom:8px">🔢 Stock count: ${item.stockCount} units remaining · counted ${fmtDate(item.stockCountDate)}</div>` : ''}
+    ${item.stockCount != null ? `<div style="font-size:11px;color:var(--accent2);font-family:var(--mono);margin-bottom:8p"><svg class="icon" aria-hidden="true"><use href="#i-hash"></use></svg> Stock count: ${item.stockCount} units remaining · counted ${fmtDate(item.stockCountDate)}</div>` : ''}
     ${priceTrendHTML(item)}
     ${frequencyInsightHTML(item)}
     <div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       ${cadenceBadge}${statusBadge}
-      ${item.ordered ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(91,141,238,0.15);border:1px solid rgba(91,141,238,0.3);color:#5b8dee;font-family:var(--mono)">📦 Ordered</span>` : ''}
+      ${item.ordered ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(91,141,238,0.15);border:1px solid rgba(91,141,238,0.3);color:#5b8dee;font-family:var(--mono"><svg class="icon" aria-hidden="true"><use href="#i-truck"></use></svg> Ordered</span>` : ''}
       ${(() => { const ex = getExpiryStatus(item); return ex ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(232,168,56,0.1);border:1px solid rgba(232,168,56,0.3);color:${ex.color};font-family:var(--mono)" title="${fmtDate(item.expiry)}">⏰ ${ex.label}</span>` : ''; })()}
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
@@ -3738,18 +3738,18 @@ function cardHTML(item, threshold) {
     ${cardTagsHTML(item)}
     ${item.notes ? `<div class="card-notes"><svg class="icon" aria-hidden="true"><use href="#i-message-square"></use></svg> ${esc(item.notes)}</div>` : ''}
     ${storePricesCardHTML(item)}
-    ${item.url ? `<a class="card-link" href="${esc(item.url)}" target="_blank" rel="noopener">🛒 Buy now ↗</a>` : ''}
+    ${item.url ? `<a class="card-link" href="${esc(item.url)}" target="_blank" rel="noopener"><svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Buy now ↗</a>` : ''}
     ${item.logs?.some(l => l.pendingDelivery) && !item.startedUsing
       ? `<div style="font-size:12px;color:var(--warn);background:rgba(232,168,56,0.1);border:1px solid rgba(232,168,56,0.25);border-radius:8px;padding:8px 12px;margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px">
-           <span>⏳ When did you start using this?</span>
+           <span><svg class="icon" aria-hidden="true"><use href="#i-clock"></use></svg> When did you start using this?</span>
            <button class="btn btn-sm" style="background:rgba(232,168,56,0.2);color:var(--warn);border:none;font-size:12px" onclick="openStartedUsingModal('${item.id}')">Set date</button>
          </div>`
       : ''}
     <div style="display:flex;gap:6px;margin-top:10px">
-      <button class="btn btn-ghost btn-sm log-btn" style="flex:1" onclick="openLogPurchaseModal('${item.id}')">📋 Log Purchase</button>
+      <button class="btn btn-ghost btn-sm log-btn" style="flex:1" onclick="openLogPurchaseModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> Log Purchase</button>
       ${item.ordered
-        ? `<button class="btn btn-sm log-btn" style="flex:1;background:rgba(76,187,138,0.15);color:var(--ok);border:1px solid rgba(76,187,138,0.3)" onclick="openDeliveredModal('${item.id}')">📦 Delivered</button>`
-        : `<button class="btn btn-ghost btn-sm log-btn" style="flex:1;color:var(--muted)" onclick="openDeliveredModal('${item.id}')">📦 Delivered</button>`
+        ? `<button class="btn btn-sm log-btn" style="flex:1;background:rgba(76,187,138,0.15);color:var(--ok);border:1px solid rgba(76,187,138,0.3)" onclick="openDeliveredModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-package-check"></use></svg> Delivered</button>`
+        : `<button class="btn btn-ghost btn-sm log-btn" style="flex:1;color:var(--muted)" onclick="openDeliveredModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-package-check"></use></svg> Delivered</button>`
       }
     </div>
   </div>`;
@@ -3764,7 +3764,7 @@ function storePricesCardHTML(item) {
   const chips = parsed.map(sp => {
     const isBest = sp.val !== null && sp.val === minVal && validPrices.length > 1;
     return `<span style="font-size:11px;font-family:var(--mono);padding:2px 8px;border-radius:99px;background:${isBest?'rgba(76,187,138,0.15)':'var(--surface2)'};border:1px solid ${isBest?'rgba(76,187,138,0.4)':'var(--border)'};color:${isBest?'var(--ok)':'var(--muted)'};white-space:nowrap">
-      ${esc(sp.store)}: ${esc(sp.price)}${isBest?' 🏷':''}
+      ${esc(sp.store)}: ${esc(sp.price)}${isBest?' <svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg>':''}
     </span>`;
   }).join('');
   return `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">${chips}</div>`;
@@ -3975,7 +3975,7 @@ async function fetchProductImage() {
 
   const imageUrl = await extractOgImage(url);
 
-  btn.textContent = '🖼 Fetch Image';
+  btn.textContent = 'Fetch Image';
   btn.disabled = false;
 
   if (imageUrl) {
@@ -4013,7 +4013,7 @@ async function fetchProductImage() {
 
   const imageUrl = await findProductImage(name || url);
 
-  btn.textContent = '🖼 Find Image';
+  btn.textContent = 'Find Image';
   btn.disabled = false;
 
   if (imageUrl) {
@@ -4193,7 +4193,7 @@ function frequencyInsightHTML(item) {
   const configured = f.configuredMonths === 1 ? '1 month' : `${f.configuredMonths} months`;
   const faster = f.avgMonths < f.configuredMonths;
   return `<div style="background:rgba(91,141,238,0.08);border:1px solid rgba(91,141,238,0.25);border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:11px;line-height:1.5;display:flex;align-items:flex-start;gap:8px">
-    <span>💡</span>
+    <span><svg class="icon" aria-hidden="true"><use href="#i-lightbulb"></use></svg></span>
     <span style="color:var(--muted)">
       Based on ${f.purchases} purchases, you actually restock every ${actual}
       — ${faster ? 'faster' : 'slower'} than your configured ${configured}.
@@ -4337,7 +4337,7 @@ function renderReport() {
   let html = '';
 
   if (needBuy.length) {
-    html += `<div id="need-to-buy"><h3>⚠️ BUY BEFORE YOU RUN OUT</h3><div class="buy-chips">
+    html += `<div id="need-to-buy"><h3><svg class="icon" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> BUY BEFORE YOU RUN OUT</h3><div class="buy-chips">
       ${needBuy.map(({item,daysLeft}) => `<span class="buy-chip">${esc(item.name)} <span style="color:${daysLeft<7?'#e85050':'#e8a838'};font-family:var(--mono)">(${daysLeft??'?'}d)</span></span>`).join('')}
     </div></div>`;
   }
@@ -4370,10 +4370,10 @@ function renderReport() {
       ${makeTable(entries)}
     </div>`;
 
-  html += section('🔴 Critical — Order Now', '#e85050', groups.critical);
-  html += section('🟡 Getting Low — Order Soon', '#e8a838', groups.warn);
-  html += section('🟢 Well Stocked', '#4cbb8a', groups.ok);
-  if (groups.nodata.length) html += section('⚪ No Purchase Data', '#7880a0', groups.nodata);
+  html += section('<svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Critical — Order Now', '#e85050', groups.critical);
+  html += section('<svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Getting Low — Order Soon', '#e8a838', groups.warn);
+  html += section('<svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Well Stocked', '#4cbb8a', groups.ok);
+  if (groups.nodata.length) html += section('<svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> No Purchase Data', '#7880a0', groups.nodata);
 
   document.getElementById('report-content').innerHTML = html || '<p style="color:var(--muted);text-align:center;padding:60px">No items yet.</p>';
 }
@@ -4703,7 +4703,7 @@ function openPriceHistoryModal(id) {
   const history = getPriceHistory(item);
   if (!history.length) return;
 
-  document.getElementById('ph-title').textContent = '💰 ' + item.name;
+  document.getElementById('ph-title').innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-banknote"></use></svg> ' + esc(item.name);
 
   const prices  = history.map(h => h.price);
   const minP    = Math.min(...prices);
@@ -4789,7 +4789,7 @@ function openPriceHistoryModal(id) {
             <td style="font-family:monospace;font-size:12px">${fmtDate(h.date)}</td>
             <td style="color:var(--muted);font-size:12px">${esc(h.store||'—')}</td>
             <td style="font-family:monospace;font-size:12px">${history[history.length-1-i]?.qty||'—'}</td>
-            <td style="font-family:monospace;font-weight:700;color:${isLow?'var(--ok)':isHigh?'var(--danger)':'var(--text)'}">${h.raw||currency+h.price.toFixed(2)}${isLow?' 🏷':''}</td>
+            <td style="font-family:monospace;font-weight:700;color:${isLow?'var(--ok)':isHigh?'var(--danger)':'var(--text)'}">${h.raw||currency+h.price.toFixed(2)}${isLow?' <svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg>':''}</td>
             <td style="font-size:12px">${vsEl}</td>
           </tr>`;
         }).join('')}</tbody>
@@ -5041,7 +5041,7 @@ function renderSavingsView() {
       : '';
 
     const snsBuyBtn = snsLink && status !== 'active'
-      ? `<a href="${esc(snsLink)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">🔗 Subscribe on Amazon</a>`
+      ? `<a href="${esc(snsLink)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm"><svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg> Subscribe on Amazon</a>`
       : '';
 
     return `<div class="sns-item">
@@ -11709,7 +11709,7 @@ function renderGrocery() {
   if (hcBtn) {
     const hasChecked = listItems.some(i => i.checked);
     hcBtn.style.display = hasChecked && !groceryEditMode && activeGroceryListId ? 'inline-flex' : 'none';
-    hcBtn.textContent = groceryHideChecked ? '👁 Show ticked' : '<svg class="icon" aria-hidden="true"><use href="#i-eye-off"></use></svg> Hide ticked';
+    hcBtn.innerHTML = groceryHideChecked ? `<svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg> Show ticked` : `<svg class="icon" aria-hidden="true"><use href="#i-eye-off"></use></svg> Hide ticked`;
     hcBtn.style.color = groceryHideChecked ? 'var(--accent)' : '';
     hcBtn.style.borderColor = groceryHideChecked ? 'rgba(232,168,56,0.4)' : '';
     hcBtn.style.background = groceryHideChecked ? 'rgba(232,168,56,0.08)' : '';
@@ -12064,7 +12064,7 @@ function toggleGroceryHideChecked() {
   try { localStorage.setItem('stockroom_hide_checked', groceryHideChecked ? '1' : '0'); } catch(e) {}
   const btn = document.getElementById('grocery-hide-checked-btn');
   if (btn) {
-    btn.textContent = groceryHideChecked ? '👁 Show ticked' : '<svg class="icon" aria-hidden="true"><use href="#i-eye-off"></use></svg> Hide ticked';
+    btn.innerHTML = groceryHideChecked ? `<svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg> Show ticked` : `<svg class="icon" aria-hidden="true"><use href="#i-eye-off"></use></svg> Hide ticked`;
     btn.style.color = groceryHideChecked ? 'var(--accent)' : '';
     btn.style.borderColor = groceryHideChecked ? 'rgba(232,168,56,0.4)' : '';
     btn.style.background = groceryHideChecked ? 'rgba(232,168,56,0.08)' : '';
@@ -12713,7 +12713,7 @@ function openGroceryContext(e, id) {
   if (!item) return;
   const menu = document.getElementById('grocery-context-menu');
   menu.innerHTML = `
-    <button class="grocery-context-item" onclick="editFromContext()">✏️ Edit item</button>
+    <button class="grocery-context-item" onclick="editFromContext()"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit item</button>
     <button class="grocery-context-item" onclick="convertFromContext()">📦 Convert to stock item</button>
     <button class="grocery-context-item danger" onclick="deleteFromContext()">🗑 Delete</button>
   `;
@@ -15161,7 +15161,7 @@ async function renderNotes() {
 
   visible.forEach(n => {
     if (showHeaders && n.pinned && !inPinned) {
-      html += `<div class="notes-section-label" style="padding:8px 0 4px">📌 Pinned</div>`;
+      html += `<div class="notes-section-label" style="padding:8px 0 4px"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg> Pinned</div>`;
       inPinned = true;
     }
     if (showHeaders && !n.pinned && inPinned) {
