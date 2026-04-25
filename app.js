@@ -9434,24 +9434,21 @@ async function removeWrappedKey(deviceId) {
 // If the user ticked "Remember me", trust the device without any popup.
 // This replaces the old offerTrustDevice() confirm dialog entirely.
 async function _trustIfRemembered(email, emailHash, verifier, key) {
-  // Check all possible sources of "stay signed in" intent:
-  // 1. The module-level flag (set by either checkbox via onchange)
-  // 2. The step-1b checkbox (email entry step, new users)
-  // 3. The step-1b-auth checkbox (passphrase step, returning users)
-  // 4. Previously granted cookie consent
   const cb1 = document.getElementById('remember-me-checkbox');
   const cb2 = document.getElementById('remember-me-checkbox-auth');
   const remembered = _rememberMeChecked
     || cb1?.checked
     || cb2?.checked
     || getCookieConsent() === 'granted';
+  console.log('[DIAG] _trustIfRemembered: _rememberMeChecked=', _rememberMeChecked, 'cb1=', cb1?.checked, 'cb2=', cb2?.checked, 'consent=', getCookieConsent(), '→ remembered=', remembered);
   if (!remembered) return;
-  // Don't re-trust if already trusted with a valid key
   const secret = localStorage.getItem('stockroom_device_secret');
   if (secret) {
     const existing = await loadWrappedKey(getOrCreateDeviceId(), secret);
+    console.log('[DIAG] _trustIfRemembered: existing IDB key=', !!existing);
     if (existing) return;
   }
+  console.log('[DIAG] _trustIfRemembered: calling trustThisDeviceWith');
   await trustThisDeviceWith(email, emailHash, verifier, key);
 }
 
@@ -9479,6 +9476,7 @@ async function trustThisDeviceWith(email, emailHash, verifier, key) {
   try {
     const deviceId = getOrCreateDeviceId();
     let   secret   = localStorage.getItem('stockroom_device_secret');
+    console.log('[DIAG] trustThisDeviceWith: deviceId=', deviceId, 'existingSecret=', !!secret, 'keyExtractable=', key?.extractable);
     if (!secret) {
       secret = Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2,'0')).join('');
       localStorage.setItem('stockroom_device_secret', secret);
@@ -9610,6 +9608,7 @@ async function kvStoreSession(email, emailHash, verifier, key) {
   _kvEmailHash = emailHash;
   _kvVerifier  = verifier;
   _kvKey       = key;
+  console.log('[DIAG] kvStoreSession: email=', email, '_rememberMeChecked=', _rememberMeChecked, 'consent=', getCookieConsent());
   kvConnected  = true;
   _keyFingerprint(key).then(fp => console.log('[key] kvStoreSession (passphrase) — key fingerprint:', fp));
   try {
@@ -9637,8 +9636,10 @@ async function kvStoreSession(email, emailHash, verifier, key) {
 async function kvRestoreSession() {
   try {
     const raw = localStorage.getItem('stockroom_kv_session');
+    console.log('[DIAG] kvRestoreSession: raw=', raw ? 'found' : 'ABSENT');
     if (!raw) return false;
     const { email, emailHash, verifier, sessionToken, authMethod } = JSON.parse(raw);
+    console.log('[DIAG] kvRestoreSession: email=', email, 'authMethod=', authMethod, 'hasVerifier=', !!verifier, 'hasToken=', !!sessionToken);
     if (!email || !emailHash) return false;
 
     // Back-fill device passkey flag from stored credential map (for users pre-dating this flag)
@@ -9676,6 +9677,7 @@ async function kvRestoreSession() {
     if (secret) {
       try {
         const wrappedKey = await loadWrappedKey(deviceId, secret);
+        console.log('[DIAG] kvRestore: IDB wrappedKey=', !!wrappedKey);
         if (wrappedKey) {
           // Also cache raw key bytes in localStorage as a resilient fallback
           try {
@@ -9709,6 +9711,7 @@ async function kvRestoreSession() {
     // 2. 4-hour session key — stored encrypted in localStorage with expiry
     try {
       const cached = await lsGetEncrypted('stockroom_kv_session_key');
+      console.log('[DIAG] kvRestore: session_key cached=', !!cached, cached ? `expiry in ${Math.round((cached.expiry-Date.now())/60000)}min` : '');
       if (cached && cached.emailHash === emailHash && Date.now() < cached.expiry) {
         const raw2 = Uint8Array.from(atob(cached.keyData), c => c.charCodeAt(0));
         const key  = await crypto.subtle.importKey('raw', raw2, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
@@ -9719,6 +9722,7 @@ async function kvRestoreSession() {
     } catch(e) {}
 
     // 3. Credentials only — key will be prompted on first sync
+    console.log('[DIAG] kvRestore: falling to PATH 3 (credentials only, no key)');
     // Don't make a network call here — just restore what we have from localStorage
     _kvEmail     = email;
     _kvEmailHash = emailHash;
@@ -14258,7 +14262,21 @@ async function init() {
   }
 
   // Restore KV session
+  const _diagSession = localStorage.getItem('stockroom_kv_session');
+  const _diagSecret  = localStorage.getItem('stockroom_device_secret');
+  const _diagEmail   = localStorage.getItem('stockroom_remembered_email');
+  const _diagConsent = localStorage.getItem('stockroom_cookie_consent');
+  const _diagFallback= localStorage.getItem('stockroom_kv_key_fallback');
+  const _diagLsKey   = localStorage.getItem('stockroom_kv_session_key');
+  console.log('[DIAG] ── init ──────────────────────────────');
+  console.log('[DIAG] kv_session:       ', _diagSession ? JSON.parse(_diagSession) : 'ABSENT');
+  console.log('[DIAG] device_secret:    ', _diagSecret  ? 'SET' : 'ABSENT');
+  console.log('[DIAG] remembered_email: ', _diagEmail   || 'ABSENT');
+  console.log('[DIAG] cookie_consent:   ', _diagConsent || 'ABSENT');
+  console.log('[DIAG] key_fallback:     ', _diagFallback ? JSON.parse(_diagFallback) : 'ABSENT');
+  console.log('[DIAG] session_key (ls): ', _diagLsKey   ? 'SET' : 'ABSENT');
   const kvRestored = await kvRestoreSession();
+  console.log('[DIAG] kvRestored:', kvRestored, '| kvConnected:', kvConnected, '| _kvKey:', !!_kvKey);
   if (kvRestored) {
     // Always ensure the data key is available before syncing.
     // If _kvKey is already set (trusted device / 4h cache), this is instant.
@@ -14307,6 +14325,7 @@ async function init() {
   const wizardStep  = localStorage.getItem('stockroom_wizard_step');
   const countrySet  = await getCountrySetForDevice();
   const protectSeen = await getProtectSeenForDevice();
+  console.log('[DIAG] init branch: seen=', seen, 'kvConnected=', kvConnected, '_kvKey=', !!_kvKey, 'protectSeen=', protectSeen);
 
   if (_joinCode) {
   } else if (kvConnected && !protectSeen) {
