@@ -6686,7 +6686,7 @@ let _kvEmail         = '';
 let _kvEmailHash     = '';
 let _kvVerifier      = '';
 let _kvKey           = null;
-// Captured when the "Stay signed in" checkbox changes — survives wizard DOM teardown
+// Captured when the "Remember me" checkbox changes — survives wizard DOM teardown
 let _rememberMeChecked = false;
 let _kvSessionToken  = null;
 
@@ -7181,7 +7181,8 @@ function setDeviceHasPasskey(val) {
 }
 
 function getRememberedEmail() {
-  if (getCookieConsent() !== 'granted') return null;
+  // Consent is implicit — the email is only ever saved when Remember me is ticked,
+  // so if it's present, reading it back is always appropriate.
   try { return localStorage.getItem(COOKIE_EMAIL_KEY) || null; } catch(e) { return null; }
 }
 function getRememberedPasskey() {
@@ -7212,9 +7213,11 @@ function clearRememberedCookieData() {
 function persistLoginCookies(email, hasPasskey) {
   // Always store passkey registration (functional, not tracking)
   if (hasPasskey) setDeviceHasPasskey(true);
-  if (getCookieConsent() !== 'granted') return;
-  setRememberedEmail(email);
-  setRememberedPasskey(hasPasskey);
+  // Save email if Remember me was ticked (consent already granted by checkbox)
+  if (_rememberMeChecked || getCookieConsent() === 'granted') {
+    setRememberedEmail(email);
+    setRememberedPasskey(hasPasskey);
+  }
 }
 
 // ── Navigation ───────────────────────────────────────────────
@@ -7230,15 +7233,13 @@ function showKvLogin() {
   const rememberedEmail   = getRememberedEmail();
   const rememberedPasskey = getRememberedPasskey();
   if (rememberedEmail) {
-    // Skip email screen — go straight to auth with remembered details
+    // Email remembered — skip email entry screen, go straight to auth
     _showAuthStep(rememberedEmail, rememberedPasskey === 'true');
   } else {
     document.getElementById('wizard-step-1b')?.classList.add('active');
-    // Reset remember-me checkbox and cookie panel
+    // Reset remember-me checkbox to unchecked for a fresh login
     const cb = document.getElementById('remember-me-checkbox');
     if (cb) cb.checked = false;
-    const panel = document.getElementById('cookie-inline-panel');
-    if (panel) panel.style.display = 'none';
     // If this device has a passkey, show hint so users know they can use it
     const deviceHasPK = getDeviceHasPasskey();
     const pkHint = document.getElementById('login-passkey-hint');
@@ -7319,12 +7320,12 @@ function _showAuthStep(email, usePasskey) {
   const errEl = document.getElementById('kv-login-error');
   if (errEl) errEl.style.display = 'none';
 
-  // Pre-check "Stay signed in" if consent was previously granted
+  // Pre-check "Remember me" when a remembered email is present or consent was granted
   const authCb = document.getElementById('remember-me-checkbox-auth');
   if (authCb) {
-    const alreadyConsented = getCookieConsent() === 'granted';
-    authCb.checked = alreadyConsented;
-    _rememberMeChecked = alreadyConsented;
+    const shouldCheck = !!getRememberedEmail() || getCookieConsent() === 'granted';
+    authCb.checked = shouldCheck;
+    _rememberMeChecked = shouldCheck;
   }
 }
 
@@ -9430,7 +9431,7 @@ async function removeWrappedKey(deviceId) {
 }
 
 // Silent trust — called after successful passphrase login.
-// If the user ticked "Stay signed in", trust the device without any popup.
+// If the user ticked "Remember me", trust the device without any popup.
 // This replaces the old offerTrustDevice() confirm dialog entirely.
 async function _trustIfRemembered(email, emailHash, verifier, key) {
   // Check all possible sources of "stay signed in" intent:
@@ -9455,7 +9456,7 @@ async function _trustIfRemembered(email, emailHash, verifier, key) {
 }
 
 async function offerTrustDevice(email, emailHash, verifier, key) {
-  // Popup removed — now handled silently via "Stay signed in" checkbox.
+  // Popup removed — now handled silently via "Remember me" checkbox.
   // This stub is kept so any call sites that haven't been updated still work.
   await _trustIfRemembered(email, emailHash, verifier, key);
 }
@@ -10862,14 +10863,14 @@ window.addEventListener('resize', () => {
 }, { passive: true });
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Capture "Stay signed in" checkbox state into a module variable immediately.
+  // Capture "Remember me" checkbox state into a module variable immediately.
   // There are two checkboxes: one on the email step (new users) and one on the
   // passphrase step (returning users). Both set _rememberMeChecked.
   const rememberCb = document.getElementById('remember-me-checkbox');
   const rememberCbAuth = document.getElementById('remember-me-checkbox-auth');
-  const consentGranted = getCookieConsent() === 'granted';
-  // Pre-check both if consent was previously granted
-  if (consentGranted) {
+  // Pre-check if email already remembered
+  const emailAlreadyRemembered = !!getRememberedEmail() || getCookieConsent() === 'granted';
+  if (emailAlreadyRemembered) {
     _rememberMeChecked = true;
     if (rememberCb) rememberCb.checked = true;
     if (rememberCbAuth) rememberCbAuth.checked = true;
