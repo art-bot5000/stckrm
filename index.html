@@ -719,12 +719,12 @@
     <div id="presence-bar" style="display:none"></div>
     <button id="header-shield-btn" onclick="navTo('account-security')"
       title="Account &amp; Security"
-      style="background:none;border:none;cursor:pointer;padding:4px 2px;font-size:17px;line-height:1;display:flex;align-items:center;color:var(--muted)">🛡️</button>
+      style="background:none;border:none;cursor:pointer;padding:4px 2px;display:flex;align-items:center;color:var(--muted)"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-shield"></use></svg></button>
     <div id="sync-pill" class="sync-pill pending" onclick="handleSyncPillTap()">
       <div class="sync-dot"></div>
       <span id="sync-label">Local only</span>
     </div>
-    <button class="btn btn-ghost btn-sm" onclick="openQuickAdd()" title="Quick add multiple items">⚡</button>
+    <button class="btn btn-ghost btn-sm" onclick="openQuickAdd()" title="Quick add multiple items"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg></button>
     <button class="btn btn-primary btn-sm" onclick="openAddModal()">+ Add Item</button>
   </div>
 </div>
@@ -744,7 +744,7 @@
 
 <!-- Incomplete items nudge banner -->
 <div id="incomplete-banner" style="display:none;background:rgba(232,168,56,0.12);border-bottom:1px solid rgba(232,168,56,0.3);padding:10px 20px;align-items:center;justify-content:space-between;gap:12px;font-size:13px;cursor:pointer" onclick="scrollToIncomplete()">
-  <span>⚡ <strong id="incomplete-banner-text">Items need setting up</strong> — tap to complete them</span>
+  <span><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg> <strong id="incomplete-banner-text">Items need setting up</strong> — tap to complete them</span>
   <button class="btn btn-sm" style="background:rgba(232,168,56,0.2);border:1px solid rgba(232,168,56,0.4);color:var(--accent);font-size:12px" onclick="event.stopPropagation();scrollToIncomplete()">View →</button>
 </div>
 
@@ -757,7 +757,7 @@
     </div>
     <!-- Amazon import banner — desktop, dismissed via user data -->
     <div id="amazon-banner-desktop" style="display:none;margin-top:10px;padding:8px 10px;background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.25);border-radius:8px;text-align:center">
-      <div style="font-size:11px;color:var(--accent);font-weight:700;margin-bottom:4px">📦 Import Amazon orders</div>
+      <div style="font-size:11px;color:var(--accent);font-weight:700;margin-bottom:4px"><svg class="icon" aria-hidden="true"><use href="#i-package"></use></svg> Import Amazon orders</div>
       <div style="font-size:10px;color:var(--muted);line-height:1.5;margin-bottom:6px">Auto-populate your stockroom from your purchase history</div>
       <div style="display:flex;gap:6px">
         <button onclick="openAmazonImporter()" style="flex:1;padding:5px 0;background:var(--accent);color:#111;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">Get started</button>
@@ -819,7 +819,7 @@
         <span style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-left:2px">days</span>
       </div>
       <span id="item-count" style="font-size:12px;color:var(--muted)">0 items</span>
-      <button class="btn btn-ghost btn-sm stock-desktop-actions" onclick="openQuickAdd()" title="Quick add" style="display:none">⚡</button>
+      <button class="btn btn-ghost btn-sm stock-desktop-actions" onclick="openQuickAdd()" title="Quick add" style="display:none"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg></button>
       <button class="btn btn-primary btn-sm stock-desktop-actions" onclick="openAddModal()" style="display:none">+ Add Item</button>
     </div>
   </div>
@@ -844,7 +844,7 @@
     <div id="pending-deliveries-section" style="display:none;flex:1;margin-bottom:20px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
         <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:13px;font-weight:700;color:#5b8dee">📦 Pending Deliveries</span>
+          <span style="font-size:13px;font-weight:700;color:#5b8dee"><svg class="icon" aria-hidden="true"><use href="#i-truck"></use></svg> Pending Deliveries</span>
           <span id="pending-deliveries-badge" style="background:rgba(91,141,238,0.2);border:1px solid rgba(91,141,238,0.3);color:#5b8dee;font-size:11px;font-weight:700;padding:1px 7px;border-radius:99px;font-family:var(--mono)"></span>
         </div>
       </div>
@@ -856,10 +856,10 @@
     <div id="incomplete-section" style="display:none;margin-bottom:20px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
         <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:13px;font-weight:700;color:var(--accent)">⚡ Quick Added</span>
+          <span style="font-size:13px;font-weight:700;color:var(--accent)"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg> Quick Added</span>
           <span id="incomplete-count-badge" style="background:rgba(232,168,56,0.2);border:1px solid rgba(232,168,56,0.3);color:var(--accent);font-size:11px;font-weight:700;padding:1px 7px;border-radius:99px;font-family:var(--mono)"></span>
         </div>
-        <span style="font-size:11px;color:var(--muted)">Tap ✏️ to complete setup</span>
+        <span style="font-size:11px;color:var(--muted)">Tap <svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> to complete setup</span>
       </div>
       <div id="incomplete-grid"></div>
       <div style="border-bottom:1px solid var(--border);margin-bottom:16px;margin-top:4px"></div>
@@ -872,7 +872,7 @@
     <!-- Stockroom search — shown on mobile; on desktop it moves inline with filters -->
     <!-- Search always first, full width -->
     <div style="margin-bottom:8px">
-      <input id="stock-search" type="search" placeholder="🔍 Search items…" autocomplete="off"
+      <input id="stock-search" type="search" placeholder="Search items…" autocomplete="off"
         class="grocery-search" style="width:100%;box-sizing:border-box"
         oninput="renderGrid()">
     </div>
@@ -919,7 +919,7 @@
           <button class="filter-chip" onclick="setRatingFilter(3,this)">★★★ 3</button>
           <button class="filter-chip" onclick="setRatingFilter(4,this)">★★★★ 4</button>
           <button class="filter-chip" onclick="setRatingFilter(5,this)">★★★★★ 5</button>
-          <button class="filter-chip" onclick="setRatingFilter(-1,this)">⚠️ Not rated</button>
+          <button class="filter-chip" onclick="setRatingFilter(-1,this)"><svg class="icon" aria-hidden="true"><use href="#i-star-off"></use></svg> Not rated</button>
         </div>
         <button class="btn btn-ghost btn-sm" style="align-self:flex-start;font-size:11px" onclick="resetAllFilters()">↺ Reset filters</button>
       </div>
@@ -936,7 +936,7 @@
       <div style="display:flex;justify-content:flex-end;align-items:center;margin-bottom:12px;gap:8px">
         <div id="shopping-subtitle" style="font-size:12px;color:var(--muted);font-family:var(--mono);flex:1">Items running out in the next 30 days</div>
         <button class="btn btn-ghost btn-sm" onclick="exportShoppingList()"><svg class="icon icon-md" aria-hidden="true"><use href="#i-download"></use></svg> Export</button>
-        <button class="btn btn-primary btn-sm" onclick="openStorePickerModal()">⚙ Stores</button>
+        <button class="btn btn-primary btn-sm" onclick="openStorePickerModal()"><svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg> Stores</button>
       </div>
       <div id="shopping-store-pills" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
       <div id="shopping-tag-filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
@@ -950,7 +950,7 @@
   <div class="view" id="view-reminders">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:10px">
       <div>
-        <h2 style="font-size:18px;font-weight:700">🔔 Reminders</h2>
+        <h2 style="font-size:18px;font-weight:700"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-bell"></use></svg> Reminders</h2>
         <p style="font-size:12px;color:var(--muted);margin-top:3px">Set reminders for Stockroom items or anything else</p>
       </div>
       <button class="btn btn-primary btn-sm" onclick="openAddReminderModal()"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Reminder</button>
@@ -965,7 +965,7 @@
     <!-- Overdue section -->
     <div id="reminders-overdue-section" style="display:none;margin-bottom:24px">
       <div style="font-size:11px;font-weight:700;color:var(--danger);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:8px">
-        <span id="reminders-overdue" style="scroll-margin-top:80px">🔴 Overdue</span>
+        <span id="reminders-overdue" style="scroll-margin-top:80px"><span class="status-dot status-critical"></span> Overdue</span>
         <span id="overdue-count" style="background:rgba(232,80,80,0.15);border:1px solid rgba(232,80,80,0.3);color:var(--danger);font-size:10px;padding:1px 7px;border-radius:99px"></span>
       </div>
       <div id="reminders-overdue-list"></div>
@@ -999,7 +999,7 @@
   <div class="view" id="view-savings">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:10px">
       <div>
-        <h2 style="font-size:18px;font-weight:700">💰 Savings</h2>
+        <h2 style="font-size:18px;font-weight:700"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-piggy-bank"></use></svg> Savings</h2>
         <p style="font-size:12px;color:var(--muted);margin-top:3px">Amazon Subscribe &amp; Save opportunities based on your purchase history</p>
       </div>
     </div>
@@ -1021,7 +1021,7 @@
     </div>
     <div id="report-household-tabs" style="display:none;margin-bottom:16px"></div>
     <div id="spend-section" style="display:none;margin-bottom:28px">
-      <h3 style="font-size:15px;font-weight:700;margin-bottom:16px">💷 Monthly Spend</h3>
+      <h3 style="font-size:15px;font-weight:700;margin-bottom:16px"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-banknote"></use></svg> Monthly Spend</h3>
       <div id="spend-chart" style="margin-bottom:12px"></div>
       <div id="spend-breakdown"></div>
     </div>
@@ -1032,11 +1032,11 @@
   <!-- SETTINGS VIEW -->
   <!-- ACCOUNT & SECURITY VIEW (desktop sidebar only) -->
   <div class="view" id="view-account-security">
-    <h2 style="font-size:20px;font-weight:700;margin-bottom:24px">🛡️ Account &amp; Security</h2>
+    <h2 style="font-size:20px;font-weight:700;margin-bottom:24px"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-shield"></use></svg> Account &amp; Security</h2>
 
     <!-- ── YOUR DETAILS ───────────────────────────────── -->
     <div class="acc-sec-section" style="margin-bottom:20px">
-      <div class="acc-sec-section-title">👤 Your Details</div>
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-user"></use></svg> Your Details</div>
       <div class="acc-sec-card">
         <div class="acc-sec-row">
           <div class="acc-sec-label">
@@ -1068,7 +1068,7 @@
 
     <!-- ── ACCOUNT PROTECTION ─────────────────────────── -->
     <div class="acc-sec-section" style="margin-bottom:20px">
-      <div class="acc-sec-section-title">🔐 Account Protection</div>
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-lock"></use></svg> Account Protection</div>
       <div class="acc-sec-card">
 
         <!-- Passphrase -->
@@ -1111,7 +1111,7 @@
         <div class="acc-sec-row acc-sec-row-block">
           <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:10px">
             <div class="acc-sec-label">
-              <div class="acc-sec-h">🛡️ Multifactor Authentication</div>
+              <div class="acc-sec-h"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Multifactor Authentication</div>
               <div class="acc-sec-p">Second factor on all devices after passphrase or passkey.</div>
             </div>
             <div style="display:flex;gap:6px;flex-shrink:0" id="mfa-action-btns">
@@ -1146,7 +1146,7 @@
 
     <!-- ── DATA ───────────────────────────────────────── -->
     <div class="acc-sec-section" style="margin-bottom:20px">
-      <div class="acc-sec-section-title">📦 Data</div>
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-package"></use></svg> Data</div>
       <div class="acc-sec-card">
         <div class="acc-sec-row">
           <div class="acc-sec-label">
@@ -1173,7 +1173,7 @@
 
     <!-- ── DANGER ZONE ────────────────────────────────── -->
     <div class="acc-sec-section" style="margin-bottom:20px">
-      <div class="acc-sec-section-title" style="color:var(--danger)">⚠️ Danger Zone</div>
+      <div class="acc-sec-section-title" style="color:var(--danger)"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> Danger Zone</div>
       <div class="acc-sec-card" style="border-color:rgba(224,92,92,0.3)">
 
         <!-- Deactivate -->
@@ -1243,13 +1243,13 @@
         <div id="share-targets-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px"></div>
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <button class="btn btn-ghost btn-sm" id="add-share-target-btn" onclick="openAddShareTarget()">+ Add person</button>
-          <button class="btn btn-ghost btn-sm" id="clear-all-shares-btn" onclick="clearAllShares()" style="color:var(--danger);border-color:var(--danger);display:none">🗑 Clear all shares</button>
+          <button class="btn btn-ghost btn-sm" id="clear-all-shares-btn" onclick="clearAllShares()" style="color:var(--danger);border-color:var(--danger);display:none"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Clear all shares</button>
         </div>
       </div>
 
       <!-- Joined section — shown when this device has joined someone else's household -->
       <div id="household-joined-section" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--glass-border)">
-        <h4 style="font-size:13px;font-weight:700;margin-bottom:8px">🔗 Joined Household</h4>
+        <h4 style="font-size:13px;font-weight:700;margin-bottom:8px"><svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg> Joined Household</h4>
         <p style="font-size:12px;color:var(--ok);margin-bottom:4px" id="joined-status-text">✓ Syncing to shared household</p>
         
         <button class="btn btn-ghost btn-sm" onclick="leaveShare()" style="color:var(--danger);border-color:var(--danger)">Leave shared household</button>
@@ -1260,11 +1260,11 @@
 
     <!-- 3. Alerts — push + email reports merged -->
     <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-alerts-body',this)">
-      <span>🔔 Alerts &amp; Reports</span>
+      <span><svg class="icon icon-md" aria-hidden="true"><use href="#i-bell"></use></svg> Alerts &amp; Reports</span>
       <span class="settings-chevron">▾</span>
     </div>
     <div id="settings-alerts-body" class="settings-collapsible-body settings-card">
-      <h3 style="display:none">🔔 Alerts &amp; Reports</h3>
+      <h3 style="display:none"><svg class="icon icon-md" aria-hidden="true"><use href="#i-bell"></use></svg> Alerts &amp; Reports</h3>
 
       <!-- Push notifications -->
       <h4 style="font-size:13px;font-weight:700;margin-bottom:4px">Push Notifications</h4>
@@ -1328,7 +1328,7 @@
             </select>
           </div>
         </div>
-        <button class="btn btn-blue btn-sm" onclick="connectEmailReports()">☁️ Connect &amp; Enable Email Reports</button>
+        <button class="btn btn-blue btn-sm" onclick="connectEmailReports()"><svg class="icon" aria-hidden="true"><use href="#i-cloud"></use></svg> Connect &amp; Enable Email Reports</button>
       </div>
       <div id="email-registered" style="display:none">
         <div class="setting-row">
@@ -1362,11 +1362,11 @@
 
     <!-- 4. Reminders (renamed from "Email Reminders" — these are in-app reminder schedules) -->
     <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-reminders-body',this)">
-      <span>📅 Reminder Schedules</span>
+      <span><svg class="icon icon-md" aria-hidden="true"><use href="#i-calendar"></use></svg> Reminder Schedules</span>
       <span class="settings-chevron">▾</span>
     </div>
     <div id="settings-reminders-body" class="settings-collapsible-body settings-card">
-      <h3 style="display:none">📅 Reminder Schedules</h3>
+      <h3 style="display:none"><svg class="icon icon-md" aria-hidden="true"><use href="#i-calendar"></use></svg> Reminder Schedules</h3>
       <p style="font-size:12px;color:var(--muted);margin-bottom:4px">Configure when in-app reminders fire and where notifications are sent. Settings save automatically.</p>
       <div class="setting-row">
         <div class="setting-info"><h4>Notification email</h4><p>Where reminder alerts are sent</p></div>
@@ -1409,7 +1409,7 @@
           <h4>Send now</h4>
           <p>Send a reminder immediately with 7-day and 30-day items</p>
         </div>
-        <button class="btn btn-primary btn-sm" id="send-reminder-btn" onclick="sendReminderEmail(true)">📧 Send Now</button>
+        <button class="btn btn-primary btn-sm" id="send-reminder-btn" onclick="sendReminderEmail(true)"><svg class="icon" aria-hidden="true"><use href="#i-mail"></use></svg> Send Now</button>
       </div>
       <div id="email-status" style="font-size:12px;margin-top:8px;display:none"></div>
       <div class="setting-row" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--glass-border)">
@@ -1426,12 +1426,12 @@
 
     <!-- Data section (renamed from Preferences & Data) -->
     <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-prefs-body',this)">
-      <span>⚙️ Preferences</span>
+      <span><svg class="icon icon-md" aria-hidden="true"><use href="#i-settings"></use></svg> Preferences</span>
       <span class="settings-chevron">▾</span>
     </div>
     <div id="settings-prefs-body" class="settings-collapsible-body">
     <div class="settings-card full-width">
-      <h3 style="display:none">⚙️ Preferences</h3>
+      <h3 style="display:none"><svg class="icon icon-md" aria-hidden="true"><use href="#i-settings"></use></svg> Preferences</h3>
 
       <!-- Low stock warning — only preference not covered by Account & Security -->
       <div class="setting-row">
@@ -1448,7 +1448,7 @@
 
     <!-- Data -->
     <div class="settings-card full-width">
-      <h3>📦 Data</h3>
+      <h3><svg class="icon icon-md" aria-hidden="true"><use href="#i-package"></use></svg> Data</h3>
       <div class="setting-row">
         <div class="setting-info"><h4><svg class="icon icon-md" aria-hidden="true"><use href="#i-package"></use></svg> Import Amazon order history</h4><p>Auto-populate items from your Amazon purchase history CSV</p></div>
         <button class="btn btn-ghost acc-sec-btn" onclick="openAmazonImporter()">Import →</button>
@@ -1491,11 +1491,11 @@
   <div id="grocery-sticky-header">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
     <div>
-      <h2 style="font-family:var(--mono);font-size:16px;letter-spacing:2px;color:var(--accent)">🛒 GROCERY LIST</h2>
+      <h2 style="font-family:var(--mono);font-size:16px;letter-spacing:2px;color:var(--accent)"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> GROCERY LIST</h2>
       <div id="grocery-subtitle" style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:3px"></div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-ghost btn-sm" onclick="openQuickList()" title="Quick add items">⚡ Quick List</button>
+      <button class="btn btn-ghost btn-sm" onclick="openQuickList()" title="Quick add items"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg> Quick List</button>
       <button class="btn btn-ghost btn-sm" onclick="openAddGroceryList()" title="Add new shopping list"><svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> Add Store</button>
       <button class="btn btn-ghost btn-sm" onclick="openGroceryDepts()" title="Manage departments"><svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg> Departments</button>
       <button class="btn btn-primary btn-sm" onclick="openAddGroceryItem()">+ Add Item</button>
@@ -1507,7 +1507,7 @@
       <button class="grocery-sort-btn active" id="grocery-sort-dept" onclick="setGrocerySort('dept',this)">By Dept</button>
       <button class="grocery-sort-btn" id="grocery-sort-alpha" onclick="setGrocerySort('alpha',this)">A–Z</button>
     </div>
-    <button class="btn btn-ghost btn-sm" id="grocery-edit-toggle" onclick="toggleGroceryEditMode()" title="Edit grocery list" style="flex-shrink:0">✏️ Edit</button>
+    <button class="btn btn-ghost btn-sm" id="grocery-edit-toggle" onclick="toggleGroceryEditMode()" title="Edit grocery list" style="flex-shrink:0"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit</button>
 
     <input type="file" id="grocery-import-file" accept=".txt,.csv,.text,.xml,.doc,.docx,.rtf,.md,.tsv" style="display:none" onchange="handleGroceryImportFile(event)">
   </div>
@@ -1655,7 +1655,7 @@
 <!-- ═══ GROCERY DEPARTMENTS MODAL ═══ -->
 <div class="modal-backdrop" id="grocery-depts-modal" style="z-index:300">
   <div class="modal" style="max-width:420px">
-    <h2>🏷️ Departments</h2>
+    <h2><svg class="icon icon-lg" aria-hidden="true"><use href="#i-tag"></use></svg> Departments</h2>
     <p class="subtitle">Organise your grocery list. Drag to reorder (coming soon).</p>
 
     <div id="grocery-depts-list" style="margin-bottom:16px"></div>
@@ -1689,7 +1689,7 @@
 <!-- ═══ GROCERY CONVERT TO STOCK MODAL ═══ -->
 <div class="modal-backdrop" id="grocery-convert-modal" style="z-index:310">
   <div class="modal" style="max-width:420px">
-    <h2>📦 Add to Stockroom</h2>
+    <h2><svg class="icon icon-lg" aria-hidden="true"><use href="#i-package"></use></svg> Add to Stockroom</h2>
     <p class="subtitle">Convert this grocery item into a tracked stock item.</p>
     <div id="grocery-convert-body"></div>
     <div class="modal-footer">
@@ -1705,7 +1705,7 @@
 <!-- ═══ TEMPLATES MODAL ═══ -->
 <div class="modal-backdrop" id="templates-modal" style="z-index:300">
   <div class="modal" style="max-width:520px">
-    <h2>📋 Starter Templates</h2>
+    <h2><svg class="icon icon-lg" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> Starter Templates</h2>
     <p class="subtitle">Tap any item to pre-fill the form. You can edit before saving.</p>
 
     <!-- Category filter -->
@@ -1730,7 +1730,7 @@
 <!-- ═══ BARCODE SCANNER MODAL ═══ -->
 <div class="modal-backdrop" id="barcode-modal">
   <div class="modal" style="max-width:420px">
-    <h2>📷 Scan Barcode</h2>
+    <h2><svg class="icon icon-lg" aria-hidden="true"><use href="#i-camera"></use></svg> Scan Barcode</h2>
     <p class="subtitle">Point your camera at the product barcode.</p>
     <div id="barcode-video-wrap" style="position:relative;border-radius:10px;overflow:hidden;background:#000;margin-bottom:12px;aspect-ratio:4/3">
       <video id="barcode-video" autoplay playsinline muted style="width:100%;display:block"></video>
@@ -1748,7 +1748,7 @@
 <!-- ═══ PRICE HISTORY MODAL ═══ -->
 <div class="modal-backdrop" id="price-history-modal">
   <div class="modal" style="max-width:500px">
-    <h2 id="ph-title">💰 Price History</h2>
+    <h2 id="ph-title"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-banknote"></use></svg> Price History</h2>
     <p class="subtitle" id="ph-subtitle"></p>
     <div id="ph-chart" style="margin:16px 0"></div>
     <div id="ph-table"></div>
@@ -1761,7 +1761,7 @@
 <!-- ═══ STOCK COUNT MODAL ═══ -->
 <div class="modal-backdrop" id="stock-count-modal">
   <div class="modal" style="max-width:440px">
-    <h2>🔢 Update Stock Count</h2>
+    <h2><svg class="icon icon-lg" aria-hidden="true"><use href="#i-hash"></use></svg> Update Stock Count</h2>
     <p class="subtitle" id="sc-subtitle">How many units do you have left right now?</p>
     <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:18px;font-size:13px;color:var(--muted);line-height:1.6">
       <span id="sc-explanation">The app will calculate your actual daily consumption rate from how many you've used, then project when the remainder will run out.</span>
@@ -1800,7 +1800,7 @@
 <!-- ═══ STORE PICKER MODAL ═══ -->
 <div class="modal-backdrop" id="store-picker-modal">
   <div class="modal" style="max-width:480px">
-    <h2>🛍️ Filter by Store</h2>
+    <h2><svg class="icon icon-lg" aria-hidden="true"><use href="#i-shopping-bag"></use></svg> Filter by Store</h2>
     <p class="subtitle">Choose which stores to include in your shopping list.</p>
     <p style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px">Stores</p>
     <div id="store-picker-options" style="display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto"></div>
@@ -1826,7 +1826,7 @@
           <div id="ro-meta" style="font-size:12px;color:var(--muted);line-height:1.8"></div>
           <div id="ro-store" style="font-size:12px;color:var(--muted);margin-top:2px"></div>
         </div>
-        <button class="btn btn-blue btn-sm" style="flex-shrink:0" onclick="enableItemEdit()">✏️ Edit</button>
+        <button class="btn btn-blue btn-sm" style="flex-shrink:0" onclick="enableItemEdit()"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit</button>
       </div>
       <div class="modal-footer" style="margin-top:16px">
         <button class="btn btn-ghost" onclick="closeModal('item-modal')">Close</button>
@@ -1863,7 +1863,7 @@
           <div style="display:flex;gap:8px;align-items:center">
             <input type="url" id="f-url" placeholder="https://amazon.co.uk/..." oninput="autoFillStore()" style="flex:1">
             <button type="button" class="btn btn-ghost btn-sm" onclick="fetchProductImage()" id="fetch-img-btn" title="Search for product image by name"><svg class="icon" aria-hidden="true"><use href="#i-image"></use></svg> Find</button>
-            <button type="button" class="btn btn-ghost btn-sm" onclick="openCameraModal()" title="Take a photo of the product">📷</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="openCameraModal()" title="Take a photo of the product"><svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg></button>
           </div>
           <div class="img-preview-wrap" id="img-preview-wrap" style="display:none">
             <img id="img-preview" class="img-preview" src="" alt="Product image">
@@ -1881,7 +1881,7 @@
         <div class="field"><label>Expiry date <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="date" id="f-expiry"></div>
         <div class="field"><label>Warn threshold override <span style="font-weight:400;color:var(--muted)">(% — leave blank to use global)</span></label><input type="number" id="f-threshold" min="5" max="80" step="5" placeholder="e.g. 30"></div>
         <div class="field form-full" style="padding-top:4px">
-          <label>🔔 Replacement reminder <span style="font-weight:400;color:var(--muted)">(e.g. toothbrush head every 3 months)</span></label>
+          <label><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Replacement reminder <span style="font-weight:400;color:var(--muted)">(e.g. toothbrush head every 3 months)</span></label>
           <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
             <span style="font-size:13px;color:var(--muted)">Replace every</span>
             <input type="number" id="f-replace-interval" min="1" max="52" step="1" placeholder="—"
@@ -1910,7 +1910,7 @@
       </div>
 
       <div class="modal-section">
-        <p class="modal-section-label">📅 Most Recent Purchase</p>
+        <p class="modal-section-label"><svg class="icon" aria-hidden="true"><use href="#i-calendar"></use></svg> Most Recent Purchase</p>
         <div class="form-grid">
           <div class="field"><label>Date purchased</label><input type="date" id="f-last-date"></div>
           <div class="field"><label>Qty purchased</label><input type="number" id="f-last-qty" min="0.1" step="0.1" value="1"></div>
@@ -1924,20 +1924,20 @@
 
       <div class="modal-section" id="store-prices-section" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-          <p class="modal-section-label" style="margin:0">🏪 Price by Store</p>
+          <p class="modal-section-label" style="margin:0"><svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> Price by Store</p>
           <button type="button" class="btn btn-ghost btn-sm" onclick="addStorePriceRow()">+ Add Store</button>
         </div>
         <div id="store-prices-list"></div>
       </div>
 
       <div class="modal-section">
-        <p style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">🔍 Find Best Price</p>
+        <p style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px"><svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg> Find Best Price</p>
         <input type="text" id="price-search-input" placeholder="Search product name across stores..." style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none;margin-bottom:8px" oninput="updatePriceLinks()">
         <div class="price-links" id="price-links"></div>
       </div>
 
       <div class="modal-footer" style="flex-wrap:wrap;gap:8px">
-        <button class="btn btn-ghost btn-sm" onclick="openTemplatesModal()" style="margin-right:auto">📋 Templates</button>
+        <button class="btn btn-ghost btn-sm" onclick="openTemplatesModal()" style="margin-right:auto"><svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> Templates</button>
         <button class="btn btn-ghost" onclick="closeModal('item-modal')">Cancel</button>
         <button class="btn btn-primary" onclick="saveItem()">Save Item</button>
       </div>
@@ -1969,7 +1969,7 @@
 <!-- Household edit modal -->
 <div class="modal-backdrop" id="household-edit-modal">
   <div class="modal" style="max-width:380px">
-    <h2>✏️ Edit Household</h2>
+    <h2><svg class="icon icon-lg" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit Household</h2>
     <input type="hidden" id="household-edit-key">
     <div class="form-group" style="margin-bottom:12px">
       <label class="form-label">Name</label>
@@ -1989,7 +1989,7 @@
 <!-- Share Target Modal -->
 <div class="modal-backdrop" id="share-target-modal">
   <div class="modal" style="max-width:420px;max-height:80vh;overflow-y:auto">
-    <h2 id="share-target-modal-title">👤 Add Person</h2>
+    <h2 id="share-target-modal-title"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-user"></use></svg> Add Person</h2>
     <input type="hidden" id="share-target-code">
     <div class="form-group" style="margin-bottom:12px">
       <label class="form-label">Their name</label>
@@ -2028,7 +2028,7 @@
       <div style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-bottom:6px">INVITE LINK</div>
       <div id="share-link-value" style="font-size:12px;word-break:break-all;color:var(--accent);font-family:var(--mono);margin-bottom:8px"></div>
       <div style="font-size:11px;color:var(--ok);margin-bottom:8px"><svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg> End-to-end encrypted — no secret in this link</div>
-      <button class="btn btn-ghost btn-sm full" onclick="copyShareLink()">📋 Copy link</button>
+      <button class="btn btn-ghost btn-sm full" onclick="copyShareLink()"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg> Copy link</button>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('share-target-modal')">Cancel</button>
@@ -2072,9 +2072,9 @@
     <canvas id="share-canvas" style="width:100%;border-radius:12px;display:block;margin-bottom:14px"></canvas>
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:4px">
       <button class="btn btn-primary btn-xl full" id="share-image-btn" onclick="doShareImage()"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg> Share as image</button>
-      <button class="btn btn-ghost btn-xl full" id="share-link-btn" onclick="doShareItemLink()">🔗 Share item link</button>
-      <button class="btn btn-ghost btn-xl full" id="share-buy-btn" onclick="doShareLink()">🛒 Share buy link</button>
-      <button class="btn btn-ghost btn-xl full" onclick="doShareText()">📋 Copy as text</button>
+      <button class="btn btn-ghost btn-xl full" id="share-link-btn" onclick="doShareItemLink()"><svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg> Share item link</button>
+      <button class="btn btn-ghost btn-xl full" id="share-buy-btn" onclick="doShareLink()"><svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Share buy link</button>
+      <button class="btn btn-ghost btn-xl full" onclick="doShareText()"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg> Copy as text</button>
     </div>
     <div class="modal-footer" style="margin-top:12px">
       <button class="btn btn-ghost" onclick="closeModal('share-modal')">Close</button>
@@ -2089,9 +2089,9 @@
     <h2 id="scan-chooser-name" style="font-size:17px;margin-bottom:6px;word-break:break-word"></h2>
     <p class="subtitle" style="margin-bottom:24px">What would you like to do?</p>
     <div style="display:flex;flex-direction:column;gap:10px">
-      <button class="btn btn-primary btn-xl full" onclick="scanChooserQuickAdd()">⚡ Quick Add this item</button>
-      <button class="btn btn-ghost btn-xl full" onclick="scanChooserLogPurchase()">📋 Log a purchase for an existing item</button>
-      <button class="btn btn-ghost btn-xl full" onclick="scanChooserFullAdd()">✏️ Add as new item with full details</button>
+      <button class="btn btn-primary btn-xl full" onclick="scanChooserQuickAdd()"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg> Quick Add this item</button>
+      <button class="btn btn-ghost btn-xl full" onclick="scanChooserLogPurchase()"><svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> Log a purchase for an existing item</button>
+      <button class="btn btn-ghost btn-xl full" onclick="scanChooserFullAdd()"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Add as new item with full details</button>
     </div>
     <div class="modal-footer" style="margin-top:20px;justify-content:center">
       <button class="btn btn-ghost btn-sm" onclick="closeModal('scan-chooser-modal')">Cancel</button>
@@ -2102,7 +2102,7 @@
 <!-- ═══ LOG PURCHASE PICKER MODAL ═══ -->
 <div class="modal-backdrop" id="log-picker-modal">
   <div class="modal" style="max-width:440px">
-    <h2>📋 Log Purchase</h2>
+    <h2><svg class="icon icon-lg" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> Log Purchase</h2>
     <p class="subtitle">Which item did you buy?</p>
     <input type="text" id="log-picker-search" placeholder="Search items…"
       style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none;margin-bottom:12px"
@@ -2117,7 +2117,7 @@
 <!-- ═══ QUICK ADD MODAL ═══ -->
 <div class="modal-backdrop" id="quick-add-modal">
   <div class="modal" style="max-width:480px">
-    <h2>⚡ Quick Add</h2>
+    <h2><svg class="icon icon-lg" aria-hidden="true"><use href="#i-zap"></use></svg> Quick Add</h2>
     <p class="subtitle">Type item names separated by commas, or scan barcodes one at a time. You can complete the details later.</p>
 
     <div style="position:relative;margin-bottom:12px">
@@ -2129,7 +2129,7 @@
 
     <!-- Barcode scan row -->
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
-      <button class="btn btn-ghost btn-sm" onclick="quickAddBarcodeScan()">📷 Scan barcode</button>
+      <button class="btn btn-ghost btn-sm" onclick="quickAddBarcodeScan()"><svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg> Scan barcode</button>
       <span style="font-size:12px;color:var(--muted)">Scanned items are added to the list above</span>
     </div>
 
@@ -2141,7 +2141,7 @@
 
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('quick-add-modal')">Cancel</button>
-      <button class="btn btn-primary" id="quick-add-save-btn" onclick="saveQuickAdd()">⚡ Add Items</button>
+      <button class="btn btn-primary" id="quick-add-save-btn" onclick="saveQuickAdd()"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg> Add Items</button>
     </div>
   </div>
 </div>
@@ -2172,7 +2172,7 @@
 <!-- ═══ DELIVERED MODAL (puts stock in, clears ordered) ═══ -->
 <div class="modal-backdrop" id="delivered-modal">
   <div class="modal" style="max-width:440px">
-    <h2 id="delivered-modal-title">📦 Mark as Delivered</h2>
+    <h2 id="delivered-modal-title"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-package-check"></use></svg> Mark as Delivered</h2>
     <p class="subtitle">This adds the item to your stock and clears the ordered flag.</p>
     <div class="form-grid">
       <div class="field"><label>Delivery date</label><input type="date" id="delivered-date"></div>
@@ -2192,7 +2192,7 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('delivered-modal')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveDelivered()">✅ Mark Delivered</button>
+      <button class="btn btn-primary" onclick="saveDelivered()"><svg class="icon" aria-hidden="true"><use href="#i-check-circle-2"></use></svg> Mark Delivered</button>
     </div>
   </div>
 </div>
@@ -2200,7 +2200,7 @@
 <!-- ═══ STARTED USING MODAL ═══ -->
 <div class="modal-backdrop" id="started-using-modal">
   <div class="modal" style="max-width:400px">
-    <h2 id="started-using-title">📅 When did you start using it?</h2>
+    <h2 id="started-using-title"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-calendar"></use></svg> When did you start using it?</h2>
     <p class="subtitle">This anchors the stock calculation and any replacement reminders to the right date.</p>
     <div class="field" style="margin-bottom:16px">
       <label>Date started using</label>
@@ -2216,7 +2216,7 @@
 <!-- ═══ POST-DELIVERY REMINDER MODAL ═══ -->
 <div class="modal-backdrop" id="delivery-reminder-modal" style="z-index:310">
   <div class="modal" style="max-width:420px">
-    <h2>🔔 Set a Replacement Reminder?</h2>
+    <h2><svg class="icon icon-lg" aria-hidden="true"><use href="#i-bell"></use></svg> Set a Replacement Reminder?</h2>
     <p class="subtitle" id="delivery-reminder-subtitle">Now it's in stock, do you want a reminder to replace it?</p>
     <div id="delivery-reminder-body"></div>
     <div class="modal-footer">
@@ -2233,7 +2233,7 @@
     <h2 style="font-size:18px;margin-bottom:4px">Confirm your identity</h2>
     <p id="reauth-reason" style="font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.5">Re-enter your passphrase to continue.</p>
     <div id="reauth-passkey-option" style="margin-bottom:12px">
-      <button class="btn btn-primary btn-xl full" onclick="reauthWithPasskey()">🔑 Use Face ID / Fingerprint</button>
+      <button class="btn btn-primary btn-xl full" onclick="reauthWithPasskey()"><svg class="icon" aria-hidden="true"><use href="#i-key-round"></use></svg> Use Face ID / Fingerprint</button>
       <div style="display:flex;align-items:center;gap:10px;margin:10px 0">
         <div style="flex:1;height:1px;background:var(--border)"></div>
         <span style="font-size:11px;color:var(--muted)">OR</span>
@@ -2336,7 +2336,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 <div class="view" id="view-notes">
   <div id="notes-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
     <div>
-      <h2 style="font-size:18px;font-weight:700">📝 Notes</h2>
+      <h2 style="font-size:18px;font-weight:700"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> Notes</h2>
       <p style="font-size:12px;color:var(--muted);margin-top:3px">Personal encrypted notes</p>
     </div>
     <button class="btn btn-primary btn-sm" onclick="openNoteEditor(null)">+ New note</button>
@@ -2349,7 +2349,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     <button class="note-chip active" onclick="setNotesFilter('all',this)">All</button>
     <button class="note-chip" onclick="setNotesFilter('pinned',this)"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg> Pinned</button>
     <button class="note-chip" onclick="setNotesFilter('archived',this)"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg> Archived</button>
-    <button class="note-chip" onclick="setNotesFilter('trash',this)">🗑️ Trash</button>
+    <button class="note-chip" onclick="setNotesFilter('trash',this)"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Trash</button>
   </div>
   <div id="notes-grid"></div>
   <div id="notes-empty" style="display:none;text-align:center;padding:60px 20px;color:var(--muted)">
@@ -2380,11 +2380,11 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
   <div id="note-editor-toolbar" style="display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0">
     <button class="btn btn-ghost btn-sm" onclick="closeNoteEditor()" style="margin-right:4px;flex-shrink:0">← Back</button>
     <div style="flex:1"></div>
-    <button class="note-tool-btn" id="note-btn-pin"      onclick="toggleNotePin()"         title="Pin">📌</button>
-    <button class="note-tool-btn" id="note-btn-archive"  onclick="toggleNoteArchive()"      title="Archive">📦</button>
-    <button class="note-tool-btn" id="note-btn-lock"     onclick="toggleNoteLock()"         title="Secure note">🔓</button>
+    <button class="note-tool-btn" id="note-btn-pin"      onclick="toggleNotePin()"         title="Pin"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg></button>
+    <button class="note-tool-btn" id="note-btn-archive"  onclick="toggleNoteArchive()"      title="Archive"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg></button>
+    <button class="note-tool-btn" id="note-btn-lock"     onclick="toggleNoteLock()"         title="Secure note"><svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg></button>
     <button class="note-tool-btn" id="note-btn-tick"     onclick="toggleNoteTicks()"        title="Tick boxes"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg></button>
-    <button class="note-tool-btn" id="note-btn-reminder" onclick="openNoteReminder()"       title="Reminder">🔔</button>
+    <button class="note-tool-btn" id="note-btn-reminder" onclick="openNoteReminder()"       title="Reminder"><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg></button>
     <div id="note-colour-wrap" style="position:relative">
       <button class="note-tool-btn" id="note-btn-colour" onclick="toggleNoteColourPicker()" title="Colour"><svg class="icon" aria-hidden="true"><use href="#i-palette"></use></svg></button>
       <div id="note-colour-picker" style="display:none;position:absolute;top:38px;right:0;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px;gap:6px;z-index:10;flex-wrap:wrap;width:132px">
@@ -2397,8 +2397,8 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
         <div class="note-swatch" data-colour="#0e3030" style="background:#0e3030"  onclick="setNoteColour('#0e3030')" title="Teal"></div>
       </div>
     </div>
-    <button class="note-tool-btn" onclick="copyNoteBody()"     title="Copy">📋</button>
-    <button class="note-tool-btn" onclick="deleteCurrentNote()" title="Delete" style="color:var(--danger)">🗑️</button>
+    <button class="note-tool-btn" onclick="copyNoteBody()"     title="Copy"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg></button>
+    <button class="note-tool-btn" onclick="deleteCurrentNote()" title="Delete" style="color:var(--danger)"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>
   </div>
   <!-- Formatting toolbar -->
   <div id="note-fmt-toolbar" style="display:flex;align-items:center;gap:2px;padding:6px 12px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0;flex-wrap:wrap">
@@ -2418,7 +2418,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     <div style="font-size:48px">🔒</div>
     <div id="note-lock-title" style="font-size:18px;font-weight:700;color:var(--text);text-align:center"></div>
     <p style="font-size:13px;color:var(--muted);text-align:center;max-width:280px;line-height:1.6">This note requires authentication to view.</p>
-    <button class="btn btn-primary" onclick="unlockCurrentNote()" id="note-unlock-btn">🔑 Unlock note</button>
+    <button class="btn btn-primary" onclick="unlockCurrentNote()" id="note-unlock-btn"><svg class="icon" aria-hidden="true"><use href="#i-unlock"></use></svg> Unlock note</button>
     <div id="note-otp-section" style="display:none;flex-direction:column;align-items:center;gap:10px;width:100%;max-width:280px">
       <p style="font-size:13px;color:var(--muted);text-align:center">Enter the 6-digit code sent to your email.</p>
       <input type="text" id="note-otp-input" inputmode="numeric" maxlength="6" placeholder="000000"
@@ -2441,13 +2441,13 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
       style="flex:1;padding:14px 16px;background:transparent;color:var(--text);font-size:15px;line-height:1.7;outline:none;font-family:var(--sans);overflow-y:auto;min-height:0;word-break:break-word"
       oninput="onNoteBodyInput()"></div>
   </div>
-  <div id="note-secure-badge" style="display:none;position:absolute;bottom:16px;right:16px;background:rgba(232,168,56,0.15);border:1px solid rgba(232,168,56,0.3);border-radius:8px;padding:4px 10px;font-size:11px;color:var(--accent);font-family:var(--mono)">🔒 SECURE NOTE</div>
+  <div id="note-secure-badge" style="display:none;position:absolute;bottom:16px;right:16px;background:rgba(232,168,56,0.15);border:1px solid rgba(232,168,56,0.3);border-radius:8px;padding:4px 10px;font-size:11px;color:var(--accent);font-family:var(--mono)"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-lock"></use></svg> SECURE NOTE</div>
 </div>
 
 <!-- NOTE REMINDER MODAL -->
 <div class="modal-backdrop" id="note-reminder-modal" style="z-index:450">
   <div class="modal">
-    <div style="font-size:16px;font-weight:700;margin-bottom:16px">🔔 Note Reminder</div>
+    <div style="font-size:16px;font-weight:700;margin-bottom:16px"><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Note Reminder</div>
     <label class="form-label">Remind me on</label>
     <input class="form-input" type="datetime-local" id="note-reminder-datetime" style="margin-bottom:16px">
     <label class="form-label">Notes (optional)</label>
@@ -2486,7 +2486,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     <h3 style="font-size:16px;font-weight:700;margin-bottom:8px">Enable Multifactor Authentication?</h3>
     <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px">Add a second verification step to protect your account across the whole app — not just notes. Choose between an email code or an authenticator app.</p>
     <div style="display:flex;flex-direction:column;gap:10px">
-      <button class="btn btn-primary" onclick="closeModal('mfa-prompt-modal');openMfaSetup()">🛡️ Enable MFA</button>
+      <button class="btn btn-primary" onclick="closeModal('mfa-prompt-modal');openMfaSetup()"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Enable MFA</button>
       <button class="btn btn-ghost" onclick="dismissMfaPrompt()">Skip for now</button>
       <p style="font-size:11px;color:var(--muted)">You can enable this later in Account &amp; Security settings</p>
     </div>
@@ -2513,16 +2513,16 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 <!-- MFA SETUP MODAL -->
 <div class="modal-backdrop" id="mfa-setup-modal">
   <div class="modal" style="max-width:420px;max-height:90vh;overflow-y:auto">
-    <h3 id="mfa-setup-title" style="font-size:16px;font-weight:700;margin-bottom:6px">🛡️ Set Up Multifactor Authentication</h3>
+    <h3 id="mfa-setup-title" style="font-size:16px;font-weight:700;margin-bottom:6px"><svg class="icon icon-md" aria-hidden="true"><use href="#i-shield"></use></svg> Set Up Multifactor Authentication</h3>
     <p id="mfa-setup-subtitle" style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:16px">Choose your second factor and verify it works before enabling.</p>
 
     <!-- Tab selector -->
     <div id="mfa-setup-step-method">
       <div style="display:flex;border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:20px">
         <button class="mfa-method-btn active" data-method="email" onclick="_mfaSetupSelectMethod('email')"
-          style="flex:1;padding:10px;border:none;background:var(--accent);color:#111;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s">📧 Email code</button>
+          style="flex:1;padding:10px;border:none;background:var(--accent);color:#111;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s"><svg class="icon" aria-hidden="true"><use href="#i-mail"></use></svg> Email code</button>
         <button class="mfa-method-btn" data-method="totp" onclick="_mfaSetupSelectMethod('totp')"
-          style="flex:1;padding:10px;border:none;background:var(--surface2);color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s">📱 Authenticator app</button>
+          style="flex:1;padding:10px;border:none;background:var(--surface2);color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s"><svg class="icon" aria-hidden="true"><use href="#i-smartphone"></use></svg> Authenticator app</button>
       </div>
     </div>
 
@@ -2570,7 +2570,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 <!-- MFA MANAGE MODAL -->
 <div class="modal-backdrop" id="mfa-manage-modal">
   <div class="modal" style="max-width:400px">
-    <h3 style="font-size:16px;font-weight:700;margin-bottom:6px">🛡️ Manage MFA Methods</h3>
+    <h3 style="font-size:16px;font-weight:700;margin-bottom:6px"><svg class="icon icon-md" aria-hidden="true"><use href="#i-shield"></use></svg> Manage MFA Methods</h3>
     <p style="font-size:13px;color:var(--muted);margin-bottom:16px">The primary method is used by default. Changes require passphrase/passkey + MFA confirmation.</p>
     <div id="mfa-manage-list" style="margin-bottom:16px"></div>
     <div id="mfa-manage-footer" style="display:flex;gap:8px;flex-wrap:wrap"></div>
@@ -2607,7 +2607,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     <h3 style="font-size:16px;font-weight:700;margin-bottom:8px;text-align:center">Secure notes found</h3>
     <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px">Your export contains secure notes. How would you like to handle them?</p>
     <div style="display:flex;flex-direction:column;gap:10px">
-      <button class="btn btn-primary" onclick="exportDataWithSecureChoice(true)">🔓 Unlock &amp; export as plain text</button>
+      <button class="btn btn-primary" onclick="exportDataWithSecureChoice(true)"><svg class="icon" aria-hidden="true"><use href="#i-unlock"></use></svg> Unlock &amp; export as plain text</button>
       <button class="btn btn-ghost" onclick="exportDataWithSecureChoice(false)">Skip secure notes (titles only)</button>
       <button class="btn btn-ghost" onclick="closeModal('export-secure-notes-modal')">Cancel</button>
     </div>

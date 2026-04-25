@@ -971,7 +971,9 @@
 
 /* Nav tab icons */
 .tab .icon-tab, .tab-btn .icon-tab { color: var(--muted); }
-.tab.active .icon-tab, .tab-btn.active .icon-tab { color: var(--accent); }
+.tab.active .icon-tab, .tab-btn.active .icon-tab { color: #111; }  /* amber bg → dark icon */
+.app-nav-link .icon-tab { color: var(--muted); }
+.app-nav-link.active .icon-tab { color: var(--accent); }  /* sidebar: no bg tint, use amber */
 
 /* Status dot replacements (were coloured circle emoji) */
 .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; }

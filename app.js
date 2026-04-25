@@ -9042,7 +9042,7 @@ async function loadPasskeys() {
     } else {
       container.innerHTML = credentials.map(c => `
         <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;margin-bottom:6px">
-          <div style="font-size:20px">🔑</div>
+          <div><svg class="icon icon-lg" aria-hidden="true"><use href="#i-key-round"></use></svg></div>
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;font-weight:700">${esc(c.deviceName)}</div>
             <div style="font-size:11px;color:var(--muted)">Added ${new Date(c.createdAt).toLocaleDateString('en-GB')} · Last used ${new Date(c.lastUsed).toLocaleDateString('en-GB')}</div>
