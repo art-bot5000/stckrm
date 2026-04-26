@@ -3614,7 +3614,7 @@ function renderGrid() {
 
   if (items.length === 0) {
     grid.innerHTML = `<div class="empty-state">
-      <div class="icon">📦</div>
+      <div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg></div>
       <h3>Your stockroom is empty</h3>
       <p>Add the household consumables you buy regularly — coffee, toilet paper, cleaning supplies, anything you don't want to run out of.</p>
       <button class="btn btn-primary" onclick="openAddModal()">+ Add Your First Item</button>
@@ -3623,7 +3623,11 @@ function renderGrid() {
   }
 
   if (filtered.length === 0) {
-    grid.innerHTML = `<div class="empty-state"><div class="icon">🔍</div><h3>No items match this filter</h3><p>Try a different filter above.</p></div>`;
+    grid.innerHTML = `<div class="empty-state">
+      <div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg></div>
+      <h3>No items match this filter</h3>
+      <p>Try a different filter above.</p>
+    </div>`;
     return;
   }
 
