@@ -7826,6 +7826,20 @@ async function reauthWithPasskey() {
 
 // Shared post-login wizard routing — called by all sign-in paths
 async function postLoginWizardRoute(recoveryCodes = []) {
+  // Pull server settings first so _setupProtectSeen / _setupCountrySet are
+  // authoritative — don't rely on local IDB or localStorage which may have been cleared.
+  if (kvConnected && _kvKey) {
+    try {
+      const remote = await kvPull().catch(() => null);
+      if (remote && remote.settings) {
+        if (remote.settings._setupProtectSeen) settings._setupProtectSeen = true;
+        if (remote.settings._setupCountrySet)  settings._setupCountrySet  = true;
+        if (remote.settings._installDismissed) settings._installDismissed = true;
+        await dbPut('settings', 'settings', settings).catch(() => {});
+      }
+    } catch(e) { console.warn('[postLoginWizardRoute] settings pull failed:', e.message); }
+  }
+
   const protectSeen = await getProtectSeenForDevice();
   const countrySet  = await getCountrySetForDevice();
   // If returning user (no new recovery codes to show) and they have passkey set up,
@@ -8743,7 +8757,10 @@ async function kvStorePasskeySession(email, emailHash, sessionToken, dataKey) {
   _keyFingerprint(dataKey).then(fp => console.log('[key] kvStorePasskeySession — key fingerprint:', fp));
   // Store session
   try {
-    localStorage.setItem('stockroom_kv_session', JSON.stringify({ email, emailHash, sessionToken, authMethod: 'passkey' }));
+    const sessionJson = JSON.stringify({ email, emailHash, sessionToken, authMethod: 'passkey' });
+    localStorage.setItem('stockroom_kv_session', sessionJson);
+    // Also persist to IDB so session survives localStorage/cookie clears
+    dbPut('settings', 'stockroom_kv_session', sessionJson).catch(() => {});
     // Cache key for 24h
     const exported = await crypto.subtle.exportKey('raw', _kvKey);
     const keyData  = btoa(String.fromCharCode(...new Uint8Array(exported)));
@@ -9619,7 +9636,10 @@ async function kvStoreSession(email, emailHash, verifier, key) {
   kvConnected  = true;
   _keyFingerprint(key).then(fp => console.log('[key] kvStoreSession (passphrase) — key fingerprint:', fp));
   try {
-    localStorage.setItem('stockroom_kv_session', JSON.stringify({ email, emailHash, verifier }));
+    const sessionJson = JSON.stringify({ email, emailHash, verifier });
+    localStorage.setItem('stockroom_kv_session', sessionJson);
+    // Also persist to IDB so session survives localStorage/cookie clears
+    dbPut('settings', 'stockroom_kv_session', sessionJson).catch(() => {});
   } catch(e) {}
   // Cache key — 4 hours normally, 30 days if user asked to stay signed in
   if (key) {
@@ -10278,6 +10298,8 @@ async function _doDeleteAccount() {
     localStorage.removeItem('stockroom_country_set');
     localStorage.removeItem('stockroom_protect_seen');
     try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
+    // Also clear IDB session copy
+    dbPut('settings', 'stockroom_kv_session', null).catch(() => {});
     kvConnected  = false;
     _kvEmail     = '';
     _kvEmailHash = '';
@@ -10318,6 +10340,8 @@ async function kvSignOut() {
   try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
   // Clear session credentials (but keep permanent setup flags)
   localStorage.removeItem('stockroom_kv_session');
+  // Also clear IDB session copy so the user is fully signed out
+  dbPut('settings', 'stockroom_kv_session', null).catch(() => {});
   localStorage.removeItem('stockroom_seen');
   // Note: keep stockroom_protect_seen and stockroom_country_set — they are permanent
   // one-time setup flags, not session data. Removing them causes the protect/country
@@ -14254,6 +14278,34 @@ function getShoppingPresenceBar() {
 }
 
 async function init() {
+  // ── Restore device ID from IDB before anything else ──────────────────────
+  // getOrCreateDeviceId() is synchronous, so the async IDB restore in the IIFE
+  // below may not have completed yet. If localStorage was cleared, a new random
+  // device ID would be generated, making all IDB setup-flag lookups miss.
+  // We await the IDB restore here so the correct device ID is in localStorage
+  // before any setup-flag checks run.
+  if (!localStorage.getItem('stockroom_device_id')) {
+    try {
+      const savedId = await dbGet('settings', 'stockroom_device_id');
+      if (savedId) {
+        localStorage.setItem('stockroom_device_id', savedId);
+        sessionStorage.setItem('stockroom_device_id_session', savedId);
+      }
+    } catch(e) {}
+  }
+
+  // ── Restore kv_session from IDB if localStorage was cleared ──────────────
+  // stockroom_kv_session is the gating key for kvRestoreSession(). We also
+  // persist it to IDB so a cookie/localStorage clear doesn't force a re-login.
+  if (!localStorage.getItem('stockroom_kv_session')) {
+    try {
+      const savedSession = await dbGet('settings', 'stockroom_kv_session');
+      if (savedSession) {
+        localStorage.setItem('stockroom_kv_session', savedSession);
+      }
+    } catch(e) {}
+  }
+
   // Load all data from IndexedDB (migrates from localStorage on first run)
   await loadData();
 
