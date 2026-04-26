@@ -6687,13 +6687,6 @@ let _kvEmailHash     = '';
 let _kvVerifier      = '';
 let _kvKey           = null;
 // Captured when the "Remember me" checkbox changes — survives wizard DOM teardown
-// Email cookie consent — drives whether email is saved across visits.
-let _rememberEmailChecked = false;
-// Trust this device for 30 days — drives whether device is trusted (keys cached
-// in IDB, MFA bypassed, no re-auth needed for 30 days).
-let _keepSignedInChecked  = false;
-// Legacy alias used by older code paths — points to keep-signed-in flag.
-// (Trusting a device is the only thing that uses the legacy flag, so this is safe.)
 let _rememberMeChecked = false;
 let _kvSessionToken  = null;
 
@@ -7032,46 +7025,6 @@ window.stockroomDiag = async function() {
   return out.join('\n');
 };
 
-// ── Trust state diagnostic — run window.trustDiag() in console ──
-window.trustDiag = async function() {
-  const out = [];
-  out.push('=== TRUSTED-DEVICE DIAGNOSTIC ===');
-  const ts     = localStorage.getItem('stockroom_trust_ts');
-  const secret = localStorage.getItem('stockroom_device_secret');
-  const fb     = localStorage.getItem('stockroom_kv_key_fallback');
-  const sess   = localStorage.getItem('stockroom_kv_session');
-  const remEmail = localStorage.getItem('stockroom_remembered_email');
-  const consent  = localStorage.getItem('stockroom_cookie_consent');
-  out.push(`stockroom_kv_session:        ${sess ? 'SET' : 'ABSENT'}`);
-  out.push(`stockroom_device_secret:     ${secret ? 'SET (' + secret.slice(0,8) + '…)' : 'ABSENT'}`);
-  out.push(`stockroom_trust_ts:          ${ts ? new Date(parseInt(ts)).toISOString() + ' (' + Math.round((Date.now()-parseInt(ts))/(1000*60*60*24)) + 'd ago)' : 'ABSENT'}`);
-  out.push(`stockroom_kv_key_fallback:   ${fb ? 'SET' : 'ABSENT'}`);
-  out.push(`stockroom_remembered_email:  ${remEmail || 'ABSENT'}`);
-  out.push(`stockroom_cookie_consent:    ${consent || 'ABSENT'}`);
-  out.push(`_keepSignedInChecked:        ${_keepSignedInChecked}`);
-  out.push(`_rememberEmailChecked:       ${_rememberEmailChecked}`);
-  out.push(`_rememberMeChecked (legacy): ${_rememberMeChecked}`);
-  // Try to load the wrapped key from IDB
-  if (secret) {
-    try {
-      const deviceId = getOrCreateDeviceId();
-      const wk = await loadWrappedKey(deviceId, secret);
-      out.push(`IDB loadWrappedKey(${deviceId.slice(0,8)}…): ${wk ? 'SUCCESS — key available' : 'NULL — IDB has no key for this device'}`);
-    } catch(e) {
-      out.push(`IDB loadWrappedKey threw: ${e.message}`);
-    }
-  } else {
-    out.push('IDB check skipped — no device_secret');
-  }
-  // Compute the "would _mfaGate bypass" verdict
-  const trustValid = ts && (Date.now() - parseInt(ts)) < (30 * 24 * 60 * 60 * 1000);
-  const wouldBypass = !!(secret && trustValid);
-  out.push(`MFA bypass would trigger: ${wouldBypass ? 'YES' : 'NO'}`);
-  out.push('=== END ===');
-  console.log(out.join('\n'));
-  return out.join('\n');
-};
-
 // ── Email verification flow ────────────────────────────────
 // _emailVerifyCallback is set before showing step-1f.
 // On successful verification it is called to continue the normal flow.
@@ -7260,11 +7213,8 @@ function clearRememberedCookieData() {
 function persistLoginCookies(email, hasPasskey) {
   // Always store passkey registration (functional, not tracking)
   if (hasPasskey) setDeviceHasPasskey(true);
-  // Save email if the email checkbox was ticked (consent already granted by it).
-  // Note: legacy _rememberMeChecked path retained — it currently means
-  // "keep-signed-in", but since trusting the device implies the user wants the
-  // app remembered, persisting the email is appropriate there too.
-  if (_rememberEmailChecked || _rememberMeChecked || getCookieConsent() === 'granted') {
+  // Save email if Remember me was ticked (consent already granted by checkbox)
+  if (_rememberMeChecked || getCookieConsent() === 'granted') {
     setRememberedEmail(email);
     setRememberedPasskey(hasPasskey);
   }
@@ -7287,13 +7237,9 @@ function showKvLogin() {
     _showAuthStep(rememberedEmail, rememberedPasskey === 'true');
   } else {
     document.getElementById('wizard-step-1b')?.classList.add('active');
-    // Reset keep-signed-in checkbox to unchecked for a fresh login.
-    // Email checkbox is left at whatever DOMContentLoaded set it to (ticked if
-    // email was previously remembered) — don't fight that here.
-    const keepCb = document.getElementById('keep-signed-in-checkbox');
-    if (keepCb) keepCb.checked = false;
-    _keepSignedInChecked = false;
-    _rememberMeChecked   = false;
+    // Reset remember-me checkbox to unchecked for a fresh login
+    const cb = document.getElementById('remember-me-checkbox');
+    if (cb) cb.checked = false;
     // If this device has a passkey, show hint so users know they can use it
     const deviceHasPK = getDeviceHasPasskey();
     const pkHint = document.getElementById('login-passkey-hint');
@@ -7313,10 +7259,9 @@ function doLoginContinue() {
   }
   if(errEl) errEl.style.display='none';
 
-  // If "Remember my email" is ticked, save the email (the inline onchange
-  // handler also sets consent = granted so this is consistent).
-  const emailCb = document.getElementById('remember-email-checkbox');
-  if (emailCb && emailCb.checked) {
+  // If "Remember me" is ticked and consent was just granted inline, save now
+  const cb = document.getElementById('remember-me-checkbox');
+  if (cb && cb.checked && getCookieConsent() === 'granted') {
     setRememberedEmail(email);
     // passkey preference saved after successful login
   }
@@ -7375,20 +7320,12 @@ function _showAuthStep(email, usePasskey) {
   const errEl = document.getElementById('kv-login-error');
   if (errEl) errEl.style.display = 'none';
 
-  // Pre-tick the email checkbox if email already remembered (saving the email
-  // is what got us to this step in the first place). Never auto-tick the
-  // keep-signed-in checkbox — that decision must be made fresh each visit.
-  const emailAuthCb = document.getElementById('remember-email-checkbox-auth');
-  if (emailAuthCb) {
+  // Pre-check "Remember me" when a remembered email is present or consent was granted
+  const authCb = document.getElementById('remember-me-checkbox-auth');
+  if (authCb) {
     const shouldCheck = !!getRememberedEmail() || getCookieConsent() === 'granted';
-    emailAuthCb.checked = shouldCheck;
-    _rememberEmailChecked = shouldCheck;
-  }
-  const keepAuthCb = document.getElementById('keep-signed-in-checkbox-auth');
-  if (keepAuthCb) {
-    keepAuthCb.checked = false;
-    _keepSignedInChecked = false;
-    _rememberMeChecked   = false;
+    authCb.checked = shouldCheck;
+    _rememberMeChecked = shouldCheck;
   }
 }
 
@@ -7418,14 +7355,8 @@ function loginBackToEmail() {
   document.getElementById('wizard-step-1b')?.classList.add('active');
   const emailEl = document.getElementById('kv-login-email');
   if (emailEl) { emailEl.value = ''; }
-  // Reset both checkboxes when user explicitly walks back
-  const emailCb = document.getElementById('remember-email-checkbox');
-  if (emailCb) emailCb.checked = false;
-  const keepCb = document.getElementById('keep-signed-in-checkbox');
-  if (keepCb) keepCb.checked = false;
-  _rememberEmailChecked = false;
-  _keepSignedInChecked  = false;
-  _rememberMeChecked    = false;
+  const cb = document.getElementById('remember-me-checkbox');
+  if (cb) cb.checked = false;
   const panel = document.getElementById('cookie-inline-panel');
   if (panel) panel.style.display = 'none';
 }
@@ -7726,10 +7657,6 @@ async function kvLoginWithPasskey() {
     await kvStorePasskeySession(email, emailHash, sessionToken, dataKey);
     if(errEl) errEl.style.display = 'none';
     persistLoginCookies(email, true);
-    // Establish 30-day device trust if "Keep me signed in" was ticked.
-    // Passkey users have no verifier — pass empty string; trustThisDeviceWith
-    // will fall back to sessionToken-based device registration on the backend.
-    await _trustIfRemembered(email, emailHash, '', dataKey);
     // Stamp permanent setup flags — these survive sign-out
     await setProtectSeenForDevice();
     await setCountrySetForDevice();
@@ -9503,31 +9430,25 @@ async function removeWrappedKey(deviceId) {
   } catch(e) {}
 }
 
-// Silent trust — called after successful sign-in.
-// Only trusts the device if "Keep me signed in for 30 days" was ticked.
-// This is independent of the email-cookie checkbox.
+// Silent trust — called after successful passphrase login.
+// If the user ticked "Remember me", trust the device without any popup.
+// This replaces the old offerTrustDevice() confirm dialog entirely.
 async function _trustIfRemembered(email, emailHash, verifier, key) {
-  // Read the live checkbox state (DOM may have been torn down by the wizard
-  // close, so module flags are the authoritative source).
-  const cb1 = document.getElementById('keep-signed-in-checkbox');
-  const cb2 = document.getElementById('keep-signed-in-checkbox-auth');
-  const wantsTrust = _keepSignedInChecked
-    || _rememberMeChecked
+  const cb1 = document.getElementById('remember-me-checkbox');
+  const cb2 = document.getElementById('remember-me-checkbox-auth');
+  const remembered = _rememberMeChecked
     || cb1?.checked
-    || cb2?.checked;
-  if (!wantsTrust) return;
-  // Skip if we already have a working trust for this account.
+    || cb2?.checked
+    || getCookieConsent() === 'granted';
+  console.log('[DIAG] _trustIfRemembered: _rememberMeChecked=', _rememberMeChecked, 'cb1=', cb1?.checked, 'cb2=', cb2?.checked, 'consent=', getCookieConsent(), '→ remembered=', remembered);
+  if (!remembered) return;
   const secret = localStorage.getItem('stockroom_device_secret');
   if (secret) {
-    try {
-      const existing = await loadWrappedKey(getOrCreateDeviceId(), secret);
-      if (existing) {
-        // Refresh the timestamp so the 30-day window restarts on every login
-        localStorage.setItem('stockroom_trust_ts', String(Date.now()));
-        return;
-      }
-    } catch(e) {}
+    const existing = await loadWrappedKey(getOrCreateDeviceId(), secret);
+    console.log('[DIAG] _trustIfRemembered: existing IDB key=', !!existing);
+    if (existing) return;
   }
+  console.log('[DIAG] _trustIfRemembered: calling trustThisDeviceWith');
   await trustThisDeviceWith(email, emailHash, verifier, key);
 }
 
@@ -9552,79 +9473,37 @@ function _handleLoginRateLimit(res, data) {
 }
 
 async function trustThisDeviceWith(email, emailHash, verifier, key) {
-  // Ensure the key is extractable — required for both saveWrappedKey AND the
-  // localStorage fallback. If we silently proceed with a non-extractable key,
-  // the IDB write fails, the LS fallback fails, and the user appears trusted
-  // but cannot restore on refresh.
-  if (!key || !key.extractable) {
-    console.warn('[trust] aborted: key is missing or non-extractable', { hasKey: !!key, extractable: key?.extractable });
-    toast('Could not trust device: encryption key is not exportable. Please sign in with your passphrase first.');
-    return false;
-  }
-
-  const deviceId = getOrCreateDeviceId();
-  let   secret   = localStorage.getItem('stockroom_device_secret');
-  const isNewSecret = !secret;
-  if (isNewSecret) {
-    secret = Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2,'0')).join('');
-    localStorage.setItem('stockroom_device_secret', secret);
-  }
-
-  // 1. Write the wrapped key to IDB. This is the canonical source of trust.
   try {
-    await saveWrappedKey(deviceId, key, secret);
-  } catch(e) {
-    console.warn('[trust] saveWrappedKey failed:', e?.message || e);
-    if (isNewSecret) localStorage.removeItem('stockroom_device_secret');
-    toast('Could not trust device — your browser blocked storage. Try signing in again.');
-    return false;
-  }
-
-  // 2. Verify round-trip — confirm IDB persisted what we just wrote.
-  //    If this fails (private mode, quota, broken IDB) we don't pretend trust
-  //    was established.
-  try {
-    const verify = await loadWrappedKey(deviceId, secret);
-    if (!verify) {
-      console.warn('[trust] verify round-trip returned null');
-      if (isNewSecret) localStorage.removeItem('stockroom_device_secret');
-      toast('Could not trust device — storage verify failed.');
-      return false;
+    const deviceId = getOrCreateDeviceId();
+    let   secret   = localStorage.getItem('stockroom_device_secret');
+    console.log('[DIAG] trustThisDeviceWith: deviceId=', deviceId, 'existingSecret=', !!secret, 'keyExtractable=', key?.extractable);
+    if (!secret) {
+      secret = Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2,'0')).join('');
+      localStorage.setItem('stockroom_device_secret', secret);
     }
+    await saveWrappedKey(deviceId, key, secret);
+    // Record when trust was established — used for 30-day expiry
+    localStorage.setItem('stockroom_trust_ts', String(Date.now()));
+    // Also store raw key bytes in localStorage as fallback for IDB failures
+    try {
+      const exported = await crypto.subtle.exportKey('raw', key);
+      const keyB64   = btoa(String.fromCharCode(...new Uint8Array(exported)));
+      localStorage.setItem('stockroom_kv_key_fallback', JSON.stringify({
+        keyB64, emailHash,
+        expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+      }));
+    } catch(e) {}
+    // Register on backend
+    const name = getDeviceName();
+    fetchKV(`${WORKER_URL}/device/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash, verifier, deviceId, name, addedAt: new Date().toISOString() }),
+    }).catch(() => {});
+    toast('This device is now trusted ✓');
+    loadTrustedDevices();
   } catch(e) {
-    console.warn('[trust] verify round-trip threw:', e?.message || e);
-    if (isNewSecret) localStorage.removeItem('stockroom_device_secret');
-    toast('Could not trust device — storage verify failed.');
-    return false;
+    toast('Could not trust device: ' + e.message);
   }
-
-  // 3. Now that IDB is confirmed, stamp the timestamp + LS fallback. This
-  //    ordering means stockroom_trust_ts only ever exists when there's a real
-  //    wrapped key behind it.
-  localStorage.setItem('stockroom_trust_ts', String(Date.now()));
-  try {
-    const exported = await crypto.subtle.exportKey('raw', key);
-    const keyB64   = btoa(String.fromCharCode(...new Uint8Array(exported)));
-    localStorage.setItem('stockroom_kv_key_fallback', JSON.stringify({
-      keyB64, emailHash,
-      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
-    }));
-  } catch(e) { console.warn('[trust] LS fallback write failed:', e?.message || e); }
-
-  // 4. Register on backend (best-effort — local trust still works if this fails)
-  const name = getDeviceName();
-  const authPayload = verifier
-    ? { verifier }
-    : (_kvSessionToken ? { sessionToken: _kvSessionToken } : {});
-  fetchKV(`${WORKER_URL}/device/register`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ emailHash, ...authPayload, deviceId, name, addedAt: new Date().toISOString() }),
-  }).catch(() => {});
-
-  console.log('[trust] established for', email, '— deviceId:', deviceId);
-  toast('This device is now trusted ✓');
-  loadTrustedDevices();
-  return true;
 }
 
 async function trustThisDevice() {
@@ -9729,6 +9608,7 @@ async function kvStoreSession(email, emailHash, verifier, key) {
   _kvEmailHash = emailHash;
   _kvVerifier  = verifier;
   _kvKey       = key;
+  console.log('[DIAG] kvStoreSession: email=', email, '_rememberMeChecked=', _rememberMeChecked, 'consent=', getCookieConsent());
   kvConnected  = true;
   _keyFingerprint(key).then(fp => console.log('[key] kvStoreSession (passphrase) — key fingerprint:', fp));
   try {
@@ -9739,9 +9619,9 @@ async function kvStoreSession(email, emailHash, verifier, key) {
     try {
       const exported = await crypto.subtle.exportKey('raw', key);
       const keyData  = btoa(String.fromCharCode(...new Uint8Array(exported)));
-      const cb1 = document.getElementById('keep-signed-in-checkbox');
-      const cb2 = document.getElementById('keep-signed-in-checkbox-auth');
-      const staySignedIn = _keepSignedInChecked || _rememberMeChecked || cb1?.checked || cb2?.checked;
+      const cb1 = document.getElementById('remember-me-checkbox');
+      const cb2 = document.getElementById('remember-me-checkbox-auth');
+      const staySignedIn = _rememberMeChecked || cb1?.checked || cb2?.checked || getCookieConsent() === 'granted';
       const expiry = Date.now() + (staySignedIn ? 30 : 4) * 24 * 60 * 60 * 1000;
       await lsSetEncrypted('stockroom_kv_session_key', { keyData, emailHash, expiry });
     } catch(e) {}
@@ -10415,28 +10295,20 @@ async function kvSignOut() {
     localStorage.removeItem('stockroom_mfa_was_active');
   }
   // Clear the per-session verified flag — next login must verify MFA again
-  try {
-    sessionStorage.removeItem(_MFA_SESSION_KEY);
-    localStorage.removeItem(_MFA_SESSION_KEY);
-  } catch(e) {}
+  try { sessionStorage.removeItem(_MFA_SESSION_KEY); } catch(e) {}
   // Dismiss any decrypt error banner — no need to show it after an intentional sign-out
   document.getElementById('kv-decrypt-error-banner')?.remove();
   // Clean up any grocery drag UI
   document.getElementById('grocery-change-dept-zone')?.remove();
   document.getElementById('grocery-dept-picker-overlay')?.remove();
   groceryEditMode = false;
-  // Clear device trust (but keep email cookie + consent flag — sign-out does
-  // not forget the email; user will tap Sign In and find their email pre-filled)
+  // Clear device trust
   const deviceId = getOrCreateDeviceId();
   await removeWrappedKey(deviceId);
   localStorage.removeItem('stockroom_device_secret');
   localStorage.removeItem('stockroom_kv_key_fallback');
   localStorage.removeItem('stockroom_kv_session_key');
-  localStorage.removeItem('stockroom_trust_ts');
   try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
-  // Reset the module-level checkbox flags so the next sign-in starts fresh
-  _keepSignedInChecked  = false;
-  _rememberMeChecked    = false;
   // Clear session credentials (but keep permanent setup flags)
   localStorage.removeItem('stockroom_kv_session');
   localStorage.removeItem('stockroom_seen');
@@ -10995,45 +10867,28 @@ window.addEventListener('resize', () => {
 }, { passive: true });
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Wire up the four wizard checkboxes — two pairs that mirror each other.
-  //   Email pair  (saves email across visits):       remember-email-checkbox / remember-email-checkbox-auth
-  //   Trust pair  (trusts device for 30 days, MFA bypass): keep-signed-in-checkbox / keep-signed-in-checkbox-auth
-  const emailCb     = document.getElementById('remember-email-checkbox');
-  const emailCbAuth = document.getElementById('remember-email-checkbox-auth');
-  const keepCb      = document.getElementById('keep-signed-in-checkbox');
-  const keepCbAuth  = document.getElementById('keep-signed-in-checkbox-auth');
-  // Pre-tick email checkbox if email already remembered (user clearly wants this).
-  // Never pre-tick keep-signed-in — that decision must be active each visit.
+  // Capture "Remember me" checkbox state into a module variable immediately.
+  // There are two checkboxes: one on the email step (new users) and one on the
+  // passphrase step (returning users). Both set _rememberMeChecked.
+  const rememberCb = document.getElementById('remember-me-checkbox');
+  const rememberCbAuth = document.getElementById('remember-me-checkbox-auth');
+  // Pre-check if email already remembered
   const emailAlreadyRemembered = !!getRememberedEmail() || getCookieConsent() === 'granted';
   if (emailAlreadyRemembered) {
-    _rememberEmailChecked = true;
-    if (emailCb)     emailCb.checked     = true;
-    if (emailCbAuth) emailCbAuth.checked = true;
+    _rememberMeChecked = true;
+    if (rememberCb) rememberCb.checked = true;
+    if (rememberCbAuth) rememberCbAuth.checked = true;
   }
-  if (emailCb) {
-    emailCb.addEventListener('change', () => {
-      _rememberEmailChecked = emailCb.checked;
-      if (emailCbAuth) emailCbAuth.checked = emailCb.checked;
+  if (rememberCb) {
+    rememberCb.addEventListener('change', () => {
+      _rememberMeChecked = rememberCb.checked;
+      if (rememberCbAuth) rememberCbAuth.checked = rememberCb.checked;
     });
   }
-  if (emailCbAuth) {
-    emailCbAuth.addEventListener('change', () => {
-      _rememberEmailChecked = emailCbAuth.checked;
-      if (emailCb) emailCb.checked = emailCbAuth.checked;
-    });
-  }
-  if (keepCb) {
-    keepCb.addEventListener('change', () => {
-      _keepSignedInChecked = keepCb.checked;
-      _rememberMeChecked   = keepCb.checked; // legacy alias
-      if (keepCbAuth) keepCbAuth.checked = keepCb.checked;
-    });
-  }
-  if (keepCbAuth) {
-    keepCbAuth.addEventListener('change', () => {
-      _keepSignedInChecked = keepCbAuth.checked;
-      _rememberMeChecked   = keepCbAuth.checked; // legacy alias
-      if (keepCb) keepCb.checked = keepCbAuth.checked;
+  if (rememberCbAuth) {
+    rememberCbAuth.addEventListener('change', () => {
+      _rememberMeChecked = rememberCbAuth.checked;
+      if (rememberCb) rememberCb.checked = rememberCbAuth.checked;
     });
   }
 
@@ -14468,6 +14323,34 @@ async function init() {
 
   const seen        = kvConnected; // signed-in users skip the wizard
   const wizardStep  = localStorage.getItem('stockroom_wizard_step');
+
+  // ── Early settings pull ──────────────────────────────────────────────────
+  // Before routing through the wizard, fetch the server's settings blob so that
+  // _setupProtectSeen and _setupCountrySet are accurate. Without this, clearing
+  // cookies/localStorage causes the local `settings` object to lack these flags
+  // (they're only in the encrypted server blob) and the screens re-appear.
+  // We only do this when connected AND the key is already in memory — i.e. a
+  // returning trusted-device user. New logins go through postLoginWizardRoute()
+  // which syncs after the protect screen, so they're unaffected.
+  if (kvConnected && _kvKey && !_joinCode) {
+    try {
+      showDataLoadingOverlay('Loading your Stockroom…');
+      const remote = await kvPull().catch(() => null);
+      hideDataLoadingOverlay();
+      if (remote && remote.settings) {
+        // Merge only the setup flags — don't overwrite everything here since the
+        // full sync happens immediately after. We just need the flags for routing.
+        if (remote.settings._setupProtectSeen)  settings._setupProtectSeen  = true;
+        if (remote.settings._setupCountrySet)   settings._setupCountrySet   = true;
+        // Persist to local IDB so future loads (before network) are also correct
+        await dbPut('settings', 'settings', settings).catch(() => {});
+      }
+    } catch(e) {
+      hideDataLoadingOverlay();
+      console.warn('[init] Early settings pull failed:', e.message);
+    }
+  }
+
   const countrySet  = await getCountrySetForDevice();
   const protectSeen = await getProtectSeenForDevice();
   console.log('[DIAG] init branch: seen=', seen, 'kvConnected=', kvConnected, '_kvKey=', !!_kvKey, 'protectSeen=', protectSeen);
@@ -16462,23 +16345,8 @@ async function mfaVerifySubmit() {
 
   _mfaVerifyAltMode = false;
   localStorage.removeItem('stockroom_mfa_was_active');
-  // Mark MFA as verified.
-  //  - On trusted devices ("Remember me" ticked → stockroom_trust_ts set):
-  //      persist for 30 days in localStorage, matching the key cache.
-  //  - On untrusted devices: fall back to sessionStorage (this tab only).
-  try {
-    const trusted = !!localStorage.getItem('stockroom_trust_ts');
-    if (trusted) {
-      const payload = {
-        emailHash: _kvEmailHash || '1',
-        expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
-      };
-      localStorage.setItem(_MFA_SESSION_KEY, JSON.stringify(payload));
-      sessionStorage.removeItem(_MFA_SESSION_KEY);
-    } else {
-      sessionStorage.setItem(_MFA_SESSION_KEY, _kvEmailHash || '1');
-    }
-  } catch(e) {}
+  // Mark MFA as verified for this browser session (allows trusted devices to skip on reload)
+  try { sessionStorage.setItem(_MFA_SESSION_KEY, _kvEmailHash || '1'); } catch(e) {}
   closeModal('mfa-verify-modal');
   if (codeEl) codeEl.value = '';
   if (_pendingMfaCallback) { const cb = _pendingMfaCallback; _pendingMfaCallback = null; cb(); }
@@ -16525,32 +16393,6 @@ let _mfaEmailTestSent    = false;
 const _MFA_SESSION_KEY = 'stockroom_mfa_verified';
 
 async function _mfaGate(callback) {
-  // Trusted-device fast path: if this device is trusted (user ticked
-  // "Keep me signed in for 30 days") and trust hasn't expired, bypass MFA
-  // entirely. This matches the spec: trust = full bypass for 30 days.
-  // _checkTrustExpiry has already run in kvEnsureKey by this point and would
-  // have cleared the timestamp + key material if expiry hit, so a present
-  // trust_ts here is genuinely valid.
-  try {
-    const trustTs = localStorage.getItem('stockroom_trust_ts');
-    const secret  = localStorage.getItem('stockroom_device_secret');
-    if (trustTs && secret && _kvEmailHash) {
-      const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
-      const trustValid  = (Date.now() - parseInt(trustTs)) < THIRTY_DAYS;
-      if (trustValid) {
-        const wrapped = await loadWrappedKey(getOrCreateDeviceId(), secret).catch(() => null);
-        if (wrapped) {
-          // Device-level trust supersedes MFA — the user already proved
-          // possession of this device's secret + IDB-bound key.
-          await callback();
-          return;
-        }
-      }
-    }
-  } catch(e) {
-    console.warn('_mfaGate: trust bypass check failed:', e.message);
-  }
-
   // Pull fresh settings from server — MFA state must be authoritative from server
   if (kvConnected && _kvKey) {
     try {
@@ -16579,64 +16421,13 @@ async function _mfaGate(callback) {
   // MFA is enabled — check if already verified this browser session
   // sessionStorage is wiped on tab/browser close AND on cookie clear,
   // so "stay signed in" users only verify once per session.
-  // Verified can come from either localStorage (trusted device, 30-day) or
-  // sessionStorage (untrusted device, this tab only). Check both.
-  let alreadyVerified = false;
-  try {
-    const raw = localStorage.getItem(_MFA_SESSION_KEY);
-    if (raw) {
-      const data = JSON.parse(raw);
-      if (data && data.emailHash === _kvEmailHash && Date.now() < data.expiresAt) {
-        alreadyVerified = true;
-      } else {
-        // Stale, expired, or wrong account — clear it
-        localStorage.removeItem(_MFA_SESSION_KEY);
-      }
-    }
-  } catch(e) { localStorage.removeItem(_MFA_SESSION_KEY); }
-  if (!alreadyVerified) {
-    alreadyVerified = sessionStorage.getItem(_MFA_SESSION_KEY) === _kvEmailHash;
-  }
+  const alreadyVerified = sessionStorage.getItem(_MFA_SESSION_KEY) === _kvEmailHash;
   if (alreadyVerified) {
     await callback();
     return;
   }
 
-  // Trusted device bypass — if this device was marked "Keep me signed in for
-  // 30 days" and the trust hasn't expired, skip MFA. The IDB-wrapped key acts
-  // as a hardware-backed second factor (key material the user has access to,
-  // bound to this physical device).
-  if (await _isDeviceTrustedForMfaBypass()) {
-    // Cache the verified state for the rest of this browser session so reauth
-    // (which calls _mfaIntercept directly, not _mfaGate) also stays bypassed.
-    try {
-      localStorage.setItem(_MFA_SESSION_KEY, JSON.stringify({
-        emailHash: _kvEmailHash,
-        expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
-      }));
-    } catch(e) {}
-    await callback();
-    return;
-  }
-
   await _mfaLoginIntercept(callback);
-}
-
-// True iff this device has a valid trusted-device key AND the trust is not
-// expired. Used to bypass MFA on trusted devices for the 30-day window.
-async function _isDeviceTrustedForMfaBypass() {
-  try {
-    const ts = localStorage.getItem('stockroom_trust_ts');
-    if (!ts) return false;
-    const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
-    if (Date.now() - parseInt(ts) > THIRTY_DAYS) return false;
-    const secret = localStorage.getItem('stockroom_device_secret');
-    if (!secret) return false;
-    const wrappedKey = await loadWrappedKey(getOrCreateDeviceId(), secret);
-    return !!wrappedKey;
-  } catch(e) {
-    return false;
-  }
 }
 function _totpGenerate(secret, time) {
   const b32   = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
