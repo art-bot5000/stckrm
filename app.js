@@ -2767,18 +2767,10 @@ if ('serviceWorker' in navigator) {
       });
     });
 
-    // Show iOS install banner if on iOS, not installed, and not dismissed
-    // Check dismissed flag fresh inside the timeout — by then loadData() and the
-    // early server pull will have completed, so settings._installDismissed is accurate.
-    if (isIOS && !isInStandaloneMode) {
-      setTimeout(() => {
-        const iosDismissed = settings._installDismissed || localStorage.getItem('stockroom_ios_banner_dismissed');
-        if (!iosDismissed) {
-          const banner = document.getElementById('ios-install-banner');
-          if (banner) banner.style.display = 'block';
-        }
-      }, 3000);
-    }
+    // iOS install banner is shown via maybeShowInstallBanner() called from
+    // _enterStockroom(), after server settings have been pulled and verified.
+    // This ensures settings._installDismissed is authoritative (not stale from
+    // IDB which may have been cleared along with cookies).
   }
 }
 
@@ -2794,20 +2786,12 @@ function applyUpdate() {
   else location.reload(true);
 }
 
-// Android install prompt
+// Android install prompt — just capture the event; banner is shown via
+// maybeShowInstallBanner() called from _enterStockroom() after server settings
+// are confirmed, so settings._installDismissed is always authoritative.
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
   deferredInstallPrompt = e;
-  // Check dismissed flag fresh inside the timeout — by then loadData() and the
-  // early server pull will have completed, so settings._installDismissed is accurate
-  // even if localStorage was cleared.
-  setTimeout(() => {
-    const dismissed = settings._installDismissed || localStorage.getItem('stockroom_install_dismissed');
-    if (!dismissed) {
-      const banner = document.getElementById('install-banner');
-      if (banner) banner.classList.add('show');
-    }
-  }, 3000);
   const row = document.getElementById('install-prompt-row');
   if (row) row.style.display = 'flex';
 });
@@ -7873,6 +7857,25 @@ async function _enterStockroom() {
   if (stockTab) showView('stock', stockTab);
   scheduleRender(...RENDER_REGIONS);
   try { await kvSyncNow(true); } finally { hideDataLoadingOverlay(); }
+  // Show install banner only after server sync — settings._installDismissed is
+  // now authoritative regardless of whether IDB/cookies were cleared.
+  setTimeout(maybeShowInstallBanner, 2000);
+}
+
+// Show the install banner (Android or iOS) only if not already dismissed.
+// Must be called after _mfaGate / kvSyncNow so settings._installDismissed
+// reflects the server value, not just whatever survived a cookie clear.
+function maybeShowInstallBanner() {
+  if (settings._installDismissed) return;
+  if (isInStandaloneMode) return; // already installed
+
+  if (isIOS && !isInStandaloneMode) {
+    const banner = document.getElementById('ios-install-banner');
+    if (banner) banner.style.display = 'block';
+  } else if (deferredInstallPrompt) {
+    const banner = document.getElementById('install-banner');
+    if (banner) banner.classList.add('show');
+  }
 }
 
 let _protectRecoveryCodes = []; // held in memory during setup only
@@ -14390,6 +14393,8 @@ async function init() {
         scheduleRender(...RENDER_REGIONS);
         try { await kvSyncNow(true); } catch(e) {}
         hideDataLoadingOverlay();
+        // Show install banner after sync — settings._installDismissed now authoritative
+        setTimeout(maybeShowInstallBanner, 2000);
       }
     });
   } else if (wizardStep === '2') {
