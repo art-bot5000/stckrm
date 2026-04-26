@@ -3683,12 +3683,12 @@ function cardHTML(item, threshold) {
         <button class="btn-icon" title="Update stock count" onclick="openStockCountModal('${item.id}'"><svg class="icon" aria-hidden="true"><use href="#i-hash"></use></svg></button>
         <button class="btn-icon" title="Usage analytics" onclick="openAnalyticsModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-bar-chart-2"></use></svg></button>
         <button class="btn-icon" title="Price history" onclick="openPriceHistoryModal('${item.id}')" ${getPriceHistory(item).length < 2 ? 'style="opacity:0.35;cursor:default"' : ''}><svg class="icon" aria-hidden="true"><use href="#i-banknote"></use></svg></button>
-        <button class="btn-icon" title="Share item" onclick="shareItem('${item.id}')">↗️</button>
+        <button class="btn-icon" title="Share item" onclick="shareItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg></button>
         <button class="btn-icon" title="Edit" onclick="openEditModal('${item.id}');enableItemEdit()"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
         ${item._archived
           ? `<button class="btn-icon" title="Restore from archive" onclick="restoreItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-refresh-ccw"></use></svg></button>
              <button class="btn-icon" title="Delete permanently" onclick="deleteItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>`
-          : `<button class="btn-icon" title="Archive item" onclick="archiveItem('${item.id}'><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg></button>`}
+          : `<button class="btn-icon" title="Archive item" onclick="archiveItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg></button>`}
       </div>
     </div>
     <div class="card-name" style="margin-bottom:12px">${esc(item.name)}</div>
