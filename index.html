@@ -298,12 +298,21 @@
             style="position:absolute;left:14px;top:0;transform:translateY(-50%);font-size:11px;font-weight:600;color:var(--accent);background:var(--surface);padding:0 4px;pointer-events:none;line-height:1;white-space:nowrap">Email address</label>
         </div>
 
-        <!-- Remember me -->
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding-left:2px">
-          <input type="checkbox" id="remember-me-checkbox" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0"
-            onchange="_rememberMeChecked=this.checked;if(this.checked){localStorage.setItem('stockroom_cookie_consent','granted');}else{localStorage.removeItem('stockroom_cookie_consent');localStorage.removeItem('stockroom_remembered_email');localStorage.removeItem('stockroom_mfa_verified');}">
-          <label for="remember-me-checkbox" style="font-size:13px;color:var(--text);cursor:pointer;font-weight:600">Remember me</label>
-          <span style="font-size:12px;color:var(--muted)">— saves your email on this device</span>
+        <!-- Remember email + Keep signed in (two independent options) -->
+        <div style="margin-bottom:16px;padding:10px 12px;background:rgba(255,255,255,0.03);border-radius:8px">
+          <label for="remember-email-checkbox" style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:8px">
+            <input type="checkbox" id="remember-email-checkbox" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0"
+              onchange="_rememberEmailChecked=this.checked;if(this.checked){localStorage.setItem('stockroom_cookie_consent','granted');}else{localStorage.removeItem('stockroom_cookie_consent');localStorage.removeItem('stockroom_remembered_email');}">
+            <span style="font-size:13px;color:var(--text);font-weight:600">Remember my email on this device</span>
+          </label>
+          <label for="keep-signed-in-checkbox" style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+            <input type="checkbox" id="keep-signed-in-checkbox" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0;margin-top:2px"
+              onchange="_keepSignedInChecked=this.checked;_rememberMeChecked=this.checked">
+            <span style="flex:1">
+              <span style="display:block;font-size:13px;color:var(--text);font-weight:600">Keep me signed in for 30 days</span>
+              <span style="display:block;font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4">Skips sign-in (including any second-factor) on this device. Don't tick on shared devices.</span>
+            </span>
+          </label>
         </div>
 
         <button type="button" class="btn btn-primary btn-xl full" style="width:100%;margin-bottom:0"
@@ -314,7 +323,7 @@
             var v=e.value.trim();
             if(!v||!v.includes('@')){if(err){err.textContent='Enter a valid email address';err.style.display='block';}e.focus();return;}
             if(err)err.style.display='none';
-            var cb=document.getElementById('remember-me-checkbox');
+            var cb=document.getElementById('remember-email-checkbox');
             if(cb&&cb.checked){try{localStorage.setItem('stockroom_cookie_consent','granted');localStorage.setItem('stockroom_remembered_email',v);}catch(ex){}}
             var usePasskey=false;
             try{
@@ -375,6 +384,23 @@
           <button type="button" class="btn btn-ghost" style="font-size:12px;padding:3px 10px" onclick="loginBackToEmail()">⇄ Not you?</button>
         </div>
 
+        <!-- Remember email + Keep signed in (visible whether using passkey or passphrase) -->
+        <div style="margin-bottom:16px;padding:10px 12px;background:rgba(255,255,255,0.03);border-radius:8px">
+          <label for="remember-email-checkbox-auth" style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:8px">
+            <input type="checkbox" id="remember-email-checkbox-auth" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0"
+              onchange="_rememberEmailChecked=this.checked;if(this.checked){localStorage.setItem('stockroom_cookie_consent','granted');var e=document.getElementById('kv-login-email-display');if(e&&e.value)localStorage.setItem('stockroom_remembered_email',e.value);}else{localStorage.removeItem('stockroom_cookie_consent');localStorage.removeItem('stockroom_remembered_email');}">
+            <span style="font-size:13px;color:var(--text);font-weight:600">Remember my email on this device</span>
+          </label>
+          <label for="keep-signed-in-checkbox-auth" style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+            <input type="checkbox" id="keep-signed-in-checkbox-auth" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0;margin-top:2px"
+              onchange="_keepSignedInChecked=this.checked;_rememberMeChecked=this.checked">
+            <span style="flex:1">
+              <span style="display:block;font-size:13px;color:var(--text);font-weight:600">Keep me signed in for 30 days</span>
+              <span style="display:block;font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4">Skips sign-in (including any second-factor) on this device. Don't tick on shared devices.</span>
+            </span>
+          </label>
+        </div>
+
         <!-- Passkey path -->
         <div id="auth-passkey-section" style="display:none">
           <button type="button" class="btn btn-primary btn-xl full" style="margin-bottom:14px" onclick="if(typeof kvLoginWithPasskey==='function'){kvLoginWithPasskey();}else{var err=document.getElementById('kv-login-error');if(err){err.textContent='App still loading — please wait a moment and try again';err.style.display='block';}}">
@@ -401,14 +427,6 @@
             <label style="position:absolute;left:14px;top:0;transform:translateY(-50%);font-size:11px;font-weight:600;color:var(--accent);background:var(--surface);padding:0 4px;pointer-events:none;line-height:1">Passphrase</label>
           </div>
           <button type="button" class="btn btn-primary btn-xl full" style="margin-bottom:12px" onclick="kvLogin()">Sign in →</button>
-
-          <!-- Remember me — shown on the auth step for returning users -->
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;padding:10px 12px;background:rgba(255,255,255,0.03);border-radius:8px">
-            <input type="checkbox" id="remember-me-checkbox-auth" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0"
-              onchange="_rememberMeChecked=this.checked;if(this.checked){localStorage.setItem('stockroom_cookie_consent','granted');var e=document.getElementById('kv-login-email-display');if(e&&e.value)localStorage.setItem('stockroom_remembered_email',e.value);}else{localStorage.removeItem('stockroom_cookie_consent');localStorage.removeItem('stockroom_remembered_email');localStorage.removeItem('stockroom_mfa_verified');}">
-            <label for="remember-me-checkbox-auth" style="font-size:13px;color:var(--text);cursor:pointer;font-weight:600">Remember me</label>
-            <span style="font-size:12px;color:var(--muted)">— saves your email on this device</span>
-          </div>
 
           <div style="text-align:center;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
             <button type="button" class="btn btn-ghost" style="font-size:13px;color:var(--muted)" onclick="showForgotPassphrase()">Forgot passphrase?</button>
@@ -1114,7 +1132,7 @@
           <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:8px">
             <div class="acc-sec-label">
               <div class="acc-sec-h"><svg class="icon icon-md" aria-hidden="true"><use href="#i-smartphone"></use></svg> Trusted Devices</div>
-              <div class="acc-sec-p">Devices where you ticked "Remember me". Remove to sign out and require re-authentication.</div>
+              <div class="acc-sec-p">Devices where you ticked "Keep me signed in for 30 days". These bypass sign-in (and any second-factor) for 30 days. Remove a device to require full re-authentication.</div>
             </div>
             <button class="btn btn-ghost acc-sec-btn" onclick="toggleTrustedDevicesPanel()">Show devices</button>
           </div>

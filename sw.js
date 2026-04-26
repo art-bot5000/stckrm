@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'stockroom-kv-v164';
+const CACHE_VERSION = 'stockroom-kv-v165';
 const CACHE_NAME    = CACHE_VERSION;
 
 const CACHE_URLS = [
