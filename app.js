@@ -2861,10 +2861,14 @@ function dismissAmazonBanner() {
 function dismissInstallBanner() {
   const banner = document.getElementById('install-banner');
   if (banner) banner.classList.remove('show');
+  // Save to localStorage immediately so it survives for the rest of this session
   try { localStorage.setItem('stockroom_install_dismissed', '1'); } catch(e){}
-  // Also save to user data so the choice persists across devices and cookie clears
+  // Save to settings object + IDB so it persists across page loads and devices
   settings._installDismissed = true;
-  _saveSettings().then(() => kvPush().catch(() => {}));
+  _saveSettings().then(() => {
+    // Push to server so the flag is in the encrypted user blob on all devices
+    if (kvConnected) kvSyncNow(true).catch(() => {});
+  });
   setTimeout(() => toast('You can install STOCKROOM anytime from Settings'), 400);
 }
 
@@ -2872,9 +2876,10 @@ function dismissIOSBanner() {
   const banner = document.getElementById('ios-install-banner');
   if (banner) banner.style.display = 'none';
   try { localStorage.setItem('stockroom_ios_banner_dismissed', '1'); } catch(e){}
-  // Also save to user data
   settings._installDismissed = true;
-  _saveSettings().then(() => kvPush().catch(() => {}));
+  _saveSettings().then(() => {
+    if (kvConnected) kvSyncNow(true).catch(() => {});
+  });
 }
 
 // ═══════════════════════════════════════════
@@ -9311,50 +9316,37 @@ function getOrCreateDeviceId() {
 // ── Per-user, per-device setup flags ────────────────────────────────────────
 // Keyed by emailHash so multiple users share a device without interfering.
 // Flags also stored in settings blob so they follow the user to new devices.
+// ── One-time setup flags ──────────────────────────────────────────────────────
+// These flags are stored in the encrypted settings blob on the server, so they
+// follow the user to every device. Once set, the screens never show again —
+// regardless of which device, browser, or whether localStorage/cookies are cleared.
+// The "ForDevice" suffix is kept on the function names for backwards compatibility
+// but the flags are truly account-wide (not device-scoped).
+
 function _setupFlagKey(flagName) {
+  // Kept for any legacy IDB reads, but new code only uses settings._setup*
   const hash = _kvEmailHash || '';
   return hash ? `device_setup_${getOrCreateDeviceId()}_${hash}_${flagName}`
               : `device_setup_${getOrCreateDeviceId()}_${flagName}`;
 }
-async function _getDeviceSetupFlag(flagName) {
-  const key = _setupFlagKey(flagName);
-  try { if (localStorage.getItem(key) === '1') return true; } catch(e) {}
-  try { if ((await dbGet('settings', key)) === '1') {
-    try { localStorage.setItem(key, '1'); } catch(e) {}
-    return true;
-  }} catch(e) {}
-  // Legacy fallback — non-user-scoped key
-  const legacyKey = `device_setup_${getOrCreateDeviceId()}_${flagName}`;
-  try { if (localStorage.getItem(legacyKey) === '1') return true; } catch(e) {}
-  return false;
-}
-async function _setDeviceSetupFlag(flagName) {
-  const key = _setupFlagKey(flagName);
-  try { localStorage.setItem(key, '1'); } catch(e) {}
-  try { await dbPut('settings', key, '1'); } catch(e) {}
-}
+
 async function getProtectSeenForDevice() {
-  // Server setting takes priority — stored in encrypted blob so it follows user to new devices
-  if (settings._setupProtectSeen) return true;
-  return _getDeviceSetupFlag('protect_seen');
+  // Primary: check server-synced settings blob (follows user to any device)
+  return !!settings._setupProtectSeen;
 }
 async function setProtectSeenForDevice() {
   settings._setupProtectSeen = true;
   await dbPut('settings', 'settings', settings);
-  await _setDeviceSetupFlag('protect_seen');
-  // Push to server immediately so the flag is durable before the user proceeds
-  kvPush().catch(() => {});
+  // Push to server immediately — flag must be durable before user proceeds
+  if (kvConnected) kvSyncNow(true).catch(() => {});
 }
 async function getCountrySetForDevice() {
-  if (settings._setupCountrySet) return true;
-  return _getDeviceSetupFlag('country_set');
+  return !!settings._setupCountrySet;
 }
 async function setCountrySetForDevice() {
   settings._setupCountrySet = true;
   await dbPut('settings', 'settings', settings);
-  await _setDeviceSetupFlag('country_set');
-  // Push to server immediately so the flag is durable before the user proceeds
-  kvPush().catch(() => {});
+  if (kvConnected) kvSyncNow(true).catch(() => {});
 }
 
 function getDeviceName() {
