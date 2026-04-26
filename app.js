@@ -2775,11 +2775,15 @@ if ('serviceWorker' in navigator) {
     });
 
     // Show iOS install banner if on iOS, not installed, and not dismissed
-    const iosDismissed = settings._installDismissed || localStorage.getItem('stockroom_ios_banner_dismissed');
-    if (isIOS && !isInStandaloneMode && !iosDismissed) {
+    // Check dismissed flag fresh inside the timeout — by then loadData() and the
+    // early server pull will have completed, so settings._installDismissed is accurate.
+    if (isIOS && !isInStandaloneMode) {
       setTimeout(() => {
-        const banner = document.getElementById('ios-install-banner');
-        if (banner) banner.style.display = 'block';
+        const iosDismissed = settings._installDismissed || localStorage.getItem('stockroom_ios_banner_dismissed');
+        if (!iosDismissed) {
+          const banner = document.getElementById('ios-install-banner');
+          if (banner) banner.style.display = 'block';
+        }
       }, 3000);
     }
   }
@@ -2801,13 +2805,16 @@ function applyUpdate() {
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
   deferredInstallPrompt = e;
-  const dismissed = settings._installDismissed || localStorage.getItem('stockroom_install_dismissed');
-  if (!dismissed) {
-    setTimeout(() => {
+  // Check dismissed flag fresh inside the timeout — by then loadData() and the
+  // early server pull will have completed, so settings._installDismissed is accurate
+  // even if localStorage was cleared.
+  setTimeout(() => {
+    const dismissed = settings._installDismissed || localStorage.getItem('stockroom_install_dismissed');
+    if (!dismissed) {
       const banner = document.getElementById('install-banner');
       if (banner) banner.classList.add('show');
-    }, 3000);
-  }
+    }
+  }, 3000);
   const row = document.getElementById('install-prompt-row');
   if (row) row.style.display = 'flex';
 });
@@ -14342,6 +14349,12 @@ async function init() {
         // full sync happens immediately after. We just need the flags for routing.
         if (remote.settings._setupProtectSeen)  settings._setupProtectSeen  = true;
         if (remote.settings._setupCountrySet)   settings._setupCountrySet   = true;
+        if (remote.settings._installDismissed)  settings._installDismissed  = true;
+        // Backfill localStorage so banner checks (which may read LS directly) are also correct
+        if (settings._installDismissed) {
+          try { localStorage.setItem('stockroom_install_dismissed', '1'); } catch(e) {}
+          try { localStorage.setItem('stockroom_ios_banner_dismissed', '1'); } catch(e) {}
+        }
         // Persist to local IDB so future loads (before network) are also correct
         await dbPut('settings', 'settings', settings).catch(() => {});
       }
