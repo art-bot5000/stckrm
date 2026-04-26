@@ -7032,6 +7032,46 @@ window.stockroomDiag = async function() {
   return out.join('\n');
 };
 
+// ── Trust state diagnostic — run window.trustDiag() in console ──
+window.trustDiag = async function() {
+  const out = [];
+  out.push('=== TRUSTED-DEVICE DIAGNOSTIC ===');
+  const ts     = localStorage.getItem('stockroom_trust_ts');
+  const secret = localStorage.getItem('stockroom_device_secret');
+  const fb     = localStorage.getItem('stockroom_kv_key_fallback');
+  const sess   = localStorage.getItem('stockroom_kv_session');
+  const remEmail = localStorage.getItem('stockroom_remembered_email');
+  const consent  = localStorage.getItem('stockroom_cookie_consent');
+  out.push(`stockroom_kv_session:        ${sess ? 'SET' : 'ABSENT'}`);
+  out.push(`stockroom_device_secret:     ${secret ? 'SET (' + secret.slice(0,8) + '…)' : 'ABSENT'}`);
+  out.push(`stockroom_trust_ts:          ${ts ? new Date(parseInt(ts)).toISOString() + ' (' + Math.round((Date.now()-parseInt(ts))/(1000*60*60*24)) + 'd ago)' : 'ABSENT'}`);
+  out.push(`stockroom_kv_key_fallback:   ${fb ? 'SET' : 'ABSENT'}`);
+  out.push(`stockroom_remembered_email:  ${remEmail || 'ABSENT'}`);
+  out.push(`stockroom_cookie_consent:    ${consent || 'ABSENT'}`);
+  out.push(`_keepSignedInChecked:        ${_keepSignedInChecked}`);
+  out.push(`_rememberEmailChecked:       ${_rememberEmailChecked}`);
+  out.push(`_rememberMeChecked (legacy): ${_rememberMeChecked}`);
+  // Try to load the wrapped key from IDB
+  if (secret) {
+    try {
+      const deviceId = getOrCreateDeviceId();
+      const wk = await loadWrappedKey(deviceId, secret);
+      out.push(`IDB loadWrappedKey(${deviceId.slice(0,8)}…): ${wk ? 'SUCCESS — key available' : 'NULL — IDB has no key for this device'}`);
+    } catch(e) {
+      out.push(`IDB loadWrappedKey threw: ${e.message}`);
+    }
+  } else {
+    out.push('IDB check skipped — no device_secret');
+  }
+  // Compute the "would _mfaGate bypass" verdict
+  const trustValid = ts && (Date.now() - parseInt(ts)) < (30 * 24 * 60 * 60 * 1000);
+  const wouldBypass = !!(secret && trustValid);
+  out.push(`MFA bypass would trigger: ${wouldBypass ? 'YES' : 'NO'}`);
+  out.push('=== END ===');
+  console.log(out.join('\n'));
+  return out.join('\n');
+};
+
 // ── Email verification flow ────────────────────────────────
 // _emailVerifyCallback is set before showing step-1f.
 // On successful verification it is called to continue the normal flow.
@@ -9512,41 +9552,79 @@ function _handleLoginRateLimit(res, data) {
 }
 
 async function trustThisDeviceWith(email, emailHash, verifier, key) {
-  try {
-    const deviceId = getOrCreateDeviceId();
-    let   secret   = localStorage.getItem('stockroom_device_secret');
-    if (!secret) {
-      secret = Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2,'0')).join('');
-      localStorage.setItem('stockroom_device_secret', secret);
-    }
-    await saveWrappedKey(deviceId, key, secret);
-    // Record when trust was established — used for 30-day expiry
-    localStorage.setItem('stockroom_trust_ts', String(Date.now()));
-    // Also store raw key bytes in localStorage as fallback for IDB failures
-    try {
-      const exported = await crypto.subtle.exportKey('raw', key);
-      const keyB64   = btoa(String.fromCharCode(...new Uint8Array(exported)));
-      localStorage.setItem('stockroom_kv_key_fallback', JSON.stringify({
-        keyB64, emailHash,
-        expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
-      }));
-    } catch(e) {}
-    // Register on backend. Passphrase users authenticate with `verifier`;
-    // passkey users have no verifier — fall back to `_kvSessionToken` so the
-    // backend can authorise the device-register call either way.
-    const name = getDeviceName();
-    const authPayload = verifier
-      ? { verifier }
-      : (_kvSessionToken ? { sessionToken: _kvSessionToken } : {});
-    fetchKV(`${WORKER_URL}/device/register`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, ...authPayload, deviceId, name, addedAt: new Date().toISOString() }),
-    }).catch(() => {});
-    toast('This device is now trusted ✓');
-    loadTrustedDevices();
-  } catch(e) {
-    toast('Could not trust device: ' + e.message);
+  // Ensure the key is extractable — required for both saveWrappedKey AND the
+  // localStorage fallback. If we silently proceed with a non-extractable key,
+  // the IDB write fails, the LS fallback fails, and the user appears trusted
+  // but cannot restore on refresh.
+  if (!key || !key.extractable) {
+    console.warn('[trust] aborted: key is missing or non-extractable', { hasKey: !!key, extractable: key?.extractable });
+    toast('Could not trust device: encryption key is not exportable. Please sign in with your passphrase first.');
+    return false;
   }
+
+  const deviceId = getOrCreateDeviceId();
+  let   secret   = localStorage.getItem('stockroom_device_secret');
+  const isNewSecret = !secret;
+  if (isNewSecret) {
+    secret = Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2,'0')).join('');
+    localStorage.setItem('stockroom_device_secret', secret);
+  }
+
+  // 1. Write the wrapped key to IDB. This is the canonical source of trust.
+  try {
+    await saveWrappedKey(deviceId, key, secret);
+  } catch(e) {
+    console.warn('[trust] saveWrappedKey failed:', e?.message || e);
+    if (isNewSecret) localStorage.removeItem('stockroom_device_secret');
+    toast('Could not trust device — your browser blocked storage. Try signing in again.');
+    return false;
+  }
+
+  // 2. Verify round-trip — confirm IDB persisted what we just wrote.
+  //    If this fails (private mode, quota, broken IDB) we don't pretend trust
+  //    was established.
+  try {
+    const verify = await loadWrappedKey(deviceId, secret);
+    if (!verify) {
+      console.warn('[trust] verify round-trip returned null');
+      if (isNewSecret) localStorage.removeItem('stockroom_device_secret');
+      toast('Could not trust device — storage verify failed.');
+      return false;
+    }
+  } catch(e) {
+    console.warn('[trust] verify round-trip threw:', e?.message || e);
+    if (isNewSecret) localStorage.removeItem('stockroom_device_secret');
+    toast('Could not trust device — storage verify failed.');
+    return false;
+  }
+
+  // 3. Now that IDB is confirmed, stamp the timestamp + LS fallback. This
+  //    ordering means stockroom_trust_ts only ever exists when there's a real
+  //    wrapped key behind it.
+  localStorage.setItem('stockroom_trust_ts', String(Date.now()));
+  try {
+    const exported = await crypto.subtle.exportKey('raw', key);
+    const keyB64   = btoa(String.fromCharCode(...new Uint8Array(exported)));
+    localStorage.setItem('stockroom_kv_key_fallback', JSON.stringify({
+      keyB64, emailHash,
+      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+    }));
+  } catch(e) { console.warn('[trust] LS fallback write failed:', e?.message || e); }
+
+  // 4. Register on backend (best-effort — local trust still works if this fails)
+  const name = getDeviceName();
+  const authPayload = verifier
+    ? { verifier }
+    : (_kvSessionToken ? { sessionToken: _kvSessionToken } : {});
+  fetchKV(`${WORKER_URL}/device/register`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ emailHash, ...authPayload, deviceId, name, addedAt: new Date().toISOString() }),
+  }).catch(() => {});
+
+  console.log('[trust] established for', email, '— deviceId:', deviceId);
+  toast('This device is now trusted ✓');
+  loadTrustedDevices();
+  return true;
 }
 
 async function trustThisDevice() {
