@@ -10665,15 +10665,15 @@ let _fabOpen = false;
 
 const FAB_ACTIONS = {
   stock: [
-    { icon: '⚡', label: 'Quick Add',    action: () => { closeFab(); openQuickAdd(); } },
-    { icon: '📷', label: 'Scan Barcode', action: () => { closeFab(); sessionStorage.setItem('barcode_target','scan-chooser'); openBarcodeScanner(); } },
-    { icon: '➕', label: 'Add Item',     action: () => { closeFab(); openAddModal(); } },
+    { icon: '<svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg>',    label: 'Quick Add',    action: () => { closeFab(); openQuickAdd(); } },
+    { icon: '<svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg>', label: 'Scan Barcode', action: () => { closeFab(); sessionStorage.setItem('barcode_target','scan-chooser'); openBarcodeScanner(); } },
+    { icon: '<svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>',   label: 'Add Item',     action: () => { closeFab(); openAddModal(); } },
   ],
   reminders: [
-    { icon: '➕', label: 'Add Reminder', action: () => { closeFab(); openAddReminderModal(); } },
+    { icon: '<svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>', label: 'Add Reminder', action: () => { closeFab(); openAddReminderModal(); } },
   ],
   notes: [
-    { icon: '📝', label: 'New Note', action: () => { closeFab(); openNoteEditor(null); } },
+    { icon: '<svg class="icon" aria-hidden="true"><use href="#i-notebook-pen"></use></svg>', label: 'New Note', action: () => { closeFab(); openNoteEditor(null); } },
   ],
 };
 
@@ -10681,20 +10681,20 @@ const FAB_ACTIONS = {
 function getGroceryFabActions() {
   if (groceryEditMode) {
     return {
-      primary:     { icon: '🔒', label: 'Done editing',   action: () => { closeFab(); toggleGroceryEditMode(); } },
+      primary:     { icon: '<svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>',          label: 'Done editing',   action: () => { closeFab(); toggleGroceryEditMode(); } },
       secondaries: [
-        { icon: '📋', label: 'Import List', action: () => { closeFab(); openGroceryImport(); } },
-        { icon: '🏷️', label: 'Edit Depts', action: () => { closeFab(); openGroceryDepts(); } },
+        { icon: '<svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg>', label: 'Import List', action: () => { closeFab(); openGroceryImport(); } },
+        { icon: '<svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg>',             label: 'Edit Depts',  action: () => { closeFab(); openGroceryDepts(); } },
       ],
     };
   }
   return {
-    primary:     { icon: '✏️', label: 'Add / Edit List', action: () => { closeFab(); toggleGroceryEditMode(); } },
+    primary:     { icon: '<svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg>',         label: 'Add / Edit List', action: () => { closeFab(); toggleGroceryEditMode(); } },
     secondaries: [
-      { icon: '⚡', label: 'Quick List',  action: () => { closeFab(); openQuickList(); } },
-      { icon: '📋', label: 'Import List', action: () => { closeFab(); openGroceryImport(); } },
-      { icon: '🏪', label: 'Add Store',   action: () => { closeFab(); openAddGroceryList(); } },
-      { icon: '🏷️', label: 'Edit Depts', action: () => { closeFab(); openGroceryDepts(); } },
+      { icon: '<svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg>',            label: 'Quick List',  action: () => { closeFab(); openQuickList(); } },
+      { icon: '<svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg>', label: 'Import List', action: () => { closeFab(); openGroceryImport(); } },
+      { icon: '<svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg>',           label: 'Add Store',   action: () => { closeFab(); openAddGroceryList(); } },
+      { icon: '<svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg>',             label: 'Edit Depts',  action: () => { closeFab(); openGroceryDepts(); } },
     ],
   };
 }
@@ -11739,12 +11739,14 @@ function renderGrocery() {
   if (infoEl) infoEl.textContent = `Shopping every ${si.value} ${unitLabel} · ${listItems.filter(i=>!i.checked).length} item${listItems.filter(i=>!i.checked).length===1?'':'s'} remaining`;
 
   const sub = document.getElementById('grocery-subtitle');
-  if (sub) sub.textContent = `${listItems.length} item${listItems.length===1?'':'s'} · ${groceryEditMode ? '✏️ editing' : 'tap to check off'}`;
+  if (sub) sub.innerHTML = `${listItems.length} item${listItems.length===1?'':'s'} · ${groceryEditMode ? '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-pencil"></use></svg> editing' : 'tap to check off'}`;
 
   // Edit mode lock button
   const editBtn = document.getElementById('grocery-edit-toggle');
   if (editBtn) {
-    editBtn.textContent = groceryEditMode ? '🔒 Done' : '✏️ Edit';
+    editBtn.innerHTML = groceryEditMode
+      ? '<svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg> Done'
+      : '<svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit';
     editBtn.style.background = groceryEditMode ? 'rgba(232,168,56,0.15)' : '';
     editBtn.style.color = groceryEditMode ? 'var(--accent)' : '';
     editBtn.style.borderColor = groceryEditMode ? 'rgba(232,168,56,0.4)' : '';
@@ -11774,7 +11776,7 @@ function renderGrocery() {
   }
 
   if (listItems.length === 0) {
-    body.innerHTML = `<div class="grocery-empty"><div class="grocery-empty-icon">🛒</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">No items in this list yet</div><div style="font-size:13px;color:var(--muted)">Tap ⚡ Quick List or ✏️ Edit to add items.</div></div>`;
+    body.innerHTML = `<div class="grocery-empty"><div class="grocery-empty-icon">🛒</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">No items in this list yet</div><div style="font-size:13px;color:var(--muted)">Tap <svg class="icon icon-sm" aria-hidden="true" style="vertical-align:middle"><use href="#i-zap"></use></svg> Quick List or <svg class="icon icon-sm" aria-hidden="true" style="vertical-align:middle"><use href="#i-pencil"></use></svg> Edit to add items.</div></div>`;
     return;
   }
 
@@ -12284,7 +12286,7 @@ function _showGroceryDoneSlide() {
   slide.id = 'grocery-done-slide';
   slide.onclick = () => { toggleGroceryEditMode(); };
   slide.style.cssText = 'position:fixed;bottom:88px;right:112px;z-index:1100;display:flex;align-items:center;gap:10px;cursor:pointer;animation:fabSlideLeft 0.22s cubic-bezier(0.34,1.56,0.64,1) both';
-  slide.innerHTML = `<span style="font-size:17px;font-weight:700;color:#111;background:var(--accent);padding:10px 18px;border-radius:12px;white-space:nowrap;box-shadow:0 4px 16px rgba(232,168,56,0.45)">🔒 Done editing</span>`;
+  slide.innerHTML = `<span style="font-size:17px;font-weight:700;color:#111;background:var(--accent);padding:10px 18px;border-radius:12px;white-space:nowrap;box-shadow:0 4px 16px rgba(232,168,56,0.45);display:flex;align-items:center;gap:8px"><svg class="icon" aria-hidden="true" style="color:#111"><use href="#i-lock"></use></svg> Done editing</span>`;
   document.body.appendChild(slide);
 }
 
