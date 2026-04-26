@@ -738,19 +738,12 @@ async function wizardFinish() {
     const wizardName = document.getElementById('wizard-display-name')?.value?.trim();
     if (wizardName) settings.displayName = _capitaliseFirst(wizardName);
     await _saveSettings();
-    localStorage.setItem('stockroom_seen', '1');
     await setCountrySetForDevice();
     const countrySel = document.getElementById('setting-country');
     if (countrySel) countrySel.value = settings.country;
     updateHeaderGreeting();
-    await _mfaGate(async () => {
-      document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
-      window.scrollTo(0, 0);
-      scheduleRender(...RENDER_REGIONS);
-      const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
-      if (stockTab) showView('stock', stockTab);
-      if (kvConnected) setTimeout(() => kvSyncNow(true), 500);
-    });
+    // MFA already verified before we got here — go straight to Stockroom
+    await _enterStockroom();
   } catch(e) {
     console.error('wizardFinish error:', e);
     // Still try to dismiss wizard even if something failed
@@ -7826,67 +7819,55 @@ async function reauthWithPasskey() {
 
 // Shared post-login wizard routing — called by all sign-in paths
 async function postLoginWizardRoute(recoveryCodes = []) {
-  // Pull server settings first so _setupProtectSeen / _setupCountrySet are
-  // authoritative — don't rely on local IDB or localStorage which may have been cleared.
-  if (kvConnected && _kvKey) {
-    try {
-      const remote = await kvPull().catch(() => null);
-      if (remote && remote.settings) {
-        if (remote.settings._setupProtectSeen) settings._setupProtectSeen = true;
-        if (remote.settings._setupCountrySet)  settings._setupCountrySet  = true;
-        if (remote.settings._installDismissed) settings._installDismissed = true;
-        await dbPut('settings', 'settings', settings).catch(() => {});
-      }
-    } catch(e) { console.warn('[postLoginWizardRoute] settings pull failed:', e.message); }
-  }
+  // ── Step 1: MFA first — authenticate fully before showing any onboarding ──
+  // _mfaGate also pulls fresh settings from the server, so _setupProtectSeen /
+  // _setupCountrySet / _installDismissed are authoritative when we route below.
+  await _mfaGate(async () => {
+    // ── Step 2: Now fully authenticated — route to the right onboarding screen ──
 
-  const protectSeen = await getProtectSeenForDevice();
-  const countrySet  = await getCountrySetForDevice();
-  // If returning user (no new recovery codes to show) and they have passkey set up,
-  // skip the protect screen — they already secured their account
-  const isReturningUser = protectSeen || (recoveryCodes.length === 0 && _kvAuthMethod === 'passkey');
-  if (!isReturningUser) {
-    // Show security checklist first (new account or fresh passphrase setup)
-    showProtectDataScreen(recoveryCodes);
-  } else if (countrySet) {
-    // Everything done — go to stockroom
-    // For passkey sessions, ensure we have the data key before showing stockroom.
-    // If not cached, kvEnsureKey will prompt passphrase once, then cache it.
-    if (_kvAuthMethod === 'passkey' && !_kvKey) {
-      showDataLoadingOverlay('Unlocking your data…');
-      const keyOk = await kvEnsureKey();
-      hideDataLoadingOverlay();
-      if (!keyOk) {
-        // User cancelled passphrase prompt — stay on login screen
-        return;
-      }
+    // Re-read flags after the server pull that _mfaGate just did
+    const protectSeen = await getProtectSeenForDevice();
+    const countrySet  = await getCountrySetForDevice();
+
+    // New accounts always see protect screen (recoveryCodes present).
+    // Returning users who have already completed it skip straight to country/stockroom.
+    const isReturningUser = protectSeen || (recoveryCodes.length === 0 && _kvAuthMethod === 'passkey');
+
+    if (!isReturningUser) {
+      // Show Protecting Your Data screen — MFA already done, so protectContinue()
+      // goes directly to country/stockroom without another MFA prompt.
+      showProtectDataScreen(recoveryCodes);
+    } else if (!countrySet) {
+      // Protect already seen, but country/name not set yet
+      document.body.classList.add('wizard-active');
+      document.getElementById('wizard').style.display = 'flex';
+      document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+      document.getElementById('wizard-step-2').classList.add('active');
+      wizardCountry = settings.country || 'GB';
+      requestAnimationFrame(() => {
+        buildCountryGrid();
+        selectCountry(wizardCountry);
+      });
+    } else {
+      // Everything done — go straight to Stockroom
+      await _enterStockroom();
     }
-    // Single hard checkpoint — _mfaGate always fetches fresh MFA state from server
-    await _mfaGate(async () => {
-      showDataLoadingOverlay('Syncing your data…');
-      document.body.classList.remove('wizard-active');
-      document.getElementById('wizard').style.display = 'none';
-      window.scrollTo(0, 0);
-      localStorage.setItem('stockroom_seen', '1');
-      await setProtectSeenForDevice();
-      const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
-      if (stockTab) showView('stock', stockTab);
-      scheduleRender(...RENDER_REGIONS);
-      try { await kvSyncNow(true); } finally { hideDataLoadingOverlay(); }
-    });
-  } else {
-    // Need country selection
-    document.body.classList.add('wizard-active');
-    document.getElementById('wizard').style.display = 'flex';
-    document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
-    document.getElementById('wizard-step-2').classList.add('active');
-    // Rebuild grid after DOM has painted — ensures buttons are visible
-    wizardCountry = settings.country || 'GB';
-    requestAnimationFrame(() => {
-      buildCountryGrid();
-      selectCountry(wizardCountry);
-    });
-  }
+  });
+}
+
+// Shared helper: transition into the Stockroom after all onboarding is complete.
+// Called from protectContinue(), wizardFinish(), and postLoginWizardRoute().
+// MFA must already be verified before calling this.
+async function _enterStockroom() {
+  showDataLoadingOverlay('Syncing your data…');
+  document.body.classList.remove('wizard-active');
+  document.getElementById('wizard').style.display = 'none';
+  window.scrollTo(0, 0);
+  localStorage.setItem('stockroom_seen', '1');
+  const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
+  if (stockTab) showView('stock', stockTab);
+  scheduleRender(...RENDER_REGIONS);
+  try { await kvSyncNow(true); } finally { hideDataLoadingOverlay(); }
 }
 
 let _protectRecoveryCodes = []; // held in memory during setup only
@@ -8038,13 +8019,8 @@ async function protectContinue() {
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   const countrySet = await getCountrySetForDevice();
   if (countrySet) {
-    await _mfaGate(async () => {
-      document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
-      localStorage.setItem('stockroom_seen', '1');
-      window.scrollTo(0, 0);
-      kvSyncNow();
-      scheduleRender(...RENDER_REGIONS);
-    });
+    // MFA already verified before we got here — go straight to Stockroom
+    await _enterStockroom();
   } else {
     document.getElementById('wizard-step-2')?.classList.add('active');
   }
@@ -9366,6 +9342,8 @@ async function setProtectSeenForDevice() {
   settings._setupProtectSeen = true;
   await dbPut('settings', 'settings', settings);
   await _setDeviceSetupFlag('protect_seen');
+  // Push to server immediately so the flag is durable before the user proceeds
+  kvPush().catch(() => {});
 }
 async function getCountrySetForDevice() {
   if (settings._setupCountrySet) return true;
@@ -9375,6 +9353,8 @@ async function setCountrySetForDevice() {
   settings._setupCountrySet = true;
   await dbPut('settings', 'settings', settings);
   await _setDeviceSetupFlag('country_set');
+  // Push to server immediately so the flag is durable before the user proceeds
+  kvPush().catch(() => {});
 }
 
 function getDeviceName() {
@@ -14383,70 +14363,42 @@ async function init() {
   const seen        = kvConnected; // signed-in users skip the wizard
   const wizardStep  = localStorage.getItem('stockroom_wizard_step');
 
-  // ── Early settings pull ──────────────────────────────────────────────────
-  // Before routing through the wizard, fetch the server's settings blob so that
-  // _setupProtectSeen and _setupCountrySet are accurate. Without this, clearing
-  // cookies/localStorage causes the local `settings` object to lack these flags
-  // (they're only in the encrypted server blob) and the screens re-appear.
-  // We only do this when connected AND the key is already in memory — i.e. a
-  // returning trusted-device user. New logins go through postLoginWizardRoute()
-  // which syncs after the protect screen, so they're unaffected.
-  if (kvConnected && _kvKey && !_joinCode) {
-    try {
-      showDataLoadingOverlay('Loading your Stockroom…');
-      const remote = await kvPull().catch(() => null);
-      hideDataLoadingOverlay();
-      if (remote && remote.settings) {
-        // Merge only the setup flags — don't overwrite everything here since the
-        // full sync happens immediately after. We just need the flags for routing.
-        if (remote.settings._setupProtectSeen)  settings._setupProtectSeen  = true;
-        if (remote.settings._setupCountrySet)   settings._setupCountrySet   = true;
-        if (remote.settings._installDismissed)  settings._installDismissed  = true;
-        // Backfill localStorage so banner checks (which may read LS directly) are also correct
-        if (settings._installDismissed) {
-          try { localStorage.setItem('stockroom_install_dismissed', '1'); } catch(e) {}
-          try { localStorage.setItem('stockroom_ios_banner_dismissed', '1'); } catch(e) {}
-        }
-        // Persist to local IDB so future loads (before network) are also correct
-        await dbPut('settings', 'settings', settings).catch(() => {});
-      }
-    } catch(e) {
-      hideDataLoadingOverlay();
-      console.warn('[init] Early settings pull failed:', e.message);
-    }
-  }
-
   const countrySet  = await getCountrySetForDevice();
   const protectSeen = await getProtectSeenForDevice();
   console.log('[DIAG] init branch: seen=', seen, 'kvConnected=', kvConnected, '_kvKey=', !!_kvKey, 'protectSeen=', protectSeen);
 
   if (_joinCode) {
-  } else if (kvConnected && !protectSeen) {
-    showProtectDataScreen([]);
-  } else if (seen || kvConnected) {
-    if (kvConnected) {
-      showDataLoadingOverlay('Loading your Stockroom…');
-      if (!_kvKey) {
-        const keyOk = await kvEnsureKey().catch(() => false);
-        if (!keyOk) {
-          hideDataLoadingOverlay();
-          showKvLogin();
-          return;
-        }
-      }
+    // join flow handled by handleURLAction above
+  } else if (kvConnected) {
+    if (!_kvKey) {
+      showDataLoadingOverlay('Unlocking your data…');
+      const keyOk = await kvEnsureKey().catch(() => false);
       hideDataLoadingOverlay();
+      if (!keyOk) { showKvLogin(); return; }
     }
-    // Hide the wizard/login screen immediately — MFA modal will gate access if needed,
-    // but the login screen should never be visible underneath the MFA prompt.
+    // Always go through MFA first — protect/country/stockroom routing happens inside
     document.body.classList.remove('wizard-active');
     document.getElementById('wizard').style.display = 'none';
     window.scrollTo(0, 0);
-    // Single hard checkpoint — _mfaGate always fetches fresh MFA state from server
     await _mfaGate(async () => {
-      showDataLoadingOverlay('Loading your Stockroom…');
-      scheduleRender(...RENDER_REGIONS);
-      try { await kvSyncNow(true); } catch(e) {}
-      hideDataLoadingOverlay();
+      // Re-read flags after _mfaGate's server pull
+      const ps = await getProtectSeenForDevice();
+      const cs = await getCountrySetForDevice();
+      if (!ps) {
+        showProtectDataScreen([]);
+      } else if (!cs) {
+        document.body.classList.add('wizard-active');
+        document.getElementById('wizard').style.display = 'flex';
+        document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+        document.getElementById('wizard-step-2').classList.add('active');
+        wizardCountry = settings.country || 'GB';
+        requestAnimationFrame(() => { buildCountryGrid(); selectCountry(wizardCountry); });
+      } else {
+        showDataLoadingOverlay('Loading your Stockroom…');
+        scheduleRender(...RENDER_REGIONS);
+        try { await kvSyncNow(true); } catch(e) {}
+        hideDataLoadingOverlay();
+      }
     });
   } else if (wizardStep === '2') {
     localStorage.removeItem('stockroom_wizard_step');
@@ -16458,7 +16410,9 @@ let _mfaEmailTestSent    = false;
 const _MFA_SESSION_KEY = 'stockroom_mfa_verified';
 
 async function _mfaGate(callback) {
-  // Pull fresh settings from server — MFA state must be authoritative from server
+  // Pull fresh settings from server — MFA state must be authoritative from server.
+  // Also merge setup flags so protectSeen/countrySet/installDismissed are fresh
+  // when routing code runs inside the callback.
   if (kvConnected && _kvKey) {
     try {
       const remote = await kvPull();
@@ -16466,9 +16420,17 @@ async function _mfaGate(callback) {
         const remoteMfa = remote.settings.mfa;
         if (remoteMfa !== undefined) {
           settings.mfa = remoteMfa;
-          await _saveSettings();
           localStorage.removeItem('stockroom_mfa_was_active');
         }
+        // Merge one-time setup flags
+        if (remote.settings._setupProtectSeen) settings._setupProtectSeen = true;
+        if (remote.settings._setupCountrySet)  settings._setupCountrySet  = true;
+        if (remote.settings._installDismissed) {
+          settings._installDismissed = true;
+          try { localStorage.setItem('stockroom_install_dismissed', '1'); } catch(e) {}
+          try { localStorage.setItem('stockroom_ios_banner_dismissed', '1'); } catch(e) {}
+        }
+        await _saveSettings();
       }
     } catch(e) {
       console.warn('_mfaGate: pull failed, enforcing local/was-active MFA state:', e.message);
