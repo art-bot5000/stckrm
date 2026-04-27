@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>STOCKROOM Trusted Session Diag</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --fg: #e9ecf1;
+    --mut: #8b94a3;
+    --bd: #2a2f38;
+    --ok: #4ade80;
+    --err: #f87171;
+    --warn: #fbbf24;
+    --acc: #e8a838;
+    --surface: #181b22;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#fafafa; --fg:#16181d; --mut:#5b6472; --bd:#dadde2; --surface:#fff; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    background: var(--bg); color: var(--fg);
+    font: 15px/1.45 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 18px; margin: 8px 0 4px; }
+  p.lead { color: var(--mut); margin: 0 0 16px; font-size: 13px; }
+  label { display: block; font-size: 12px; color: var(--mut); margin: 12px 0 4px; font-weight: 600; }
+  input[type=text] {
+    width: 100%; padding: 10px 12px; font: inherit; color: var(--fg);
+    background: var(--surface); border: 1px solid var(--bd); border-radius: 8px;
+    -webkit-appearance: none;
+  }
+  button {
+    display: block; width: 100%; padding: 12px 14px; margin-top: 12px;
+    font: 600 15px/1 inherit; color: #111; background: var(--acc);
+    border: 0; border-radius: 8px; cursor: pointer;
+  }
+  button.secondary { background: var(--surface); color: var(--fg); border: 1px solid var(--bd); }
+  button:disabled { opacity: 0.5; }
+  .checks { margin-top: 16px; }
+  .check {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 10px 12px; margin: 6px 0;
+    background: var(--surface); border: 1px solid var(--bd); border-radius: 8px;
+    font-size: 13px;
+  }
+  .check .icon { flex: 0 0 18px; font-weight: 700; }
+  .check .body { flex: 1; min-width: 0; word-break: break-word; }
+  .check .name { font-weight: 600; }
+  .check .detail { color: var(--mut); font: 12px var(--mono); margin-top: 4px; }
+  .check.ok  .icon { color: var(--ok); }
+  .check.fail .icon { color: var(--err); }
+  .check.warn .icon { color: var(--warn); }
+  .check.run .icon { color: var(--mut); }
+  .summary {
+    margin-top: 20px; padding: 12px 14px;
+    background: var(--surface); border: 1px solid var(--bd); border-radius: 8px;
+    font-weight: 600;
+  }
+  .summary.ok   { border-color: var(--ok);   color: var(--ok); }
+  .summary.fail { border-color: var(--err);  color: var(--err); }
+  pre {
+    background: var(--surface); border: 1px solid var(--bd);
+    border-radius: 8px; padding: 10px;
+    font: 12px var(--mono); overflow-x: auto;
+    white-space: pre-wrap; word-wrap: break-word;
+  }
+  .row { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
+  details { margin-top: 12px; background: var(--surface); border: 1px solid var(--bd); border-radius: 8px; padding: 8px 12px; }
+  summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>STOCKROOM Trusted Session Diag</h1>
+  <p class="lead">Run this from any browser. It checks whether the backend has the new <code>/device/check</code> endpoint and inspects the local trusted-session state.</p>
+
+  <label for="backend">Backend URL</label>
+  <input type="text" id="backend" value="https://stckrm.fly.dev" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="url">
+
+  <div class="row">
+    <button id="btn-probe">Run backend probe</button>
+    <button id="btn-local" class="secondary">Inspect local state</button>
+  </div>
+
+  <div id="checks" class="checks"></div>
+  <div id="summary" class="summary" style="display:none"></div>
+
+  <details>
+    <summary>What this tests &amp; how to interpret it</summary>
+    <p style="font-size:13px;color:var(--mut);line-height:1.5">
+      <b>Backend probe</b> hits <code>/ping</code>, <code>/device/check</code>, and <code>/device/register</code> on the URL above. If <code>/device/check</code> returns 404 the new <code>main.ts</code> has not been deployed &mdash; that&rsquo;s by far the most common cause of the trusted-session refresh failing.
+    </p>
+    <p style="font-size:13px;color:var(--mut);line-height:1.5">
+      <b>Inspect local state</b> reads the localStorage entries this browser uses for trusted sessions. Run it on the same browser/profile you use for the app, in the SAME origin (open this file from the same domain as the app, otherwise localStorage is empty by design).
+    </p>
+  </details>
+</div>
+
+<script>
+'use strict';
+
+const $    = (id) => document.getElementById(id);
+const log  = $('checks');
+const summ = $('summary');
+
+function row(state, name, detail) {
+  const el = document.createElement('div');
+  el.className = 'check ' + state;
+  el.innerHTML = `
+    <div class="icon">${state === 'ok' ? '\u2713' : state === 'fail' ? '\u2717' : state === 'warn' ? '!' : '\u2026'}</div>
+    <div class="body">
+      <div class="name"></div>
+      <div class="detail" style="display:none"></div>
+    </div>`;
+  el.querySelector('.name').textContent = name;
+  if (detail) {
+    const d = el.querySelector('.detail');
+    d.textContent = detail;
+    d.style.display = '';
+  }
+  log.appendChild(el);
+  return el;
+}
+
+function reset() {
+  log.innerHTML = '';
+  summ.style.display = 'none';
+}
+
+function done(failed, total) {
+  summ.style.display = '';
+  if (failed === 0) {
+    summ.className = 'summary ok';
+    summ.textContent = `\u2713 All ${total} checks passed.`;
+  } else {
+    summ.className = 'summary fail';
+    summ.textContent = `\u2717 ${failed} of ${total} checks failed.`;
+  }
+}
+
+function fetchTimeout(url, opts = {}, ms = 10000) {
+  return Promise.race([
+    fetch(url, opts),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
+  ]);
+}
+
+async function runProbe() {
+  reset();
+  $('btn-probe').disabled = true;
+  $('btn-local').disabled = true;
+
+  const baseRaw = $('backend').value.trim().replace(/\/+$/, '');
+  if (!baseRaw) {
+    row('fail', 'Backend URL missing', 'Enter a URL above');
+    $('btn-probe').disabled = false; $('btn-local').disabled = false;
+    return;
+  }
+
+  let failed = 0, total = 0;
+
+  async function check(name, fn) {
+    total++;
+    const el = row('run', name, '');
+    try {
+      const detail = await fn();
+      el.className = 'check ok';
+      el.querySelector('.icon').textContent = '\u2713';
+      if (detail) {
+        const d = el.querySelector('.detail');
+        d.textContent = detail; d.style.display = '';
+      }
+    } catch(e) {
+      failed++;
+      el.className = 'check fail';
+      el.querySelector('.icon').textContent = '\u2717';
+      const d = el.querySelector('.detail');
+      d.textContent = e.message; d.style.display = '';
+    }
+  }
+
+  await check('/ping responds 200', async () => {
+    const r = await fetchTimeout(baseRaw + '/ping');
+    if (!r.ok) throw new Error('status ' + r.status);
+    return 'Backend reachable';
+  });
+
+  await check('/device/check exists (new endpoint)', async () => {
+    const r = await fetchTimeout(baseRaw + '/device/check', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ emailHash: 'probe', deviceId: 'probe' }),
+    });
+    if (r.status === 404) throw new Error('endpoint missing \u2014 the latest main.ts is NOT deployed');
+    if (!r.ok) throw new Error('unexpected status ' + r.status);
+    const data = await r.json().catch(() => ({}));
+    if (typeof data.trusted !== 'boolean')
+      throw new Error('unexpected body shape: ' + JSON.stringify(data));
+    if (data.trusted !== false)
+      throw new Error('probe device unexpectedly reported trusted: ' + JSON.stringify(data));
+    return 'Endpoint present, returns expected shape';
+  });
+
+  await check('/device/register accepts sessionToken (passkey path)', async () => {
+    const r = await fetchTimeout(baseRaw + '/device/register', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        emailHash: 'probe', sessionToken: 'fake-token',
+        deviceId: 'probe', name: 'probe',
+      }),
+    });
+    // Old main.ts: required verifier, would 400 with "Missing fields".
+    // New main.ts: handles sessionToken, would 401 (fake token).
+    if (r.status === 400) {
+      const data = await r.json().catch(() => ({}));
+      if (/Missing fields/i.test(data.error || ''))
+        throw new Error('400 Missing fields \u2014 looks like the OLD main.ts (verifier still required)');
+      throw new Error('unexpected 400: ' + JSON.stringify(data));
+    }
+    if (r.status !== 401) throw new Error('unexpected status ' + r.status);
+    return 'Endpoint accepts sessionToken (passkey users can be trusted)';
+  });
+
+  await check('/device/register accepts trustExpiresAt', async () => {
+    const r = await fetchTimeout(baseRaw + '/device/register', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        emailHash:      'probe',
+        verifier:       'probe',
+        deviceId:       'probe',
+        name:           'probe',
+        trustExpiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+      }),
+    });
+    // New endpoint should return 401 (bad verifier). Anything else is suspicious.
+    if (r.status !== 401) throw new Error('unexpected status ' + r.status);
+    return 'Endpoint shape supports 30-day expiry field';
+  });
+
+  done(failed, total);
+  $('btn-probe').disabled = false;
+  $('btn-local').disabled = false;
+}
+
+function inspectLocal() {
+  reset();
+
+  const KEYS = [
+    'stockroom_kv_session',
+    'stockroom_trusted_session',
+    'stockroom_mfa_verified_trusted',
+    'stockroom_device_secret',
+    'stockroom_device_id',
+    'stockroom_trust_ts',
+    'stockroom_kv_key_fallback',
+    'stockroom_kv_session_key',
+    'stockroom_remembered_email',
+    'stockroom_cookie_consent',
+    'stockroom_mfa_was_active',
+    'stockroom_protect_seen',
+  ];
+
+  // Quick reminder if we're not on the same origin as the app
+  const sameOrigin = location.origin === $('backend').value.trim().replace(/\/+$/, '')
+                  || /stckrm/.test(location.host)
+                  || /stockroom|claude/.test(location.host);
+  if (!sameOrigin) {
+    row('warn', 'Not on app origin', 'localStorage is per-origin. To inspect the real app state, host this file at the same origin as STOCKROOM (or open it from there). The values below are for ' + location.origin + '.');
+  }
+
+  for (const k of KEYS) {
+    let v = null;
+    try { v = localStorage.getItem(k); } catch(e) {}
+    if (v == null) {
+      row('fail', k, '(absent)');
+      continue;
+    }
+    let pretty = v;
+    try { pretty = JSON.stringify(JSON.parse(v), null, 0); } catch(e) {}
+    if (pretty.length > 200) pretty = pretty.slice(0, 200) + '\u2026';
+    row('ok', k, pretty);
+  }
+
+  // Trusted session evaluated state
+  try {
+    const raw = localStorage.getItem('stockroom_trusted_session');
+    if (raw) {
+      const ts = JSON.parse(raw);
+      const remainingMs = ts.expiresAt - Date.now();
+      const remainingDays = remainingMs / 86400000;
+      if (remainingMs <= 0) {
+        row('fail', 'Trusted session expired',
+            `expiresAt was ${new Date(ts.expiresAt).toISOString()} (${(-remainingDays).toFixed(1)}d ago)`);
+      } else {
+        row('ok', 'Trusted session active',
+            `${remainingDays.toFixed(1)} days remaining, established ${((Date.now()-ts.establishedAt)/60000).toFixed(0)} min ago`);
+      }
+    } else {
+      row('warn', 'No trusted session set on this device',
+          'Sign in with Remember me ticked to create one. If you JUST did and this is empty, check that app.js is the latest version (cache-busted).');
+    }
+  } catch(e) {
+    row('fail', 'Trusted session entry malformed', e.message);
+  }
+
+  // Device-secret + key fallback consistency
+  const sec = localStorage.getItem('stockroom_device_secret');
+  const fb  = localStorage.getItem('stockroom_kv_key_fallback');
+  const sess = localStorage.getItem('stockroom_kv_session');
+  if (sess && !sec && !fb) {
+    row('warn', 'Session present but no key material',
+        'localStorage has stockroom_kv_session but no device_secret or key_fallback. Either kvSyncNow encountered a decrypt error and wiped them, or trust was never established. The next reload will land on the login wizard.');
+  }
+}
+
+$('btn-probe').addEventListener('click', runProbe);
+$('btn-local').addEventListener('click', inspectLocal);
+</script>
+</body>
+</html>
