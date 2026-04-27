@@ -1,4 +1,24 @@
 // ═══════════════════════════════════════════
+//  RUNTIME STYLE FIX — inline SVG icons inside buttons/clickables must
+//  not absorb clicks (Safari + iOS especially). Without this, taps land
+//  on the <svg> or <use> and the button/link onclick never fires.
+// ═══════════════════════════════════════════
+(function injectIconClickFix() {
+  if (document.getElementById('_stockroom_icon_clickfix')) return;
+  const s = document.createElement('style');
+  s.id = '_stockroom_icon_clickfix';
+  s.textContent = `
+    button svg, button svg *,
+    a svg, a svg *,
+    .btn svg, .btn svg *,
+    .btn-icon svg, .btn-icon svg *,
+    [onclick] svg, [onclick] svg *,
+    [role="button"] svg, [role="button"] svg * { pointer-events: none; }
+  `;
+  (document.head || document.documentElement).appendChild(s);
+})();
+
+// ═══════════════════════════════════════════
 //  DATA
 // ═══════════════════════════════════════════
 const CATEGORIES = ['Kitchen','Bathroom','Cleaning','Food & Drink','Health','Garden','Office','Other'];
