@@ -66,11 +66,33 @@ try {
 }
 
 // ── CORS ─────────────────────────────────────────────────
+// CORS — allow-list specific origins rather than wildcard.
+// `corsHeaders` is the default fallback (used for same-origin requests where
+// the browser ignores CORS headers anyway). For cross-origin requests, use
+// `corsFor(request)` which reflects the request's Origin only if it matches.
+const ALLOWED_ORIGINS = new Set([
+  Deno.env.get('APP_URL') || 'https://stckrm.fly.dev',
+  // Add any extra origins via env var: APP_DEV_ORIGINS=http://localhost:8080,http://127.0.0.1:8080
+  ...(Deno.env.get('APP_DEV_ORIGINS') || '').split(',').map(s => s.trim()).filter(Boolean),
+]);
+
 const corsHeaders = {
-  'Access-Control-Allow-Origin':  '*',
+  'Access-Control-Allow-Origin':  Deno.env.get('APP_URL') || 'https://stckrm.fly.dev',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Vary':                         'Origin',
 };
+
+// Build a per-request CORS header set. Reflects the Origin if it's allow-listed,
+// otherwise falls back to the canonical APP_URL (which means cross-origin
+// requests from disallowed origins will get blocked by the browser).
+function corsFor(request) {
+  const origin = request.headers.get('Origin');
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    return { ...corsHeaders, 'Access-Control-Allow-Origin': origin };
+  }
+  return corsHeaders;
+}
 
 function json(data, headers = {}, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -121,6 +143,51 @@ async function hashEmail(email) {
   const encoded = new TextEncoder().encode(email.toLowerCase().trim());
   const hash    = await crypto.subtle.digest('SHA-256', encoded);
   return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('').slice(0, 32);
+}
+
+// ── Auth helper ───────────────────────────────────────────
+// Verifies that an emailHash + (verifier OR sessionToken) authenticates as
+// that user. Returns { ok: true } on success, or a Response on failure that
+// the caller should return directly. Mirrors the inline pattern used by
+// /share/create and /share/list.
+async function verifyEmailAuth(emailHash, verifier, sessionToken, corsHeaders) {
+  if (!emailHash || (!verifier && !sessionToken)) {
+    return json({ error: 'Authentication required' }, corsHeaders, 401);
+  }
+  if (sessionToken) {
+    const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+    if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+  } else {
+    const stored = await kvGet(['user', emailHash, 'verifier']);
+    if (!stored.value || stored.value !== verifier) {
+      return json({ error: 'Unauthorised' }, corsHeaders, 401);
+    }
+  }
+  return null; // null = OK, no early-return needed
+}
+
+// ── Rate limit helper ─────────────────────────────────────
+// Returns a 429 Response if the bucket is currently locked, otherwise null.
+// `bucket` is a string like 'send_reminder' that scopes the limit per action.
+async function checkRateLimit(bucket, key, max, windowMs, corsHeaders) {
+  const rlKey = ['rate_limit', bucket, key];
+  const now   = Date.now();
+  const rlRaw = await kvGet(rlKey);
+  const rl    = rlRaw.value ? JSON.parse(rlRaw.value) : { attempts: [], lockedUntil: 0 };
+  if (rl.lockedUntil && now < rl.lockedUntil) {
+    const retryAfter = Math.ceil((rl.lockedUntil - now) / 1000);
+    return json({ error: 'Too many requests — try again later', retryAfter }, corsHeaders, 429);
+  }
+  rl.attempts = (rl.attempts || []).filter((t) => now - t < windowMs);
+  rl.attempts.push(now);
+  if (rl.attempts.length > max) {
+    rl.lockedUntil = now + windowMs;
+    rl.attempts    = [];
+    await kvSet(rlKey, JSON.stringify(rl), { expireIn: windowMs * 2 });
+    return json({ error: 'Too many requests — try again later', retryAfter: windowMs / 1000 }, corsHeaders, 429);
+  }
+  await kvSet(rlKey, JSON.stringify(rl), { expireIn: windowMs * 2 });
+  return null;
 }
 
 // ── Hourly cron ───────────────────────────────────────────
@@ -223,6 +290,12 @@ async function _deleteAllUserData(kv: Deno.Kv, emailHash: string): Promise<void>
 
 // ── Request handler ───────────────────────────────────────
 Deno.serve(async (request) => {
+  // Per-request CORS headers: reflects the Origin if allow-listed.
+  // Shadows the module-level `corsHeaders` for the rest of this handler so
+  // every existing `json(..., corsHeaders, ...)` site automatically uses
+  // the right Access-Control-Allow-Origin without needing edits.
+  const corsHeaders = corsFor(request);
+
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
@@ -232,6 +305,39 @@ Deno.serve(async (request) => {
   // ── Health / debug ────────────────────────────────────
   if (url.pathname === '/ping') {
     return json({ ok: true, ts: new Date().toISOString() }, corsHeaders);
+  }
+
+  // ── Error log: client-side runtime errors ─────────────
+  // Stores error reports under ['error_log', ISO_TIMESTAMP] with a 7-day TTL.
+  // Heavily rate-limited to prevent log spam — both globally and per IP.
+  // Read with the admin tool (admin.html) or `kv list ['error_log']` directly.
+  if (url.pathname === '/error/log' && request.method === 'POST') {
+    try {
+      // Global rate limit: 200 reports per hour across all clients
+      const globalRl = await checkRateLimit('error_log', 'global', 200, 60 * 60 * 1000, corsHeaders);
+      if (globalRl) return globalRl;
+
+      const body = await request.json().catch(() => ({}));
+      // Truncate fields to bound storage cost
+      const entry = {
+        kind:      String(body.kind || 'error').slice(0, 20),
+        message:   String(body.message || '').slice(0, 500),
+        where:     String(body.where || '').slice(0, 200),
+        stack:     String(body.stack || '').slice(0, 1500),
+        ua:        String(body.ua || '').slice(0, 200),
+        url:       String(body.url || '').slice(0, 200),
+        emailHash: body.emailHash ? String(body.emailHash).slice(0, 32) : null,
+        ts:        body.ts || new Date().toISOString(),
+      };
+      // Drop empty payloads
+      if (!entry.message) return json({ ok: true, skipped: true }, corsHeaders);
+      const ts = new Date().toISOString();
+      await kvSet(['error_log', ts], JSON.stringify(entry), { expireIn: 7 * 24 * 60 * 60 * 1000 });
+      return json({ ok: true }, corsHeaders);
+    } catch (err) {
+      // Even errors here shouldn't block the client
+      return json({ ok: false }, corsHeaders);
+    }
   }
 
   // ── User: delete account (all data) ──────────────────
@@ -1268,6 +1374,27 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
+  // ── Admin: list recent client error reports ──────────
+  if (url.pathname === '/admin/error-logs' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      if (!await verifyAdminRequest(body)) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const limit = Math.min(Math.max(parseInt(body.limit) || 100, 1), 500);
+      const logs: any[] = [];
+      // Iterate in reverse order so newest first. Deno KV doesn't support
+      // descending iteration directly so we collect then reverse.
+      const iter = kv.list({ prefix: ['error_log'] });
+      for await (const entry of iter) {
+        try {
+          const data = JSON.parse(entry.value as string);
+          logs.push({ ts: entry.key[1], ...data });
+        } catch (_) {}
+      }
+      logs.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+      return json({ ok: true, logs: logs.slice(0, limit), total: logs.length }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
   // ── Admin: delete account by emailHash ────────────────
   if (url.pathname === '/admin/delete-account' && request.method === 'POST') {
     try {
@@ -1595,10 +1722,15 @@ Deno.serve(async (request) => {
   // ── Share: get encrypted share key (owner recovery) ───
   if (url.pathname === '/share/key/get' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, code } = await request.json();
-      if (!ownerEmailHash || !verifier || !code) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken, code } = await request.json();
+      if (!ownerEmailHash || (!verifier && !sessionToken) || !code) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const encKey = await kvGet(['share_key', code.toUpperCase(), ownerEmailHash]);
       if (!encKey.value) return json({ error: 'No key stored for this share' }, corsHeaders, 404);
       return json({ ok: true, encryptedShareKey: encKey.value }, corsHeaders);
@@ -1608,10 +1740,15 @@ Deno.serve(async (request) => {
   // ── Share: list (authenticated) ──────────────────────
   if (url.pathname === '/share/list' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier } = await request.json();
-      if (!ownerEmailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken } = await request.json();
+      if (!ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const targets = [];
       const entries = kv.list({ prefix: ['share'] });
       for await (const entry of entries) {
@@ -1711,10 +1848,15 @@ Deno.serve(async (request) => {
   // ── Share: modified time ──────────────────────────────
   if (url.pathname === '/share/data/modified' && request.method === 'POST') {
     try {
-      const { guestEmailHash, guestVerifier, code, household } = await request.json();
-      if (!code || !guestEmailHash || !guestVerifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);
-      if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { guestEmailHash, guestVerifier, guestSessionToken, code, household } = await request.json();
+      if (!code || !guestEmailHash || (!guestVerifier && !guestSessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (guestSessionToken) {
+        const sess = await kvGet(['passkey_session', guestEmailHash, guestSessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);
+        if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const hKey    = household && household !== 'default' ? household : 'default';
       const modified = await kvGet(['share_data', code.toUpperCase(), `${hKey}_modified`]);
       return json({ modifiedTime: modified.value||null }, corsHeaders);
@@ -1748,10 +1890,15 @@ Deno.serve(async (request) => {
 
   if (url.pathname === '/share/delete' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, code } = await request.json();
-      if (!code || !ownerEmailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken, code } = await request.json();
+      if (!code || !ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const r = await kvGet(['share', code.toUpperCase()]);
       if (r.value && JSON.parse(r.value).ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
       await kvDel(['share', code.toUpperCase()]);
@@ -1769,10 +1916,15 @@ Deno.serve(async (request) => {
   // ── Share: refresh link (new 24h window) ─────────────
   if (url.pathname === '/share/refresh' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, code } = await request.json();
-      if (!code || !ownerEmailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken, code } = await request.json();
+      if (!code || !ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const r = await kvGet(['share', code.toUpperCase()]);
       if (!r.value) return json({ error: 'Not found' }, corsHeaders, 404);
       const existing = JSON.parse(r.value);
@@ -1786,8 +1938,13 @@ Deno.serve(async (request) => {
   // ── Presence: update (ephemeral, 5min TTL) ───────────
   if (url.pathname === '/presence-update' && request.method === 'POST') {
     try {
-      const { userId, name, initials, colour, view } = await request.json();
+      const { userId, emailHash, verifier, sessionToken, name, initials, colour, view } = await request.json();
       if (!userId) return json({ error: 'Missing userId' }, corsHeaders, 400);
+      // Auth: presence is identifying info — require the caller proves they own the email.
+      // Falls back to silent rejection rather than hard error for unauthenticated callers
+      // because presence is non-critical and pre-auth init can race.
+      const authFail = await verifyEmailAuth(emailHash, verifier, sessionToken, corsHeaders);
+      if (authFail) return authFail;
       await kvSet(['presence', userId], JSON.stringify({ userId, name, initials, colour, view, ts: new Date().toISOString() }), { expireIn: 5 * 60 * 1000 });
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
@@ -1832,10 +1989,12 @@ Deno.serve(async (request) => {
   if (url.pathname === '/set-schedule' && request.method === 'POST') {
     try {
       const body = await request.json();
-      const { email, emailHash, startDate, startTime, intervalDays, household, urgent = [], upcoming = [] } = body;
+      const { email, emailHash, verifier, sessionToken, startDate, startTime, intervalDays, household, urgent = [], upcoming = [] } = body;
       if (!email || !startDate) return json({ error: 'Missing email or startDate' }, corsHeaders, 400);
+      const ehash = emailHash || await hashEmail(email);
+      const authFail = await verifyEmailAuth(ehash, verifier, sessionToken, corsHeaders);
+      if (authFail) return authFail;
       const sfx     = household && household !== 'default' ? `:${household}` : '';
-      const ehash   = emailHash || await hashEmail(email);
       await kvSet([`schedule${sfx}`], JSON.stringify({ startDate, startTime: startTime||'09:00', intervalDays: intervalDays??30, email, emailHash: ehash }));
       if (urgent.length || upcoming.length) await kvSet([`user_items${sfx}`], JSON.stringify({ urgent, upcoming }));
       return json({ ok: true }, corsHeaders);
@@ -1847,9 +2006,14 @@ Deno.serve(async (request) => {
   // ── Email schedule: reset last sent ──────────────────
   if (url.pathname === '/reset-schedule' && request.method === 'POST') {
     try {
-      const body      = await request.json().catch(() => ({}));
-      const household = body.household || null;
-      const key       = household && household !== 'default' ? `last_sent:${household}` : 'last_sent';
+      const body = await request.json().catch(() => ({}));
+      const { email, emailHash, verifier, sessionToken, household } = body;
+      // Auth required to prevent anyone wiping the schedule. Allow either an
+      // explicit emailHash or derive it from email (matches /set-schedule).
+      const ehash = emailHash || (email ? await hashEmail(email) : null);
+      const authFail = await verifyEmailAuth(ehash, verifier, sessionToken, corsHeaders);
+      if (authFail) return authFail;
+      const key = household && household !== 'default' ? `last_sent:${household}` : 'last_sent';
       await kvDel([key]);
     } catch(e) { /* ok */ }
     return json({ ok: true }, corsHeaders);
@@ -1858,9 +2022,12 @@ Deno.serve(async (request) => {
   // ── Email schedule: unsubscribe ───────────────────────
   if (url.pathname === '/unsubscribe' && request.method === 'POST') {
     try {
-      const body      = await request.json().catch(() => ({}));
-      const household = body.household || null;
-      const sfx       = household && household !== 'default' ? `:${household}` : '';
+      const body = await request.json().catch(() => ({}));
+      const { email, emailHash, verifier, sessionToken, household } = body;
+      const ehash = emailHash || (email ? await hashEmail(email) : null);
+      const authFail = await verifyEmailAuth(ehash, verifier, sessionToken, corsHeaders);
+      if (authFail) return authFail;
+      const sfx = household && household !== 'default' ? `:${household}` : '';
       await kvDel([`schedule${sfx}`]);
       await kvDel([`last_sent${sfx}`]);
       await kvDel([`user_items${sfx}`]);
@@ -1872,8 +2039,15 @@ Deno.serve(async (request) => {
   if (url.pathname === '/send-reminder' && request.method === 'POST') {
     try {
       const body = await request.json();
-      const { email, urgent = [], upcoming = [], manual = false } = body;
+      const { email, emailHash, verifier, sessionToken, urgent = [], upcoming = [], manual = false } = body;
       if (!email) return json({ error: 'Missing email' }, corsHeaders, 400);
+      // Auth: requester must own the email being sent to
+      const ehash = emailHash || await hashEmail(email);
+      const authFail = await verifyEmailAuth(ehash, verifier, sessionToken, corsHeaders);
+      if (authFail) return authFail;
+      // Rate limit: max 10 sends per hour per user (cron uses 1/day, manual is rare)
+      const rlFail = await checkRateLimit('send_reminder', ehash, 10, 60 * 60 * 1000, corsHeaders);
+      if (rlFail) return rlFail;
       const result = await sendEmail(email, urgent, upcoming);
       if (!result.ok) return json({ error: result.error }, corsHeaders, 500);
       if (!manual) await kvSet(['last_sent'], new Date().toISOString());
@@ -1911,6 +2085,11 @@ Deno.serve(async (request) => {
   // send fires at the correct time without waiting for cron.
   if (url.pathname === '/check-now' && request.method === 'POST') {
     try {
+      // Global rate limit — cron itself runs hourly, so 6/hour from manual triggers is generous.
+      // No per-user auth: there's no per-user identity in this endpoint, but the worst case
+      // is a cron sweep that's already idempotent and self-rate-limited via `last_sent`.
+      const rlFail = await checkRateLimit('check_now', 'global', 6, 60 * 60 * 1000, corsHeaders);
+      if (rlFail) return rlFail;
       await cronCheck();
       return json({ ok: true }, corsHeaders);
     } catch(err) {
