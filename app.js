@@ -3790,7 +3790,7 @@ function cardHTML(item, threshold) {
         <button class="btn-icon" title="Usage analytics" onclick="openAnalyticsModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-bar-chart-2"></use></svg></button>
         <button class="btn-icon" title="Price history" onclick="openPriceHistoryModal('${item.id}')" ${getPriceHistory(item).length < 2 ? 'style="opacity:0.35;cursor:default"' : ''}><svg class="icon" aria-hidden="true"><use href="#i-banknote"></use></svg></button>
         <button class="btn-icon" title="Share item" onclick="shareItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg></button>
-        <button class="btn-icon" title="Edit" onclick="openEditModal('${item.id}');enableItemEdit()"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
+        <button class="btn-icon" title="Edit" onclick="openEditModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
         ${item._archived
           ? `<button class="btn-icon" title="Restore from archive" onclick="restoreItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-refresh-ccw"></use></svg></button>
              <button class="btn-icon" title="Delete permanently" onclick="deleteItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>`
@@ -6044,6 +6044,19 @@ function _getItemReminders(item) {
 
 function openLogModal(id) { openOrderFlow(id, 'purchase'); } // backward compat
 function openLogPurchaseModal(id) { openOrderFlow(id, 'purchase'); } // backward compat
+function openLogPurchaseModalLegacy(id) {
+  // Legacy fallback for when new index.html hasn't been deployed
+  loggingId = id;
+  const item = items.find(i => i.id === id);
+  if (!item || !document.getElementById('log-modal')) return;
+  document.getElementById('log-modal-title').textContent = 'Log Purchase — ' + item.name;
+  document.getElementById('log-date').value  = today();
+  document.getElementById('log-qty').value   = item.qty || 1;
+  document.getElementById('log-price').value = '';
+  document.getElementById('log-store').value = item.store || urlToStoreName(item.url||'') || '';
+  renderLogHistory(item);
+  openModal('log-modal');
+}
 
 // ═══════════════════════════════════════════════════════════════
 //  ORDER FLOW — unified Log Purchase / Delivered / Start Using
@@ -6054,6 +6067,14 @@ let _ofStage    = 'purchase'; // 'purchase' | 'delivered' | 'startusing'
 function openOrderFlow(id, stage) {
   const item = items.find(i => i.id === id);
   if (!item) return;
+
+  // Fallback: if new modal HTML isn't deployed yet, use legacy modals
+  if (!document.getElementById('order-flow-modal')) {
+    if (stage === 'delivered') { openDeliveredModal(id); return; }
+    if (stage === 'startusing') { openStartedUsingModal(id); return; }
+    openLogPurchaseModalLegacy(id); return;
+  }
+
   _ofItemId = id;
 
   // Auto-detect stage if not specified
