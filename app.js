@@ -1738,13 +1738,23 @@ function _resolveReminderId(id) {
   if (!id.startsWith('item_')) return null;
 
   const rest = id.slice('item_'.length); // either "itemId" or "itemId_remId"
-  const underIdx = rest.indexOf('_');
 
-  if (underIdx === -1) {
-    // Legacy: item_${itemId}
-    const item = items.find(i => i.id === rest);
-    if (!item) return null;
-    const fallbackDate = item.startedUsing || item.logs?.filter(l => !l.pendingDelivery)[0]?.date || null;
+  // Strategy: itemId and remId both come from uid() and contain underscores
+  // (e.g. "id_1730123456789_a3xyz"), so we can't just split on the first
+  // underscore. Instead, try matching prefixes against actual item IDs:
+  //   1. If `rest` is itself an item ID → legacy single-reminder format.
+  //   2. Otherwise iterate possible split points and look for an item whose
+  //      ID matches the prefix and which has a replacement reminder whose
+  //      ID matches the remaining suffix.
+  // This also stays compatible with future IDs that don't use uid()'s
+  // exact pattern.
+  const fallbackForItem = (item) =>
+    item.startedUsing || item.logs?.filter(l => !l.pendingDelivery)[0]?.date || null;
+
+  // 1. Legacy: rest IS the item ID
+  let item = items.find(i => i.id === rest);
+  if (item) {
+    const fallbackDate = fallbackForItem(item);
     return {
       r: {
         id, name: item.name, itemName: item.name, reminderName: '',
@@ -1755,15 +1765,18 @@ function _resolveReminderId(id) {
       },
       item, remEntry: null,
     };
-  } else {
-    // New: item_${itemId}_${remId}
-    const itemId = rest.slice(0, underIdx);
-    const remId  = rest.slice(underIdx + 1);
-    const item   = items.find(i => i.id === itemId);
-    if (!item) return null;
+  }
+
+  // 2. Multi-reminder: rest is "${itemId}_${remId}" but both parts can
+  //    contain underscores. Find every underscore split point that matches.
+  for (let idx = rest.indexOf('_'); idx !== -1; idx = rest.indexOf('_', idx + 1)) {
+    const itemId = rest.slice(0, idx);
+    const remId  = rest.slice(idx + 1);
+    item = items.find(i => i.id === itemId);
+    if (!item) continue;
     const remEntry = item.replacementReminders?.find(r => r.id === remId);
-    if (!remEntry) return null;
-    const fallbackDate = item.startedUsing || item.logs?.filter(l => !l.pendingDelivery)[0]?.date || null;
+    if (!remEntry) continue;
+    const fallbackDate = fallbackForItem(item);
     return {
       r: {
         id, name: remEntry.name ? `${item.name} — ${remEntry.name}` : item.name,
@@ -1776,6 +1789,8 @@ function _resolveReminderId(id) {
       item, remEntry,
     };
   }
+
+  return null;
 }
 
 // ── Reminder Timeline ──────────────────────
