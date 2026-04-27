@@ -373,8 +373,9 @@ Deno.serve(async (request) => {
       await kvSet(['user', emailHash, 'email'], email);
       const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;background:#f5f5f5;padding:32px">
         <div style="max-width:480px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
-          <div style="background:#111;padding:20px 24px">
-            <div style="color:#e8a838;font-size:18px;font-weight:800;letter-spacing:2px">📦 STOCKROOM</div>
+          <div style="background:#111;padding:20px 24px;display:flex;align-items:center;gap:10px">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e8a838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg>
+            <div style="color:#e8a838;font-size:18px;font-weight:800;letter-spacing:2px">STOCKROOM</div>
           </div>
           <div style="padding:28px">
             <h2 style="margin:0 0 12px;font-size:20px">Verify your email</h2>
@@ -389,7 +390,7 @@ Deno.serve(async (request) => {
       const r = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: env.FROM_EMAIL, to: [email], subject: '📧 Verify your STOCKROOM email', html }),
+        body: JSON.stringify({ from: env.FROM_EMAIL, to: [email], subject: 'Verify your STOCKROOM email', html }),
       });
       if (!r.ok) return json({ error: 'Could not send verification email' }, corsHeaders, 500);
       return json({ ok: true }, corsHeaders);
@@ -451,8 +452,9 @@ Deno.serve(async (request) => {
       if (!env.RESEND_API_KEY) return json({ error: 'Email not configured' }, corsHeaders, 500);
       const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;background:#f5f5f5;padding:32px">
         <div style="max-width:480px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
-          <div style="background:#111;padding:20px 24px">
-            <div style="color:#e8a838;font-size:18px;font-weight:800;letter-spacing:2px">📦 STOCKROOM</div>
+          <div style="background:#111;padding:20px 24px;display:flex;align-items:center;gap:10px">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e8a838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg>
+            <div style="color:#e8a838;font-size:18px;font-weight:800;letter-spacing:2px">STOCKROOM</div>
           </div>
           <div style="padding:28px">
             <h2 style="margin:0 0 12px;font-size:20px">Reset your passphrase</h2>
@@ -1148,8 +1150,9 @@ Deno.serve(async (request) => {
       await kvSet(['admin_otp'], otp, { expireIn: 10 * 60 * 1000 });
       await kvSet(['admin_otp_sent'], String(Date.now()), { expireIn: 60 * 1000 });
       const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:480px;margin:32px auto;color:#333">
-        <div style="background:#111;padding:20px 24px;border-radius:12px 12px 0 0">
-          <span style="color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px">📦 STOCKROOM</span>
+        <div style="background:#111;padding:20px 24px;border-radius:12px 12px 0 0;display:flex;align-items:center;gap:10px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#e8a838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg>
+          <span style="color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px">STOCKROOM</span>
         </div>
         <div style="background:#fff;border:1px solid #e5e7eb;border-top:none;padding:24px 28px;border-radius:0 0 12px 12px">
           <h2 style="margin:0 0 12px;font-size:18px">Admin sign-in code</h2>
@@ -1160,7 +1163,7 @@ Deno.serve(async (request) => {
       const r = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: env.FROM_EMAIL, to: [ADMIN_EMAIL], subject: '🔐 STOCKROOM Admin code', html }),
+        body: JSON.stringify({ from: env.FROM_EMAIL, to: [ADMIN_EMAIL], subject: 'STOCKROOM Admin code', html }),
       });
       if (!r.ok) return json({ error: 'Could not send email' }, corsHeaders, 500);
       return json({ ok: true, sentTo: ADMIN_EMAIL }, corsHeaders);
@@ -2146,7 +2149,7 @@ Deno.serve(async (request) => {
       const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;background:#f5f5f5;padding:32px">
         <div style="max-width:480px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
           <div style="background:#111;padding:20px 28px;display:flex;align-items:center;gap:12px">
-            <span style="font-size:24px">🛡️</span>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#e8a838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
             <div style="color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px">STOCKROOM</div>
           </div>
           <div style="padding:28px">
@@ -2162,7 +2165,7 @@ Deno.serve(async (request) => {
       const sendRes = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: env.FROM_EMAIL, to: [emailAddr], subject: '🛡️ STOCKROOM — Your sign-in code', html }),
+        body: JSON.stringify({ from: env.FROM_EMAIL, to: [emailAddr], subject: 'STOCKROOM — Your sign-in code', html }),
       });
       if (!sendRes.ok) {
         const errData = await sendRes.json().catch(() => ({}));
@@ -2287,7 +2290,7 @@ Deno.serve(async (request) => {
       const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;background:#f5f5f5;padding:32px">
         <div style="max-width:480px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
           <div style="background:#111;padding:20px 28px;display:flex;align-items:center;gap:12px">
-            <span style="font-size:24px">📝</span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e8a838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             <div style="color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px">STOCKROOM</div>
           </div>
           <div style="padding:28px">
@@ -2303,7 +2306,7 @@ Deno.serve(async (request) => {
       await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: env.FROM_EMAIL, to: [emailAddr], subject: '🔒 STOCKROOM — Secure Note unlock code', html }),
+        body: JSON.stringify({ from: env.FROM_EMAIL, to: [emailAddr], subject: 'STOCKROOM — Secure Note unlock code', html }),
       });
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
@@ -2414,7 +2417,7 @@ Deno.serve(async (request) => {
         <div style="max-width:500px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden">
           <div style="background:#111;padding:20px 28px"><div style="color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px">STOCKROOM</div></div>
           <div style="padding:28px">
-            <h2 style="margin:0 0 12px;color:#e05c5c">⚠️ Final warning — account deletion</h2>
+            <h2 style="margin:0 0 12px;color:#e05c5c;display:flex;align-items:center;gap:8px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e05c5c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> Final warning — account deletion</h2>
             <p style="color:#555;margin:0 0 16px;font-size:14px;line-height:1.6">You have requested permanent deletion of your STOCKROOM account. <strong>This cannot be undone.</strong> All your data will be permanently erased.</p>
             <p style="color:#555;margin:0 0 20px;font-size:14px;line-height:1.6">This link expires in 24 hours. If you change your mind, simply ignore this email.</p>
             <a href="${appUrl}?delete_token=${deleteToken}" style="display:inline-block;background:#e05c5c;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px">Delete Account Permanently</a>
@@ -2426,7 +2429,7 @@ Deno.serve(async (request) => {
       await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: env.FROM_EMAIL, to: [emailAddr], subject: '⚠️ STOCKROOM account deletion — final warning', html }),
+        body: JSON.stringify({ from: env.FROM_EMAIL, to: [emailAddr], subject: 'STOCKROOM account deletion — final warning', html }),
       });
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
@@ -2506,7 +2509,7 @@ Deno.cron('stockroom-deactivation-check', '0 10 * * *', async () => {
         </div>`;
         await fetch('https://api.resend.com/emails', {
           method:'POST', headers:{'Authorization':`Bearer ${resendKey}`,'Content-Type':'application/json'},
-          body: JSON.stringify({ from: fromEmail, to: [emailAddr], subject: `⚠️ STOCKROOM: your account expires in ${daysLeft} days`, html }),
+          body: JSON.stringify({ from: fromEmail, to: [emailAddr], subject: `STOCKROOM: your account expires in ${daysLeft} days`, html }),
         });
         data.remindSent = true;
         await kvSet(['deactivation', emailHash], JSON.stringify(data));
@@ -2516,7 +2519,7 @@ Deno.cron('stockroom-deactivation-check', '0 10 * * *', async () => {
       if (!data.warningSent && daysSince >= 90 && daysSince < 91) {
         const html = `<div style="font-family:-apple-system,sans-serif;padding:28px;max-width:500px">
           <div style="color:#e8a838;font-weight:800;letter-spacing:2px;margin-bottom:16px">STOCKROOM</div>
-          <h2>⚠️ Final warning — account marked for deletion in 30 days</h2>
+          <h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:6px"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> Final warning — account marked for deletion in 30 days</h2>
           <p style="color:#555;line-height:1.6">Your STOCKROOM account deactivation period has expired. Your account and all data will be marked for deletion in 30 days if no action is taken.</p>
           <div style="display:flex;gap:12px;margin-top:20px;flex-wrap:wrap">
             <a href="${appUrl}?reactivate_token=${data.reactivateToken}" style="background:#e8a838;color:#111;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Reactivate now</a>
@@ -2525,7 +2528,7 @@ Deno.cron('stockroom-deactivation-check', '0 10 * * *', async () => {
         </div>`;
         await fetch('https://api.resend.com/emails', {
           method:'POST', headers:{'Authorization':`Bearer ${resendKey}`,'Content-Type':'application/json'},
-          body: JSON.stringify({ from: fromEmail, to: [emailAddr], subject: '⚠️ STOCKROOM: final warning — account deletion in 30 days', html }),
+          body: JSON.stringify({ from: fromEmail, to: [emailAddr], subject: 'STOCKROOM: final warning — account deletion in 30 days', html }),
         });
         data.warningSent = true;
         await kvSet(['deactivation', emailHash], JSON.stringify(data));
@@ -2535,7 +2538,7 @@ Deno.cron('stockroom-deactivation-check', '0 10 * * *', async () => {
       if (data.warningSent && !data.fiveDaySent && daysSince >= 115 && daysSince < 116) {
         const html = `<div style="font-family:-apple-system,sans-serif;padding:28px;max-width:500px">
           <div style="color:#e8a838;font-weight:800;letter-spacing:2px;margin-bottom:16px">STOCKROOM</div>
-          <h2>⚠️ 5 days until your account is marked for deletion</h2>
+          <h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:6px"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> 5 days until your account is marked for deletion</h2>
           <p style="color:#555;line-height:1.6">This is your 5-day notice. If you take no action, your account will be marked for deletion by an administrator.</p>
           <div style="display:flex;gap:12px;margin-top:20px;flex-wrap:wrap">
             <a href="${appUrl}?reactivate_token=${data.reactivateToken}" style="background:#e8a838;color:#111;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Reactivate now</a>
@@ -2544,7 +2547,7 @@ Deno.cron('stockroom-deactivation-check', '0 10 * * *', async () => {
         </div>`;
         await fetch('https://api.resend.com/emails', {
           method:'POST', headers:{'Authorization':`Bearer ${resendKey}`,'Content-Type':'application/json'},
-          body: JSON.stringify({ from: fromEmail, to: [emailAddr], subject: '⚠️ STOCKROOM: 5 days until your account is marked for deletion', html }),
+          body: JSON.stringify({ from: fromEmail, to: [emailAddr], subject: 'STOCKROOM: 5 days until your account is marked for deletion', html }),
         });
         data.fiveDaySent = true;
         await kvSet(['deactivation', emailHash], JSON.stringify(data));
@@ -2554,7 +2557,7 @@ Deno.cron('stockroom-deactivation-check', '0 10 * * *', async () => {
       if (data.fiveDaySent && !data.twoDaySent && daysSince >= 118 && daysSince < 119) {
         const html = `<div style="font-family:-apple-system,sans-serif;padding:28px;max-width:500px">
           <div style="color:#e8a838;font-weight:800;letter-spacing:2px;margin-bottom:16px">STOCKROOM</div>
-          <h2>⚠️ 2 days — final notice before deletion mark</h2>
+          <h2><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:6px"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> 2 days — final notice before deletion mark</h2>
           <p style="color:#555;line-height:1.6">This is your final notice. In 2 days your account will be marked as "Can be deleted" for administrator review.</p>
           <div style="display:flex;gap:12px;margin-top:20px;flex-wrap:wrap">
             <a href="${appUrl}?reactivate_token=${data.reactivateToken}" style="background:#e8a838;color:#111;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Reactivate now</a>
@@ -2563,7 +2566,7 @@ Deno.cron('stockroom-deactivation-check', '0 10 * * *', async () => {
         </div>`;
         await fetch('https://api.resend.com/emails', {
           method:'POST', headers:{'Authorization':`Bearer ${resendKey}`,'Content-Type':'application/json'},
-          body: JSON.stringify({ from: fromEmail, to: [emailAddr], subject: '⚠️ STOCKROOM: 2-day final notice', html }),
+          body: JSON.stringify({ from: fromEmail, to: [emailAddr], subject: 'STOCKROOM: 2-day final notice', html }),
         });
         data.twoDaySent = true;
         await kvSet(['deactivation', emailHash], JSON.stringify(data));
@@ -2633,8 +2636,8 @@ async function sendMigrationEmail(to: string, stage: 'notify' | 'complete') {
   const appUrl = env.APP_URL;
 
   const subjects = {
-    notify:   '🔐 STOCKROOM — Security upgrade coming on ' + CRYPTO_V2_SWITCHOVER,
-    complete: '✅ STOCKROOM — Your account has been upgraded',
+    notify:   'STOCKROOM — Security upgrade coming on ' + CRYPTO_V2_SWITCHOVER,
+    complete: 'STOCKROOM — Your account has been upgraded',
   };
 
   const bodies = {
@@ -2661,7 +2664,7 @@ async function sendMigrationEmail(to: string, stage: 'notify' | 'complete') {
 
   const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:560px;margin:32px auto;color:#333">
     <div style="background:#111;padding:20px 24px;border-radius:12px 12px 0 0;display:flex;align-items:center;gap:12px">
-      <span style="font-size:24px">📦</span>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e8a838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg>
       <span style="color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px">STOCKROOM</span>
     </div>
     <div style="background:#fff;border:1px solid #e5e7eb;border-top:none;padding:24px 28px;border-radius:0 0 12px 12px">
@@ -2714,7 +2717,7 @@ async function sendEmail(to, urgentItems, upcomingItems, household = null) {
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:0;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
   <div style="max-width:600px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
     <div style="background:#111;padding:24px 28px;display:flex;align-items:center;gap:16px">
-      <span style="font-size:28px">📦</span>
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#e8a838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg>
       <div>
         <div style="color:#e8a838;font-size:18px;font-weight:800;letter-spacing:2px">STOCKROOM</div>
         <div style="color:#666;font-size:12px;font-family:monospace;margin-top:2px">Stock Report${householdLabel}</div>
@@ -2722,8 +2725,8 @@ async function sendEmail(to, urgentItems, upcomingItems, household = null) {
     </div>
     <div style="padding:28px">
       <p style="color:#333;margin:0 0 24px;font-size:15px">You have <strong>${totalItems} item${totalItems!==1?'s':''}</strong> that need attention.</p>
-      ${urgentItems.length ? `<h2 style="font-size:15px;font-weight:700;color:#e85050;margin:0 0 12px">⚠️ Critical — running out soon</h2>${tableWrap(urgentRows)}` : ''}
-      ${upcomingItems.length ? `<h2 style="font-size:15px;font-weight:700;color:#e8a838;margin:0 0 12px">📦 Upcoming — order soon</h2>${tableWrap(upcomingRows)}` : ''}
+      ${urgentItems.length ? `<h2 style="font-size:15px;font-weight:700;color:#e85050;margin:0 0 12px;display:flex;align-items:center;gap:6px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e85050" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> Critical — running out soon</h2>${tableWrap(urgentRows)}` : ''}
+      ${upcomingItems.length ? `<h2 style="font-size:15px;font-weight:700;color:#e8a838;margin:0 0 12px;display:flex;align-items:center;gap:6px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#e8a838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg> Upcoming — order soon</h2>${tableWrap(upcomingRows)}` : ''}
       <div style="text-align:center;margin-top:28px">
         <a href="${appUrl}" style="display:inline-block;background:#e8a838;color:#111;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px">Open STOCKROOM →</a>
       </div>
@@ -2737,7 +2740,7 @@ async function sendEmail(to, urgentItems, upcomingItems, household = null) {
       body: JSON.stringify({
         from:    env.FROM_EMAIL,
         to:      [to],
-        subject: `📦 STOCKROOM${householdLabel} — ${urgentItems.length?`${urgentItems.length} urgent, `:''}${totalItems} item${totalItems!==1?'s':''} running low`,
+        subject: `STOCKROOM${householdLabel} — ${urgentItems.length?`${urgentItems.length} urgent, `:''}${totalItems} item${totalItems!==1?'s':''} running low`,
         html,
       }),
     });
