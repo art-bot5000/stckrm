@@ -336,6 +336,15 @@ function ic(name, size='') {
 }
 const today = () => new Date().toISOString().split('T')[0];
 const fmtDate = d => d ? new Date(d+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—';
+// Generic date formatter — accepts both 'YYYY-MM-DD' and full ISO timestamps.
+// Replaces a previously-local helper that several call sites still reference.
+const fmt = d => {
+  if (!d) return '—';
+  const s = String(d);
+  const date = s.length <= 10 ? new Date(s + 'T12:00:00') : new Date(s);
+  if (isNaN(date)) return '—';
+  return date.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+};
 
 function timeAgo(dateStr) {
   if (!dateStr) return '—';
@@ -1207,7 +1216,7 @@ async function sendReminderEmail(manual = true) {
   } finally {
     if (manual) {
       const btn = document.getElementById('send-reminder-btn');
-      if (btn) { btn.textContent = '📧 Send Now'; btn.disabled = false; }
+      if (btn) { btn.innerHTML = '<svg class="icon" aria-hidden="true" style="vertical-align:-3px"><use href="#i-mail"></use></svg> Send Now'; btn.disabled = false; }
     }
   }
 }
@@ -1849,7 +1858,7 @@ function openReminderTimeline(reminderId) {
 
   if (!r.lastReplaced) {
     html = `<div style="text-align:center;padding:32px 16px;color:var(--muted)">
-      <div style="font-size:36px;margin-bottom:12px">📅</div>
+      <div style="margin-bottom:12px;color:var(--accent)"><svg aria-hidden="true" style="width:36px;height:36px"><use href="#i-calendar"></use></svg></div>
       <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px">No start date recorded</div>
       <div style="font-size:13px;line-height:1.6">Mark this as replaced to start tracking the timeline.</div>
     </div>`;
@@ -5143,7 +5152,7 @@ function renderSavingsView() {
 
   if (!all.length) {
     html = `<div class="sns-empty">
-      <div style="font-size:48px;margin-bottom:16px">🛒</div>
+      <div style="margin-bottom:16px;color:var(--accent)"><svg aria-hidden="true" style="width:48px;height:48px"><use href="#i-shopping-cart"></use></svg></div>
       <h3 style="font-size:18px;color:var(--text);margin-bottom:8px">No Amazon purchases found</h3>
       <p style="font-size:14px;line-height:1.7">Add items purchased from Amazon and log at least 3 purchases to see Subscribe &amp; Save opportunities.</p>
     </div>`;
@@ -6579,7 +6588,7 @@ function openDeliveredModal(id) {
     openLogPurchaseModal(id);
     setTimeout(() => {
       const title = document.getElementById('log-modal-title');
-      if (title) title.textContent = '📦 Purchase Details — ' + item.name;
+      if (title) title.innerHTML = '<svg class="icon icon-md" aria-hidden="true" style="color:var(--accent);vertical-align:-3px"><use href="#i-package"></use></svg> Purchase Details — ' + esc(item.name);
       const sub = document.querySelector('#log-modal .subtitle');
       if (sub) sub.textContent = 'Enter the purchase details then we\'ll confirm delivery.';
       const saveBtn = document.querySelector('#log-modal .btn-primary');
@@ -6589,7 +6598,7 @@ function openDeliveredModal(id) {
   }
 
   deliveringId = id;
-  document.getElementById('delivered-modal-title').textContent = `📦 Delivered — ${item.name}`;
+  document.getElementById('delivered-modal-title').innerHTML = `<svg class="icon icon-md" aria-hidden="true" style="color:var(--accent);vertical-align:-3px"><use href="#i-package-check"></use></svg> Delivered — ${esc(item.name)}`;
   document.getElementById('delivered-date').value = today();
   const pendingLog = [...(item.logs||[])].reverse().find(l => l.pendingDelivery);
   document.getElementById('delivered-qty').value = pendingLog?.qty || item.qty || 1;
@@ -6706,7 +6715,7 @@ function openStartedUsingModal(id) {
   startedUsingItemId = id;
   const item = items.find(i => i.id === id);
   if (!item) return;
-  document.getElementById('started-using-title').textContent = `📅 ${item.name} — when did you start using it?`;
+  document.getElementById('started-using-title').innerHTML = `<svg class="icon icon-md" aria-hidden="true" style="color:var(--accent);vertical-align:-3px"><use href="#i-calendar"></use></svg> ${esc(item.name)} — when did you start using it?`;
   document.getElementById('started-using-date').value = today();
   openModal('started-using-modal');
 }
@@ -8418,10 +8427,10 @@ async function kvLoginWithPasskey() {
 
     if (!dataKey) {
       // No envelope or unwrap failed — prompt passphrase once to bootstrap this device
-      if (btn) { btn.textContent = '🔑 One moment…'; }
+      if (btn) { btn.innerHTML = '<svg class="icon" aria-hidden="true" style="vertical-align:-3px"><use href="#i-key-round"></use></svg> One moment…'; }
       dataKey = await _getKeyViaPassphrase(emailHash, sessionToken, credId, errEl);
       if (!dataKey) {
-        if (btn) { btn.textContent = '🔑 Sign in with Face ID / Fingerprint'; btn.disabled = false; }
+        if (btn) { btn.innerHTML = '<svg class="icon" aria-hidden="true" style="vertical-align:-3px"><use href="#i-key-round"></use></svg> Sign in with Face ID / Fingerprint'; btn.disabled = false; }
         return;
       }
     }
@@ -8441,7 +8450,7 @@ async function kvLoginWithPasskey() {
       if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
     }
   } finally {
-    if (btn) { btn.textContent = '🔑 Sign in with Face ID / Fingerprint'; btn.disabled = false; }
+    if (btn) { btn.innerHTML = '<svg class="icon" aria-hidden="true" style="vertical-align:-3px"><use href="#i-key-round"></use></svg> Sign in with Face ID / Fingerprint'; btn.disabled = false; }
   }
 }
 
@@ -8675,7 +8684,7 @@ function showProtectDataScreen(recoveryCodes, isMigration = false) {
     const heading = step1d.querySelector('h1');
     const subtext = step1d.querySelector('p');
     if (isMigration) {
-      if (heading) heading.textContent = '🔐 Encryption upgraded';
+      if (heading) heading.innerHTML = '<svg class="icon icon-md" aria-hidden="true" style="color:var(--ok);vertical-align:-3px"><use href="#i-lock"></use></svg> Encryption upgraded';
       if (subtext)  subtext.textContent = 'Your account now uses stronger encryption. Save your new recovery codes — your old ones no longer work.';
     } else {
       if (heading) heading.textContent = 'Protecting your data';
@@ -9189,7 +9198,7 @@ async function runCryptoMigration(email, emailHash, verifier, passphrase, v1Data
     overlay.id = 'crypto-migration-overlay';
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:10000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:#fff;font-family:var(--sans)';
     overlay.innerHTML = `
-      <div style="font-size:40px">🔐</div>
+      <div style="color:var(--accent)"><svg aria-hidden="true" style="width:40px;height:40px"><use href="#i-lock"></use></svg></div>
       <div style="font-size:18px;font-weight:700">Upgrading your encryption</div>
       <div id="crypto-migration-status" style="font-size:13px;color:rgba(255,255,255,0.7);text-align:center;max-width:300px;line-height:1.6">
         Fetching your data…
@@ -10716,7 +10725,7 @@ function showPassphrasePrompt(subtitleOverride = null) {
     modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
     modal.innerHTML = `
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px 24px;width:100%;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,0.4)">
-        <div style="font-size:32px;margin-bottom:12px;text-align:center">${isPasskeySession ? '🔓' : '🔑'}</div>
+        <div style="margin-bottom:12px;text-align:center;color:var(--accent)"><svg aria-hidden="true" style="width:32px;height:32px"><use href="#i-${isPasskeySession ? 'unlock' : 'key-round'}"></use></svg></div>
         <h3 style="font-size:17px;font-weight:700;margin-bottom:6px;text-align:center">${isPasskeySession ? 'One-time unlock needed' : 'Enter passphrase'}</h3>
         <p style="font-size:13px;color:var(--muted);margin-bottom:18px;text-align:center;line-height:1.5">${subtitle}</p>
         <input type="password" id="kv-pp-input" placeholder="Your passphrase"
@@ -12004,7 +12013,7 @@ function openQuickList() {
   overlay.innerHTML = `
     <div style="background:var(--surface);border-radius:20px 20px 0 0;width:100%;max-width:600px;padding:24px 20px 36px;box-shadow:0 -8px 32px rgba(0,0,0,0.5);max-height:90vh;overflow-y:auto">
       <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px"></div>
-      <h3 style="font-size:18px;font-weight:700;margin-bottom:4px;text-align:center">⚡ Quick List</h3>
+      <h3 style="font-size:18px;font-weight:700;margin-bottom:4px;text-align:center"><svg class="icon icon-md" aria-hidden="true" style="vertical-align:-3px;color:var(--accent)"><use href="#i-zap"></use></svg> Quick List</h3>
       <p style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:16px">Type items separated by commas. Tap a suggestion to add it.</p>
       <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
         <div style="flex:1;min-width:140px">
@@ -12559,12 +12568,12 @@ function renderGrocery() {
   }
 
   if (listItems.length === 0) {
-    body.innerHTML = `<div class="grocery-empty"><div class="grocery-empty-icon">🛒</div><div style="font-size:16px;font-weight:700;margin-bottom:8px">No items in this list yet</div><div style="font-size:13px;color:var(--muted)">Tap <svg class="icon icon-sm" aria-hidden="true" style="vertical-align:middle"><use href="#i-zap"></use></svg> Quick List or <svg class="icon icon-sm" aria-hidden="true" style="vertical-align:middle"><use href="#i-pencil"></use></svg> Edit to add items.</div></div>`;
+    body.innerHTML = `<div class="grocery-empty"><div class="grocery-empty-icon" style="color:var(--accent)"><svg aria-hidden="true" style="width:48px;height:48px"><use href="#i-shopping-cart"></use></svg></div><div style="font-size:16px;font-weight:700;margin-bottom:8px">No items in this list yet</div><div style="font-size:13px;color:var(--muted)">Tap <svg class="icon icon-sm" aria-hidden="true" style="vertical-align:middle"><use href="#i-zap"></use></svg> Quick List or <svg class="icon icon-sm" aria-hidden="true" style="vertical-align:middle"><use href="#i-pencil"></use></svg> Edit to add items.</div></div>`;
     return;
   }
 
   if (filtered.length === 0 && !groceryEditMode) {
-    body.innerHTML = `<div class="grocery-empty"><div class="grocery-empty-icon">🔍</div><div style="font-size:15px;font-weight:600">No matches</div></div>`;
+    body.innerHTML = `<div class="grocery-empty"><div class="grocery-empty-icon" style="color:var(--muted)"><svg aria-hidden="true" style="width:48px;height:48px"><use href="#i-search"></use></svg></div><div style="font-size:15px;font-weight:600">No matches</div></div>`;
     return;
   }
 
@@ -13103,7 +13112,7 @@ function _showChangeDeptZone() {
   const deptBtn = document.createElement('div');
   deptBtn.id = 'grocery-zone-dept';
   deptBtn.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px;border:2px dashed rgba(232,168,56,0.4);border-radius:12px;cursor:pointer';
-  deptBtn.innerHTML = `<div style="font-size:22px">📂</div><div style="font-size:12px;font-weight:700;color:var(--accent);letter-spacing:1px">CHANGE DEPT</div>`;
+  deptBtn.innerHTML = `<svg aria-hidden="true" style="width:22px;height:22px;color:var(--accent)"><use href="#i-folder-open"></use></svg><div style="font-size:12px;font-weight:700;color:var(--accent);letter-spacing:1px">CHANGE DEPT</div>`;
   deptBtn.addEventListener('dragover', e => { e.preventDefault(); deptBtn.style.background='rgba(232,168,56,0.12)'; });
   deptBtn.addEventListener('dragleave', () => { deptBtn.style.background=''; });
   deptBtn.addEventListener('drop', e => { e.preventDefault(); deptBtn.style.background=''; _showDeptPickerOverlay(); });
@@ -13123,7 +13132,7 @@ function _showChangeDeptZone() {
   const delBtn = document.createElement('div');
   delBtn.id = 'grocery-zone-delete';
   delBtn.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px;border:2px dashed rgba(232,80,80,0.4);border-radius:12px;cursor:pointer';
-  delBtn.innerHTML = `<div style="font-size:22px">🗑️</div><div style="font-size:12px;font-weight:700;color:var(--danger);letter-spacing:1px">DELETE</div>`;
+  delBtn.innerHTML = `<svg aria-hidden="true" style="width:22px;height:22px;color:var(--danger)"><use href="#i-trash-2"></use></svg><div style="font-size:12px;font-weight:700;color:var(--danger);letter-spacing:1px">DELETE</div>`;
   delBtn.addEventListener('dragover', e => { e.preventDefault(); delBtn.style.background='rgba(232,80,80,0.12)'; });
   delBtn.addEventListener('dragleave', () => { delBtn.style.background=''; });
   delBtn.addEventListener('drop', async e => {
@@ -13557,8 +13566,8 @@ function openGroceryContext(e, id) {
   const menu = document.getElementById('grocery-context-menu');
   menu.innerHTML = `
     <button class="grocery-context-item" onclick="editFromContext()"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit item</button>
-    <button class="grocery-context-item" onclick="convertFromContext()">📦 Convert to stock item</button>
-    <button class="grocery-context-item danger" onclick="deleteFromContext()">🗑 Delete</button>
+    <button class="grocery-context-item" onclick="convertFromContext()"><svg class="icon" aria-hidden="true"><use href="#i-package"></use></svg> Convert to stock item</button>
+    <button class="grocery-context-item danger" onclick="deleteFromContext()"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
   `;
   // Position near tap
   const rect = e.currentTarget.getBoundingClientRect();
@@ -14018,7 +14027,7 @@ async function createInviteCode() {
   } catch(err) {
     toast('Could not create invite: ' + err.message);
   } finally {
-    if (btn) { btn.textContent = '🔗 Generate invite code'; btn.disabled = false; }
+    if (btn) { btn.innerHTML = '<svg class="icon" aria-hidden="true" style="vertical-align:-3px"><use href="#i-link"></use></svg> Generate invite code'; btn.disabled = false; }
   }
 }
 
@@ -14271,7 +14280,7 @@ async function openAddShareTarget() {
   profileKeys.forEach(k => { _shareTargetPerms[k] = { ...defaults }; });
 
   _shareTargetDone   = false;
-  document.getElementById('share-target-modal-title').textContent = '👤 Add Person';
+  document.getElementById('share-target-modal-title').innerHTML = '<svg class="icon icon-md" aria-hidden="true" style="color:var(--accent);vertical-align:-3px"><use href="#i-user"></use></svg> Add Person';
   document.getElementById('share-target-code').value = '';
   document.getElementById('share-target-name').value = '';
   document.getElementById('share-target-email').value = '';
@@ -14294,7 +14303,7 @@ async function openEditShareTarget(code) {
   _shareTargetColour = target.colour || HOUSEHOLD_COLOURS[0];
   _shareTargetDone   = false;
 
-  document.getElementById('share-target-modal-title').textContent = '✏️ Edit Access';
+  document.getElementById('share-target-modal-title').innerHTML = '<svg class="icon icon-md" aria-hidden="true" style="color:var(--accent);vertical-align:-3px"><use href="#i-pencil"></use></svg> Edit Access';
   document.getElementById('share-target-code').value = code;
   document.getElementById('share-target-name').value = target.name || '';
 
@@ -14966,7 +14975,7 @@ async function connectPresence() {
     _presencePingTimer = setInterval(pushPresence, 25000);
 
     const statusEl = document.getElementById('household-status');
-    if (statusEl) statusEl.textContent = '🟢 Connected — presence active';
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--ok)">●</span> Connected — presence active';
   } catch(e) {
     console.warn('Presence SSE failed:', e);
   }
@@ -15337,7 +15346,7 @@ function updateQuickAddPreview() {
       📦 ${esc(n)}
     </span>`
   ).join('');
-  if (btn) btn.textContent = `⚡ Add ${names.length} Item${names.length !== 1 ? 's' : ''}`;
+  if (btn) btn.innerHTML = `<svg class="icon" aria-hidden="true" style="vertical-align:-3px"><use href="#i-zap"></use></svg> Add ${names.length} Item${names.length !== 1 ? 's' : ''}`;
 }
 
 async function saveQuickAdd() {
@@ -15734,7 +15743,7 @@ function showShareAuthGate(meta) {
   const hCount = Object.keys(meta.households || {}).length;
   const groupName = meta.name ? `the <strong>${esc(meta.name)}</strong> group` : 'this household';
   step1.innerHTML = `
-    <div style="font-size:44px;margin-bottom:12px">🏠</div>
+    <div style="margin-bottom:12px;color:var(--accent)"><svg aria-hidden="true" style="width:44px;height:44px"><use href="#i-home"></use></svg></div>
     <h1 style="font-size:22px;font-weight:700;margin-bottom:6px">You're invited!</h1>
     <p style="color:var(--muted);font-size:13px;line-height:1.6;margin-bottom:16px">
       <strong style="color:var(--text)">${esc(meta.ownerName||'Someone')}</strong> has invited you
@@ -16044,7 +16053,7 @@ async function renderNotes() {
 
   // Trash: show "Empty trash" button
   const trashBar = _notesFilter === 'trash' && visible.length
-    ? `<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="emptyNotesTrash()">🗑️ Empty trash</button></div>`
+    ? `<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="emptyNotesTrash()"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Empty trash</button></div>`
     : '';
 
   // Render pinned section header if mixed
@@ -16061,7 +16070,7 @@ async function renderNotes() {
       inPinned = true;
     }
     if (showHeaders && !n.pinned && inPinned) {
-      html += `<div class="notes-section-label" style="padding:8px 0 4px">📝 Notes</div>`;
+      html += `<div class="notes-section-label" style="padding:8px 0 4px"><svg class="icon" aria-hidden="true" style="vertical-align:-3px"><use href="#i-notebook-pen"></use></svg> Notes</div>`;
       inPinned = false;
     }
     html += _noteCardHTML(n);
@@ -16183,9 +16192,9 @@ function _showNoteActionBar() {
     bar.id = 'note-action-bar';
     bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);padding:16px 20px;display:flex;gap:10px;justify-content:space-around;z-index:350;box-shadow:0 -4px 20px rgba(0,0,0,0.3)';
     bar.innerHTML = `
-      <button class="btn btn-ghost" onclick="_bulkNoteAction('pin')" style="flex:1;flex-direction:column;gap:4px;height:56px;font-size:12px">📌<br>Pin</button>
-      <button class="btn btn-ghost" onclick="_bulkNoteAction('archive')" style="flex:1;flex-direction:column;gap:4px;height:56px;font-size:12px">📦<br>Archive</button>
-      <button class="btn btn-danger" onclick="_bulkNoteAction('delete')" style="flex:1;flex-direction:column;gap:4px;height:56px;font-size:12px">🗑️<br>Delete</button>
+      <button class="btn btn-ghost" onclick="_bulkNoteAction('pin')" style="flex:1;flex-direction:column;gap:4px;height:56px;font-size:12px"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg><br>Pin</button>
+      <button class="btn btn-ghost" onclick="_bulkNoteAction('archive')" style="flex:1;flex-direction:column;gap:4px;height:56px;font-size:12px"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg><br>Archive</button>
+      <button class="btn btn-danger" onclick="_bulkNoteAction('delete')" style="flex:1;flex-direction:column;gap:4px;height:56px;font-size:12px"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg><br>Delete</button>
       <button class="btn btn-ghost" onclick="_cancelNoteSelect()" style="flex:1;flex-direction:column;gap:4px;height:56px;font-size:12px"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg><br>Cancel</button>
     `;
     document.body.appendChild(bar);
@@ -17307,7 +17316,7 @@ async function openMfaSetup() {
   _pendingMfaSetupMode = 'enable';
   _mfaEmailTestSent    = false;
   _mfaSetupReset();
-  document.getElementById('mfa-setup-title').textContent    = '🛡️ Set Up Multifactor Authentication';
+  document.getElementById('mfa-setup-title').innerHTML    = '<svg class="icon icon-md" aria-hidden="true" style="color:var(--accent);vertical-align:-3px"><use href="#i-shield"></use></svg> Set Up Multifactor Authentication';
   document.getElementById('mfa-setup-subtitle').textContent = 'Choose your second factor and verify it works before enabling.';
   document.getElementById('mfa-setup-confirm-btn').textContent = 'Send code to my email →';
   // Always show both tabs — fresh enable, no existing methods
@@ -18227,7 +18236,7 @@ function _azHtmlUpload() {
     </div>
   </div>
   <label id="az-dropzone" style="display:block;border:2px dashed var(--border);border-radius:16px;padding:48px 24px;text-align:center;cursor:pointer">
-    <div style="font-size:36px;margin-bottom:10px">📂</div>
+    <div style="margin-bottom:10px;color:var(--accent)"><svg aria-hidden="true" style="width:36px;height:36px"><use href="#i-folder-open"></use></svg></div>
     <div style="font-weight:700;margin-bottom:6px">Drop Order_History.csv here</div>
     <div style="color:var(--muted);font-size:13px">or click to browse</div>
     <input type="file" accept=".csv" id="az-file-input" style="display:none" onchange="(e=>_azHandleFile(e.target.files[0]))(event)">
@@ -18243,7 +18252,7 @@ function _azHtmlPrivacy() {
   const keep_cols=['ASIN','Product Name','Order Date','Total Amount'];
   const totalOrders=_azAllRows.length, recentOrders=_azRows.length, uniqueAsins=new Set(_azRows.map(r=>r.ASIN)).size;
   return `
-  <h2 style="font-size:22px;font-weight:700;margin-bottom:8px">⚠️ Before we continue</h2>
+  <h2 style="font-size:22px;font-weight:700;margin-bottom:8px"><svg class="icon icon-md" aria-hidden="true" style="vertical-align:-3px;color:var(--accent)"><use href="#i-alert-triangle"></use></svg> Before we continue</h2>
   <p style="color:var(--muted);font-size:14px;line-height:1.7;margin-bottom:20px">Your file contains sensitive personal information. We only need four columns — everything else is discarded locally. We recommend removing private columns first.</p>
   <div style="background:rgba(224,92,92,0.08);border:1px solid rgba(224,92,92,0.25);border-radius:12px;padding:16px;margin-bottom:14px">
     <div style="font-size:11px;font-weight:700;color:var(--danger);margin-bottom:10px;font-family:var(--mono);letter-spacing:1px">RECOMMENDED: REMOVE THESE COLUMNS FIRST</div>
@@ -18301,7 +18310,7 @@ function _azHtmlPreview() {
 
 function _azHtmlAnalyse() {
   return `<div style="text-align:center;padding:60px 20px">
-    <div style="font-size:48px;margin-bottom:16px;display:inline-block;animation:az-spin 2s linear infinite">🔍</div>
+    <div style="margin-bottom:16px;display:inline-block;animation:az-spin 2s linear infinite;color:var(--accent)"><svg aria-hidden="true" style="width:48px;height:48px"><use href="#i-search"></use></svg></div>
     <style>@keyframes az-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}@keyframes az-pulse{0%,100%{opacity:.4}50%{opacity:1}}</style>
     <h2 style="font-size:20px;font-weight:700;margin-bottom:8px">Analysing your orders…</h2>
     <p style="color:var(--muted);font-size:13px;line-height:1.7;max-width:360px;margin:0 auto 20px">Finding repeat purchases, matching ASINs, and detecting similar products — all locally on your device.</p>

@@ -212,7 +212,7 @@
 <!-- ═══ LOG REPLACEMENT MODAL ═══ -->
 <div class="modal-backdrop" id="log-replacement-modal">
   <div class="modal" style="max-width:380px;text-align:center">
-    <div style="font-size:40px;margin-bottom:8px">✅</div>
+    <div style="margin-bottom:8px;color:var(--ok)"><svg aria-hidden="true" style="width:40px;height:40px"><use href="#i-check-circle-2"></use></svg></div>
     <h2 id="log-replacement-title" style="font-size:18px;margin-bottom:6px"></h2>
     <p class="subtitle" id="log-replacement-subtitle" style="margin-bottom:20px"></p>
     <div class="field" style="text-align:left;margin-bottom:20px">
@@ -240,7 +240,7 @@
     <!-- ══ CREATE ACCOUNT ══ -->
     <div class="wizard-step" id="wizard-step-1">
       <div style="text-align:center;margin-bottom:28px">
-        <div style="font-size:48px;margin-bottom:10px">📦</div>
+        <div style="margin-bottom:10px;color:var(--accent)"><svg aria-hidden="true" style="width:48px;height:48px"><use href="#i-package"></use></svg></div>
         <h1 style="font-size:24px;font-weight:700;margin-bottom:6px">Create account</h1>
         <p style="color:var(--muted);font-size:13px;line-height:1.5">Your data is encrypted on-device before syncing.</p>
       </div>
@@ -281,7 +281,7 @@
     <!-- ══ LOGIN — STEP 1: Email entry ══ -->
     <div class="wizard-step active" id="wizard-step-1b">
       <div style="text-align:center;margin-bottom:28px">
-        <div style="font-size:48px;margin-bottom:10px">🔑</div>
+        <div style="margin-bottom:10px;color:var(--accent)"><svg aria-hidden="true" style="width:48px;height:48px"><use href="#i-key-round"></use></svg></div>
         <h1 style="font-size:24px;font-weight:700;margin-bottom:6px">Log in</h1>
         <p style="color:var(--muted);font-size:13px">Enter your email to continue.</p>
       </div>
@@ -360,7 +360,7 @@
     <!-- ══ LOGIN — STEP 2: Auth (passphrase or passkey) ══ -->
     <div class="wizard-step" id="wizard-step-1b-auth">
       <div style="text-align:center;margin-bottom:24px">
-        <div style="font-size:48px;margin-bottom:10px">🔑</div>
+        <div style="margin-bottom:10px;color:var(--accent)"><svg aria-hidden="true" style="width:48px;height:48px"><use href="#i-key-round"></use></svg></div>
         <h1 style="font-size:24px;font-weight:700;margin-bottom:6px">Welcome back</h1>
       </div>
 
@@ -429,7 +429,7 @@
     <!-- Step 1c: Account recovery via recovery codes -->
     <div class="wizard-step" id="wizard-step-1c">
       <div style="text-align:center;margin-bottom:20px">
-        <div style="font-size:44px;margin-bottom:12px">🔐</div>
+        <div style="margin-bottom:12px;color:var(--accent)"><svg aria-hidden="true" style="width:44px;height:44px"><use href="#i-lock"></use></svg></div>
         <h1 style="font-size:22px;font-weight:700;margin-bottom:8px">Account recovery</h1>
         <p style="color:var(--muted);font-size:13px;line-height:1.6">Recover your account using two verification methods.</p>
       </div>
@@ -523,7 +523,7 @@
 
     <!-- Step 1d: Protecting Your Data -->
     <div class="wizard-step" id="wizard-step-1d" style="text-align:left">
-      <div style="font-size:40px;margin-bottom:8px;text-align:center">🛡️</div>
+      <div style="text-align:center;margin-bottom:8px;color:var(--accent)"><svg aria-hidden="true" style="width:40px;height:40px"><use href="#i-shield"></use></svg></div>
       <h1 style="font-size:22px;font-weight:700;margin-bottom:4px;text-align:center">Protecting your data</h1>
       <p style="font-size:13px;color:var(--muted);margin-bottom:20px;text-align:center;line-height:1.5">Complete these steps to keep your account safe.</p>
 
@@ -536,7 +536,7 @@
       <!-- 2. Passkey (optional) -->
       <div id="protect-passkey-section" style="border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-          <div style="font-size:18px">🔑</div>
+          <div style="color:var(--accent);display:flex;align-items:center"><svg aria-hidden="true" style="width:18px;height:18px"><use href="#i-key-round"></use></svg></div>
           <div style="flex:1"><div style="font-size:13px;font-weight:700">Add a passkey <span style="font-size:11px;color:var(--muted);font-weight:400">(optional)</span></div><div style="font-size:11px;color:var(--muted)">Sign in faster with Face ID or fingerprint — no passphrase needed</div></div>
         </div>
         <div id="protect-passkey-done" style="display:none;font-size:12px;color:var(--ok);margin-bottom:6px">✓ Passkey added for this device</div>
@@ -549,7 +549,7 @@
       <!-- 3. Recovery codes -->
       <div id="protect-recovery-section" style="border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-          <div style="font-size:18px">🔐</div>
+          <div style="color:var(--accent);display:flex;align-items:center"><svg aria-hidden="true" style="width:18px;height:18px"><use href="#i-lock"></use></svg></div>
           <div><div style="font-size:13px;font-weight:700">Recovery codes</div><div style="font-size:11px;color:var(--muted)">10 one-time codes — use these if you lose access to your passphrase and passkey</div></div>
         </div>
         <!-- Codes display -->
@@ -569,7 +569,7 @@
       <!-- 4. Export reminder -->
       <div style="border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-          <div style="font-size:18px">📦</div>
+          <div style="color:var(--accent);display:flex;align-items:center"><svg aria-hidden="true" style="width:18px;height:18px"><use href="#i-package"></use></svg></div>
           <div><div style="font-size:13px;font-weight:700">Regular exports</div><div style="font-size:11px;color:var(--muted)">Export your data regularly as an additional backup — we'll remind you monthly</div></div>
         </div>
       </div>
@@ -585,7 +585,7 @@
 
     <!-- Step 1e: Duplicate account detected -->
     <div class="wizard-step" id="wizard-step-1e">
-      <div style="font-size:44px;margin-bottom:12px">👤</div>
+      <div style="margin-bottom:12px;color:var(--accent)"><svg aria-hidden="true" style="width:44px;height:44px"><use href="#i-user"></use></svg></div>
       <h1 style="font-size:22px;font-weight:700;margin-bottom:8px">Account already exists</h1>
       <p style="color:var(--muted);font-size:13px;line-height:1.6;margin-bottom:6px">An account is already registered to <strong id="duplicate-email-display" style="color:var(--text)"></strong>.</p>
       <p style="color:var(--muted);font-size:13px;line-height:1.6;margin-bottom:20px">Sign in to that account, recover it, or import a backup — or use a different email to create a new account.</p>
@@ -611,7 +611,7 @@
 
     <!-- Step 1f: Email verification (new registrations) -->
     <div class="wizard-step" id="wizard-step-1f">
-      <div style="font-size:44px;margin-bottom:12px">📧</div>
+      <div style="margin-bottom:12px;color:var(--accent)"><svg aria-hidden="true" style="width:44px;height:44px"><use href="#i-mail"></use></svg></div>
       <h1 style="font-size:22px;font-weight:700;margin-bottom:8px">Verify your email</h1>
       <p style="color:var(--muted);font-size:13px;line-height:1.6;margin-bottom:6px">We sent a 6-digit code to <strong id="verify-email-display" style="color:var(--text)"></strong>.</p>
       <p style="color:var(--muted);font-size:13px;line-height:1.6;margin-bottom:20px">Enter it below to confirm you own this address. Valid for 5 minutes.</p>
@@ -633,7 +633,7 @@
 
     <!-- Step 2: Country -->
     <div class="wizard-step" id="wizard-step-2">
-      <div style="font-size:48px;margin-bottom:12px">🌍</div>
+      <div style="margin-bottom:12px;color:var(--accent)"><svg aria-hidden="true" style="width:48px;height:48px"><use href="#i-globe"></use></svg></div>
       <h2 style="font-size:22px;font-weight:700;margin-bottom:8px">Almost there!</h2>
       <p style="color:var(--muted);font-size:14px;line-height:1.6;margin-bottom:20px">Tell us your name and where you're based so we can personalise your experience.</p>
       <div class="form-group" style="margin-bottom:20px;text-align:left">
@@ -668,7 +668,7 @@
 
 <!-- PWA Install Banner — Android (shown via beforeinstallprompt) -->
 <div id="install-banner">
-  <div class="install-icon">📦</div>
+  <div class="install-icon" style="display:flex;align-items:center;color:var(--accent)"><svg aria-hidden="true" style="width:32px;height:32px"><use href="#i-package"></use></svg></div>
   <div class="install-text">
     <strong>Add STOCKROOM to your home screen</strong>
     <span>Get quick access and low-stock notifications</span>
@@ -680,7 +680,7 @@
 <!-- PWA Install Banner — iOS (shown manually since beforeinstallprompt doesn't fire) -->
 <div id="ios-install-banner" style="display:none;background:var(--surface);border-bottom:1px solid var(--border);padding:14px 20px;gap:12px;box-shadow:0 2px 8px rgba(0,0,0,0.2)">
   <div style="display:flex;align-items:flex-start;gap:12px">
-    <div style="font-size:26px;flex-shrink:0">📦</div>
+    <div style="flex-shrink:0;color:var(--accent);display:flex;align-items:center"><svg aria-hidden="true" style="width:26px;height:26px"><use href="#i-package"></use></svg></div>
     <div style="flex:1;min-width:0">
       <div style="font-size:14px;font-weight:700;margin-bottom:4px">Add STOCKROOM to your home screen</div>
       <div style="font-size:12px;color:var(--muted);line-height:1.6">
@@ -814,7 +814,7 @@
   <!-- Amazon import banner — mobile, below "Your Stockroom — Shopping List" -->
   <div id="amazon-banner-mobile" style="display:none;margin-bottom:12px;padding:10px 14px;background:rgba(232,168,56,0.07);border:1px solid rgba(232,168,56,0.22);border-radius:10px">
     <div style="display:flex;align-items:center;gap:10px">
-      <span style="font-size:20px;flex-shrink:0">📦</span>
+      <span style="flex-shrink:0;color:var(--accent);display:inline-flex;align-items:center"><svg aria-hidden="true" style="width:20px;height:20px"><use href="#i-package"></use></svg></span>
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;font-weight:700;color:var(--accent)">Import Amazon orders</div>
         <div style="font-size:11px;color:var(--muted);line-height:1.4">Auto-populate your stockroom from your purchase history</div>
@@ -975,7 +975,7 @@
 
     <!-- Empty state -->
     <div id="reminders-empty" style="text-align:center;padding:60px 20px;color:var(--muted)">
-      <div style="font-size:48px;margin-bottom:12px">🔔</div>
+      <div style="margin-bottom:12px;color:var(--accent)"><svg aria-hidden="true" style="width:48px;height:48px"><use href="#i-bell"></use></svg></div>
       <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--text)">No reminders yet</div>
       <p style="font-size:13px;line-height:1.6;margin-bottom:20px">Add replacement reminders for items that need regular changing — toothbrush heads, water filters, smoke alarm batteries, and more.</p>
       <button class="btn btn-primary" onclick="openAddReminderModal()"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add your first reminder</button>
@@ -1560,7 +1560,7 @@
 
     <div style="background:rgba(88,166,255,0.06);border:1px solid rgba(88,166,255,0.2);border-radius:8px;padding:10px 12px;margin-bottom:16px">
       <div style="font-size:12px;color:var(--accent3);line-height:1.6">
-        💡 <strong>Tip:</strong> The simplest approach is a Notes app or plain text file with one item per line:<br>
+        <svg class="icon icon-md" aria-hidden="true" style="vertical-align:-3px;color:var(--accent)"><use href="#i-lightbulb"></use></svg> <strong>Tip:</strong> The simplest approach is a Notes app or plain text file with one item per line:<br>
         <span style="font-family:var(--mono);font-size:11px;color:var(--muted)">Milk<br>Bread<br>Chicken breast<br>Washing up liquid</span>
       </div>
     </div>
@@ -1698,13 +1698,13 @@
     <!-- Category filter -->
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px" id="template-cat-filter">
       <button class="btn btn-ghost btn-sm active-cat" onclick="filterTemplates('all',this)" style="font-size:11px">All</button>
-      <button class="btn btn-ghost btn-sm" onclick="filterTemplates('Kitchen',this)" style="font-size:11px">🍳 Kitchen</button>
-      <button class="btn btn-ghost btn-sm" onclick="filterTemplates('Bathroom',this)" style="font-size:11px">🛁 Bathroom</button>
-      <button class="btn btn-ghost btn-sm" onclick="filterTemplates('Cleaning',this)" style="font-size:11px">🧹 Cleaning</button>
-      <button class="btn btn-ghost btn-sm" onclick="filterTemplates('Food & Drink',this)" style="font-size:11px">🥫 Food</button>
-      <button class="btn btn-ghost btn-sm" onclick="filterTemplates('Health',this)" style="font-size:11px">💊 Health</button>
-      <button class="btn btn-ghost btn-sm" onclick="filterTemplates('Garden',this)" style="font-size:11px">🌱 Garden</button>
-      <button class="btn btn-ghost btn-sm" onclick="filterTemplates('Other',this)" style="font-size:11px">📦 Other</button>
+      <button class="btn btn-ghost btn-sm" onclick="filterTemplates('Kitchen',this)" style="font-size:11px"><svg class="icon icon-sm" aria-hidden="true" style="vertical-align:-3px"><use href="#i-coffee"></use></svg> Kitchen</button>
+      <button class="btn btn-ghost btn-sm" onclick="filterTemplates('Bathroom',this)" style="font-size:11px"><svg class="icon icon-sm" aria-hidden="true" style="vertical-align:-3px"><use href="#i-droplets"></use></svg> Bathroom</button>
+      <button class="btn btn-ghost btn-sm" onclick="filterTemplates('Cleaning',this)" style="font-size:11px"><svg class="icon icon-sm" aria-hidden="true" style="vertical-align:-3px"><use href="#i-wind"></use></svg> Cleaning</button>
+      <button class="btn btn-ghost btn-sm" onclick="filterTemplates('Food & Drink',this)" style="font-size:11px"><svg class="icon icon-sm" aria-hidden="true" style="vertical-align:-3px"><use href="#i-package"></use></svg> Food</button>
+      <button class="btn btn-ghost btn-sm" onclick="filterTemplates('Health',this)" style="font-size:11px"><svg class="icon icon-sm" aria-hidden="true" style="vertical-align:-3px"><use href="#i-circle-dot"></use></svg> Health</button>
+      <button class="btn btn-ghost btn-sm" onclick="filterTemplates('Garden',this)" style="font-size:11px"><svg class="icon icon-sm" aria-hidden="true" style="vertical-align:-3px"><use href="#i-leaf"></use></svg> Garden</button>
+      <button class="btn btn-ghost btn-sm" onclick="filterTemplates('Other',this)" style="font-size:11px"><svg class="icon icon-sm" aria-hidden="true" style="vertical-align:-3px"><use href="#i-package"></use></svg> Other</button>
     </div>
 
     <div id="templates-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;max-height:400px;overflow-y:auto"></div>
@@ -2233,7 +2233,7 @@
 <!-- ═══ CAMERA PHOTO MODAL ═══ -->
 <div class="modal-backdrop" id="camera-modal">
   <div class="modal" style="max-width:420px">
-    <h2>📷 Take Photo</h2>
+    <h2><svg class="icon icon-md" aria-hidden="true" style="vertical-align:-3px;color:var(--accent)"><use href="#i-camera"></use></svg> Take Photo</h2>
     <p class="subtitle">Take a photo of the product to use as the item image.</p>
     <div style="position:relative;border-radius:10px;overflow:hidden;background:#000;margin-bottom:12px;aspect-ratio:4/3">
       <video id="camera-video" autoplay playsinline muted style="width:100%;display:block"></video>
@@ -2278,7 +2278,7 @@
 <!-- ═══ SCAN CHOOSER MODAL ═══ -->
 <div class="modal-backdrop" id="scan-chooser-modal">
   <div class="modal" style="max-width:380px;text-align:center">
-    <div style="font-size:36px;margin-bottom:8px">📷</div>
+    <div style="margin-bottom:8px;color:var(--accent)"><svg aria-hidden="true" style="width:36px;height:36px"><use href="#i-camera"></use></svg></div>
     <h2 id="scan-chooser-name" style="font-size:17px;margin-bottom:6px;word-break:break-word"></h2>
     <p class="subtitle" style="margin-bottom:24px">What would you like to do?</p>
     <div style="display:flex;flex-direction:column;gap:10px">
@@ -2422,7 +2422,7 @@
 <!-- ═══ RE-AUTH MODAL ═══ -->
 <div class="modal-backdrop" id="reauth-modal" style="z-index:450">
   <div class="modal" style="max-width:400px;text-align:center">
-    <div style="font-size:40px;margin-bottom:8px">🔒</div>
+    <div style="margin-bottom:8px;color:var(--accent)"><svg aria-hidden="true" style="width:40px;height:40px"><use href="#i-lock"></use></svg></div>
     <h2 style="font-size:18px;margin-bottom:4px">Confirm your identity</h2>
     <p id="reauth-reason" style="font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.5">Re-enter your passphrase to continue.</p>
     <div id="reauth-passkey-option" style="margin-bottom:12px">
@@ -2495,7 +2495,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 
 <!-- ═══ DATA LOADING OVERLAY ═══ -->
 <div id="data-loading-overlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:200;flex-direction:column;align-items:center;justify-content:center;gap:20px">
-  <div style="font-size:48px;animation:spin-pulse 1.8s ease-in-out infinite">📦</div>
+  <div style="color:var(--accent);animation:spin-pulse 1.8s ease-in-out infinite"><svg aria-hidden="true" style="width:48px;height:48px"><use href="#i-package"></use></svg></div>
   <div style="text-align:center">
     <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:6px">Loading your Stockroom…</div>
     <div id="data-loading-status" style="font-size:13px;color:var(--muted)">Syncing your data</div>
@@ -2556,7 +2556,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 <!-- NOTES 2FA PROMPT MODAL -->
 <div class="modal-backdrop" id="notes-2fa-prompt-modal">
   <div class="modal" style="text-align:center">
-    <div style="font-size:40px;margin-bottom:12px">🔐</div>
+    <div style="margin-bottom:12px;color:var(--accent)"><svg aria-hidden="true" style="width:40px;height:40px"><use href="#i-lock"></use></svg></div>
     <h3 style="font-size:16px;font-weight:700;margin-bottom:8px">Secure your notes further?</h3>
     <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px">Enable 2-step unlock to require an email code in addition to your passphrase or passkey when opening a secure note.</p>
     <div style="display:flex;flex-direction:column;gap:10px">
@@ -2657,7 +2657,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 <!-- BACK BUTTON / SWIPE INTERSTITIAL MODAL -->
 <div class="modal-backdrop" id="back-interstitial-modal">
   <div class="modal" style="max-width:360px">
-    <div style="font-size:28px;text-align:center;margin-bottom:8px">📦</div>
+    <div style="text-align:center;margin-bottom:8px;color:var(--accent)"><svg aria-hidden="true" style="width:28px;height:28px"><use href="#i-package"></use></svg></div>
     <h3 style="font-size:16px;font-weight:700;text-align:center;margin-bottom:6px">Leave STOCKROOM?</h3>
     <p style="font-size:13px;color:var(--muted);text-align:center;line-height:1.5;margin-bottom:20px">Back gesture detected. Go to a section or exit the app.</p>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
@@ -2675,7 +2675,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 <!-- MFA PROMPT MODAL (first visit to Notes) -->
 <div class="modal-backdrop" id="mfa-prompt-modal">
   <div class="modal" style="text-align:center;max-width:380px">
-    <div style="font-size:40px;margin-bottom:10px">🛡️</div>
+    <div style="margin-bottom:10px;color:var(--accent)"><svg aria-hidden="true" style="width:40px;height:40px"><use href="#i-shield"></use></svg></div>
     <h3 style="font-size:16px;font-weight:700;margin-bottom:8px">Enable Multifactor Authentication?</h3>
     <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px">Add a second verification step to protect your account across the whole app — not just notes. Choose between an email code or an authenticator app.</p>
     <div style="display:flex;flex-direction:column;gap:10px">
@@ -2773,7 +2773,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 <!-- MFA VERIFY MODAL (shown after passphrase/passkey when MFA enabled) -->
 <div class="modal-backdrop" id="mfa-verify-modal" style="z-index:460">
   <div class="modal" style="max-width:340px;text-align:center">
-    <div style="font-size:32px;margin-bottom:8px">🛡️</div>
+    <div style="margin-bottom:8px;color:var(--accent)"><svg aria-hidden="true" style="width:32px;height:32px"><use href="#i-shield"></use></svg></div>
     <h3 style="font-size:16px;font-weight:700;margin-bottom:6px">Verify your identity</h3>
     <div id="mfa-email-hint">
       <p style="font-size:13px;color:var(--muted);margin-bottom:8px">Enter the code sent to your email.</p>
@@ -2796,7 +2796,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 <!-- EXPORT SECURE NOTES MODAL -->
 <div class="modal-backdrop" id="export-secure-notes-modal">
   <div class="modal" style="max-width:380px">
-    <div style="font-size:32px;text-align:center;margin-bottom:10px">🔒</div>
+    <div style="text-align:center;margin-bottom:10px;color:var(--accent)"><svg aria-hidden="true" style="width:32px;height:32px"><use href="#i-lock"></use></svg></div>
     <h3 style="font-size:16px;font-weight:700;margin-bottom:8px;text-align:center">Secure notes found</h3>
     <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px">Your export contains secure notes. How would you like to handle them?</p>
     <div style="display:flex;flex-direction:column;gap:10px">
@@ -2811,7 +2811,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 <!-- DEACTIVATE ACCOUNT MODAL -->
 <div class="modal-backdrop" id="deactivate-account-modal">
   <div class="modal" style="max-width:400px">
-    <div style="font-size:32px;text-align:center;margin-bottom:10px">⏸️</div>
+    <div style="text-align:center;margin-bottom:10px;color:var(--muted)"><svg aria-hidden="true" style="width:32px;height:32px"><use href="#i-circle"></use></svg></div>
     <h3 style="font-size:16px;font-weight:700;margin-bottom:8px;text-align:center">Deactivate your account?</h3>
     <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:16px">
       Your account will be disabled for up to 3 months. During this time:
@@ -2823,7 +2823,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
       <li>If no action is taken, a final warning period begins before the account is marked for deletion</li>
     </ul>
     <div style="background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:var(--muted)">
-      💡 <strong style="color:var(--text)">Tip:</strong> Export your data in the Data section before deactivating.
+      <svg class="icon icon-md" aria-hidden="true" style="vertical-align:-3px;color:var(--accent)"><use href="#i-lightbulb"></use></svg> <strong style="color:var(--text)">Tip:</strong> Export your data in the Data section before deactivating.
     </div>
     <div style="display:flex;flex-direction:column;gap:8px">
       <button class="btn acc-sec-btn" style="background:rgba(224,92,92,0.15);border:1px solid rgba(224,92,92,0.4);color:var(--danger);width:100%" onclick="confirmDeactivateAccount()">Yes, deactivate my account</button>
@@ -2835,7 +2835,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 <!-- DELETE ACCOUNT FLOW — STEP 1: ARE YOU SURE? -->
 <div class="modal-backdrop" id="delete-account-step1-modal">
   <div class="modal" style="max-width:400px">
-    <div style="font-size:32px;text-align:center;margin-bottom:10px">🗑️</div>
+    <div style="text-align:center;margin-bottom:10px;color:var(--danger)"><svg aria-hidden="true" style="width:32px;height:32px"><use href="#i-trash-2"></use></svg></div>
     <h3 style="font-size:16px;font-weight:700;margin-bottom:8px;text-align:center">Delete your account?</h3>
     <p style="font-size:13px;color:var(--danger);font-weight:600;margin-bottom:8px;text-align:center">This is permanent and cannot be undone.</p>
     <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:16px">All your items, notes, groceries, reminders, and household data will be permanently erased from our servers.</p>
@@ -2880,7 +2880,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 <!-- DELETE ACCOUNT — EMAIL SENT CONFIRMATION -->
 <div class="modal-backdrop" id="delete-email-sent-modal">
   <div class="modal" style="max-width:400px;text-align:center">
-    <div style="font-size:40px;margin-bottom:10px">📧</div>
+    <div style="margin-bottom:10px;color:var(--accent)"><svg aria-hidden="true" style="width:40px;height:40px"><use href="#i-mail"></use></svg></div>
     <h3 style="font-size:16px;font-weight:700;margin-bottom:8px">Check your email</h3>
     <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:16px">A final warning email has been sent to your address. Click the <strong style="color:var(--text)">Delete Account</strong> button in that email to complete deletion.</p>
     <button class="btn btn-ghost acc-sec-btn" style="width:100%" onclick="closeModal('delete-email-sent-modal')">OK</button>
@@ -2890,7 +2890,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 <!-- ACCOUNT DELETED CONFIRMATION (shown after clicking email link) -->
 <div class="modal-backdrop" id="account-deleted-modal">
   <div class="modal" style="max-width:400px;text-align:center">
-    <div style="font-size:40px;margin-bottom:10px">✅</div>
+    <div style="margin-bottom:10px;color:var(--ok)"><svg aria-hidden="true" style="width:40px;height:40px"><use href="#i-check-circle-2"></use></svg></div>
     <h3 style="font-size:16px;font-weight:700;margin-bottom:8px">Account deleted</h3>
     <p style="font-size:13px;color:var(--muted);line-height:1.6">Your account and all associated data has been permanently deleted from our servers. Thank you for using STOCKROOM.</p>
   </div>
