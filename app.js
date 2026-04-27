@@ -16382,11 +16382,11 @@ async function renderNotes() {
 
   visible.forEach(n => {
     if (showHeaders && n.pinned && !inPinned) {
-      html += `<div class="notes-section-label" style="padding:8px 0 4px"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg> Pinned</div>`;
+      html += `<div class="notes-section-label"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg> Pinned</div>`;
       inPinned = true;
     }
     if (showHeaders && !n.pinned && inPinned) {
-      html += `<div class="notes-section-label" style="padding:8px 0 4px"><svg class="icon" aria-hidden="true" style="vertical-align:-3px"><use href="#i-notebook-pen"></use></svg> Notes</div>`;
+      html += `<div class="notes-section-label"><svg class="icon" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> Notes</div>`;
       inPinned = false;
     }
     html += _noteCardHTML(n);

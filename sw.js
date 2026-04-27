@@ -1,7 +1,8 @@
-const CACHE_VERSION = 'stockroom-kv-v193';
+const CACHE_VERSION = 'stockroom-kv-v194';
 const CACHE_NAME    = CACHE_VERSION;
 
 const CACHE_URLS = [
+  './',
   './index.html',
   './app.js',
   './styles.css',
@@ -29,8 +30,12 @@ self.addEventListener('install', event => {
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
+    console.log('[SW] activate — found caches:', keys);
     await Promise.all(keys.map(k => {
-      if (k !== CACHE_NAME) return caches.delete(k);
+      if (k !== CACHE_NAME) {
+        console.log('[SW] deleting cache:', k);
+        return caches.delete(k);
+      }
     }));
     // Take control of all open pages immediately
     await self.clients.claim();
@@ -39,6 +44,7 @@ self.addEventListener('activate', event => {
     clientList.forEach(client => {
       client.postMessage({ type: 'SW_UPDATED', version: CACHE_VERSION });
     });
+    console.log('[SW] activated v' + CACHE_VERSION + ', told', clientList.length, 'clients to reload');
   })());
 });
 
@@ -80,11 +86,12 @@ self.addEventListener('fetch', event => {
     '/reminder','/status','/register','/unregister','/unsubscribe',
     '/check-now','/send-now','/debug-schedule','/reset-schedule',
     '/set-schedule','/send-reminder',
+    '/note/','/mfa/',
   ];
   if (apiPaths.some(p => url.pathname === p || url.pathname.startsWith(p + '/'))) return;
 
   // Diagnostic and admin pages — always network
-  if (['/diag.html', '/admin.html'].includes(url.pathname)) return;
+  if (['/diag.html', '/admin.html', '/diag-trusted.html'].includes(url.pathname)) return;
 
   // App shell — network first, cache fallback for offline
   event.respondWith(

@@ -838,7 +838,13 @@
 .note-swatch { width:24px; height:24px; border-radius:6px; cursor:pointer; border:2px solid transparent; transition:border-color 0.15s; }
 .note-swatch:hover, .note-swatch.active { border-color:var(--accent); }
 .notes-section-label { font-size:11px; font-weight:700; color:var(--accent); font-family:var(--mono);
-  letter-spacing:1.5px; text-transform:uppercase; margin-bottom:10px; }
+  letter-spacing:1.5px; text-transform:uppercase; margin-bottom:10px;
+  /* When inside a CSS grid (#notes-grid), span the entire row so the heading
+     sits above the cards instead of being placed in a single cell. */
+  grid-column: 1 / -1;
+  display:flex; align-items:center; gap:8px;
+  padding-top:4px; }
+.notes-section-label .icon { width:14px; height:14px; }
 /* note overlay display controlled via JS inline style */
 /* Note formatting toolbar */
 .note-fmt-btn { background:transparent; border:1px solid transparent; border-radius:6px; padding:4px 8px; font-size:13px; font-weight:700; cursor:pointer; color:var(--text); transition:background 0.12s; line-height:1.4; min-width:28px; text-align:center; }
