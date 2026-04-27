@@ -867,6 +867,8 @@
   #view-account-security.active { display:block; }
   /* Account & Security view */
   #view-account-security { max-width: 720px; }
+  /* Settings view — same width as Account & Security */
+  #view-settings { max-width: 720px; }
 }
 /* Mobile: Hi greeting flush with logo */
 @media (max-width:899px) {
@@ -899,6 +901,8 @@
 /* ── Account & Security view ── */
 #view-account-security { max-width:680px; }
 #view-account-security.active { display:block !important; }
+/* Settings view — same width as Account & Security */
+#view-settings { max-width:680px; }
 /* Ensure acc-sec rows use flex regardless of any settings overrides */
 .acc-sec-card .acc-sec-row { display:flex !important; }
 .acc-sec-card .acc-sec-row.acc-sec-row-block { flex-direction:column !important; }
