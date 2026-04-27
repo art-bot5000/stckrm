@@ -3786,7 +3786,7 @@ function cardHTML(item, threshold) {
     <div class="card-top">
       <div class="card-category">${item.category||'Other'}</div>
       <div class="card-btns">
-        <button class="btn-icon" title="Update stock count" onclick="openStockCountModal('${item.id}'"><svg class="icon" aria-hidden="true"><use href="#i-hash"></use></svg></button>
+        <button class="btn-icon" title="Update stock count" onclick="openStockCountModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-hash"></use></svg></button>
         <button class="btn-icon" title="Usage analytics" onclick="openAnalyticsModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-bar-chart-2"></use></svg></button>
         <button class="btn-icon" title="Price history" onclick="openPriceHistoryModal('${item.id}')" ${getPriceHistory(item).length < 2 ? 'style="opacity:0.35;cursor:default"' : ''}><svg class="icon" aria-hidden="true"><use href="#i-banknote"></use></svg></button>
         <button class="btn-icon" title="Share item" onclick="shareItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg></button>
