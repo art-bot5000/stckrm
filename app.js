@@ -10228,6 +10228,8 @@ async function removeTrustedDevice(deviceId) {
       localStorage.removeItem('stockroom_kv_session_key');
       localStorage.removeItem('stockroom_kv_session');
       localStorage.removeItem('stockroom_trust_ts');
+      try { localStorage.removeItem(_MFA_PERSIST_KEY); } catch(e) {}
+      try { sessionStorage.removeItem(_MFA_SESSION_KEY); } catch(e) {}
       try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
       dbPut('settings', 'stockroom_kv_session', null).catch(() => {});
       kvConnected     = false;
@@ -10962,6 +10964,8 @@ async function kvSignOut() {
   }
   // Clear the per-session verified flag — next login must verify MFA again
   try { sessionStorage.removeItem(_MFA_SESSION_KEY); } catch(e) {}
+  // Also drop the 30-day persistent marker so signing back in re-prompts MFA
+  try { localStorage.removeItem(_MFA_PERSIST_KEY); } catch(e) {}
   // Revoke server-side passkey session so a stale 30-day token cannot be reused
   if (_kvSessionToken && _kvEmailHash) {
     try {
@@ -16955,8 +16959,25 @@ async function mfaVerifySubmit() {
 
   _mfaVerifyAltMode = false;
   localStorage.removeItem('stockroom_mfa_was_active');
-  // Mark MFA as verified for this browser session (allows trusted devices to skip on reload)
+  // Mark MFA as verified for this browser session.
+  // sessionStorage covers same-tab refreshes. When "Remember me" is on we
+  // also write a 30-day localStorage marker so the user isn't re-prompted
+  // for MFA every time they close and reopen the tab during the persistent
+  // login window — that matches the rest of the 30-day session promise.
   try { sessionStorage.setItem(_MFA_SESSION_KEY, _kvEmailHash || '1'); } catch(e) {}
+  try {
+    const rememberMe = _rememberMeChecked
+      || !!document.getElementById('remember-me-checkbox')?.checked
+      || !!document.getElementById('remember-me-checkbox-auth')?.checked
+      || (() => { try { const s = JSON.parse(localStorage.getItem('stockroom_kv_session') || 'null'); return !!(s && s.rememberMe); } catch(e) { return false; } })()
+      || getCookieConsent() === 'granted';
+    if (rememberMe && _kvEmailHash) {
+      localStorage.setItem(_MFA_PERSIST_KEY, JSON.stringify({
+        emailHash: _kvEmailHash,
+        expiry:    Date.now() + 30 * 24 * 60 * 60 * 1000,
+      }));
+    }
+  } catch(e) {}
   closeModal('mfa-verify-modal');
   if (codeEl) codeEl.value = '';
   if (_pendingMfaCallback) { const cb = _pendingMfaCallback; _pendingMfaCallback = null; cb(); }
@@ -16997,10 +17018,14 @@ let _mfaEmailTestSent    = false;
 //
 // "Stay signed in" behaviour with MFA:
 //   - First load after sign-in: MFA fires, user verifies → flag set in sessionStorage
+//     (and in localStorage with a 30-day expiry if "Remember me" was ticked)
 //   - Subsequent page loads in same browser session: flag present → MFA skipped
-//   - Sign out or cookie/storage clear: sessionStorage wiped → MFA fires again next load
-//   - Explicit sign-out always clears the flag
+//   - Subsequent page loads after tab close (Remember me on): localStorage flag
+//     valid → MFA skipped for the duration of the 30-day persistent login
+//   - Sign out, trusted device removal, or cookie/storage clear: both flags
+//     wiped → MFA fires again next load
 const _MFA_SESSION_KEY = 'stockroom_mfa_verified';
+const _MFA_PERSIST_KEY = 'stockroom_mfa_verified_30d';
 
 async function _mfaGate(callback) {
   // Pull fresh settings from server — MFA state must be authoritative from server.
@@ -17038,11 +17063,28 @@ async function _mfaGate(callback) {
     return;
   }
 
-  // MFA is enabled — check if already verified this browser session
-  // sessionStorage is wiped on tab/browser close AND on cookie clear,
-  // so "stay signed in" users only verify once per session.
-  const alreadyVerified = sessionStorage.getItem(_MFA_SESSION_KEY) === _kvEmailHash;
-  if (alreadyVerified) {
+  // MFA is enabled — check if already verified this browser session.
+  // sessionStorage covers same-tab refreshes; the localStorage 30-day marker
+  // (only written when "Remember me" was ticked) covers tab close/reopen
+  // during the persistent login window.
+  const alreadyVerifiedSession = sessionStorage.getItem(_MFA_SESSION_KEY) === _kvEmailHash;
+  let alreadyVerifiedPersistent = false;
+  try {
+    const raw = localStorage.getItem(_MFA_PERSIST_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.emailHash === _kvEmailHash && Date.now() < parsed.expiry) {
+        alreadyVerifiedPersistent = true;
+        // Mirror to sessionStorage so other code paths that only check it
+        // (e.g. legacy callers) also treat MFA as satisfied this tab.
+        try { sessionStorage.setItem(_MFA_SESSION_KEY, _kvEmailHash || '1'); } catch(e) {}
+      } else if (parsed && (parsed.emailHash !== _kvEmailHash || Date.now() >= parsed.expiry)) {
+        // Stale or for a different account — drop it.
+        localStorage.removeItem(_MFA_PERSIST_KEY);
+      }
+    }
+  } catch(e) {}
+  if (alreadyVerifiedSession || alreadyVerifiedPersistent) {
     await callback();
     return;
   }
