@@ -299,11 +299,13 @@
         </div>
 
         <!-- Remember me -->
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding-left:2px">
-          <input type="checkbox" id="remember-me-checkbox" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0"
+        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:16px;padding-left:2px">
+          <input type="checkbox" id="remember-me-checkbox" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0;margin-top:2px"
             onchange="_rememberMeChecked=this.checked;if(this.checked){localStorage.setItem('stockroom_cookie_consent','granted');}else{localStorage.removeItem('stockroom_cookie_consent');localStorage.removeItem('stockroom_remembered_email');}">
-          <label for="remember-me-checkbox" style="font-size:13px;color:var(--text);cursor:pointer;font-weight:600">Remember me</label>
-          <span style="font-size:12px;color:var(--muted)">— saves your email on this device</span>
+          <div>
+            <label for="remember-me-checkbox" style="font-size:13px;color:var(--text);cursor:pointer;font-weight:600;display:block">Remember me on this device</label>
+            <span style="font-size:12px;color:var(--muted);line-height:1.4">Stay signed in for 30 days &mdash; skip the passphrase and 2FA on this device.</span>
+          </div>
         </div>
 
         <button type="button" class="btn btn-primary btn-xl full" style="width:100%;margin-bottom:0"
@@ -403,11 +405,13 @@
           <button type="button" class="btn btn-primary btn-xl full" style="margin-bottom:12px" onclick="kvLogin()">Sign in →</button>
 
           <!-- Remember me — shown on the auth step for returning users -->
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;padding:10px 12px;background:rgba(255,255,255,0.03);border-radius:8px">
-            <input type="checkbox" id="remember-me-checkbox-auth" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0"
+          <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;padding:10px 12px;background:rgba(255,255,255,0.03);border-radius:8px">
+            <input type="checkbox" id="remember-me-checkbox-auth" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0;margin-top:2px"
               onchange="_rememberMeChecked=this.checked;if(this.checked){localStorage.setItem('stockroom_cookie_consent','granted');var e=document.getElementById('kv-login-email-display');if(e&&e.value)localStorage.setItem('stockroom_remembered_email',e.value);}else{localStorage.removeItem('stockroom_cookie_consent');localStorage.removeItem('stockroom_remembered_email');}">
-            <label for="remember-me-checkbox-auth" style="font-size:13px;color:var(--text);cursor:pointer;font-weight:600">Remember me</label>
-            <span style="font-size:12px;color:var(--muted)">— saves your email on this device</span>
+            <div>
+              <label for="remember-me-checkbox-auth" style="font-size:13px;color:var(--text);cursor:pointer;font-weight:600;display:block">Remember me on this device</label>
+              <span style="font-size:12px;color:var(--muted);line-height:1.4">Stay signed in for 30 days &mdash; skip the passphrase and 2FA on this device.</span>
+            </div>
           </div>
 
           <div style="text-align:center;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
@@ -1114,7 +1118,7 @@
           <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:8px">
             <div class="acc-sec-label">
               <div class="acc-sec-h"><svg class="icon icon-md" aria-hidden="true"><use href="#i-smartphone"></use></svg> Trusted Devices</div>
-              <div class="acc-sec-p">Devices where you ticked "Remember me". Remove to sign out and require re-authentication.</div>
+              <div class="acc-sec-p">Devices where you ticked "Remember me". Each stays signed in for 30 days without passphrase or 2FA. Remove to require full sign-in next time.</div>
             </div>
             <button class="btn btn-ghost acc-sec-btn" onclick="toggleTrustedDevicesPanel()">Show devices</button>
           </div>
@@ -1198,12 +1202,13 @@
     <div class="settings-layout">
       <div class="settings-content" id="settings-content">
 
-    <h2 style="font-size:20px;font-weight:700;margin-bottom:24px"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-settings"></use></svg> Settings</h2>
-
-    <!-- ── HOUSEHOLDS ─────────────────────────────────── -->
-    <div class="acc-sec-section" id="settings-households-body" style="margin-bottom:20px">
-      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-home"></use></svg> Households</div>
-      <div class="acc-sec-card" style="padding:18px">
+    <!-- 1. Households — first, it's a core feature -->
+    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-households-body',this)">
+      <span><svg class="icon icon-md" aria-hidden="true"><use href="#i-home"></use></svg> Households</span>
+      <span class="settings-chevron">▾</span>
+    </div>
+    <div id="settings-households-body" class="settings-collapsible-body settings-card full-width">
+      <h3 style="display:none"><svg class="icon icon-md" aria-hidden="true"><use href="#i-home"></use></svg> Households</h3>
       <p style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6">Manage your households and share access with family, cleaners or guests.</p>
 
       <!-- Households list -->
@@ -1242,13 +1247,15 @@
       </div>
 
       <div id="household-status" style="margin-top:12px;font-size:12px;color:var(--muted);font-family:var(--mono)"></div>
-      </div>
     </div>
 
-    <!-- ── ALERTS & REPORTS ───────────────────────────── -->
-    <div class="acc-sec-section" id="settings-alerts-body" style="margin-bottom:20px">
-      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-bell"></use></svg> Alerts &amp; Reports</div>
-      <div class="acc-sec-card" style="padding:18px">
+    <!-- 3. Alerts — push + email reports merged -->
+    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-alerts-body',this)">
+      <span><svg class="icon icon-md" aria-hidden="true"><use href="#i-bell"></use></svg> Alerts &amp; Reports</span>
+      <span class="settings-chevron">▾</span>
+    </div>
+    <div id="settings-alerts-body" class="settings-collapsible-body settings-card">
+      <h3 style="display:none"><svg class="icon icon-md" aria-hidden="true"><use href="#i-bell"></use></svg> Alerts &amp; Reports</h3>
 
       <!-- Push notifications -->
       <h4 style="font-size:13px;font-weight:700;margin-bottom:4px">Push Notifications</h4>
@@ -1342,13 +1349,15 @@
           </div>
         </div>
       </div>
-      </div>
     </div>
 
-    <!-- ── REMINDER SCHEDULES ─────────────────────────── -->
-    <div class="acc-sec-section" id="settings-reminders-body" style="margin-bottom:20px">
-      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-calendar"></use></svg> Reminder Schedules</div>
-      <div class="acc-sec-card" style="padding:18px">
+    <!-- 4. Reminders (renamed from "Email Reminders" — these are in-app reminder schedules) -->
+    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-reminders-body',this)">
+      <span><svg class="icon icon-md" aria-hidden="true"><use href="#i-calendar"></use></svg> Reminder Schedules</span>
+      <span class="settings-chevron">▾</span>
+    </div>
+    <div id="settings-reminders-body" class="settings-collapsible-body settings-card">
+      <h3 style="display:none"><svg class="icon icon-md" aria-hidden="true"><use href="#i-calendar"></use></svg> Reminder Schedules</h3>
       <p style="font-size:12px;color:var(--muted);margin-bottom:4px">Configure when in-app reminders fire and where notifications are sent. Settings save automatically.</p>
       <div class="setting-row">
         <div class="setting-info"><h4>Notification email</h4><p>Where reminder alerts are sent</p></div>
@@ -1404,39 +1413,65 @@
           <button class="btn btn-ghost btn-sm" onclick="repushToServer()" id="kv-repush-btn" title="Re-send your email and schedule to the server">Re-push</button>
         </div>
       </div>
-      </div>
     </div>
 
-    <!-- ── PREFERENCES ────────────────────────────────── -->
-    <div class="acc-sec-section" id="settings-prefs-body" style="margin-bottom:20px">
-      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-sliders-horizontal"></use></svg> Preferences</div>
-      <div class="acc-sec-card">
-        <div class="acc-sec-row">
-          <div class="acc-sec-label">
-            <div class="acc-sec-h">Low stock warning</div>
-            <div class="acc-sec-p">Warn when stock drops below this percentage</div>
-          </div>
-          <select id="setting-threshold" onchange="saveSettings()" class="acc-sec-select" style="width:90px">
-            <option value="10">10%</option><option value="15">15%</option><option value="20" selected>20%</option><option value="25">25%</option><option value="33">33%</option>
-          </select>
-        </div>
+    <!-- Data section (renamed from Preferences & Data) -->
+    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-prefs-body',this)">
+      <span><svg class="icon icon-md" aria-hidden="true"><use href="#i-settings"></use></svg> Preferences</span>
+      <span class="settings-chevron">▾</span>
+    </div>
+    <div id="settings-prefs-body" class="settings-collapsible-body">
+    <div class="settings-card full-width">
+      <h3 style="display:none"><svg class="icon icon-md" aria-hidden="true"><use href="#i-settings"></use></svg> Preferences</h3>
+
+      <!-- Low stock warning — only preference not covered by Account & Security -->
+      <div class="setting-row">
+        <div class="setting-info"><h4>Low stock warning</h4><p>Warn when stock drops below this %</p></div>
+        <select id="setting-threshold" onchange="saveSettings()" style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
+          <option value="10">10%</option><option value="15">15%</option><option value="20" selected>20%</option><option value="25">25%</option><option value="33">33%</option>
+        </select>
       </div>
+
       <!-- Hidden inputs kept for JS compat — real inputs live in Account & Security -->
       <input type="hidden" id="setting-display-name">
       <input type="hidden" id="setting-country" value="GB">
     </div>
 
-    <!-- ── ABOUT ──────────────────────────────────────── -->
-    <!-- ── ABOUT ──────────────────────────────────────── -->
-    <div class="acc-sec-section" id="settings-about-body" style="margin-bottom:20px">
-      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-info"></use></svg> About</div>
-      <div class="acc-sec-card" style="padding:18px">
+    <!-- Data -->
+    <div class="settings-card full-width">
+      <h3><svg class="icon icon-md" aria-hidden="true"><use href="#i-package"></use></svg> Data</h3>
+      <div class="setting-row">
+        <div class="setting-info"><h4><svg class="icon icon-md" aria-hidden="true"><use href="#i-package"></use></svg> Import Amazon order history</h4><p>Auto-populate items from your Amazon purchase history CSV</p></div>
+        <button class="btn btn-ghost acc-sec-btn" onclick="openAmazonImporter()">Import →</button>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info"><h4>Export data (JSON)</h4><p>Download all items as a backup file</p></div>
+        <button class="btn btn-ghost acc-sec-btn" onclick="exportData()">Export</button>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info"><h4>Import data</h4><p>Restore from a previously exported file</p></div>
+        <button class="btn btn-ghost acc-sec-btn" onclick="document.getElementById('import-file').click()">Import</button>
+        <input type="file" id="import-file" style="display:none" accept=".json" onchange="importData(event)">
+      </div>
+      <div class="setting-row">
+        <div class="setting-info"><h4>Clear all data</h4><p>Remove all items and history from this household</p></div>
+        <button class="btn btn-danger acc-sec-btn" onclick="clearAll()">Clear All</button>
+      </div>
+    </div>
+    </div><!-- /settings-prefs-body -->
+
+    <!-- 7. About -->
+    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-about-body',this)">
+      <span>ℹ️ About</span>
+      <span class="settings-chevron">▾</span>
+    </div>
+    <div id="settings-about-body" class="settings-collapsible-body settings-card">
+      <h3 style="display:none">ℹ️ About</h3>
       <p style="font-size:13px;color:var(--muted);line-height:1.8">
         <strong style="color:var(--text)">STOCKROOM</strong> — Household Consumables Tracker.<br>
         Stock estimates are calculated from your purchase history, quantity per purchase, and months-of-supply settings.<br>
         Data syncs securely to the cloud, encrypted on your device. Export regularly as an additional backup.
       </p>
-      </div>
     </div>
       </div><!-- /settings-content -->
     </div><!-- /settings-layout -->
