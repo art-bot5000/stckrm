@@ -6033,11 +6033,15 @@ function _renderEditReminders(item) {
   }
 }
 
-// Get replacement reminders from item — handles both old single and new array format
+// Get replacement reminders from item — always returns from the array (migrating legacy first)
 function _getItemReminders(item) {
-  if (item.replacementReminders?.length) return item.replacementReminders;
-  if (item.replacementInterval) return [{ id: 'legacy', name: '', interval: item.replacementInterval, unit: item.replacementUnit || 'months', lastReplaced: item.startedUsing || null }];
-  return [];
+  const hadLegacy = !item.replacementReminders?.length && !!item.replacementInterval;
+  _ensureReplRemindersArray(item);
+  if (hadLegacy && item.replacementReminders?.length) {
+    // Persist the migration so IDs are stable across page loads
+    saveData().catch(() => {});
+  }
+  return item.replacementReminders || [];
 }
 
 
@@ -6068,11 +6072,50 @@ function openOrderFlow(id, stage) {
   const item = items.find(i => i.id === id);
   if (!item) return;
 
-  // Fallback: if new modal HTML isn't deployed yet, use legacy modals
+  // Create order-flow-modal dynamically if index.html doesn't have it yet
   if (!document.getElementById('order-flow-modal')) {
-    if (stage === 'delivered') { openDeliveredModal(id); return; }
-    if (stage === 'startusing') { openStartedUsingModal(id); return; }
-    openLogPurchaseModalLegacy(id); return;
+    const backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop';
+    backdrop.id = 'order-flow-modal';
+    backdrop.innerHTML = `
+      <div class="modal" style="max-width:460px">
+        <h2 id="order-flow-title"><svg class="icon icon-md" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Log Purchase</h2>
+        <p class="subtitle" id="order-flow-subtitle"></p>
+        <div id="order-stage-purchase">
+          <div class="form-grid">
+            <div class="field"><label>Date purchased</label><input type="date" id="of-date"></div>
+            <div class="field"><label>Quantity</label><input type="number" id="of-qty" min="0.1" step="0.1" value="1"></div>
+            <div class="field"><label>Price paid <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="of-price" placeholder="e.g. £12.99"></div>
+            <div class="field"><label>Store <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="of-store" placeholder="Amazon, Tesco…"></div>
+          </div>
+          <div id="of-purchase-history" style="margin-top:12px"></div>
+        </div>
+        <div id="order-stage-delivered" style="display:none">
+          <div class="form-grid">
+            <div class="field"><label>Delivery date</label><input type="date" id="of-delivered-date"></div>
+            <div class="field"><label>Quantity delivered</label><input type="number" id="of-delivered-qty" min="0.1" step="0.1" value="1"></div>
+          </div>
+          <div style="margin-top:14px;padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">
+            <label style="font-size:13px;font-weight:700;display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="of-started-now" onchange="ofToggleStarted()" style="width:16px;height:16px">
+              I'm starting to use this straight away
+            </label>
+            <div id="of-started-row" style="display:none;margin-top:10px">
+              <div class="field"><label>Started using date</label><input type="date" id="of-started-date"></div>
+            </div>
+            <p id="of-started-hint" style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5">If not using it immediately, leave this unchecked — you'll be prompted to set the date when you open it.</p>
+          </div>
+        </div>
+        <div id="order-stage-startusing" style="display:none">
+          <p style="font-size:14px;color:var(--text);margin-bottom:16px;line-height:1.6">When did you start using this item? This anchors the stock clock so your estimates stay accurate.</p>
+          <div class="field"><label>Started using date</label><input type="date" id="of-startusing-date"></div>
+        </div>
+        <div class="modal-footer" style="margin-top:16px">
+          <button class="btn btn-ghost" onclick="closeModal('order-flow-modal')">Cancel</button>
+          <button class="btn btn-primary" id="of-save-btn" onclick="ofSave()">Save</button>
+        </div>
+      </div>`;
+    document.body.appendChild(backdrop);
   }
 
   _ofItemId = id;
@@ -6212,7 +6255,37 @@ let _replItemId = null;
 function openReplRemindersModal(id) {
   const item = items.find(i => i.id === id);
   if (!item) return;
+
+  // Migrate legacy single-reminder into array format before opening, and persist it
+  const hadLegacy = !item.replacementReminders?.length && !!item.replacementInterval;
+  _ensureReplRemindersArray(item);
+  if (hadLegacy && item.replacementReminders?.length) {
+    // Silently persist the migrated format so future opens use stable IDs
+    saveData().then(() => _syncQueue.enqueue()).catch(() => {});
+  }
+
   _replItemId = id;
+
+  // Create modal dynamically if index.html doesn't have it yet
+  if (!document.getElementById('repl-reminders-modal')) {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop';
+    backdrop.id = 'repl-reminders-modal';
+    backdrop.innerHTML = `
+      <div class="modal" style="max-width:480px">
+        <h2><svg class="icon icon-md" aria-hidden="true"><use href="#i-bell"></use></svg> Replacement Reminders</h2>
+        <p class="subtitle" id="repl-reminders-subtitle"></p>
+        <div id="repl-reminders-list" style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px"></div>
+        <button class="btn btn-ghost btn-sm" onclick="replAddReminder()" style="width:100%">
+          <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add a reminder
+        </button>
+        <div class="modal-footer" style="margin-top:16px">
+          <button class="btn btn-ghost" onclick="closeModal('repl-reminders-modal')">Close</button>
+        </div>
+      </div>`;
+    document.body.appendChild(backdrop);
+  }
+
   document.getElementById('repl-reminders-subtitle').textContent = item.name;
   _renderReplRemindersList(item);
   openModal('repl-reminders-modal');
