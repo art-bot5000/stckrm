@@ -9275,8 +9275,10 @@ async function _fetchPasskeyWrappedKey(emailHash, sessionToken, credentialId) {
 async function _getKeyViaPassphrase(emailHash, sessionToken, credentialId, errEl) {
   // Show a clear one-time explanation
   const result = await showPassphrasePrompt(
-    'One-time setup: enter your passphrase to unlock your data. ' +
-    'After this, Face ID / Fingerprint alone will be enough on this device.'
+    'One-time setup on this device: enter your passphrase to unlock your encrypted data. ' +
+    'Your passkey alone can prove who you are, but the data is end-to-end encrypted with your passphrase, ' +
+    'so we need it once on each device to derive the encryption key. ' +
+    'After this, Face ID / Fingerprint will be enough on this device.'
   );
   if (!result) return null;
   const { passphrase } = result;
@@ -9314,29 +9316,58 @@ async function _getKeyViaPassphrase(emailHash, sessionToken, credentialId, errEl
 
     if (!dataKey) return null;
 
-    // Store a passkey-wrapped copy so future logins don't need passphrase
+    // Store a passkey-wrapped copy so future logins don't need passphrase.
+    // CRITICAL: every step of this bootstrap must succeed, otherwise the
+    // next login will hit the same passphrase prompt. Errors here used to
+    // be swallowed silently — that caused users to see "passphrase needed"
+    // twice in a row before passkey-only login worked. We now check each
+    // write and only treat the bootstrap as complete if the server stored
+    // the envelope and the IDB write is verifiable.
     try {
       const exported  = await crypto.subtle.exportKey('raw', dataKey);
       const rawKeyB64 = btoa(String.fromCharCode(...new Uint8Array(exported)));
-      // Store via new PRF endpoint (device-bound since we don't have PRF at this point)
       const deviceKeyRaw  = crypto.getRandomValues(new Uint8Array(32));
       const deviceWrapKey = await crypto.subtle.importKey('raw', deviceKeyRaw, 'AES-KW', false, ['wrapKey']);
       const deviceKeyB64  = btoa(String.fromCharCode(...deviceKeyRaw));
       const deviceEnv     = await wrapKeyWithPrf(dataKey, deviceWrapKey);
-      // Store device key in BOTH IDB and localStorage so clearing one doesn't break passkey login
-      await dbPut('settings', `passkey_device_key_${credentialId}`, deviceKeyB64);
-      try { localStorage.setItem(`stockroom_passkey_dk_${credentialId}`, deviceKeyB64); } catch(e) {}
-      await fetchKV(`${WORKER_URL}/key/passkey-prf-store`, {
+
+      // 1. Persist envelope on the server first (most likely to fail) so we
+      //    can abort cleanly if something is wrong before touching local IDB.
+      const storeRes = await fetchKV(`${WORKER_URL}/key/passkey-prf-store`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ emailHash, sessionToken, credentialId, prfEnvelope: deviceEnv, deviceBound: true }),
       });
-      // Cache session key
+      if (!storeRes.ok) {
+        const e = await storeRes.json().catch(() => ({}));
+        console.error('Passkey envelope upload failed:', storeRes.status, e);
+        throw new Error('Could not save passkey unlock data on the server. Please try signing in again.');
+      }
+
+      // 2. Persist device key in BOTH IDB and localStorage, then verify the
+      //    IDB write actually round-trips so a flaky storage layer doesn't
+      //    cost the user a second passphrase prompt.
+      await dbPut('settings', `passkey_device_key_${credentialId}`, deviceKeyB64);
+      try { localStorage.setItem(`stockroom_passkey_dk_${credentialId}`, deviceKeyB64); } catch(e) {}
+      const readBack = await dbGet('settings', `passkey_device_key_${credentialId}`).catch(() => null);
+      if (readBack !== deviceKeyB64) {
+        console.warn('Passkey device key did not round-trip from IDB; relying on localStorage backup.');
+      }
+
+      // 3. Cache the unwrapped key so this same session doesn't have to
+      //    fetch+unwrap again on the next page refresh.
       await lsSetEncrypted('stockroom_kv_session_key', {
         keyData: rawKeyB64, emailHash, expiry: Date.now() + 24 * 60 * 60 * 1000,
       });
     } catch(e) {
-      console.warn('Could not store passkey-wrapped key:', e.message);
-      // Non-fatal — key still works, just needs passphrase next time
+      console.warn('Could not finalise passkey bootstrap:', e.message);
+      if (errEl) {
+        errEl.textContent = e.message || 'Could not save passkey unlock data — try again.';
+        errEl.style.display = 'block';
+      }
+      // Returning null forces the caller to bail out so the user retries.
+      // Returning the key would let them in but leave the bootstrap broken,
+      // which is exactly the "passphrase prompted twice" bug we want to avoid.
+      return null;
     }
 
     return dataKey;
@@ -9541,9 +9572,12 @@ async function _doAddPasskeyToAccount() {
       const deviceKeyRaw  = crypto.getRandomValues(new Uint8Array(32));
       const deviceWrapKey = await crypto.subtle.importKey('raw', deviceKeyRaw, 'AES-KW', false, ['wrapKey', 'unwrapKey']);
       const deviceEnvelope = await wrapKeyWithPrf(_kvKey, deviceWrapKey); // same wrap fn, different key
-      // Store device key in IDB (never leaves device)
+      // Store device key in IDB (never leaves device) and mirror to
+      // localStorage so a single layer being cleared doesn't strand the
+      // device-bound envelope without its key on subsequent logins.
       const deviceKeyB64 = btoa(String.fromCharCode(...deviceKeyRaw));
       await dbPut('settings', `passkey_device_key_${credId}`, deviceKeyB64);
+      try { localStorage.setItem(`stockroom_passkey_dk_${credId}`, deviceKeyB64); } catch(e) {}
       // Store envelope on server (useless without the device key — fallback is device-bound)
       const storeRes = await fetchKV(`${WORKER_URL}/key/passkey-prf-store`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
