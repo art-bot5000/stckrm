@@ -3694,8 +3694,10 @@ function _flushRender() {
       const sd = document.getElementById('setting-email-start');
       const st = document.getElementById('setting-email-start-time');
       if (t)  t.value  = settings.threshold;
-      // Re-populate country options if empty (e.g. first render after sign-in)
-      if (c && c.options.length === 0) buildSettingsCountrySelect();
+      // Re-populate country options if empty. Only valid for <select>; the
+      // primary 'setting-country' element is a hidden <input> without .options,
+      // so we guard with tagName.
+      if (c && c.tagName === 'SELECT' && c.options.length === 0) buildSettingsCountrySelect();
       if (c)  c.value  = settings.country || 'GB';
       if (e)  e.value  = settings.email || '';
       if (iv) iv.value = settings.emailInterval ?? 30;
@@ -6950,7 +6952,11 @@ function buildSettingsCountrySelect() {
   ['setting-country', 'setting-country-sec'].forEach(id => {
     const sel = document.getElementById(id);
     if (!sel) return;
-    if (!sel.options.length) sel.innerHTML = options;
+    // Only <select> has .options. The primary 'setting-country' is a hidden
+    // <input>, where we just set the value.
+    if (sel.tagName === 'SELECT') {
+      if (!sel.options.length) sel.innerHTML = options;
+    }
     sel.value = val;
   });
 }
