@@ -1,8 +1,7 @@
-const CACHE_VERSION = 'stockroom-kv-v184';
+const CACHE_VERSION = 'stockroom-kv-v185';
 const CACHE_NAME    = CACHE_VERSION;
 
 const CACHE_URLS = [
-  './',
   './index.html',
   './app.js',
   './styles.css',
@@ -30,12 +29,8 @@ self.addEventListener('install', event => {
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    console.log('[SW] activate — found caches:', keys);
     await Promise.all(keys.map(k => {
-      if (k !== CACHE_NAME) {
-        console.log('[SW] deleting cache:', k);
-        return caches.delete(k);
-      }
+      if (k !== CACHE_NAME) return caches.delete(k);
     }));
     // Take control of all open pages immediately
     await self.clients.claim();
@@ -44,7 +39,6 @@ self.addEventListener('activate', event => {
     clientList.forEach(client => {
       client.postMessage({ type: 'SW_UPDATED', version: CACHE_VERSION });
     });
-    console.log('[SW] activated v' + CACHE_VERSION + ', told', clientList.length, 'clients to reload');
   })());
 });
 

@@ -1,38 +1,52 @@
 // ═══════════════════════════════════════════
-//  DIAGNOSTIC — surface silent errors from inline onclick handlers
-//  so we can see exactly what's failing on Log Purchase / pencil edit /
-//  Replacement Reminders. Remove this block once the bugs are fixed.
+//  DIAGNOSTIC — surface silent errors visibly AND log to backend
+//  Two layers:
+//    1. On-screen red banner so the active user knows something broke
+//    2. Best-effort POST to /error/log so the developer has a record
+//       across all users (TTL 7 days, dedup'd by message+location)
+//  Both layers are wrapped in try/catch and never throw — error reporting
+//  must never make things worse.
 // ═══════════════════════════════════════════
-(function installClickDiagnostic() {
+(function installErrorReporter() {
   if (window._stockroomClickDiagInstalled) return;
   window._stockroomClickDiagInstalled = true;
 
-  // Catch any uncaught synchronous error (e.g. `openLogModal is not defined`,
-  // `Cannot read properties of null (reading 'value')`). These normally vanish
-  // into the console with no UI feedback.
-  window.addEventListener('error', e => {
+  // Throttle reports to the backend: dedup identical errors within 60s
+  // so a tight loop of failures doesn't hammer the API.
+  const _reportSeen = new Map();
+  function reportToBackend(payload) {
     try {
-      const msg = e.message || (e.error && e.error.message) || 'Unknown error';
-      const where = e.filename ? ` @${(e.filename + '').split('/').pop()}:${e.lineno}` : '';
-      // Use a raw banner instead of toast() because toast's DOM element may
-      // not yet exist when this fires.
-      let bar = document.getElementById('_diag-bar');
-      if (!bar) {
-        bar = document.createElement('div');
-        bar.id = '_diag-bar';
-        bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#7a1d1d;color:#fff;padding:10px 14px;font:600 12px/1.4 monospace;z-index:99999;cursor:pointer';
-        bar.onclick = () => bar.remove();
-        document.body && document.body.appendChild(bar);
+      // Need a backend URL to be configured
+      if (typeof WORKER_URL === 'undefined' || !WORKER_URL) return;
+      const key = `${payload.message}|${payload.where || ''}`;
+      const now = Date.now();
+      const last = _reportSeen.get(key);
+      if (last && now - last < 60_000) return;
+      _reportSeen.set(key, now);
+      // Trim the map if it grows too large
+      if (_reportSeen.size > 50) {
+        const cutoff = now - 60_000;
+        for (const [k, t] of _reportSeen) if (t < cutoff) _reportSeen.delete(k);
       }
-      bar.textContent = `⚠ ${msg}${where} — tap to dismiss`;
-      console.error('[stockroom diag]', e);
+      // Add identifying context where available — these globals may not be defined yet
+      const ctx = {
+        emailHash: typeof _kvEmailHash !== 'undefined' ? (_kvEmailHash || null) : null,
+        ua: navigator.userAgent.slice(0, 200),
+        ts: new Date().toISOString(),
+        url: location.pathname + location.search,
+      };
+      // Fire-and-forget — never block on the report
+      fetch(`${WORKER_URL}/error/log`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, ...ctx }),
+        keepalive: true, // survive page unload
+      }).catch(() => {});
     } catch (_) {}
-  });
+  }
 
-  // Promise rejections (async onclicks like archiveItem)
-  window.addEventListener('unhandledrejection', e => {
+  function showBanner(msg) {
     try {
-      const msg = (e.reason && (e.reason.message || e.reason)) || 'Unknown promise rejection';
       let bar = document.getElementById('_diag-bar');
       if (!bar) {
         bar = document.createElement('div');
@@ -42,6 +56,27 @@
         document.body && document.body.appendChild(bar);
       }
       bar.textContent = `⚠ ${msg} — tap to dismiss`;
+    } catch (_) {}
+  }
+
+  window.addEventListener('error', e => {
+    try {
+      const msg = e.message || (e.error && e.error.message) || 'Unknown error';
+      const where = e.filename ? `@${(e.filename + '').split('/').pop()}:${e.lineno}` : '';
+      const stack = (e.error && e.error.stack) ? String(e.error.stack).slice(0, 1500) : '';
+      showBanner(`${msg}${where ? ' ' + where : ''}`);
+      reportToBackend({ kind: 'error', message: msg, where, stack });
+      console.error('[stockroom diag]', e);
+    } catch (_) {}
+  });
+
+  window.addEventListener('unhandledrejection', e => {
+    try {
+      const reason = e.reason;
+      const msg = (reason && (reason.message || reason)) || 'Unknown promise rejection';
+      const stack = (reason && reason.stack) ? String(reason.stack).slice(0, 1500) : '';
+      showBanner(String(msg));
+      reportToBackend({ kind: 'rejection', message: String(msg), stack });
       console.error('[stockroom diag rejection]', e);
     } catch (_) {}
   });
@@ -238,8 +273,6 @@ const CLIENT_ID       = '589308993147-rfj3kbaave6uhf3k1ojes3ph2l1pkd1m.apps.goog
 const SCOPES          = 'https://www.googleapis.com/auth/drive.file';
 // KV-native: no Drive file
 const WORKER_URL      = 'https://stckrm.fly.dev';
-// Legacy constants kept to prevent reference errors in dead code paths
-const DROPBOX_FILE    = '';
 
 // ═══════════════════════════════════════════
 //  STATE
@@ -270,11 +303,6 @@ let _noteRedoStack = new Map();    // noteId → string[]
 let _noteBodyDirty = false;        // unsaved changes flag
 let _noteAutoSaveTimer = null;
 let _noteOtpPending = false;       // waiting for 2FA OTP input
-
-// Drive / Dropbox — disabled in KV build (kept as no-op vars to avoid reference errors)
-let driveConnected   = false;
-let dropboxToken     = null;
-let dropboxConnected = false;
 
 // ═══════════════════════════════════════════
 //  MODAL HELPERS (defined early — used everywhere)
@@ -390,13 +418,6 @@ function calcStock(item) {
   const daysLeft   = Math.round(Math.max(0, totalDays - daysSince));
   const pct        = Math.round(Math.max(0, Math.min(100, (daysLeft / totalDays) * 100)));
   return { pct, daysLeft, referenceDate };
-}
-
-function getStatus(pct, threshold) {
-  if (pct === null || pct === undefined) return 'nodata';
-  if (pct <= threshold/2) return 'critical';
-  if (pct <= threshold) return 'warn';
-  return 'ok';
 }
 
 const STATUS_COLOR = { critical:'#e85050', warn:'#e8a838', ok:'#4cbb8a', nodata:'#7880a0' };
@@ -689,34 +710,6 @@ async function removeTombstone(id) {
   await saveDeletedIds(set);
 }
 
-async function mergeItems(local, remote, remoteWins = false) {
-  const deletedIds = await loadDeletedIds();
-  const merged = new Map();
-  for (const item of local) {
-    if (!deletedIds.has(item.id)) merged.set(item.id, item);
-  }
-  for (const remoteItem of remote) {
-    if (deletedIds.has(remoteItem.id)) continue;
-    const localItem = merged.get(remoteItem.id);
-    if (!localItem) {
-      merged.set(remoteItem.id, remoteItem);
-    } else {
-      const localTime  = localItem.updatedAt  ? new Date(localItem.updatedAt).getTime()  : null;
-      const remoteTime = remoteItem.updatedAt ? new Date(remoteItem.updatedAt).getTime() : null;
-      if (localTime !== null && remoteTime !== null) {
-        if (remoteTime > localTime) merged.set(remoteItem.id, remoteItem);
-      } else if (remoteTime !== null && localTime === null) {
-        merged.set(remoteItem.id, remoteItem);
-      } else if (localTime !== null && remoteTime === null) {
-        // local wins
-      } else {
-        if (remoteWins) merged.set(remoteItem.id, remoteItem);
-      }
-    }
-  }
-  return Array.from(merged.values());
-}
-
 // ═══════════════════════════════════════════
 //  WIZARD
 // ═══════════════════════════════════════════
@@ -760,13 +753,6 @@ function enableItemEdit() {
   document.getElementById('item-readonly-view').style.display = 'none';
   document.getElementById('item-edit-view').style.display = 'block';
 }
-
-// ═══════════════════════════════════════════
-// Drive / Dropbox functions — stubbed as no-ops in KV build
-function openDrivePermissionModal() { /* Drive removed — KV build */ }
-function proceedConnectDrive()      { /* Drive removed — KV build */ }
-function wizardConnectDrive()       { /* Drive removed — KV build */ }
-function wizardConnectDropbox()     { /* Drive removed — KV build */ }
 
 function wizardNext() {
   localStorage.setItem('stockroom_country_set', '1');
@@ -1012,6 +998,8 @@ async function pushScheduleToWorker() {
       body: JSON.stringify({
         email:        settings.email,
         emailHash:    _kvEmailHash || null,
+        verifier:     _kvVerifier,
+        sessionToken: _kvSessionToken,
         startDate:    settings.emailStartDate,
         startTime:    settings.emailStartTime || '09:00',
         intervalDays: settings.emailInterval ?? 30,
@@ -1040,6 +1028,8 @@ async function pushItemsToWorker() {
       body: JSON.stringify({
         email:        settings.email,
         emailHash:    _kvEmailHash || null,
+        verifier:     _kvVerifier,
+        sessionToken: _kvSessionToken,
         startDate:    settings.emailStartDate,
         startTime:    settings.emailStartTime || '09:00',
         intervalDays: settings.emailInterval ?? 30,
@@ -1099,7 +1089,7 @@ async function resetLastSent() {
     fetch(`${WORKER_URL}/reset-schedule`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: settings.email }),
+      body: JSON.stringify({ email: settings.email, emailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken }),
     }).catch(() => {});
   }
   updateLastSentUI();
@@ -1126,6 +1116,7 @@ async function handleUnsubscribe() {
       fetch(`${WORKER_URL}/unsubscribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: settings.email, emailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken }),
       }).catch(() => {});
     }
 
@@ -1182,7 +1173,7 @@ async function sendReminderEmail(manual = true) {
     const res = await fetch(`${WORKER_URL}/send-reminder`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, urgent, upcoming, sns: snsPayload, manual }),
+      body: JSON.stringify({ email, emailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, urgent, upcoming, sns: snsPayload, manual }),
     });
     const data = await res.json();
     if (res.ok) {
@@ -3280,6 +3271,7 @@ async function deleteItem(id) {
   const idx  = items.findIndex(i => i.id === id);
   const item = items[idx];
   if (!item) return;
+  if (!confirm('Remove "' + item.name + '" from your stockroom?')) return;
 
   // Stash for undo
   deletedItem  = item;
@@ -3287,8 +3279,10 @@ async function deleteItem(id) {
   items.splice(idx, 1);
   await addTombstone(id);
   await saveData();
+  // Close edit modal if it was open (deleteItem can be invoked from there)
+  closeModal('item-modal');
   scheduleRender('grid', 'dashboard', 'shopping');
-  setTimeout(syncAll, 400);
+  _syncQueue.enqueue('Deleting item…');
 
   // Show undo toast
   clearTimeout(undoTimer);
@@ -3348,12 +3342,10 @@ if ('serviceWorker' in navigator) {
       _applyReplacedLocally(reminderId, date);
     }
     if (event.data?.type === 'BG_SYNC') {
-      console.log('BG_SYNC received from SW');
       syncAll().catch(e => console.warn('BG_SYNC syncAll failed:', e));
     }
     if (event.data?.type === 'SW_UPDATED') {
       // New service worker activated — reload to get fresh app.js
-      console.log('[SW] New SW activated:', event.data.version, '— reloading for fresh files');
       window.location.reload();
     }
   });
@@ -3431,7 +3423,6 @@ async function checkPendingSWSync() {
     const pending = await cache.match('pending-sync');
     if (pending) {
       await cache.delete('pending-sync');
-      console.log('Pending SW sync flag found — syncing now');
       setTimeout(syncAll, 800);
     }
   } catch(e) {}
@@ -3459,13 +3450,6 @@ async function checkCloudAhead() {
         body: JSON.stringify({emailHash: _kvEmailHash, verifier: _kvVerifier, household: activeProfile})
       });
       if (res.ok) remoteModified = (await res.json()).modifiedTime;
-    } else if (false && false) { // dropbox disabled in KV build
-      const res = await fetch('https://api.dropboxapi.com/2/files/get_metadata', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${dropboxToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: DROPBOX_FILE }),
-      });
-      if (res.ok) remoteModified = (await res.json()).server_modified;
     }
 
     if (!remoteModified) return;
@@ -4115,43 +4099,6 @@ function setTagFilter(index, btn) {
 function buildTagSettingsRows() {} // no-op — tags now managed inline
 
 
-
-async function fetchProductImage() {
-  const url = document.getElementById('f-url').value.trim();
-  if (!url) { alert('Enter a product URL first.'); return; }
-
-  const btn = document.getElementById('fetch-img-btn');
-  const wrap = document.getElementById('img-preview-wrap');
-  const status = document.getElementById('img-preview-status');
-  const preview = document.getElementById('img-preview');
-
-  btn.textContent = '⏳ Fetching…';
-  btn.disabled = true;
-  status.textContent = '';
-  wrap.style.display = 'none';
-
-  const imageUrl = await extractOgImage(url);
-
-  btn.textContent = 'Fetch Image';
-  btn.disabled = false;
-
-  if (imageUrl) {
-    pendingImageUrl = imageUrl;
-    preview.src = imageUrl;
-    preview.onerror = () => {
-      status.textContent = '<svg class="icon" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> Image loaded but may not display';
-      status.style.color = 'var(--warn)';
-    };
-    status.textContent = '✓ Image found';
-    status.style.color = 'var(--ok)';
-    wrap.style.display = 'flex';
-  } else {
-    status.textContent = '';
-    pendingImageUrl = null;
-    wrap.style.display = 'none';
-    toast('No image found for this URL — the retailer may block scraping');
-  }
-}
 
 async function fetchProductImage() {
   const name = document.getElementById('f-name').value.trim();
@@ -6484,9 +6431,15 @@ async function saveItem() {
       item.expiry       = document.getElementById('f-expiry')?.value || null;
       const tOverride   = parseInt(document.getElementById('f-threshold')?.value);
       item.thresholdOverride = isNaN(tOverride) ? null : tOverride;
-      const replInterval = parseInt(document.getElementById('f-replace-interval')?.value);
-      item.replacementInterval = isNaN(replInterval) ? null : replInterval;
-      item.replacementUnit     = document.getElementById('f-replace-unit')?.value || 'months';
+      // Legacy single-reminder fields are now mirrors of replacementReminders[0]
+      // (kept in sync by _saveReplReminders). Only write them from the hidden
+      // form fields if the new array doesn't exist — otherwise we'd overwrite
+      // changes the user just made via the Replacement Reminders modal.
+      if (!item.replacementReminders?.length) {
+        const replInterval = parseInt(document.getElementById('f-replace-interval')?.value);
+        item.replacementInterval = isNaN(replInterval) ? null : replInterval;
+        item.replacementUnit     = document.getElementById('f-replace-unit')?.value || 'months';
+      }
 
       // Update the most recent log entry's date and qty
       const lastDate  = document.getElementById('f-last-date').value;
@@ -6734,42 +6687,6 @@ async function saveStartedUsing() {
   toast('Start date saved — stock clock updated ✓');
 }
 
-async function archiveItem(id) {
-  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
-  const item = items.find(i => i.id === id);
-  if (!item) return;
-  item._archived  = true;
-  item.updatedAt  = new Date().toISOString();
-  await saveData();
-  scheduleRender('grid', 'dashboard');
-  _syncQueue.enqueue();
-  toast(`"${item.name}" archived`);
-}
-
-async function restoreItem(id) {
-  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
-  const item = items.find(i => i.id === id);
-  if (!item) return;
-  delete item._archived;
-  item.updatedAt = new Date().toISOString();
-  await saveData();
-  scheduleRender('grid', 'dashboard');
-  _syncQueue.enqueue();
-  toast(`"${item.name}" restored`);
-}
-
-async function deleteItem(id) {
-  const item = items.find(i => i.id === id);
-  if (!item || !confirm('Remove "' + item.name + '" from your stockroom?')) return;
-  items = items.filter(i => i.id !== id);
-  await addTombstone(id);
-  await saveData();
-  closeModal('item-modal');
-  scheduleRender('grid', 'dashboard', 'shopping');
-  toast('Item removed');
-  _syncQueue.enqueue('Deleting item…');
-}
-
 // ═══════════════════════════════════════════
 //  PRICE LINKS
 // ═══════════════════════════════════════════
@@ -6956,12 +6873,6 @@ function buildSettingsCountrySelect() {
 }
 
 // ═══════════════════════════════════════════
-//  GOOGLE DRIVE SYNC
-// ═══════════════════════════════════════════
-// connectDrive — removed in KV build
-function connectDrive() { /* Drive removed — KV build uses email/passphrase auth */ }
-
-// ═══════════════════════════════════════════
 //  EMAIL REPORTS (Part C)
 // ═══════════════════════════════════════════
 
@@ -7129,90 +7040,6 @@ async function sendEmailNow() {
   } catch(e) { toast('Could not reach email service'); }
 }
 
-async function handleOAuthRedirect() {
-  const qParams = new URLSearchParams(location.search);
-
-  // ── Google Drive code flow (returns via query string from Worker) ──
-  const driveAuth = qParams.get('drive_auth');
-  if (driveAuth) {
-    history.replaceState(null, '', location.pathname);
-    if (driveAuth === 'success') {
-      // Refresh token is now stored in backend KV — frontend just sets connected flag
-      driveConnected = true;
-      try { localStorage.setItem('stockroom_drive', JSON.stringify({ driveConnected })); } catch(e){}
-      updateSyncUI();
-      const wizardStep = localStorage.getItem('stockroom_wizard_step');
-      if (wizardStep === '2') { localStorage.removeItem('stockroom_wizard_step'); wizardNext(); }
-      // First sync via backend proxy — no access token needed
-      syncNow().then(() => {
-        try {
-          const preAuthView = sessionStorage.getItem('stockroom_pre_auth_view');
-          sessionStorage.removeItem('stockroom_pre_auth_view');
-          if (preAuthView === 'settings') {
-            const tab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Settings'));
-            if (tab) showView('settings', tab);
-          } else {
-            localStorage.setItem('stockroom_seen', '1');
-            document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
-            const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
-            if (stockTab) showView('stock', stockTab);
-          }
-        } catch(e){}
-      });
-    } else {
-      const reason = qParams.get('reason') || 'unknown';
-      // Map raw Google/OAuth errors to friendly messages
-      const friendly = reason.includes('Bad Request') || reason.includes('invalid_grant')
-        ? 'Sign-in expired — please try connecting Google Drive again'
-        : reason === 'no_code'
-        ? 'Sign-in was cancelled'
-        : `Drive connection failed: ${reason}`;
-      toast(friendly);
-    }
-    return;
-  }
-
-  // ── Dropbox PKCE code flow (returns via query string from Worker) ──
-  const dropboxAuth = qParams.get('dropbox_auth');
-  if (dropboxAuth) {
-    history.replaceState(null, '', location.pathname);
-    if (dropboxAuth === 'success') {
-      fetch(`${WORKER_URL}/auth/dropbox-token`)
-        .then(r => r.json())
-        .then(data => {
-          if (data.access_token) {
-            dropboxToken     = data.access_token;
-            dropboxConnected = true;
-            try { sessionStorage.setItem('stockroom_dropbox_token', data.access_token); } catch(e){}
-            try { localStorage.setItem('stockroom_dropbox', JSON.stringify({ dropboxConnected })); } catch(e){}
-            updateSyncUI();
-            const wizardStep = localStorage.getItem('stockroom_wizard_step');
-            if (wizardStep === '2') { localStorage.removeItem('stockroom_wizard_step'); wizardNext(); }
-            syncDropbox().then(() => {
-              try {
-                const preAuthView = sessionStorage.getItem('stockroom_pre_auth_view');
-                sessionStorage.removeItem('stockroom_pre_auth_view');
-                if (preAuthView === 'settings') {
-                  const tab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Settings'));
-                  if (tab) showView('settings', tab);
-                } else {
-                  // Came from wizard — go to Stockroom
-                  localStorage.setItem('stockroom_seen', '1');
-                  document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
-                  const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
-                  if (stockTab) showView('stock', stockTab);
-                }
-              } catch(e){}
-            });
-          }
-        })
-        .catch(e => { console.error('Dropbox token fetch failed:', e); toast('Dropbox connection failed — try again'); });
-    } else {
-      toast('Dropbox sign-in expired or was cancelled — please try again');
-    }
-    return;
-  }
-}
 
 // ── Drive sync via backend proxy ─────────────────────────
 // The frontend never talks to Drive directly. All reads/writes
@@ -7452,14 +7279,6 @@ async function unwrapKeyWithPrf(envelopeB64, prfWrapKey) {
   );
 }
 
-
-// Debug helper: get first 8 bytes of a CryptoKey as hex for comparison across sessions
-async function _keyFingerprint(key) {
-  try {
-    const raw = await crypto.subtle.exportKey('raw', key);
-    return Array.from(new Uint8Array(raw).slice(0, 8)).map(b => b.toString(16).padStart(2,'0')).join('');
-  } catch(e) { return 'non-extractable'; }
-}
 
 // ── State ──────────────────────────────────
 let kvConnected      = false;
@@ -7726,7 +7545,6 @@ async function ensureEcdhKeypair(emailHash) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ emailHash, publicKeyJwk: pubJwk }),
       });
-      console.log('ECDH keypair generated and public key uploaded');
       return;
     }
 
@@ -7747,7 +7565,6 @@ async function ensureEcdhKeypair(emailHash) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ emailHash, publicKeyJwk: pubJwk }),
       });
-      console.log('ECDH public key re-uploaded');
     }
   } catch(e) {
     console.warn('ensureEcdhKeypair failed (non-fatal):', e.message);
@@ -7802,7 +7619,6 @@ window.stockroomDiag = async function() {
     out.push('Cannot check server — no emailHash/verifier in session');
   }
   out.push('=== END ===');
-  console.log(out.join('\n'));
   return out.join('\n');
 };
 
@@ -8372,7 +8188,6 @@ async function kvLoginWithPasskey() {
     // Extract PRF output if available (same salt → same deterministic output)
     const loginExt   = assertion.getClientExtensionResults?.() || {};
     const loginPrf   = loginExt?.prf?.results?.first || null;
-    console.log('[passkey] PRF available at login:', !!loginPrf);
 
     // Finish auth on server
     const finishRes = await fetchKV(`${WORKER_URL}/passkey/auth/finish`, {
@@ -8400,7 +8215,6 @@ async function kvLoginWithPasskey() {
         try {
           const prfWrapKey = await prfBytesToWrapKey(loginPrf);
           dataKey = await unwrapKeyWithPrf(prfEnvelope, prfWrapKey);
-          console.log('[passkey] Data key unwrapped via PRF ✓');
         } catch(e) { console.warn('[passkey] PRF unwrap failed:', e.message); }
       } else if (deviceBound) {
         // ── Path B: Device-bound IDB key ──────────────────────────────
@@ -8412,14 +8226,12 @@ async function kvLoginWithPasskey() {
             if (deviceKeyB64) {
               // Restore to IDB for future use
               await dbPut('settings', `passkey_device_key_${credId}`, deviceKeyB64);
-              console.log('[passkey] Device key restored from localStorage to IDB');
             }
           }
           if (deviceKeyB64) {
             const deviceKeyRaw  = Uint8Array.from(atob(deviceKeyB64), c => c.charCodeAt(0));
             const deviceWrapKey = await crypto.subtle.importKey('raw', deviceKeyRaw, 'AES-KW', false, ['unwrapKey']);
             dataKey = await unwrapKeyWithPrf(prfEnvelope, deviceWrapKey);
-            console.log('[passkey] Data key unwrapped via device-bound key ✓');
           }
         } catch(e) { console.warn('[passkey] Device-bound unwrap failed:', e.message); }
       }
@@ -8675,7 +8487,6 @@ let _protectRecoveryCodes = []; // held in memory during setup only
 function showProtectDataScreen(recoveryCodes, isMigration = false) {
   _protectRecoveryCodes = recoveryCodes || [];
   const hasCodes = _protectRecoveryCodes.length > 0;
-  console.log('[protect] showProtectDataScreen called — hasCodes:', hasCodes, 'codes count:', _protectRecoveryCodes.length);
   const step1d = document.getElementById('wizard-step-1d');
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   if (step1d) {
@@ -9509,7 +9320,6 @@ async function _getKeyViaPassphrase(emailHash, sessionToken, credentialId, errEl
       await lsSetEncrypted('stockroom_kv_session_key', {
         keyData: rawKeyB64, emailHash, expiry: Date.now() + 24 * 60 * 60 * 1000,
       });
-      console.log('Passkey device key stored in IDB + localStorage — future logins will not need passphrase ✓');
     } catch(e) {
       console.warn('Could not store passkey-wrapped key:', e.message);
       // Non-fatal — key still works, just needs passphrase next time
@@ -9530,7 +9340,7 @@ async function kvStorePasskeySession(email, emailHash, sessionToken, dataKey) {
   _kvAuthMethod   = 'passkey';
   kvConnected     = true;
   _kvKey = dataKey || null;
-  _keyFingerprint(dataKey).then(fp => console.log('[key] kvStorePasskeySession — key fingerprint:', fp));
+
   // Store session
   try {
     const sessionJson = JSON.stringify({ email, emailHash, sessionToken, authMethod: 'passkey' });
@@ -9598,7 +9408,6 @@ async function addPasskeyToAccount() {
 }
 
 async function _doAddPasskeyToAccount() {
-  console.log('[passkey] _doAddPasskeyToAccount called — email:', _kvEmail, 'emailHash:', _kvEmailHash ? _kvEmailHash.slice(0,8)+'…' : 'EMPTY', 'sessionToken:', _kvSessionToken ? 'SET' : 'null', 'verifier:', _kvVerifier ? 'SET' : 'EMPTY');
 
   // Prompt for a friendly device name so users can identify passkeys in settings
   const suggestedName = getDeviceName();
@@ -9650,7 +9459,6 @@ async function _doAddPasskeyToAccount() {
     // Check if PRF extension gave us output at registration time
     const extResults = credential.getClientExtensionResults?.() || {};
     const prfOutput  = extResults?.prf?.results?.first || null;
-    console.log('[passkey] PRF supported at registration:', !!prfOutput);
 
     const verifierToSend = _kvSessionToken ? undefined : _kvVerifier;
     const finishRes = await fetchKV(`${WORKER_URL}/passkey/register/finish`, {
@@ -9705,10 +9513,8 @@ async function _doAddPasskeyToAccount() {
         const e = await storeRes.json().catch(() => ({}));
         throw new Error('Could not store PRF envelope: ' + (e.error || storeRes.status));
       }
-      console.log('[passkey] PRF envelope stored ✓ — fully E2EE, server cannot read data key');
     } else {
       // ── Path B: Device-bound IDB key ─────────────────────────────────
-      console.log('[passkey] PRF not supported — using device-bound IDB key fallback');
       const deviceKeyRaw  = crypto.getRandomValues(new Uint8Array(32));
       const deviceWrapKey = await crypto.subtle.importKey('raw', deviceKeyRaw, 'AES-KW', false, ['wrapKey', 'unwrapKey']);
       const deviceEnvelope = await wrapKeyWithPrf(_kvKey, deviceWrapKey); // same wrap fn, different key
@@ -9730,10 +9536,8 @@ async function _doAddPasskeyToAccount() {
         const e = await storeRes.json().catch(() => ({}));
         throw new Error('Could not store device envelope: ' + (e.error || storeRes.status));
       }
-      console.log('[passkey] Device-bound envelope stored ✓ — first passkey login on new device needs passphrase once');
     }
 
-    console.log('[passkey] Setup complete — credId:', credId.slice(0, 12), 'method:', prfOutput ? 'PRF' : 'device-bound');
 
     toast('Passkey added ✓ — you can now sign in with Face ID / Fingerprint');
     loadPasskeys();
@@ -10231,15 +10035,12 @@ async function _trustIfRemembered(email, emailHash, verifier, key) {
     || cb1?.checked
     || cb2?.checked
     || getCookieConsent() === 'granted';
-  console.log('[DIAG] _trustIfRemembered: _rememberMeChecked=', _rememberMeChecked, 'cb1=', cb1?.checked, 'cb2=', cb2?.checked, 'consent=', getCookieConsent(), '→ remembered=', remembered);
   if (!remembered) return;
   const secret = localStorage.getItem('stockroom_device_secret');
   if (secret) {
     const existing = await loadWrappedKey(getOrCreateDeviceId(), secret);
-    console.log('[DIAG] _trustIfRemembered: existing IDB key=', !!existing);
     if (existing) return;
   }
-  console.log('[DIAG] _trustIfRemembered: calling trustThisDeviceWith');
   await trustThisDeviceWith(email, emailHash, verifier, key);
 }
 
@@ -10267,7 +10068,6 @@ async function trustThisDeviceWith(email, emailHash, verifier, key) {
   try {
     const deviceId = getOrCreateDeviceId();
     let   secret   = localStorage.getItem('stockroom_device_secret');
-    console.log('[DIAG] trustThisDeviceWith: deviceId=', deviceId, 'existingSecret=', !!secret, 'keyExtractable=', key?.extractable);
     if (!secret) {
       secret = Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2,'0')).join('');
       localStorage.setItem('stockroom_device_secret', secret);
@@ -10300,16 +10100,6 @@ async function trustThisDeviceWith(email, emailHash, verifier, key) {
 async function trustThisDevice() {
   if (!_kvKey) { toast('Sign in first'); return; }
   await trustThisDeviceWith(_kvEmail, _kvEmailHash, _kvVerifier, _kvKey);
-}
-
-function toggleTrustedDevicesPanel() {
-  const panel = document.getElementById('trusted-devices-panel');
-  const btn = event.target.closest('button');
-  if (!panel) return;
-  const hidden = panel.style.display === 'none';
-  panel.style.display = hidden ? 'block' : 'none';
-  if (btn) btn.textContent = hidden ? 'Hide devices' : 'Show devices';
-  if (hidden) loadTrustedDevices();
 }
 
 async function loadTrustedDevices() {
@@ -10399,9 +10189,8 @@ async function kvStoreSession(email, emailHash, verifier, key) {
   _kvEmailHash = emailHash;
   _kvVerifier  = verifier;
   _kvKey       = key;
-  console.log('[DIAG] kvStoreSession: email=', email, '_rememberMeChecked=', _rememberMeChecked, 'consent=', getCookieConsent());
   kvConnected  = true;
-  _keyFingerprint(key).then(fp => console.log('[key] kvStoreSession (passphrase) — key fingerprint:', fp));
+
   try {
     const sessionJson = JSON.stringify({ email, emailHash, verifier });
     localStorage.setItem('stockroom_kv_session', sessionJson);
@@ -10430,10 +10219,8 @@ async function kvStoreSession(email, emailHash, verifier, key) {
 async function kvRestoreSession() {
   try {
     const raw = localStorage.getItem('stockroom_kv_session');
-    console.log('[DIAG] kvRestoreSession: raw=', raw ? 'found' : 'ABSENT');
     if (!raw) return false;
     const { email, emailHash, verifier, sessionToken, authMethod } = JSON.parse(raw);
-    console.log('[DIAG] kvRestoreSession: email=', email, 'authMethod=', authMethod, 'hasVerifier=', !!verifier, 'hasToken=', !!sessionToken);
     if (!email || !emailHash) return false;
 
     // Back-fill device passkey flag from stored credential map (for users pre-dating this flag)
@@ -10461,7 +10248,6 @@ async function kvRestoreSession() {
       const el = document.getElementById('kv-account-email');
       if (el) el.textContent = email;
       updateSyncUI();
-      console.log('Session restored from:', source);
       return true;
     };
 
@@ -10471,7 +10257,6 @@ async function kvRestoreSession() {
     if (secret) {
       try {
         const wrappedKey = await loadWrappedKey(deviceId, secret);
-        console.log('[DIAG] kvRestore: IDB wrappedKey=', !!wrappedKey);
         if (wrappedKey) {
           // Also cache raw key bytes in localStorage as a resilient fallback
           try {
@@ -10505,7 +10290,6 @@ async function kvRestoreSession() {
     // 2. 4-hour session key — stored encrypted in localStorage with expiry
     try {
       const cached = await lsGetEncrypted('stockroom_kv_session_key');
-      console.log('[DIAG] kvRestore: session_key cached=', !!cached, cached ? `expiry in ${Math.round((cached.expiry-Date.now())/60000)}min` : '');
       if (cached && cached.emailHash === emailHash && Date.now() < cached.expiry) {
         const raw2 = Uint8Array.from(atob(cached.keyData), c => c.charCodeAt(0));
         const key  = await crypto.subtle.importKey('raw', raw2, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
@@ -10516,7 +10300,6 @@ async function kvRestoreSession() {
     } catch(e) {}
 
     // 3. Credentials only — key will be prompted on first sync
-    console.log('[DIAG] kvRestore: falling to PATH 3 (credentials only, no key)');
     // Don't make a network call here — just restore what we have from localStorage
     _kvEmail     = email;
     _kvEmailHash = emailHash;
@@ -10608,7 +10391,7 @@ async function kvEnsureKey() {
     if (cached && cached.emailHash === _kvEmailHash && Date.now() < cached.expiry) {
       const raw = Uint8Array.from(atob(cached.keyData), c => c.charCodeAt(0));
       _kvKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
-      if (_kvKey) { _keyFingerprint(_kvKey).then(fp => console.log('[key] kvEnsureKey: restored from 4h/24h cache — fingerprint:', fp)); return true; }
+      if (_kvKey) { return true; }
     } else if (cached) {
       localStorage.removeItem('stockroom_kv_session_key');
     }
@@ -10789,7 +10572,7 @@ async function kvPush() {
     shareTargets: _shareTargets,
     notes: notes.map(n => ({ ...n, body: n.locked ? undefined : n.body })),
   });
-  _keyFingerprint(_kvKey).then(fp => console.log('[key] kvPush: encrypting with key fingerprint:', fp));
+
   const ciphertext = await kvEncrypt(_kvKey, payload);
   const res = await fetchKV(`${WORKER_URL}/data/push`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -10874,7 +10657,7 @@ async function kvPull() {
   const { ciphertext } = await res.json();
   if (!ciphertext) return null;
   try {
-    _keyFingerprint(_kvKey).then(fp => console.log('[key] kvPull: decrypting with key fingerprint:', fp));
+
     const plain = await kvDecrypt(_kvKey, ciphertext);
     return JSON.parse(plain);
   } catch(e) {
@@ -11186,14 +10969,6 @@ async function kvChangePassphrase(oldPass, newPass) {
 
 // ═══════════════════════════════════════════
 //  DROPBOX SYNC (kept for reference, disabled in KV build)
-// ═══════════════════════════════════════════
-// ── Dropbox — removed in KV build (stubbed to prevent reference errors) ──
-function connectDropbox()           { /* Dropbox removed — KV build */ }
-function generateCodeVerifier()     { return ''; }
-async function generateCodeChallenge() { return ''; }
-async function syncDropbox()        { /* Dropbox removed */ }
-async function uploadToDropbox()    { /* Dropbox removed */ }
-async function signOutDropbox()     { /* Dropbox removed */ }
 // ── Sync Queue — visual feedback for pending changes ──────
 // Shows a bottom bar while changes are queued/syncing.
 // Debounces rapid saves so we don't hammer the backend.
@@ -11289,11 +11064,6 @@ function updateSyncUI() {
   const el = document.getElementById('kv-account-email');
   if (el && _kvEmail) el.textContent = _kvEmail;
 }
-
-// Drive/Dropbox UI functions — stubbed as no-ops in KV build
-function updateDropboxUI() { /* Dropbox removed */ }
-async function signOutDrive() { /* Drive removed */ }
-function updateDriveUI()    { /* Drive removed */ }
 
 function renderSettingsForUser() {
   const settingsView = document.getElementById('view-settings');
@@ -13982,28 +13752,6 @@ function loadHouseholdShareState() {
 
 function saveHouseholdShareState() { saveShareState(); }
 
-function updateHouseholdShareUI() {
-  const joinedSection = document.getElementById('household-joined-section');
-  const joinSection   = document.getElementById('household-join-section');
-  const ownerSection  = document.getElementById('household-owner-section');
-  const statusEl      = document.getElementById('household-share-status');
-  if (!joinedSection) return;
-
-  if (_sharedFileId) {
-    joinedSection.style.display = 'block';
-    joinSection.style.display   = 'none';
-    ownerSection.style.display  = 'none';
-    if (statusEl) statusEl.textContent = 'Your data syncs to the shared household. The owner manages the connection.';
-  } else {
-    joinedSection.style.display = 'none';
-    joinSection.style.display   = 'block';
-    ownerSection.style.display  = 'block';
-    if (statusEl) statusEl.textContent = kvConnected
-      ? 'You are the household owner. Generate an invite code for others to join.'
-      : 'Sign in above, then generate an invite code for others to join.';
-  }
-}
-
 async function createInviteCode() {
   if (!kvConnected) {
     toast('Sign in first');
@@ -14666,7 +14414,6 @@ async function _fulfilPendingRewraps(code) {
             guestEmailHash: req.guestEmailHash, wrappedKey, ownerPublicKeyJwk: ownerPubKeyJwk,
           }),
         });
-        console.log('[share] rewrapped key for guest:', req.guestEmailHash);
       } catch(e) { console.warn('[share] rewrap failed for', req.guestEmailHash, e.message); }
     }
   } catch(e) { /* non-critical */ }
@@ -14695,7 +14442,7 @@ window.shareDiag = async function(code) {
   out.push(`local share keys: ${Object.keys(localKeys).join(', ') || 'none'}`);
 
   const codes = code ? [code] : (_shareTargets||[]).map(t=>t.code);
-  if (!codes.length) { out.push('No share targets found'); console.log(out.join('\n')); return out.join('\n'); }
+  if (!codes.length) { out.push('No share targets found'); return out.join('\n'); }
 
   for (const c of codes) {
     out.push(`\n--- Code: ${c} ---`);
@@ -14741,7 +14488,6 @@ window.shareDiag = async function(code) {
   }
   out.push('\nTo recover a share with no key: run window.rebuildShare("CODE") to delete and recreate it.');
   out.push('=== END ===');
-  console.log(out.join('\n'));
   return out.join('\n');
 };
 
@@ -14762,7 +14508,6 @@ window.clearBrokenShare = async function(code) {
       await _setShareKeys(stored);
     } catch(e) {}
     await loadShareTargets();
-    console.log(`Share ${code} deleted. Go to Settings → Households → Add person to create a new share.`);
     toast('Share removed — create a new one from Settings → Households');
   } catch(e) {
     console.error('clearBrokenShare failed:', e.message);
@@ -14992,6 +14737,7 @@ function disconnectPresence() {
 
 async function pushPresence() {
   if (!WORKER_URL || !_householdEnabled) return;
+  if (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return; // wait for auth
   const name   = _householdName || settings.email?.split('@')[0] || 'You';
   const initials = name.slice(0,2).toUpperCase();
   try {
@@ -14999,7 +14745,10 @@ async function pushPresence() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userId:   await getHouseholdUserId(),
+        userId:       await getHouseholdUserId(),
+        emailHash:    _kvEmailHash,
+        verifier:     _kvVerifier,
+        sessionToken: _kvSessionToken,
         name,
         initials,
         colour:   _householdColour,
@@ -15086,7 +14835,6 @@ async function init() {
   });
   if (migrated) {
     await saveData();
-    console.log(`Stamped updatedAt on ${items.filter(i=>i.updatedAt===now).length} legacy items`);
   }
 
   // Restore KV session
@@ -15096,15 +14844,7 @@ async function init() {
   const _diagConsent = localStorage.getItem('stockroom_cookie_consent');
   const _diagFallback= localStorage.getItem('stockroom_kv_key_fallback');
   const _diagLsKey   = localStorage.getItem('stockroom_kv_session_key');
-  console.log('[DIAG] ── init ──────────────────────────────');
-  console.log('[DIAG] kv_session:       ', _diagSession ? JSON.parse(_diagSession) : 'ABSENT');
-  console.log('[DIAG] device_secret:    ', _diagSecret  ? 'SET' : 'ABSENT');
-  console.log('[DIAG] remembered_email: ', _diagEmail   || 'ABSENT');
-  console.log('[DIAG] cookie_consent:   ', _diagConsent || 'ABSENT');
-  console.log('[DIAG] key_fallback:     ', _diagFallback ? JSON.parse(_diagFallback) : 'ABSENT');
-  console.log('[DIAG] session_key (ls): ', _diagLsKey   ? 'SET' : 'ABSENT');
   const kvRestored = await kvRestoreSession();
-  console.log('[DIAG] kvRestored:', kvRestored, '| kvConnected:', kvConnected, '| _kvKey:', !!_kvKey);
   if (kvRestored) {
     // Always ensure the data key is available before syncing.
     // If _kvKey is already set (trusted device / 4h cache), this is instant.
@@ -15125,8 +14865,6 @@ async function init() {
 
   // Restore Dropbox state (disabled in KV build)
 
-  // KV build: no OAuth redirect handling needed
-  // handleOAuthRedirect(); // Drive OAuth — not used in KV build
   await loadShareState();
 
   // Check for ?join=CODE — show loading state immediately so user doesn't see normal wizard
@@ -15154,7 +14892,6 @@ async function init() {
 
   const countrySet  = await getCountrySetForDevice();
   const protectSeen = await getProtectSeenForDevice();
-  console.log('[DIAG] init branch: seen=', seen, 'kvConnected=', kvConnected, '_kvKey=', !!_kvKey, 'protectSeen=', protectSeen);
 
   if (_joinCode) {
     // join flow handled by handleURLAction above

@@ -98,6 +98,20 @@
     <button class="btn-ghost" onclick="refreshAccounts()">🔄 Refresh</button>
     <div id="log"></div>
   </div>
+
+  <div class="card">
+    <h2>⚠ Recent client errors (<span id="errorlog-count">0</span>)</h2>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <button class="btn-ghost" style="margin:0" onclick="loadErrorLogs()">🔄 Refresh</button>
+      <span style="font-size:11px;color:var(--muted)">Last 7 days · newest first</span>
+    </div>
+    <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+      <table>
+        <thead><tr><th>When</th><th>Kind</th><th>Message</th><th>Where</th><th>User</th></tr></thead>
+        <tbody id="errorlog-body"></tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -181,6 +195,7 @@ async function verifyOtp() {
     document.getElementById('step-main').style.display = 'block';
     startSessionTimer();
     await refreshAccounts();
+    loadErrorLogs(); // fire-and-forget — don't block on it
   } catch(e) {
     otpErr('Error: ' + e.message, 'log-err');
   } finally {
@@ -272,6 +287,44 @@ async function loadCryptoStatus() {
     const d = await adminPost('/admin/crypto-status');
     log(`Crypto — v1: ${d.v1}  v2: ${d.v2}  total: ${d.total}  switchover: ${d.switchoverDate}`, 'log-ok');
   } catch(e) { log('Error: ' + e.message, 'log-err'); }
+}
+
+function _esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+async function loadErrorLogs() {
+  const body = document.getElementById('errorlog-body');
+  const count = document.getElementById('errorlog-count');
+  if (!body) return;
+  body.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">Loading…</td></tr>';
+  try {
+    const d = await adminPost('/admin/error-logs', { limit: 200 });
+    const logs = d.logs || [];
+    if (count) count.textContent = String(d.total || logs.length);
+    if (!logs.length) {
+      body.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">No errors logged.</td></tr>';
+      return;
+    }
+    body.innerHTML = logs.map(l => {
+      const when    = (l.ts || '').replace('T', ' ').slice(0, 19);
+      const kind    = l.kind === 'rejection' ? '<span class="badge v1">reject</span>' : '<span class="badge v2">error</span>';
+      const message = _esc(l.message || '').slice(0, 200);
+      const where   = _esc(l.where || '').slice(0, 80);
+      const user    = l.emailHash ? _esc(l.emailHash).slice(0, 8) + '…' : '<span style="color:var(--muted)">—</span>';
+      return `<tr title="${_esc(l.stack || '').slice(0, 1000)}">
+        <td>${_esc(when)}</td>
+        <td>${kind}</td>
+        <td style="white-space:normal;word-break:break-word">${message}</td>
+        <td>${where}</td>
+        <td>${user}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    body.innerHTML = `<tr><td colspan="5" style="color:var(--danger)">Error: ${_esc(e.message)}</td></tr>`;
+  }
 }
 </script>
 </body>
