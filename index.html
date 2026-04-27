@@ -299,11 +299,29 @@
         </div>
 
         <!-- Remember me -->
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding-left:2px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-left:2px">
           <input type="checkbox" id="remember-me-checkbox" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0"
-            onchange="window._rememberMeChecked=this.checked;var auth=document.getElementById('remember-me-checkbox-auth');if(auth)auth.checked=this.checked;if(this.checked){localStorage.setItem('stockroom_cookie_consent','granted');}else{localStorage.removeItem('stockroom_cookie_consent');localStorage.removeItem('stockroom_remembered_email');}">
+            onchange="window._rememberMeChecked=this.checked;var auth=document.getElementById('remember-me-checkbox-auth');if(auth)auth.checked=this.checked;var panel=document.getElementById('cookie-inline-panel');var consent=null;try{consent=localStorage.getItem('stockroom_cookie_consent');}catch(ex){}if(this.checked){if(consent!=='granted'&&consent!=='declined'){if(panel)panel.style.display='block';}else if(consent==='declined'){try{localStorage.setItem('stockroom_cookie_consent','granted');}catch(ex){}}}else{if(panel)panel.style.display='none';try{localStorage.removeItem('stockroom_remembered_email');}catch(ex){}}">
           <label for="remember-me-checkbox" style="font-size:13px;color:var(--text);cursor:pointer;font-weight:600">Remember me</label>
           <span style="font-size:12px;color:var(--muted)">— stay signed in for 30 days on this device</span>
+        </div>
+
+        <!-- Cookie consent banner — shown when "Remember me" is ticked and consent has not been recorded yet -->
+        <div id="cookie-inline-panel" style="display:none;background:rgba(232,168,56,0.07);border:1px solid rgba(232,168,56,0.25);border-radius:10px;padding:14px;margin-bottom:16px">
+          <p style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:10px">
+            <strong style="color:var(--text)">Allow cookies?</strong> We'll save your email address on this device so you can skip this screen next visit.
+            <button type="button" onclick="var d=document.getElementById('cookie-inline-detail');if(d)d.style.display=d.style.display==='none'?'block':'none'"
+              style="background:none;border:none;color:var(--accent);font-size:11px;cursor:pointer;padding:0;margin-left:4px">Details ▾</button>
+          </p>
+          <div id="cookie-inline-detail" style="display:none;font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:10px;padding:8px;background:rgba(0,0,0,0.2);border-radius:6px">
+            Stored on this device: your email address, sign-in method (passphrase or passkey) and the 30-day session. Not stored: your passphrase, passkey or any personal data.
+          </div>
+          <div style="display:flex;gap:8px">
+            <button type="button" class="btn btn-primary" style="flex:1;font-size:13px;padding:8px"
+              onclick="try{localStorage.setItem('stockroom_cookie_consent','granted');var em=document.getElementById('kv-login-email');if(em&&em.value&&em.value.includes('@')){localStorage.setItem('stockroom_remembered_email',em.value.trim());}}catch(ex){}var p=document.getElementById('cookie-inline-panel');if(p)p.style.display='none';">Allow</button>
+            <button type="button" class="btn btn-ghost" style="flex:1;font-size:13px;padding:8px"
+              onclick="try{localStorage.setItem('stockroom_cookie_consent','declined');localStorage.removeItem('stockroom_remembered_email');}catch(ex){}var p=document.getElementById('cookie-inline-panel');if(p)p.style.display='none';var cb=document.getElementById('remember-me-checkbox');if(cb)cb.checked=false;var cba=document.getElementById('remember-me-checkbox-auth');if(cba)cba.checked=false;window._rememberMeChecked=false;">Decline</button>
+          </div>
         </div>
 
         <button type="button" class="btn btn-primary btn-xl full" style="width:100%;margin-bottom:0"
@@ -315,7 +333,8 @@
             if(!v||!v.includes('@')){if(err){err.textContent='Enter a valid email address';err.style.display='block';}e.focus();return;}
             if(err)err.style.display='none';
             var cb=document.getElementById('remember-me-checkbox');
-            if(cb&&cb.checked){try{localStorage.setItem('stockroom_cookie_consent','granted');localStorage.setItem('stockroom_remembered_email',v);}catch(ex){}}
+            var consent=null;try{consent=localStorage.getItem('stockroom_cookie_consent');}catch(ex){}
+            if(cb&&cb.checked&&consent==='granted'){try{localStorage.setItem('stockroom_remembered_email',v);}catch(ex){}}
             var usePasskey=false;
             try{
               usePasskey=localStorage.getItem('stockroom_device_has_passkey')==='true'
