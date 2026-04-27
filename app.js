@@ -7806,6 +7806,69 @@ window.stockroomDiag = async function() {
   return out.join('\n');
 };
 
+// ── Trusted-session diagnostic — run window.trustDiag() in browser console ──
+window.trustDiag = async function() {
+  const out = [];
+  out.push('=== TRUSTED SESSION DIAGNOSTIC ===');
+  out.push(`kvConnected:           ${kvConnected}`);
+  out.push(`_kvEmailHash:          ${_kvEmailHash || '(empty)'}`);
+  out.push(`device_id:             ${localStorage.getItem('stockroom_device_id') || '(none)'}`);
+  out.push(`device_secret:         ${localStorage.getItem('stockroom_device_secret') ? 'SET' : 'absent'}`);
+  out.push(`trust_ts:              ${localStorage.getItem('stockroom_trust_ts') || '(none)'}`);
+  out.push(`kv_session present:    ${!!localStorage.getItem('stockroom_kv_session')}`);
+  out.push(`key_fallback present:  ${!!localStorage.getItem('stockroom_kv_key_fallback')}`);
+
+  const tsRaw = localStorage.getItem('stockroom_trusted_session');
+  if (tsRaw) {
+    try {
+      const ts = JSON.parse(tsRaw);
+      const ageMin = Math.round((Date.now() - ts.establishedAt) / 60000);
+      const remainDays = Math.round((ts.expiresAt - Date.now()) / 86400000);
+      out.push(`trusted_session:       SET — established ${ageMin}min ago, ${remainDays}d remaining, emailHash match: ${ts.emailHash === _kvEmailHash}`);
+    } catch(e) { out.push(`trusted_session:       SET (parse error)`); }
+  } else {
+    out.push(`trusted_session:       absent`);
+  }
+
+  const mfaRaw = localStorage.getItem('stockroom_mfa_verified_trusted');
+  if (mfaRaw) {
+    try {
+      const m = JSON.parse(mfaRaw);
+      const remainDays = Math.round((m.expiresAt - Date.now()) / 86400000);
+      out.push(`mfa_trusted:           SET — ${remainDays}d remaining, emailHash match: ${m.emailHash === _kvEmailHash}`);
+    } catch(e) { out.push(`mfa_trusted:           SET (parse error)`); }
+  } else {
+    out.push(`mfa_trusted:           absent`);
+  }
+
+  if (_kvEmailHash) {
+    try {
+      const deviceId = localStorage.getItem('stockroom_device_id') || '';
+      const r = await fetch(`${WORKER_URL}/device/check`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash: _kvEmailHash, deviceId }),
+      });
+      const d = await r.json();
+      out.push(`server /device/check:  status ${r.status}, body=${JSON.stringify(d)}`);
+    } catch(e) { out.push(`server /device/check error: ${e.message}`); }
+
+    try {
+      const r = await fetch(`${WORKER_URL}/device/list`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          emailHash: _kvEmailHash,
+          ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
+        }),
+      });
+      const d = await r.json();
+      out.push(`server /device/list:   status ${r.status}, ${d.devices?.length || 0} device(s): ${(d.devices || []).map(x => `${x.deviceId.slice(0,8)}…(${x.name})`).join(', ') || 'none'}`);
+    } catch(e) { out.push(`server /device/list error: ${e.message}`); }
+  }
+  out.push('=== END ===');
+  console.log(out.join('\n'));
+  return out.join('\n');
+};
+
 // ── Email verification flow ────────────────────────────────
 // _emailVerifyCallback is set before showing step-1f.
 // On successful verification it is called to continue the normal flow.
@@ -10245,6 +10308,10 @@ function _markTrustedSession(emailHash) {
     localStorage.setItem(_TRUSTED_SESSION_KEY, JSON.stringify({
       emailHash, expiresAt, establishedAt: Date.now(),
     }));
+    // Suppress the periodic trust check in kvSyncNow for the first interval
+    // after sign-in. The server's KV write may not have propagated yet, and
+    // we already have a deferred check scheduled by kvRestoreSession.
+    if (typeof _lastTrustCheckAt !== 'undefined') _lastTrustCheckAt = Date.now();
   } catch(e) {}
 }
 
@@ -10365,6 +10432,12 @@ async function trustThisDeviceWith(email, emailHash, verifier, key) {
     // Register on backend — accept either passphrase verifier OR passkey sessionToken
     // so passkey users can be trusted too. Backend stores trustExpiresAt and
     // returns "not trusted" via /device/check once that time passes.
+    //
+    // We AWAIT this on purpose: the deferred /device/check on next refresh will
+    // see a missing record as "trust revoked" and sign the user out, so the
+    // local trust flag and the server record must be set up together. If the
+    // network fails the await still completes (catch swallows) and we proceed —
+    // the deferred check tolerates network errors with networkFailed:true.
     const name           = getDeviceName();
     const trustExpiresAt = new Date(Date.now() + _TRUST_WINDOW_MS).toISOString();
     const body = {
@@ -10373,10 +10446,19 @@ async function trustThisDeviceWith(email, emailHash, verifier, key) {
       trustExpiresAt,
       ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: verifier || _kvVerifier }),
     };
-    fetchKV(`${WORKER_URL}/device/register`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }).catch(() => {});
+    try {
+      const res = await fetchKV(`${WORKER_URL}/device/register`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        console.warn('[DIAG] /device/register returned', res.status);
+      } else {
+        console.log('[DIAG] /device/register OK');
+      }
+    } catch(e) {
+      console.warn('[DIAG] /device/register network error:', e.message);
+    }
     toast('This device is now trusted ✓');
     loadTrustedDevices();
   } catch(e) {
@@ -10533,28 +10615,57 @@ async function kvRestoreSession() {
     console.log('[DIAG] kvRestoreSession: email=', email, 'authMethod=', authMethod, 'hasVerifier=', !!verifier, 'hasToken=', !!sessionToken);
     if (!email || !emailHash) return false;
 
-    // ── Server-side trust validation ─────────────────────────────
-    // If this device claims to be a trusted-session device, verify with the
-    // server that it's still in the user's trusted list. If "Clear all
-    // trusted devices" was performed on another device — or this device's
-    // server-side trust has expired — the call returns trusted:false and we
-    // sign out locally. Network failures don't punish offline users (we trust
-    // the local flag in that case).
+    // ── Deferred server-side trust validation ────────────────────
+    // We DON'T block the silent restore on the server's view of trust.
+    // Reasons:
+    //  • On the very first refresh after first sign-in, /device/register may
+    //    not yet be visible to /device/check due to KV consistency lag — the
+    //    server would legitimately say "not trusted" and falsely sign the
+    //    user out.
+    //  • Network errors and slow servers shouldn't keep the user out.
+    // Instead: schedule an async check ~10s after restore, and only if the
+    // session was established more than 60s ago. Recently-established trust
+    // is exempt from the deferred check entirely. The kvSyncNow path also
+    // runs this check periodically.
     if (_isTrustedSession(emailHash)) {
-      const trustResult = await _verifyDeviceTrustWithServer(emailHash);
-      if (!trustResult.trusted && !trustResult.networkFailed) {
-        console.log('[DIAG] kvRestoreSession: server says trust revoked — clearing local trust');
-        // Mirror sign-out without the confirm() prompt
-        _clearTrustedSession();
-        const dId = getOrCreateDeviceId();
-        await removeWrappedKey(dId).catch(() => {});
-        localStorage.removeItem('stockroom_device_secret');
-        localStorage.removeItem('stockroom_kv_key_fallback');
-        localStorage.removeItem('stockroom_trust_ts');
-        localStorage.removeItem('stockroom_kv_session_key');
-        localStorage.removeItem('stockroom_kv_session');
-        toast('Signed out — trusted devices were cleared');
-        return false;
+      let establishedAt = 0;
+      try {
+        const ts = JSON.parse(localStorage.getItem(_TRUSTED_SESSION_KEY) || '{}');
+        establishedAt = ts.establishedAt || 0;
+      } catch(e) {}
+      const ageMs = Date.now() - establishedAt;
+      if (ageMs > 60 * 1000) {
+        setTimeout(() => {
+          _verifyDeviceTrustWithServer(emailHash).then(trustResult => {
+            if (!trustResult.trusted && !trustResult.networkFailed) {
+              console.log('[DIAG] deferred trust check: server says trust revoked');
+              _clearTrustedSession();
+              const dId = getOrCreateDeviceId();
+              removeWrappedKey(dId).catch(() => {});
+              localStorage.removeItem('stockroom_device_secret');
+              localStorage.removeItem('stockroom_kv_key_fallback');
+              localStorage.removeItem('stockroom_trust_ts');
+              localStorage.removeItem('stockroom_kv_session_key');
+              localStorage.removeItem('stockroom_kv_session');
+              kvConnected     = false;
+              _kvEmail        = '';
+              _kvEmailHash    = '';
+              _kvVerifier     = '';
+              _kvSessionToken = '';
+              _kvAuthMethod   = '';
+              _kvKey          = null;
+              toast('Signed out — trusted devices were cleared');
+              document.body.classList.add('wizard-active');
+              const wiz = document.getElementById('wizard');
+              if (wiz) wiz.style.display = 'flex';
+              document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
+              if (typeof showKvLogin === 'function') showKvLogin();
+              updateSyncUI();
+            }
+          }).catch(() => {});
+        }, 10000);
+      } else {
+        console.log('[DIAG] kvRestoreSession: trust established', Math.round(ageMs/1000), 's ago — skipping deferred check');
       }
     }
 
