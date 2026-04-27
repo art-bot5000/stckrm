@@ -8881,13 +8881,12 @@ function duplicateGoToRecovery() {
 }
 
 function duplicateGoToImport() {
-  // Dismiss wizard, land on settings, trigger file picker
+  // Dismiss wizard, land on Account & Security (where Data section now lives), trigger file picker
   localStorage.setItem('stockroom_seen', '1');
   document.body.classList.remove('wizard-active');
   document.getElementById('wizard').style.display = 'none';
-  const settingsTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Settings'));
-  if (settingsTab) showView('settings', settingsTab);
-  setTimeout(() => document.getElementById('import-file')?.click(), 300);
+  if (typeof navTo === 'function') navTo('account-security');
+  setTimeout(() => document.getElementById('import-file-sec')?.click(), 300);
 }
 
 function duplicateGoToNewAccount() {
@@ -12736,53 +12735,18 @@ function _saveSettingsCollapsed(state) {
 }
 
 function toggleSettings(bodyId, headerEl) {
-  // On desktop the sections are always expanded — clicking the header scrolls to it instead
-  if (window.innerWidth >= 900) {
-    scrollToSection(bodyId);
-    return;
-  }
-  const body = document.getElementById(bodyId);
-  if (!body) return;
-  const isOpen = body.style.display !== 'none';
-  const nowOpen = !isOpen;
-  body.style.display = nowOpen ? '' : 'none';
-  const chevron = headerEl?.querySelector('.settings-chevron');
-  if (chevron) chevron.style.transform = nowOpen ? '' : 'rotate(-90deg)';
-  const state = _getSettingsCollapsed();
-  if (nowOpen) delete state[bodyId];
-  else state[bodyId] = true;
-  _saveSettingsCollapsed(state);
+  // After the redesign all Settings sections are always visible (no collapsibles).
+  // This function now just scrolls to the section — kept as an alias because
+  // any old cached HTML or onclick handlers might still call it.
+  scrollToSection(bodyId);
 }
 
 function initSettingsCollapsibles() {
-  const collapsed = _getSettingsCollapsed();
-  const allIds = [
-    'settings-households-body', 'settings-account-body', 'settings-alerts-body',
-    'settings-reminders-body',  'settings-prefs-body',   'settings-about-body',
-  ];
-
-  // On desktop: always show all sections, sidebar handles navigation
-  const isDesktop = window.innerWidth >= 900;
-
-  allIds.forEach(bodyId => {
-    const body = document.getElementById(bodyId);
-    if (!body) return;
-    const header = body.previousElementSibling;
-    const chevron = header?.querySelector?.('.settings-chevron');
-    if (isDesktop) {
-      // Always expanded on desktop
-      body.style.display = '';
-      if (chevron) chevron.style.transform = '';
-    } else if (collapsed[bodyId]) {
-      body.style.display = 'none';
-      if (chevron) chevron.style.transform = 'rotate(-90deg)';
-    } else {
-      body.style.display = '';
-      if (chevron) chevron.style.transform = '';
-    }
-  });
-
-  if (isDesktop) _initSettingsSidebarScroll();
+  // After the redesign all Settings sections are always visible. This function
+  // is kept as a no-op for backward compatibility with any cached pages still
+  // expecting it. The sidebar-scroll observer is still useful on desktop for
+  // highlighting the active section as the user scrolls.
+  if (window.innerWidth >= 900) _initSettingsSidebarScroll();
 }
 
 function scrollToSection(bodyId) {
