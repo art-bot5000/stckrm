@@ -1526,25 +1526,44 @@ function getReminderStatus(reminder) {
 async function renderReminders() {
   await loadReminders();
 
-  // Also collect reminders embedded in items
+  // Also collect reminders embedded in items — supports both old single and new array format
   const allReminders = [
     ...reminders,
-    ...items
-      .filter(i => i.replacementInterval && i.replacementUnit)
-      .map(i => {
-        // Use lastReplaced if set, otherwise fall back to startedUsing or first log date
-        const fallbackDate = i.startedUsing || i.logs?.[0]?.date || null;
-        return {
-          id:           'item_' + i.id,
+    ...items.flatMap(i => {
+      const fallbackDate = i.startedUsing || i.logs?.filter(l => !l.pendingDelivery)[0]?.date || null;
+      if (i.replacementReminders?.length) {
+        // New array format — one entry per named reminder
+        return i.replacementReminders.map(r => ({
+          id:           `item_${i.id}_${r.id}`,
+          name:         r.name ? `${i.name} — ${r.name}` : i.name,
+          itemName:     i.name,
+          reminderName: r.name || '',
+          interval:     r.interval,
+          unit:         r.unit,
+          lastReplaced: r.lastReplaced || fallbackDate || null,
+          lastReplacedIsFallback: !r.lastReplaced && !!fallbackDate,
+          notes:        i.notes || '',
+          fromItem:     i.id,
+          fromReminder: r.id,
+        }));
+      } else if (i.replacementInterval && i.replacementUnit) {
+        // Legacy single-reminder format
+        return [{
+          id:           `item_${i.id}`,
           name:         i.name,
+          itemName:     i.name,
+          reminderName: '',
           interval:     i.replacementInterval,
           unit:         i.replacementUnit,
           lastReplaced: i.lastReplaced || fallbackDate || null,
           lastReplacedIsFallback: !i.lastReplaced && !!fallbackDate,
           notes:        i.notes || '',
           fromItem:     i.id,
-        };
-      }),
+          fromReminder: null,
+        }];
+      }
+      return [];
+    }),
   ];
 
   const overdue  = allReminders.filter(r => getReminderStatus(r) === 'overdue');
@@ -1629,7 +1648,8 @@ function reminderCardHTML(r) {
   return `<div style="background:var(--surface);border:1px solid ${borderColor};border-radius:12px;padding:14px 16px;margin-bottom:10px;display:flex;gap:12px;align-items:flex-start;cursor:pointer;transition:border-color 0.15s,box-shadow 0.15s" onclick="openReminderTimeline('${r.id}')" title="Tap to view timeline">
     <div style="flex:1;min-width:0">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
-        <span style="font-size:15px;font-weight:700;color:var(--text)">${esc(r.name)}</span>
+        <span style="font-size:15px;font-weight:700;color:var(--text)">${esc(r.itemName || r.name)}</span>
+        ${r.reminderName ? `<span style="font-size:12px;color:var(--muted)">${esc(r.reminderName)}</span>` : ''}
         ${isFromItem ? `<span style="font-size:10px;color:var(--muted);font-family:var(--mono);padding:1px 6px;border:1px solid var(--border);border-radius:99px">linked</span>` : ''}
         <span style="font-size:10px;color:var(--muted);margin-left:auto;opacity:0.5"><svg class="icon" aria-hidden="true"><use href="#i-bar-chart-2"></use></svg> Timeline</span>
       </div>
@@ -1640,34 +1660,71 @@ function reminderCardHTML(r) {
       ${r.notes ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-top:6px"><svg class="icon" aria-hidden="true"><use href="#i-message-square"></use></svg> ${esc(r.notes)}</div>` : ''}
       <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap" onclick="event.stopPropagation()">
         <button class="btn btn-primary btn-sm" onclick="openLogReplacementModal('${r.id}')"><svg class="icon" aria-hidden="true"><use href="#i-check-circle-2"></use></svg> Mark replaced</button>
-        ${!isFromItem ? `<button class="btn btn-ghost btn-sm" onclick="openEditReminderModal('${r.id}')"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit</button>` : `<button class="btn btn-ghost btn-sm" onclick="openEditModal('${r.fromItem}');enableItemEdit()"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit item</button>`}
-        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteReminder('${isFromItem ? 'item_' + r.fromItem : r.id}')"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
+        ${!isFromItem
+          ? `<button class="btn btn-ghost btn-sm" onclick="openEditReminderModal('${r.id}')"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit</button>`
+          : `<button class="btn btn-ghost btn-sm" onclick="openEditModal('${r.fromItem}')"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit item</button>`
+        }
+        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteReminder('${r.id}')"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
       </div>
     </div>
   </div>`;
 }
 
-// ── Reminder Timeline ──────────────────────
-function openReminderTimeline(reminderId) {
-  // Reconstruct the reminder object (same logic as renderReminders)
-  let r = reminders.find(rem => rem.id === reminderId);
-  if (!r) {
-    const itemId = reminderId.replace('item_', '');
-    const item   = items.find(i => 'item_' + i.id === reminderId);
-    if (item) {
-      const fallbackDate = item.startedUsing || item.logs?.[0]?.date || null;
-      r = {
-        id:           reminderId,
-        name:         item.name,
-        interval:     item.replacementInterval,
-        unit:         item.replacementUnit,
+// ── Resolve a reminder ID to its full data object ──────────
+// Handles: standalone reminder IDs, item_${itemId} (legacy), item_${itemId}_${remId} (new)
+function _resolveReminderId(id) {
+  // Standalone reminder
+  const standalone = reminders.find(r => r.id === id);
+  if (standalone) return { r: standalone, item: null, remEntry: null };
+
+  if (!id.startsWith('item_')) return null;
+
+  const rest = id.slice('item_'.length); // either "itemId" or "itemId_remId"
+  const underIdx = rest.indexOf('_');
+
+  if (underIdx === -1) {
+    // Legacy: item_${itemId}
+    const item = items.find(i => i.id === rest);
+    if (!item) return null;
+    const fallbackDate = item.startedUsing || item.logs?.filter(l => !l.pendingDelivery)[0]?.date || null;
+    return {
+      r: {
+        id, name: item.name, itemName: item.name, reminderName: '',
+        interval: item.replacementInterval, unit: item.replacementUnit,
         lastReplaced: item.lastReplaced || fallbackDate || null,
         lastReplacedIsFallback: !item.lastReplaced && !!fallbackDate,
-        fromItem:     item.id,
-      };
-    }
+        notes: item.notes || '', fromItem: item.id, fromReminder: null,
+      },
+      item, remEntry: null,
+    };
+  } else {
+    // New: item_${itemId}_${remId}
+    const itemId = rest.slice(0, underIdx);
+    const remId  = rest.slice(underIdx + 1);
+    const item   = items.find(i => i.id === itemId);
+    if (!item) return null;
+    const remEntry = item.replacementReminders?.find(r => r.id === remId);
+    if (!remEntry) return null;
+    const fallbackDate = item.startedUsing || item.logs?.filter(l => !l.pendingDelivery)[0]?.date || null;
+    return {
+      r: {
+        id, name: remEntry.name ? `${item.name} — ${remEntry.name}` : item.name,
+        itemName: item.name, reminderName: remEntry.name || '',
+        interval: remEntry.interval, unit: remEntry.unit,
+        lastReplaced: remEntry.lastReplaced || fallbackDate || null,
+        lastReplacedIsFallback: !remEntry.lastReplaced && !!fallbackDate,
+        notes: item.notes || '', fromItem: item.id, fromReminder: remId,
+      },
+      item, remEntry,
+    };
   }
-  if (!r) return;
+}
+
+// ── Reminder Timeline ──────────────────────
+function openReminderTimeline(reminderId) {
+  const resolved = _resolveReminderId(reminderId);
+  if (!resolved) return;
+  const r = resolved.r;
 
   const intervalDays = getReminderIntervalDays(r);
   const now          = new Date();
@@ -1837,9 +1894,9 @@ function openReminderTimeline(reminderId) {
     const reorderNode = nodes.find(n => n.type === 'reorder');
     const reorderDateStr = reorderNode ? fmtDate(reorderNode.date.toISOString().slice(0,10)) : null;
     html += `<div style="margin-top:16px;padding:12px 14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);font-size:12px;font-family:var(--mono);line-height:2;color:var(--muted)">
-      <div>🔔 <span style="color:var(--text)">Next replacement:</span> ${nextReplaceDate}</div>
-      ${reorderDateStr ? `<div>🛒 <span style="color:var(--text)">Reorder by:</span> <span style="color:#e8a838">${reorderDateStr}</span></div>` : ''}
-      <div>↻ <span style="color:var(--text)">Cycle:</span> every ${r.interval} ${r.unit} (${Math.round(intervalDays)} days)</div>
+      <div><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> <span style="color:var(--text)">Next replacement:</span> ${nextReplaceDate}</div>
+      ${reorderDateStr ? `<div><svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> <span style="color:var(--text)">Reorder by:</span> <span style="color:#e8a838">${reorderDateStr}</span></div>` : ''}
+      <div><svg class="icon" aria-hidden="true"><use href="#i-repeat"></use></svg> <span style="color:var(--text)">Cycle:</span> every ${r.interval} ${r.unit} (${Math.round(intervalDays)} days)</div>
     </div>`;
   }
 
@@ -1967,19 +2024,34 @@ async function deleteReminder(id) {
   if (!canWrite('reminders')) { showLockBanner('reminders'); return; }
 
   const isItemReminder = id.startsWith('item_');
-  const itemId = isItemReminder ? id.replace('item_', '') : null;
-  const item   = itemId ? items.find(i => i.id === itemId) : null;
 
-  if (isItemReminder && item) {
+  if (isItemReminder) {
+    const resolved = _resolveReminderId(id);
+    if (!resolved) return;
+    const { item, remEntry } = resolved;
+    const name = resolved.r.reminderName ? `${item.name} — ${resolved.r.reminderName}` : item.name;
     const confirmed = confirm(
-      `Delete the replacement reminder for "${item.name}"?\n\n` +
-      `This will remove the reminder from the item. ` +
-      `The item itself will remain in your Stockroom.`
+      `Delete the replacement reminder "${name}"?\n\nThe item itself will remain in your Stockroom.`
     );
     if (!confirmed) return;
-    item.replacementInterval = null;
-    item.replacementUnit     = null;
-    touchField(item, 'replacementInterval');
+
+    if (remEntry && item.replacementReminders) {
+      // New array format — remove specific reminder
+      item.replacementReminders = item.replacementReminders.filter(r => r.id !== remEntry.id);
+      // Sync legacy fields to first remaining reminder
+      if (item.replacementReminders.length) {
+        item.replacementInterval = item.replacementReminders[0].interval;
+        item.replacementUnit     = item.replacementReminders[0].unit;
+      } else {
+        item.replacementInterval = null;
+        item.replacementUnit     = null;
+      }
+    } else {
+      // Legacy single reminder
+      item.replacementInterval = null;
+      item.replacementUnit     = null;
+    }
+    touchField(item, 'replacementInterval', 'replacementReminders');
     await saveData();
     await kvSyncNow(true);
     renderReminders();
@@ -2001,12 +2073,9 @@ async function deleteReminder(id) {
 // ── Log replacement ───────────────────────
 function openLogReplacementModal(id) {
   loggingReminderId = id;
-  const isItem   = id.startsWith('item_');
-  const itemId   = isItem ? id.replace('item_', '') : null;
-  const item     = itemId ? items.find(i => i.id === itemId) : null;
-  const reminder = !isItem ? reminders.find(r => r.id === id) : null;
-  const name     = item?.name || reminder?.name || '';
-  const interval = item ? `${item.replacementInterval} ${item.replacementUnit}` : reminder ? `${reminder.interval} ${reminder.unit}` : '';
+  const resolved = _resolveReminderId(id);
+  const name     = resolved?.r.name || '';
+  const interval = resolved?.r ? `${resolved.r.interval} ${resolved.r.unit}` : '';
 
   document.getElementById('log-replacement-title').textContent    = `Replaced: ${name}`;
   document.getElementById('log-replacement-subtitle').textContent = interval ? `Next replacement in ${interval}` : 'When did you replace it?';
@@ -2016,21 +2085,28 @@ function openLogReplacementModal(id) {
 
 async function confirmLogReplacement() {
   if (!canWrite("reminders")) { showLockBanner("reminders"); return; }
-  const date     = document.getElementById('log-replacement-date').value || today();
-  const id       = loggingReminderId;
-  const isItem   = id.startsWith('item_');
-  const itemId   = isItem ? id.replace('item_', '') : null;
+  const date = document.getElementById('log-replacement-date').value || today();
+  const id   = loggingReminderId;
 
-  if (itemId) {
-    const item = items.find(i => i.id === itemId);
-    if (item) { item.lastReplaced = date; touchField(item, 'lastReplaced'); saveData(); }
+  if (id.startsWith('item_')) {
+    const resolved = _resolveReminderId(id);
+    if (resolved?.remEntry) {
+      // New array format — update specific reminder's lastReplaced
+      resolved.remEntry.lastReplaced = date;
+      touchField(resolved.item, 'replacementReminders');
+      await saveData();
+    } else if (resolved?.item) {
+      // Legacy single-reminder format
+      resolved.item.lastReplaced = date;
+      touchField(resolved.item, 'lastReplaced');
+      await saveData();
+    }
   } else {
     const r = reminders.find(r => r.id === id);
-    if (r) { r.lastReplaced = date; saveReminders(); }
-    // Also update linked item
+    if (r) { r.lastReplaced = date; await saveReminders(); }
     if (r?.linkedItemId) {
       const item = items.find(i => i.id === r.linkedItemId);
-      if (item) { item.lastReplaced = date; touchField(item, 'lastReplaced'); saveData(); }
+      if (item) { item.lastReplaced = date; touchField(item, 'lastReplaced'); await saveData(); }
     }
   }
 
@@ -2058,9 +2134,18 @@ async function applyReminderReplaced(reminderId, date, token) {
 async function _applyReplacedLocally(reminderId, date) {
   let changed = false;
   if (reminderId.startsWith('item_')) {
-    const itemId = reminderId.replace('item_', '');
-    const item   = items.find(i => i.id === itemId);
-    if (item) { item.lastReplaced = date; touchField(item, 'lastReplaced'); saveData(); changed = true; }
+    const resolved = _resolveReminderId(reminderId);
+    if (resolved?.remEntry) {
+      resolved.remEntry.lastReplaced = date;
+      touchField(resolved.item, 'replacementReminders');
+      await saveData();
+      changed = true;
+    } else if (resolved?.item) {
+      resolved.item.lastReplaced = date;
+      touchField(resolved.item, 'lastReplaced');
+      await saveData();
+      changed = true;
+    }
   } else {
     const r = reminders.find(r => r.id === reminderId);
     if (r) {
@@ -2069,7 +2154,7 @@ async function _applyReplacedLocally(reminderId, date) {
       changed = true;
       if (r.linkedItemId) {
         const item = items.find(i => i.id === r.linkedItemId);
-        if (item) { item.lastReplaced = date; touchField(item, 'lastReplaced'); saveData(); }
+        if (item) { item.lastReplaced = date; touchField(item, 'lastReplaced'); await saveData(); }
       }
     }
   }
@@ -2084,13 +2169,21 @@ async function _applyReplacedLocally(reminderId, date) {
 // Poll backend for any reminder replacements triggered via email (runs on load + visibility change)
 async function pollReminderReplacements() {
   if (!WORKER_URL) return;
-  // Get tokens for all current reminders that are due/overdue
   const allR = [
     ...reminders,
-    ...items.filter(i => i.replacementInterval).map(i => ({
-      id: 'item_' + i.id, name: i.name, interval: i.replacementInterval, unit: i.replacementUnit,
-      lastReplaced: i.lastReplaced || i.startedUsing || i.logs?.[0]?.date || null,
-    })),
+    ...items.flatMap(i => {
+      const base = { lastReplaced: i.lastReplaced || i.startedUsing || i.logs?.filter(l=>!l.pendingDelivery)[0]?.date || null };
+      if (i.replacementReminders?.length) {
+        return i.replacementReminders.map(r => ({
+          id: `item_${i.id}_${r.id}`, name: r.name ? `${i.name} — ${r.name}` : i.name,
+          interval: r.interval, unit: r.unit,
+          lastReplaced: r.lastReplaced || base.lastReplaced,
+        }));
+      } else if (i.replacementInterval) {
+        return [{ id: 'item_' + i.id, name: i.name, interval: i.replacementInterval, unit: i.replacementUnit, lastReplaced: base.lastReplaced }];
+      }
+      return [];
+    }),
   ].filter(r => ['overdue','soon','today'].includes(getReminderStatus(r)));
 
   for (const r of allR) {
@@ -2111,10 +2204,19 @@ async function checkReminderNotifications() {
 
   const allReminders = [
     ...reminders,
-    ...items.filter(i => i.replacementInterval).map(i => ({
-      id: 'item_' + i.id, name: i.name, interval: i.replacementInterval,
-      unit: i.replacementUnit, lastReplaced: i.lastReplaced || i.startedUsing || i.logs?.[0]?.date || null,
-    })),
+    ...items.flatMap(i => {
+      const base = { lastReplaced: i.lastReplaced || i.startedUsing || i.logs?.filter(l=>!l.pendingDelivery)[0]?.date || null };
+      if (i.replacementReminders?.length) {
+        return i.replacementReminders.map(r => ({
+          id: `item_${i.id}_${r.id}`, name: r.name ? `${i.name} — ${r.name}` : i.name,
+          interval: r.interval, unit: r.unit,
+          lastReplaced: r.lastReplaced || base.lastReplaced,
+        }));
+      } else if (i.replacementInterval) {
+        return [{ id: 'item_' + i.id, name: i.name, interval: i.replacementInterval, unit: i.replacementUnit, lastReplaced: base.lastReplaced }];
+      }
+      return [];
+    }),
   ];
 
   const overdue  = allReminders.filter(r => getReminderStatus(r) === 'overdue');
@@ -3732,20 +3834,24 @@ function cardHTML(item, threshold) {
     ${item.notes ? `<div class="card-notes"><svg class="icon" aria-hidden="true"><use href="#i-message-square"></use></svg> ${esc(item.notes)}</div>` : ''}
     ${storePricesCardHTML(item)}
     ${item.url ? `<a class="card-link" href="${esc(item.url)}" target="_blank" rel="noopener"><svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Buy now ↗</a>` : ''}
-    ${item.logs?.some(l => l.pendingDelivery) && !item.startedUsing
-      ? `<div style="font-size:12px;color:var(--warn);background:rgba(232,168,56,0.1);border:1px solid rgba(232,168,56,0.25);border-radius:8px;padding:8px 12px;margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px">
-           <span><svg class="icon" aria-hidden="true"><use href="#i-clock"></use></svg> When did you start using this?</span>
-           <button class="btn btn-sm" style="background:rgba(232,168,56,0.2);color:var(--warn);border:none;font-size:12px" onclick="openStartedUsingModal('${item.id}')">Set date</button>
-         </div>`
-      : ''}
     <div style="display:flex;gap:6px;margin-top:10px">
-      <button class="btn btn-ghost btn-sm log-btn" style="flex:1" onclick="openLogPurchaseModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> Log Purchase</button>
-      ${item.ordered
-        ? `<button class="btn btn-sm log-btn" style="flex:1;background:rgba(76,187,138,0.15);color:var(--ok);border:1px solid rgba(76,187,138,0.3)" onclick="openDeliveredModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-package-check"></use></svg> Delivered</button>`
-        : `<button class="btn btn-ghost btn-sm log-btn" style="flex:1;color:var(--muted)" onclick="openDeliveredModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-package-check"></use></svg> Delivered</button>`
-      }
+      ${_cardOrderButton(item)}
+      <button class="btn btn-ghost btn-sm log-btn" style="flex:1" onclick="openReplRemindersModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Replacement Reminders</button>
     </div>
   </div>`;
+}
+
+// Smart order button for item cards — shows correct stage based on order progress
+function _cardOrderButton(item) {
+  const hasPending         = (item.logs || []).some(l => l.pendingDelivery);
+  const hasDeliveredNoStart= (item.logs || []).some(l => !l.pendingDelivery && l.deliveredDate) && !item.startedUsing;
+  if (hasPending) {
+    return `<button class="btn btn-sm log-btn" style="flex:1;background:rgba(76,187,138,0.15);color:var(--ok);border:1px solid rgba(76,187,138,0.3)" onclick="openOrderFlow('${item.id}','delivered')"><svg class="icon" aria-hidden="true"><use href="#i-package-check"></use></svg> Mark Delivered</button>`;
+  } else if (hasDeliveredNoStart) {
+    return `<button class="btn btn-sm log-btn" style="flex:1;background:rgba(91,141,238,0.15);color:#5b8dee;border:1px solid rgba(91,141,238,0.3)" onclick="openOrderFlow('${item.id}','startusing')"><svg class="icon" aria-hidden="true"><use href="#i-play"></use></svg> Start Using</button>`;
+  } else {
+    return `<button class="btn btn-ghost btn-sm log-btn" style="flex:1" onclick="openOrderFlow('${item.id}','purchase')"><svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> Log Purchase</button>`;
+  }
 }
 
 function storePricesCardHTML(item) {
@@ -5021,7 +5127,7 @@ function renderSavingsView() {
       ? `<span class="sns-badge sns-badge-active">✓ S&amp;S Active</span>`
       : status === 'eligible'
         ? `<span class="sns-badge sns-badge-eligible">💡 Eligible</span>`
-        : `<span class="sns-badge sns-badge-tracking">⏳ Tracking (${purchaseCount}/${SNS_MIN_PURCHASES} purchases)</span>`;
+        : `<span class="sns-badge sns-badge-tracking"><svg class="icon" aria-hidden="true"><use href="#i-timer"></use></svg> Tracking (${purchaseCount}/${SNS_MIN_PURCHASES} purchases)</span>`;
 
     const savingEl = annualSaving
       ? `<div class="sns-saving">£${annualSaving.toFixed(2)}/yr saving</div>`
@@ -5062,7 +5168,7 @@ function renderSavingsView() {
     html += active.map(makeItem).join('');
   }
   if (tracking.length) {
-    html += `<div class="sns-section-title">⏳ Building history (${tracking.length})</div>`;
+    html += `<div class="sns-section-title"><svg class="icon" aria-hidden="true"><use href="#i-timer"></use></svg> Building history (${tracking.length})</div>`;
     html += tracking.map(makeItem).join('');
   }
 
@@ -5501,7 +5607,7 @@ function renderShoppingList() {
 
     return `<div class="shopping-store-section">
       <div class="shopping-store-header">
-        <h3>🏪 ${esc(store)}</h3>
+        <h3><svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> ${esc(store)}</h3>
         <span class="shopping-store-count">${entries.length} item${entries.length!==1?'s':''}</span>
       </div>
       ${itemsHTML}
@@ -5549,42 +5655,259 @@ function exportShoppingList() {
 
 
 
+// ═══════════════════════════════════════════════════════════════
+//  ADD ITEM WIZARD
+// ═══════════════════════════════════════════════════════════════
+let _wizStep = 1;
+let _wizRating = 0;
+let _wizImageUrl = null;
+let _wizReminders = []; // [{id, name, interval, unit}]
+
 function openAddModal() {
-  try {
-    editingId = null;
-    const titleEl = document.getElementById('item-modal-title');
-    const subtitleEl = document.getElementById('item-modal-subtitle');
-    const readonlyEl = document.getElementById('item-readonly-view');
-    const editEl = document.getElementById('item-edit-view');
-    if (titleEl) titleEl.textContent = 'Add Item';
-    if (subtitleEl) subtitleEl.textContent = 'Track a new consumable in your stockroom.';
-    if (readonlyEl) readonlyEl.style.display = 'none';
-    if (editEl) editEl.style.display = 'block';
-    tempStorePrices = [];
-    if (typeof renderTempStorePrices === 'function') renderTempStorePrices();
-    const spSection = document.getElementById('store-prices-section');
-    if (spSection) spSection.style.display = 'none';
-    const fields = { 'f-name':'', 'f-category':'Kitchen', 'f-cadence':'monthly',
-                     'f-qty':1, 'f-months':1, 'f-url':'', 'f-notes':'',
-                     'f-last-date':today(), 'f-last-qty':1, 'f-last-price':'', 'f-started-using':'',
-                     'price-search-input':'' };
-    Object.entries(fields).forEach(([id, val]) => {
-      const el = document.getElementById(id);
-      if (el) el.value = val;
-    });
-    pendingImageUrl = null;
-    clearProductImage();
-    const storeField = document.getElementById('f-store');
-    if (storeField) { storeField.value = ''; storeField.dataset.manual = ''; storeField.dataset.autoFilled = ''; }
-    currentRating = 0;
-    renderStars();
-    const pl = document.getElementById('price-links');
-    if (pl) pl.innerHTML = '';
-    openModal('item-modal');
-  } catch(e) {
-    console.error('openAddModal error:', e);
+  _wizStep = 1;
+  _wizRating = 0;
+  _wizImageUrl = null;
+  _wizReminders = [];
+  // Reset all fields
+  const reset = { 'wiz-name':'', 'wiz-category':'Kitchen', 'wiz-cadence':'monthly',
+    'wiz-qty':1, 'wiz-months':1, 'wiz-url':'', 'wiz-store':'', 'wiz-notes':'',
+    'wiz-last-date':today(), 'wiz-last-qty':1, 'wiz-last-price':'', 'wiz-started-using':'',
+    'wiz-price-search':'' };
+  Object.entries(reset).forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.value = v; });
+  const storeEl = document.getElementById('wiz-store');
+  if (storeEl) { storeEl.dataset.manual = ''; storeEl.dataset.autoFilled = ''; }
+  wizSetRating(0);
+  wizClearImage();
+  document.getElementById('wiz-price-links').innerHTML = '';
+  document.getElementById('wiz-reminders-list').innerHTML = '';
+  _wizGotoStep(1);
+  openModal('add-item-wizard-modal');
+}
+
+function _wizGotoStep(n) {
+  _wizStep = n;
+  [1,2,3,4].forEach(i => {
+    const s = document.getElementById('wiz-step-' + i);
+    if (s) s.style.display = i === n ? 'block' : 'none';
+    const p = document.getElementById('wprog-' + i);
+    if (p) { p.classList.toggle('active', i === n); p.classList.toggle('done', i < n); }
+  });
+  document.getElementById('wizard-step-label').textContent = `Step ${n} of 4`;
+  document.getElementById('wiz-back-btn').style.display = n > 1 ? 'inline-flex' : 'none';
+  const nextBtn = document.getElementById('wiz-next-btn');
+  const skipBtn = document.getElementById('wiz-skip-btn');
+  if (n === 4) {
+    nextBtn.textContent = 'Add Item ✓';
+    nextBtn.onclick = wizSave;
+    skipBtn.style.display = 'none';
+    _wizRenderTimeline();
+  } else {
+    nextBtn.textContent = 'Next →';
+    nextBtn.onclick = wizNext;
+    skipBtn.style.display = n === 2 || n === 3 ? 'inline-flex' : 'none';
   }
 }
+
+function wizNext() {
+  if (_wizStep === 1) {
+    const name = document.getElementById('wiz-name').value.trim();
+    if (!name) { document.getElementById('wiz-name').focus(); toast('Please enter a name for this item'); return; }
+  }
+  if (_wizStep < 4) _wizGotoStep(_wizStep + 1);
+}
+function wizBack() { if (_wizStep > 1) _wizGotoStep(_wizStep - 1); }
+function wizSkip() { if (_wizStep < 4) _wizGotoStep(_wizStep + 1); }
+
+function wizAutoFillStore() {
+  const urlEl = document.getElementById('wiz-url');
+  const storeEl = document.getElementById('wiz-store');
+  if (!urlEl || !storeEl) return;
+  if (storeEl.dataset.manual) return;
+  const s = urlToStoreName(urlEl.value);
+  if (s) { storeEl.value = s; storeEl.dataset.autoFilled = '1'; }
+}
+
+function wizSetRating(n) {
+  _wizRating = n;
+  const stars = document.querySelectorAll('#wiz-star-rating .star');
+  const label = document.getElementById('wiz-rating-label');
+  stars.forEach((s, i) => s.classList.toggle('active', i < n));
+  if (label) label.textContent = n ? (RATING_LABELS?.[n] || `${n} star${n>1?'s':''}`) : 'Not rated';
+}
+function wizPreviewStars(n) { document.querySelectorAll('#wiz-star-rating .star').forEach((s,i) => s.classList.toggle('active', i < n)); }
+function wizResetStars() { wizSetRating(_wizRating); }
+function wizUpdatePriceLinks() {
+  const q = document.getElementById('wiz-price-search').value.trim();
+  const container = document.getElementById('wiz-price-links');
+  if (!container) return;
+  if (typeof buildPriceLinks === 'function') container.innerHTML = buildPriceLinks(q);
+  else if (typeof updatePriceLinks === 'function') updatePriceLinks('wiz-price-search', 'wiz-price-links');
+}
+async function wizFetchProductImage() {
+  const name = document.getElementById('wiz-name').value.trim() || document.getElementById('wiz-price-search').value.trim();
+  if (!name) { toast('Enter an item name first'); return; }
+  if (typeof fetchProductImage !== 'function') return;
+  // Delegate to existing function but redirect to wiz preview
+  const btn = document.querySelector('#add-item-wizard-modal button[onclick="wizFetchProductImage()"]');
+  if (btn) btn.disabled = true;
+  try {
+    const url = await _fetchProductImageUrl(name);
+    if (url) { _wizImageUrl = url; wizShowImage(url); }
+    else toast('No image found');
+  } catch(e) { toast('Image search failed'); }
+  if (btn) btn.disabled = false;
+}
+function wizShowImage(url) {
+  const wrap = document.getElementById('wiz-img-preview-wrap');
+  const img = document.getElementById('wiz-img-preview');
+  if (wrap && img) { img.src = url; wrap.style.display = 'flex'; }
+}
+function wizClearImage() {
+  _wizImageUrl = null;
+  const wrap = document.getElementById('wiz-img-preview-wrap');
+  if (wrap) wrap.style.display = 'none';
+}
+
+// ── Wizard step 3: reminders ──────────────────────────────
+function wizAddReminder() {
+  _wizReminders.push({ id: uid(), name: '', interval: 3, unit: 'months' });
+  _wizRenderReminders();
+}
+function _wizRenderReminders() {
+  const list = document.getElementById('wiz-reminders-list');
+  if (!list) return;
+  list.innerHTML = _wizReminders.map((r, i) => `
+    <div class="repl-reminder-row" id="wizrem-${r.id}">
+      <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+        <input type="text" placeholder="Name (e.g. Pete, Main filter)" value="${esc(r.name)}"
+          style="width:100%" oninput="_wizReminders[${i}].name=this.value">
+        <div style="display:flex;gap:6px;align-items:center">
+          <span style="font-size:12px;color:var(--muted);white-space:nowrap">Replace every</span>
+          <input type="number" min="1" max="365" value="${r.interval}" style="width:60px"
+            oninput="_wizReminders[${i}].interval=parseInt(this.value)||1">
+          <select style="flex:1" onchange="_wizReminders[${i}].unit=this.value">
+            <option value="days" ${r.unit==='days'?'selected':''}>days</option>
+            <option value="weeks" ${r.unit==='weeks'?'selected':''}>weeks</option>
+            <option value="months" ${r.unit==='months'?'selected':''}>months</option>
+          </select>
+        </div>
+      </div>
+      <button onclick="_wizReminders.splice(${i},1);_wizRenderReminders()" style="background:none;border:none;cursor:pointer;color:var(--danger);padding:4px" title="Remove">
+        <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+      </button>
+    </div>`).join('');
+}
+
+// ── Wizard step 4: timeline ────────────────────────────────
+function _wizRenderTimeline() {
+  const content = document.getElementById('wiz-timeline-content');
+  if (!content) return;
+  const name    = document.getElementById('wiz-name').value.trim() || 'This item';
+  const months  = parseFloat(document.getElementById('wiz-months').value) || 1;
+  const qty     = parseFloat(document.getElementById('wiz-last-qty').value) || 1;
+  const refDate = document.getElementById('wiz-started-using').value
+               || document.getElementById('wiz-last-date').value
+               || today();
+  const totalDays = Math.round(months * 30.5 * qty);
+  const ref     = new Date(refDate + 'T12:00:00');
+  const runOut  = new Date(ref.getTime() + totalDays * 86400000);
+  const threshold = settings.threshold || 20;
+  const warnDays  = Math.round(totalDays * threshold / 100);
+  const warnDate  = new Date(runOut.getTime() - warnDays * 86400000);
+  const fmtD = d => d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+  const daysDiff = d => Math.round((d - Date.now()) / 86400000);
+  const relLabel = d => { const diff = daysDiff(d); return diff < 0 ? `${Math.abs(diff)}d ago` : diff === 0 ? 'today' : `in ${diff}d`; };
+
+  const events = [
+    { label: 'Started using', date: ref, color: '#5b8dee', icon: 'i-play' },
+    { label: `${threshold}% warning threshold (order reminder)`, date: warnDate, color: 'var(--warn)', icon: 'i-bell' },
+    { label: 'Estimated run-out', date: runOut, color: 'var(--danger)', icon: 'i-alert-triangle' },
+  ];
+
+  // Add replacement reminders to timeline
+  _wizReminders.forEach(r => {
+    const days = r.unit==='days' ? r.interval : r.unit==='weeks' ? r.interval*7 : r.interval*30.5;
+    const replDate = new Date(ref.getTime() + Math.round(days)*86400000);
+    events.push({ label: `Replace${r.name ? ` (${r.name})` : ''}`, date: replDate, color:'var(--ok)', icon:'i-repeat' });
+  });
+
+  events.sort((a,b) => a.date - b.date);
+
+  content.innerHTML = `
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px">
+      <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:12px">${esc(name)}</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        ${events.map(ev => `
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:32px;height:32px;border-radius:50%;background:${ev.color}22;border:1px solid ${ev.color}55;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+              <svg class="icon" aria-hidden="true" style="color:${ev.color};width:14px;height:14px"><use href="#${ev.icon}"></use></svg>
+            </div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:12px;color:var(--muted)">${ev.label}</div>
+              <div style="font-size:13px;font-weight:700;color:var(--text)">${fmtD(ev.date)} <span style="font-weight:400;color:var(--muted);font-size:12px">${relLabel(ev.date)}</span></div>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <div style="flex:1;min-width:100px;background:var(--surface2);border-radius:10px;padding:12px;text-align:center">
+        <div style="font-size:24px;font-weight:800;color:var(--text)">${totalDays}d</div>
+        <div style="font-size:11px;color:var(--muted)">Total supply</div>
+      </div>
+      <div style="flex:1;min-width:100px;background:var(--surface2);border-radius:10px;padding:12px;text-align:center">
+        <div style="font-size:24px;font-weight:800;color:var(--warn)">${warnDays}d</div>
+        <div style="font-size:11px;color:var(--muted)">Warning at</div>
+      </div>
+      <div style="flex:1;min-width:100px;background:var(--surface2);border-radius:10px;padding:12px;text-align:center">
+        <div style="font-size:24px;font-weight:800;color:var(--accent)">${Math.max(0,daysDiff(runOut))}d</div>
+        <div style="font-size:11px;color:var(--muted)">Days left</div>
+      </div>
+    </div>`;
+}
+
+async function wizSave() {
+  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
+  const name = document.getElementById('wiz-name').value.trim();
+  if (!name) { _wizGotoStep(1); document.getElementById('wiz-name').focus(); toast('Please enter an item name'); return; }
+  const storeVal = document.getElementById('wiz-store').value.trim()
+    || urlToStoreName(document.getElementById('wiz-url').value.trim());
+  const lastDate  = document.getElementById('wiz-last-date').value;
+  const lastQty   = parseFloat(document.getElementById('wiz-last-qty').value) || 1;
+  const lastPrice = document.getElementById('wiz-last-price').value.trim();
+  const startedUsing = document.getElementById('wiz-started-using').value || null;
+
+  const newItem = {
+    id:                   uid(),
+    name,
+    category:             document.getElementById('wiz-category').value,
+    cadence:              document.getElementById('wiz-cadence').value,
+    qty:                  parseFloat(document.getElementById('wiz-qty').value) || 1,
+    months:               parseFloat(document.getElementById('wiz-months').value) || 1,
+    url:                  document.getElementById('wiz-url').value.trim(),
+    store:                storeVal,
+    notes:                document.getElementById('wiz-notes').value.trim(),
+    startedUsing,
+    rating:               _wizRating || null,
+    imageUrl:             _wizImageUrl || null,
+    storePrices:          [],
+    replacementReminders: _wizReminders.filter(r => r.interval > 0).map(r => ({ ...r, lastReplaced: startedUsing || lastDate || null })),
+    logs:                 lastDate ? [{ id: uid(), date: lastDate, qty: lastQty, price: lastPrice, store: storeVal, pendingDelivery: false, deliveredDate: lastDate }] : [],
+    updatedAt:            new Date().toISOString(),
+  };
+  // Backwards compat: copy first reminder to replacementInterval/Unit
+  if (newItem.replacementReminders.length) {
+    newItem.replacementInterval = newItem.replacementReminders[0].interval;
+    newItem.replacementUnit     = newItem.replacementReminders[0].unit;
+  }
+  items.push(newItem);
+  await saveData();
+  closeModal('add-item-wizard-modal');
+  scheduleRender('grid', 'dashboard', 'filters', 'shopping', 'sns');
+  toast(`"${name}" added ✓`);
+  _syncQueue.enqueue('Saving item…');
+}
+
+
 
 function openEditModal(id) {
   const item = items.find(i => i.id === id);
@@ -5593,75 +5916,388 @@ function openEditModal(id) {
   document.getElementById('item-modal-title').textContent = 'Item Details';
   document.getElementById('item-modal-subtitle').textContent = item.name;
 
-  // Populate readonly view
+  // Populate readonly summary
   document.getElementById('ro-category').textContent = item.category || 'Other';
   document.getElementById('ro-name').textContent = item.name;
-  const lastLog = item.logs?.at(-1);
   const metaParts = [];
-  if (item.cadence === 'bulk') metaParts.push('📦 Bulk');
-  else metaParts.push('🗓️ Monthly');
+  if (item.cadence === 'bulk') metaParts.push('Bulk');
+  else metaParts.push('Monthly');
   if (item.qty) metaParts.push(`${item.qty} unit${item.qty !== 1 ? 's' : ''} per purchase`);
   if (item.months) metaParts.push(`${item.months} month${item.months !== 1 ? 's' : ''} supply`);
+  const lastLog = (item.logs || []).filter(l => !l.pendingDelivery).at(-1);
   if (lastLog?.price) metaParts.push(`Last price: ${lastLog.price}`);
   document.getElementById('ro-meta').textContent = metaParts.join(' · ');
-  document.getElementById('ro-store').textContent = item.store ? `🏪 ${item.store}` : '';
+  document.getElementById('ro-store').innerHTML = item.store
+    ? `<svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> ${esc(item.store)}` : '';
+
+  // ── Order history ──
+  _renderEditOrderHistory(item);
+
+  // ── Replacement reminders ──
+  _renderEditReminders(item);
 
   // Show readonly, hide edit form
   document.getElementById('item-readonly-view').style.display = 'block';
   document.getElementById('item-edit-view').style.display = 'none';
-  // Load store prices (renderTempStorePrices is in scanner.js)
+
+  // Pre-populate edit form fields
   tempStorePrices = JSON.parse(JSON.stringify(item.storePrices || []));
   if (typeof renderTempStorePrices === 'function') renderTempStorePrices();
   if (tempStorePrices.length) document.getElementById('store-prices-section').style.display = 'block';
-
-  // Pre-populate edit form fields (ready for when user clicks Edit)
   document.getElementById('f-name').value = item.name;
-  document.getElementById('f-category').value = item.category||'Kitchen';
-  document.getElementById('f-cadence').value = item.cadence||'monthly';
-  document.getElementById('f-qty').value = item.qty||1;
-  document.getElementById('f-months').value = item.months||1;
-  document.getElementById('f-url').value = item.url||'';
+  document.getElementById('f-category').value = item.category || 'Kitchen';
+  document.getElementById('f-cadence').value = item.cadence || 'monthly';
+  document.getElementById('f-qty').value = item.qty || 1;
+  document.getElementById('f-months').value = item.months || 1;
+  document.getElementById('f-url').value = item.url || '';
   pendingImageUrl = item.imageUrl || null;
   showModalImagePreview(item.imageUrl || null);
   const storeField = document.getElementById('f-store');
-  storeField.value = item.store || urlToStoreName(item.url||'');
+  storeField.value = item.store || urlToStoreName(item.url || '');
   storeField.dataset.manual = item.store ? '1' : '';
   storeField.dataset.autoFilled = '';
-  document.getElementById('f-notes').value = item.notes||'';
+  document.getElementById('f-notes').value = item.notes || '';
   const expiryEl    = document.getElementById('f-expiry');
   const thresholdEl = document.getElementById('f-threshold');
   if (expiryEl)    expiryEl.value    = item.expiry || '';
   if (thresholdEl) thresholdEl.value = item.thresholdOverride != null ? item.thresholdOverride : '';
-  const replIntervalEl = document.getElementById('f-replace-interval');
-  const replUnitEl     = document.getElementById('f-replace-unit');
-  if (replIntervalEl) replIntervalEl.value = item.replacementInterval || '';
-  if (replUnitEl)     replUnitEl.value     = item.replacementUnit     || 'months';
+  // Legacy compat fields (hidden inputs)
+  const last = (item.logs || []).filter(l => !l.pendingDelivery).at(-1);
+  const flDate = document.getElementById('f-last-date'); if (flDate) flDate.value = last?.date || today();
+  const flQty  = document.getElementById('f-last-qty');  if (flQty)  flQty.value  = last?.qty  || 1;
+  const flPrice= document.getElementById('f-last-price');if (flPrice) flPrice.value= last?.price|| '';
+  const flSU   = document.getElementById('f-started-using'); if (flSU) flSU.value = item.startedUsing || '';
+  const flRI   = document.getElementById('f-replace-interval'); if (flRI) flRI.value = item.replacementInterval || '';
+  const flRU   = document.getElementById('f-replace-unit'); if (flRU) flRU.value = item.replacementUnit || 'months';
   currentRating = item.rating || 0;
   renderStars();
-  const last = item.logs?.at(-1);
-  document.getElementById('f-last-date').value = last?.date||today();
-  document.getElementById('f-last-qty').value = last?.qty||1;
-  document.getElementById('f-last-price').value = last?.price||'';
-  document.getElementById('f-started-using').value = item.startedUsing||'';
   document.getElementById('price-search-input').value = item.name;
   updatePriceLinks();
   openModal('item-modal');
 }
 
-function openLogModal(id) { openLogPurchaseModal(id); } // backward compat for swipe + shopping list
+function _renderEditOrderHistory(item) {
+  const logs = (item.logs || []).slice().reverse().slice(0, 5); // latest 5
+  const container = document.getElementById('ro-order-history');
+  if (!container) return;
 
-function openLogPurchaseModal(id) {
-  loggingId = id;
+  if (!logs.length) {
+    container.innerHTML = `<p style="font-size:13px;color:var(--muted)">No orders yet.</p>`;
+  } else {
+    container.innerHTML = logs.map(l => {
+      const stage = !l.pendingDelivery && l.deliveredDate && item.startedUsing ? 'using'
+                  : !l.pendingDelivery && l.deliveredDate ? 'delivered'
+                  : 'pending';
+      const stageLabel = stage === 'using' ? 'In use' : stage === 'delivered' ? 'Delivered' : 'Ordered';
+      const dateStr = l.deliveredDate || l.date;
+      return `<div class="order-history-row">
+        <span class="order-stage-badge ${stage}">${stageLabel}</span>
+        <span style="flex:1;color:var(--muted);font-size:12px">${l.date ? fmt(l.date) : ''}${l.price ? ` · ${esc(l.price)}` : ''}${l.qty && l.qty !== 1 ? ` · ×${l.qty}` : ''}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // Smart order button
+  const btn = document.getElementById('ro-order-btn');
+  if (!btn) return;
+  const hasPending = (item.logs || []).some(l => l.pendingDelivery);
+  const hasDelivered = (item.logs || []).some(l => !l.pendingDelivery && l.deliveredDate && !item.startedUsing);
+  if (hasPending) {
+    btn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-package-check"></use></svg> Mark as Delivered';
+    btn.onclick = () => { closeModal('item-modal'); openOrderFlow(item.id, 'delivered'); };
+    btn.style.background = 'rgba(76,187,138,0.12)'; btn.style.color = 'var(--ok)'; btn.style.borderColor = 'rgba(76,187,138,0.3)';
+  } else if (hasDelivered) {
+    btn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-play"></use></svg> Set Start Using Date';
+    btn.onclick = () => { closeModal('item-modal'); openOrderFlow(item.id, 'startusing'); };
+    btn.style.background = 'rgba(91,141,238,0.12)'; btn.style.color = '#5b8dee'; btn.style.borderColor = 'rgba(91,141,238,0.3)';
+  } else {
+    btn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> Log Purchase';
+    btn.onclick = () => { closeModal('item-modal'); openOrderFlow(item.id, 'purchase'); };
+    btn.style.background = ''; btn.style.color = ''; btn.style.borderColor = '';
+  }
+}
+
+function _renderEditReminders(item) {
+  const container = document.getElementById('ro-reminders-list');
+  if (!container) return;
+  const reminders = _getItemReminders(item);
+  if (!reminders.length) {
+    container.innerHTML = `<p style="font-size:13px;color:var(--muted)">No replacement reminders set.</p>`;
+  } else {
+    container.innerHTML = reminders.map(r => `
+      <div class="order-history-row">
+        <svg class="icon" aria-hidden="true" style="color:var(--ok)"><use href="#i-bell"></use></svg>
+        <span style="flex:1;font-size:12px;color:var(--text)">${r.name ? esc(r.name) + ' — ' : ''}Every ${r.interval} ${r.unit}</span>
+        ${r.lastReplaced ? `<span style="font-size:11px;color:var(--muted)">Last: ${fmt(r.lastReplaced)}</span>` : ''}
+      </div>`).join('');
+  }
+}
+
+// Get replacement reminders from item — handles both old single and new array format
+function _getItemReminders(item) {
+  if (item.replacementReminders?.length) return item.replacementReminders;
+  if (item.replacementInterval) return [{ id: 'legacy', name: '', interval: item.replacementInterval, unit: item.replacementUnit || 'months', lastReplaced: item.startedUsing || null }];
+  return [];
+}
+
+
+
+function openLogModal(id) { openOrderFlow(id, 'purchase'); } // backward compat
+function openLogPurchaseModal(id) { openOrderFlow(id, 'purchase'); } // backward compat
+
+// ═══════════════════════════════════════════════════════════════
+//  ORDER FLOW — unified Log Purchase / Delivered / Start Using
+// ═══════════════════════════════════════════════════════════════
+let _ofItemId   = null;
+let _ofStage    = 'purchase'; // 'purchase' | 'delivered' | 'startusing'
+
+function openOrderFlow(id, stage) {
   const item = items.find(i => i.id === id);
   if (!item) return;
-  document.getElementById('log-modal-title').textContent = 'Log Purchase — ' + item.name;
-  document.getElementById('log-date').value  = today();
-  document.getElementById('log-qty').value   = item.qty || 1;
-  document.getElementById('log-price').value = '';
-  document.getElementById('log-store').value = item.store || urlToStoreName(item.url||'') || '';
-  renderLogHistory(item);
-  openModal('log-modal');
+  _ofItemId = id;
+
+  // Auto-detect stage if not specified
+  if (!stage) {
+    const hasPending = (item.logs || []).some(l => l.pendingDelivery);
+    const hasDeliveredNoStart = (item.logs || []).some(l => !l.pendingDelivery && l.deliveredDate) && !item.startedUsing;
+    stage = hasPending ? 'delivered' : hasDeliveredNoStart ? 'startusing' : 'purchase';
+  }
+  _ofStage = stage;
+
+  const titles = { purchase:'Log Purchase', delivered:'Mark as Delivered', startusing:'Set Start Using Date' };
+  const icons  = { purchase:'i-shopping-cart', delivered:'i-package-check', startusing:'i-play' };
+  document.getElementById('order-flow-title').innerHTML =
+    `<svg class="icon icon-md" aria-hidden="true"><use href="#${icons[stage]}"></use></svg> ${titles[stage]}`;
+  document.getElementById('order-flow-subtitle').textContent = item.name;
+
+  // Show/hide stages
+  document.getElementById('order-stage-purchase').style.display   = stage === 'purchase'   ? 'block' : 'none';
+  document.getElementById('order-stage-delivered').style.display  = stage === 'delivered'  ? 'block' : 'none';
+  document.getElementById('order-stage-startusing').style.display = stage === 'startusing' ? 'block' : 'none';
+
+  const saveBtn = document.getElementById('of-save-btn');
+  if (stage === 'purchase')   { saveBtn.textContent = 'Save Purchase'; }
+  if (stage === 'delivered')  { saveBtn.textContent = 'Confirm Delivery'; }
+  if (stage === 'startusing') { saveBtn.textContent = 'Save Date'; }
+
+  if (stage === 'purchase') {
+    document.getElementById('of-date').value  = today();
+    document.getElementById('of-qty').value   = item.qty || 1;
+    document.getElementById('of-price').value = '';
+    document.getElementById('of-store').value = item.store || urlToStoreName(item.url || '') || '';
+    // Show recent purchase history
+    _renderOfHistory(item);
+  }
+  if (stage === 'delivered') {
+    document.getElementById('of-delivered-date').value = today();
+    const pendingLog = [...(item.logs || [])].reverse().find(l => l.pendingDelivery);
+    document.getElementById('of-delivered-qty').value = pendingLog?.qty || item.qty || 1;
+    document.getElementById('of-started-now').checked = false;
+    document.getElementById('of-started-row').style.display = 'none';
+    document.getElementById('of-started-hint').style.display = 'block';
+    document.getElementById('of-started-date').value = today();
+  }
+  if (stage === 'startusing') {
+    document.getElementById('of-startusing-date').value = item.startedUsing || today();
+  }
+
+  openModal('order-flow-modal');
 }
+
+function _renderOfHistory(item) {
+  const hist = document.getElementById('of-purchase-history');
+  if (!hist) return;
+  const logs = (item.logs || []).filter(l => !l.pendingDelivery).slice(-3).reverse();
+  if (!logs.length) { hist.innerHTML = ''; return; }
+  hist.innerHTML = `<p style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Recent purchases</p>` +
+    logs.map(l => `<div style="font-size:12px;color:var(--muted);padding:4px 0">${fmt(l.date)}${l.price ? ' · ' + esc(l.price) : ''}${l.qty && l.qty !== 1 ? ' · ×' + l.qty : ''}</div>`).join('');
+}
+
+function ofToggleStarted() {
+  const checked = document.getElementById('of-started-now').checked;
+  document.getElementById('of-started-row').style.display  = checked ? 'block' : 'none';
+  document.getElementById('of-started-hint').style.display = checked ? 'none' : 'block';
+}
+
+async function ofSave() {
+  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
+  const item = items.find(i => i.id === _ofItemId);
+  if (!item) return;
+
+  if (_ofStage === 'purchase') {
+    if (!item.logs) item.logs = [];
+    item.logs.push({
+      id:              uid(),
+      date:            document.getElementById('of-date').value || today(),
+      qty:             parseFloat(document.getElementById('of-qty').value) || 1,
+      price:           document.getElementById('of-price').value.trim(),
+      store:           document.getElementById('of-store').value.trim(),
+      pendingDelivery: true,
+    });
+    item.logs.sort((a,b) => new Date(a.date) - new Date(b.date));
+    item.ordered   = true;
+    item.orderedAt = new Date().toISOString();
+    touchField(item, 'logs', 'ordered', 'orderedAt');
+    await saveData();
+    closeModal('order-flow-modal');
+    scheduleRender('grid', 'dashboard', 'shopping');
+    setTimeout(syncAll, 400);
+    toast('Purchase logged — tap the order button when it arrives ✓');
+
+  } else if (_ofStage === 'delivered') {
+    if (!item.logs) item.logs = [];
+    const deliveryDate = document.getElementById('of-delivered-date').value || today();
+    const qty          = parseFloat(document.getElementById('of-delivered-qty').value) || 1;
+    const startedNow   = document.getElementById('of-started-now').checked;
+    const startedDate  = startedNow ? (document.getElementById('of-started-date').value || deliveryDate) : null;
+    const pendingIdx   = [...item.logs].map((l,i) => ({l,i})).reverse().find(({l}) => l.pendingDelivery)?.i;
+    if (pendingIdx !== undefined) {
+      item.logs[pendingIdx].pendingDelivery = false;
+      item.logs[pendingIdx].deliveredDate   = deliveryDate;
+      item.logs[pendingIdx].qty             = qty;
+    } else {
+      item.logs.push({ id: uid(), date: deliveryDate, qty, pendingDelivery: false, deliveredDate });
+      item.logs.sort((a,b) => new Date(a.date) - new Date(b.date));
+    }
+    item.ordered = false; item.orderedAt = null;
+    if (startedDate) item.startedUsing = startedDate;
+    touchItem(item);
+    await saveData();
+    closeModal('order-flow-modal');
+    scheduleRender('grid', 'dashboard', 'shopping');
+    setTimeout(syncAll, 400);
+    toast(startedDate ? 'Delivered and marked as in use ✓' : 'Delivery confirmed ✓');
+
+  } else if (_ofStage === 'startusing') {
+    const date = document.getElementById('of-startusing-date').value || today();
+    item.startedUsing = date;
+    touchField(item, 'startedUsing');
+    await saveData();
+    closeModal('order-flow-modal');
+    scheduleRender('grid', 'dashboard');
+    setTimeout(syncAll, 400);
+    toast('Start date saved — stock clock updated ✓');
+  }
+}
+
+// Unified card button — determines correct stage automatically
+function openOrderFlowFromCard(id) { openOrderFlow(id, null); }
+
+// ═══════════════════════════════════════════════════════════════
+//  REPLACEMENT REMINDERS MODAL
+// ═══════════════════════════════════════════════════════════════
+let _replItemId = null;
+
+function openReplRemindersModal(id) {
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  _replItemId = id;
+  document.getElementById('repl-reminders-subtitle').textContent = item.name;
+  _renderReplRemindersList(item);
+  openModal('repl-reminders-modal');
+}
+
+function _renderReplRemindersList(item) {
+  const list = document.getElementById('repl-reminders-list');
+  if (!list) return;
+  const reminders = _getItemReminders(item);
+  if (!reminders.length) {
+    list.innerHTML = `<p style="font-size:13px;color:var(--muted)">No reminders yet. Add one below.</p>`;
+    return;
+  }
+  list.innerHTML = reminders.map((r, i) => `
+    <div class="repl-reminder-row" id="replrem-${r.id}">
+      <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <svg class="icon" aria-hidden="true" style="color:var(--ok);flex-shrink:0"><use href="#i-bell"></use></svg>
+          <input type="text" placeholder="Name (e.g. Pete, Main filter — optional)" value="${esc(r.name || '')}"
+            style="flex:1" oninput="_replUpdateName('${r.id}',this.value)">
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;padding-left:24px">
+          <span style="font-size:12px;color:var(--muted);white-space:nowrap">Every</span>
+          <input type="number" min="1" max="365" value="${r.interval}" style="width:60px"
+            oninput="_replUpdateInterval('${r.id}',parseInt(this.value)||1)">
+          <select style="flex:1" onchange="_replUpdateUnit('${r.id}',this.value)">
+            <option value="days" ${r.unit==='days'?'selected':''}>days</option>
+            <option value="weeks" ${r.unit==='weeks'?'selected':''}>weeks</option>
+            <option value="months" ${r.unit==='months'?'selected':''}>months</option>
+          </select>
+        </div>
+        ${r.lastReplaced ? `<div style="font-size:11px;color:var(--muted);padding-left:24px">Last replaced: ${fmt(r.lastReplaced)}</div>` : ''}
+      </div>
+      <button onclick="_replDeleteReminder('${r.id}')" style="background:none;border:none;cursor:pointer;color:var(--danger);padding:4px" title="Delete">
+        <svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg>
+      </button>
+    </div>`).join('');
+}
+
+function _ensureReplRemindersArray(item) {
+  if (!item.replacementReminders?.length) {
+    if (item.replacementInterval) {
+      item.replacementReminders = [{ id: uid(), name: '', interval: item.replacementInterval, unit: item.replacementUnit || 'months', lastReplaced: item.startedUsing || null }];
+    } else {
+      item.replacementReminders = [];
+    }
+  }
+}
+
+function replAddReminder() {
+  const item = items.find(i => i.id === _replItemId);
+  if (!item) return;
+  _ensureReplRemindersArray(item);
+  item.replacementReminders.push({ id: uid(), name: '', interval: 3, unit: 'months', lastReplaced: null });
+  _saveReplReminders(item);
+}
+
+function _replUpdateName(rid, val) {
+  const item = items.find(i => i.id === _replItemId);
+  if (!item?.replacementReminders) return;
+  const r = item.replacementReminders.find(r => r.id === rid);
+  if (r) { r.name = val; _saveReplRemindersDebounced(item); }
+}
+function _replUpdateInterval(rid, val) {
+  const item = items.find(i => i.id === _replItemId);
+  if (!item?.replacementReminders) return;
+  const r = item.replacementReminders.find(r => r.id === rid);
+  if (r) { r.interval = val; _saveReplRemindersDebounced(item); }
+}
+function _replUpdateUnit(rid, val) {
+  const item = items.find(i => i.id === _replItemId);
+  if (!item?.replacementReminders) return;
+  const r = item.replacementReminders.find(r => r.id === rid);
+  if (r) { r.unit = val; _saveReplRemindersDebounced(item); }
+}
+function _replDeleteReminder(rid) {
+  const item = items.find(i => i.id === _replItemId);
+  if (!item?.replacementReminders) return;
+  item.replacementReminders = item.replacementReminders.filter(r => r.id !== rid);
+  _saveReplReminders(item);
+}
+
+let _replSaveTimer = null;
+function _saveReplRemindersDebounced(item) {
+  clearTimeout(_replSaveTimer);
+  _replSaveTimer = setTimeout(() => _saveReplReminders(item), 600);
+}
+async function _saveReplReminders(item) {
+  // Keep legacy fields in sync with first reminder
+  if (item.replacementReminders?.length) {
+    item.replacementInterval = item.replacementReminders[0].interval;
+    item.replacementUnit     = item.replacementReminders[0].unit;
+  } else {
+    item.replacementInterval = null;
+    item.replacementUnit     = null;
+  }
+  touchItem(item);
+  await saveData();
+  _renderReplRemindersList(item);
+  scheduleRender('grid');
+  setTimeout(syncAll, 400);
+}
+
+
+
+
 
 // ═══════════════════════════════════════════
 //  SAVE / DELETE
@@ -11108,7 +11744,7 @@ function renderGroceryListPicker() {
             <div style="flex:1;min-width:0">
               <div style="font-size:16px;font-weight:700;margin-bottom:3px">${esc(l.name)}</div>
               <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">
-                ${l.store ? `🏪 ${esc(l.store)} · ` : ''}${itemCount} item${itemCount!==1?'s':''} remaining${checked ? ` · ${checked} done` : ''} · ${fmt(l.updatedAt)}
+                ${l.store ? `<svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> ${esc(l.store)} · ` : ''}${itemCount} item${itemCount!==1?'s':''} remaining${checked ? ` · ${checked} done` : ''} · ${fmt(l.updatedAt)}
               </div>
             </div>
             <div style="display:flex;gap:6px;flex-shrink:0">
@@ -11350,7 +11986,7 @@ function openChangeGroceryItemStore(itemId) {
           <button onclick="_moveItemToList('${itemId}','${l.id}')"
             style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:${(item?.listId||'default')===l.id?'rgba(232,168,56,0.12)':'var(--surface2)'};border:2px solid ${(item?.listId||'default')===l.id?'rgba(232,168,56,0.5)':'var(--border)'};border-radius:10px;cursor:pointer;text-align:left;width:100%">
             <span style="font-size:16px;font-weight:600;color:var(--text);flex:1">${esc(l.name)}</span>
-            ${l.store ? `<span style="font-size:12px;color:var(--muted)">🏪 ${esc(l.store)}</span>` : ''}
+            ${l.store ? `<span style="font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:4px"><svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> ${esc(l.store)}</span>` : ''}
             ${(item?.listId||'default')===l.id ? '<span style="color:var(--accent);font-size:18px">✓</span>' : ''}
           </button>`).join('')}
       </div>
@@ -11399,7 +12035,7 @@ function openChangeSelectedStore() {
           <button onclick="_moveSelectedToList('${l.id}')"
             style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--surface2);border:2px solid var(--border);border-radius:10px;cursor:pointer;text-align:left;width:100%">
             <span style="font-size:16px;font-weight:600;color:var(--text);flex:1">${esc(l.name)}</span>
-            ${l.store ? `<span style="font-size:12px;color:var(--muted)">🏪 ${esc(l.store)}</span>` : ''}
+            ${l.store ? `<span style="font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:4px"><svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> ${esc(l.store)}</span>` : ''}
           </button>`).join('')}
       </div>
       <button onclick="document.getElementById('grocery-store-picker-overlay').remove()" style="width:100%;padding:13px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:16px;font-weight:600;cursor:pointer">Cancel</button>
@@ -12047,7 +12683,7 @@ function _updateGrocerySelectionBar() {
     <div style="flex:1"></div>
     ${groceryLists.length > 1 ? `<button onclick="openChangeSelectedStore()"
       style="padding:10px 16px;border-radius:8px;border:1px solid rgba(91,141,238,0.4);background:rgba(91,141,238,0.07);color:#5b8dee;font-size:14px;font-weight:600;cursor:pointer">
-      🏪 Move list
+      <svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> Move list
     </button>` : ''}
     <button onclick="_changeSelectedDept()"
       style="padding:10px 16px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:14px;font-weight:600;cursor:pointer">
@@ -12334,7 +12970,7 @@ function _showChangeDeptZone() {
   const listBtn = document.createElement('div');
   listBtn.id = 'grocery-zone-list';
   listBtn.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px;border:2px dashed rgba(91,141,238,0.4);border-radius:12px;cursor:pointer';
-  listBtn.innerHTML = `<div style="font-size:22px">🏪</div><div style="font-size:12px;font-weight:700;color:#5b8dee;letter-spacing:1px">CHANGE LIST</div>`;
+  listBtn.innerHTML = `<svg class="icon" style="width:22px;height:22px" aria-hidden="true"><use href="#i-store"></use></svg><div style="font-size:12px;font-weight:700;color:#5b8dee;letter-spacing:1px">CHANGE LIST</div>`;
   listBtn.addEventListener('dragover', e => { e.preventDefault(); listBtn.style.background='rgba(91,141,238,0.12)'; });
   listBtn.addEventListener('dragleave', () => { listBtn.style.background=''; });
   listBtn.addEventListener('drop', e => { e.preventDefault(); listBtn.style.background=''; const id = _dragSrcEl?.dataset?.id; if (id) openChangeGroceryItemStore(id); _hideChangeDeptZone(); });
@@ -15254,12 +15890,12 @@ async function renderNotes() {
   // Trash filter: show empty state instead of add-note prompt
   if (_notesFilter === 'trash' && !visible.length) {
     grid.innerHTML = '';
-    if (empty) { empty.style.display = 'block'; empty.innerHTML = `<div style="font-size:48px;margin-bottom:12px">🗑️</div><div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--text)">Trash is empty</div><p style="font-size:13px;line-height:1.6">Deleted notes appear here for 30 days.</p>`; }
+    if (empty) { empty.style.display = 'block'; empty.innerHTML = `<div style="margin-bottom:12px;opacity:0.4"><svg style="width:48px;height:48px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></div><div style="font-size:16px;font-weight:700;margin-bottom:8px;color:var(--text);font-family:var(--sans)">Trash is empty</div><p style="font-size:13px;line-height:1.6">Deleted notes appear here for 30 days.</p>`; }
     return;
   }
   if (_notesFilter === 'archived' && !visible.length) {
     grid.innerHTML = '';
-    if (empty) { empty.style.display = 'block'; empty.innerHTML = `<div style="font-size:48px;margin-bottom:12px">📦</div><div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--text)">No archived notes</div><p style="font-size:13px;line-height:1.6">Archived notes appear here.</p>`; }
+    if (empty) { empty.style.display = 'block'; empty.innerHTML = `<div style="margin-bottom:12px;opacity:0.4"><svg style="width:48px;height:48px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg></div><div style="font-size:16px;font-weight:700;margin-bottom:8px;color:var(--text);font-family:var(--sans)">No archived notes</div><p style="font-size:13px;line-height:1.6">Archived notes appear here.</p>`; }
     return;
   }
 
@@ -15306,7 +15942,7 @@ function _noteCardHTML(n) {
   // Status icons
   const icons = [];
   if (n.pinned)  icons.push('📌');
-  if (n.locked)  icons.push(isUnlocked ? '🔓' : '🔒');
+  if (n.locked)  icons.push(isUnlocked ? '<svg class="icon" aria-hidden="true"><use href="#i-unlock"></use></svg>' : '<svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>');
   if (n.archived) icons.push('📦');
   if (n.deletedAt) {
     const daysLeft = Math.max(0, 30 - Math.round((Date.now()-new Date(n.deletedAt).getTime())/86400000));
@@ -15567,7 +16203,9 @@ function _renderNoteEditor(n, showLock) {
   document.getElementById('note-btn-archive')?.classList.toggle('active', !!n.archived);
   document.getElementById('note-btn-lock')?.classList.toggle('active', !!n.locked);
   const lockBtn = document.getElementById('note-btn-lock');
-  if (lockBtn) lockBtn.textContent = n.locked ? '🔒' : '🔓';
+  if (lockBtn) lockBtn.innerHTML = n.locked
+    ? '<svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>'
+    : '<svg class="icon" aria-hidden="true"><use href="#i-unlock"></use></svg>';
   document.getElementById('note-btn-tick')?.classList.toggle('active', !!n.tickBoxesVisible);
   const secureBadge = document.getElementById('note-secure-badge');
   if (secureBadge) secureBadge.style.display = n.locked ? 'block' : 'none';
@@ -16547,7 +17185,7 @@ function openMfaAddMethod() {
   _pendingMfaSetupMode = 'add';
   _mfaEmailTestSent    = false;
   _mfaSetupReset();
-  document.getElementById('mfa-setup-title').textContent    = '➕ Add Authentication Method';
+  document.getElementById('mfa-setup-title').innerHTML = '<svg class="icon icon-md" aria-hidden="true"><use href="#i-plus"></use></svg> Add Authentication Method';
   document.getElementById('mfa-setup-subtitle').textContent = 'Verify the new method works before adding it.';
   document.getElementById('mfa-setup-confirm-btn').textContent = canAddEmail ? 'Send code to my email →' : 'Enable authenticator app ✓';
   const step = document.getElementById('mfa-setup-step-method');
@@ -16722,7 +17360,7 @@ function _renderMfaManageList() {
   const methods = _mfaMethods();
   if (!methods.length) { container.innerHTML = '<p style="font-size:13px;color:var(--muted)">No methods configured.</p>'; return; }
   container.innerHTML = methods.map((m, i) => {
-    const label = m.type === 'totp' ? '📱 Authenticator app' : '📧 Email code';
+    const label = m.type === 'totp' ? '<svg class="icon" aria-hidden="true"><use href="#i-smartphone"></use></svg> Authenticator app' : '<svg class="icon" aria-hidden="true"><use href="#i-mail"></use></svg> Email code';
     const primaryBadge = m.primary
       ? '<span style="font-size:10px;font-weight:700;color:var(--ok);background:rgba(76,187,138,0.15);padding:2px 8px;border-radius:99px;margin-left:8px">PRIMARY</span>'
       : `<button onclick="mfaSetPrimary(${i})" style="font-size:11px;background:none;border:none;color:var(--accent);cursor:pointer;margin-left:8px;text-decoration:underline">Set primary</button>`;
@@ -16818,7 +17456,9 @@ function _updateMfaSettingsUI() {
     if (enabled && methods.length) {
       methodsList.style.display = '';
       methodsList.innerHTML = methods.map(m => {
-        const icon  = m.type === 'totp' ? '📱' : '📧';
+        const icon  = m.type === 'totp'
+          ? '<svg class="icon" aria-hidden="true" style="width:12px;height:12px"><use href="#i-smartphone"></use></svg>'
+          : '<svg class="icon" aria-hidden="true" style="width:12px;height:12px"><use href="#i-mail"></use></svg>';
         const label = m.type === 'totp' ? 'Authenticator app' : 'Email code';
         return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:3px 10px;border-radius:99px;background:${m.primary?'rgba(76,187,138,0.15)':'rgba(120,128,160,0.15)'};color:${m.primary?'var(--ok)':'var(--muted)'};margin-right:6px;margin-bottom:4px">${icon} ${label}${m.primary?' ★':''}</span>`;
       }).join('');

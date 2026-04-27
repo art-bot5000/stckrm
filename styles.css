@@ -898,7 +898,23 @@
 /* MFA method buttons */
 .mfa-method-btn.active { background:rgba(232,168,56,0.15); border-color:var(--accent); color:var(--accent); }
 
-/* ── Account & Security view ── */
+/* ── Add Item Wizard ── */
+.wizard-prog-step { height:4px; border-radius:2px; flex:1; background:var(--border); transition:background 0.2s; }
+.wizard-prog-step.active { background:var(--accent); }
+.wizard-prog-step.done { background:var(--ok); }
+.wiz-step { animation:fadeInUp 0.18s ease; }
+@keyframes fadeInUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+
+/* Replacement reminders row */
+.repl-reminder-row { display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px; }
+.repl-reminder-row input { background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none; }
+
+/* Order history in edit modal */
+.order-history-row { display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:13px; }
+.order-stage-badge { font-size:10px;font-weight:700;padding:2px 8px;border-radius:99px;font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px; }
+.order-stage-badge.pending { background:rgba(232,168,56,0.15);color:var(--accent); }
+.order-stage-badge.delivered { background:rgba(76,187,138,0.15);color:var(--ok); }
+.order-stage-badge.using { background:rgba(91,141,238,0.15);color:#5b8dee; }
 #view-account-security { max-width:680px; }
 #view-account-security.active { display:block !important; }
 /* Settings view — same width as Account & Security */

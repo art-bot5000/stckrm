@@ -298,21 +298,12 @@
             style="position:absolute;left:14px;top:0;transform:translateY(-50%);font-size:11px;font-weight:600;color:var(--accent);background:var(--surface);padding:0 4px;pointer-events:none;line-height:1;white-space:nowrap">Email address</label>
         </div>
 
-        <!-- Remember email + Keep signed in (two independent options) -->
-        <div style="margin-bottom:16px;padding:10px 12px;background:rgba(255,255,255,0.03);border-radius:8px">
-          <label for="remember-email-checkbox" style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:8px">
-            <input type="checkbox" id="remember-email-checkbox" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0"
-              onchange="_rememberEmailChecked=this.checked;if(this.checked){localStorage.setItem('stockroom_cookie_consent','granted');}else{localStorage.removeItem('stockroom_cookie_consent');localStorage.removeItem('stockroom_remembered_email');}">
-            <span style="font-size:13px;color:var(--text);font-weight:600">Remember my email on this device</span>
-          </label>
-          <label for="keep-signed-in-checkbox" style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
-            <input type="checkbox" id="keep-signed-in-checkbox" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0;margin-top:2px"
-              onchange="_keepSignedInChecked=this.checked;_rememberMeChecked=this.checked">
-            <span style="flex:1">
-              <span style="display:block;font-size:13px;color:var(--text);font-weight:600">Keep me signed in for 30 days</span>
-              <span style="display:block;font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4">Skips sign-in (including any second-factor) on this device. Don't tick on shared devices.</span>
-            </span>
-          </label>
+        <!-- Remember me -->
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding-left:2px">
+          <input type="checkbox" id="remember-me-checkbox" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0"
+            onchange="_rememberMeChecked=this.checked;if(this.checked){localStorage.setItem('stockroom_cookie_consent','granted');}else{localStorage.removeItem('stockroom_cookie_consent');localStorage.removeItem('stockroom_remembered_email');}">
+          <label for="remember-me-checkbox" style="font-size:13px;color:var(--text);cursor:pointer;font-weight:600">Remember me</label>
+          <span style="font-size:12px;color:var(--muted)">— saves your email on this device</span>
         </div>
 
         <button type="button" class="btn btn-primary btn-xl full" style="width:100%;margin-bottom:0"
@@ -323,7 +314,7 @@
             var v=e.value.trim();
             if(!v||!v.includes('@')){if(err){err.textContent='Enter a valid email address';err.style.display='block';}e.focus();return;}
             if(err)err.style.display='none';
-            var cb=document.getElementById('remember-email-checkbox');
+            var cb=document.getElementById('remember-me-checkbox');
             if(cb&&cb.checked){try{localStorage.setItem('stockroom_cookie_consent','granted');localStorage.setItem('stockroom_remembered_email',v);}catch(ex){}}
             var usePasskey=false;
             try{
@@ -384,23 +375,6 @@
           <button type="button" class="btn btn-ghost" style="font-size:12px;padding:3px 10px" onclick="loginBackToEmail()">⇄ Not you?</button>
         </div>
 
-        <!-- Remember email + Keep signed in (visible whether using passkey or passphrase) -->
-        <div style="margin-bottom:16px;padding:10px 12px;background:rgba(255,255,255,0.03);border-radius:8px">
-          <label for="remember-email-checkbox-auth" style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:8px">
-            <input type="checkbox" id="remember-email-checkbox-auth" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0"
-              onchange="_rememberEmailChecked=this.checked;if(this.checked){localStorage.setItem('stockroom_cookie_consent','granted');var e=document.getElementById('kv-login-email-display');if(e&&e.value)localStorage.setItem('stockroom_remembered_email',e.value);}else{localStorage.removeItem('stockroom_cookie_consent');localStorage.removeItem('stockroom_remembered_email');}">
-            <span style="font-size:13px;color:var(--text);font-weight:600">Remember my email on this device</span>
-          </label>
-          <label for="keep-signed-in-checkbox-auth" style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
-            <input type="checkbox" id="keep-signed-in-checkbox-auth" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0;margin-top:2px"
-              onchange="_keepSignedInChecked=this.checked;_rememberMeChecked=this.checked">
-            <span style="flex:1">
-              <span style="display:block;font-size:13px;color:var(--text);font-weight:600">Keep me signed in for 30 days</span>
-              <span style="display:block;font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4">Skips sign-in (including any second-factor) on this device. Don't tick on shared devices.</span>
-            </span>
-          </label>
-        </div>
-
         <!-- Passkey path -->
         <div id="auth-passkey-section" style="display:none">
           <button type="button" class="btn btn-primary btn-xl full" style="margin-bottom:14px" onclick="if(typeof kvLoginWithPasskey==='function'){kvLoginWithPasskey();}else{var err=document.getElementById('kv-login-error');if(err){err.textContent='App still loading — please wait a moment and try again';err.style.display='block';}}">
@@ -427,6 +401,14 @@
             <label style="position:absolute;left:14px;top:0;transform:translateY(-50%);font-size:11px;font-weight:600;color:var(--accent);background:var(--surface);padding:0 4px;pointer-events:none;line-height:1">Passphrase</label>
           </div>
           <button type="button" class="btn btn-primary btn-xl full" style="margin-bottom:12px" onclick="kvLogin()">Sign in →</button>
+
+          <!-- Remember me — shown on the auth step for returning users -->
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;padding:10px 12px;background:rgba(255,255,255,0.03);border-radius:8px">
+            <input type="checkbox" id="remember-me-checkbox-auth" style="width:18px;height:18px;cursor:pointer;accent-color:#e8a838;flex-shrink:0"
+              onchange="_rememberMeChecked=this.checked;if(this.checked){localStorage.setItem('stockroom_cookie_consent','granted');var e=document.getElementById('kv-login-email-display');if(e&&e.value)localStorage.setItem('stockroom_remembered_email',e.value);}else{localStorage.removeItem('stockroom_cookie_consent');localStorage.removeItem('stockroom_remembered_email');}">
+            <label for="remember-me-checkbox-auth" style="font-size:13px;color:var(--text);cursor:pointer;font-weight:600">Remember me</label>
+            <span style="font-size:12px;color:var(--muted)">— saves your email on this device</span>
+          </div>
 
           <div style="text-align:center;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
             <button type="button" class="btn btn-ghost" style="font-size:13px;color:var(--muted)" onclick="showForgotPassphrase()">Forgot passphrase?</button>
@@ -1132,7 +1114,7 @@
           <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:8px">
             <div class="acc-sec-label">
               <div class="acc-sec-h"><svg class="icon icon-md" aria-hidden="true"><use href="#i-smartphone"></use></svg> Trusted Devices</div>
-              <div class="acc-sec-p">Devices where you ticked "Keep me signed in for 30 days". These bypass sign-in (and any second-factor) for 30 days. Remove a device to require full re-authentication.</div>
+              <div class="acc-sec-p">Devices where you ticked "Remember me". Remove to sign out and require re-authentication.</div>
             </div>
             <button class="btn btn-ghost acc-sec-btn" onclick="toggleTrustedDevicesPanel()">Show devices</button>
           </div>
@@ -1819,12 +1801,12 @@
 <!-- ═══ ADD / EDIT ITEM MODAL ═══ -->
 <div class="modal-backdrop" id="item-modal">
   <div class="modal">
-    <h2 id="item-modal-title">Add Item</h2>
-    <p class="subtitle" id="item-modal-subtitle">Track a new consumable in your stockroom.</p>
+    <h2 id="item-modal-title">Edit Item</h2>
+    <p class="subtitle" id="item-modal-subtitle"></p>
 
-    <!-- Read-only summary — shown in edit mode only -->
+    <!-- Read-only summary + actions — shown in edit mode only -->
     <div id="item-readonly-view" style="display:none;margin-bottom:16px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);margin-bottom:14px">
         <div style="flex:1;min-width:0">
           <div id="ro-category" style="font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px"></div>
           <div id="ro-name" style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:6px;word-break:break-word"></div>
@@ -1833,19 +1815,35 @@
         </div>
         <button class="btn btn-blue btn-sm" style="flex-shrink:0" onclick="enableItemEdit()"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit</button>
       </div>
-      <div class="modal-footer" style="margin-top:16px">
+
+      <!-- Orders section -->
+      <div style="margin-bottom:14px">
+        <p style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px"><svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Orders</p>
+        <div id="ro-order-history" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px"></div>
+        <button class="btn btn-ghost btn-sm" id="ro-order-btn" onclick="" style="width:100%"></button>
+      </div>
+
+      <!-- Replacement Reminders section -->
+      <div style="margin-bottom:14px">
+        <p style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px"><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Replacement Reminders</p>
+        <div id="ro-reminders-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px"></div>
+        <button class="btn btn-ghost btn-sm" onclick="openReplRemindersModal(editingId)" style="width:100%"><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Manage Replacement Reminders</button>
+      </div>
+
+      <div class="modal-footer" style="margin-top:4px">
+        <button class="btn btn-danger btn-sm" style="margin-right:auto" onclick="deleteItem(editingId)"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
         <button class="btn btn-ghost" onclick="closeModal('item-modal')">Close</button>
       </div>
     </div>
 
-    <!-- Editable form — always shown for Add, toggled for Edit -->
-    <div id="item-edit-view">
+    <!-- Editable form — toggled on Edit click -->
+    <div id="item-edit-view" style="display:none">
       <div class="form-grid">
         <div class="field form-full">
           <label>Item Name *</label>
           <div style="display:flex;gap:8px;align-items:center">
             <input type="text" id="f-name" placeholder="e.g. Coffee Beans (1kg)" style="flex:1">
-            <button type="button" class="btn btn-ghost btn-sm" onclick="openBarcodeScanner()" title="Scan barcode to find product"><svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg> Scan</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="openBarcodeScanner()" title="Scan barcode"><svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg> Scan</button>
           </div>
         </div>
         <div class="field"><label>Category</label>
@@ -1867,8 +1865,8 @@
           <label>Product URL</label>
           <div style="display:flex;gap:8px;align-items:center">
             <input type="url" id="f-url" placeholder="https://amazon.co.uk/..." oninput="autoFillStore()" style="flex:1">
-            <button type="button" class="btn btn-ghost btn-sm" onclick="fetchProductImage()" id="fetch-img-btn" title="Search for product image by name"><svg class="icon" aria-hidden="true"><use href="#i-image"></use></svg> Find</button>
-            <button type="button" class="btn btn-ghost btn-sm" onclick="openCameraModal()" title="Take a photo of the product"><svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg></button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="fetchProductImage()" id="fetch-img-btn" title="Find image"><svg class="icon" aria-hidden="true"><use href="#i-image"></use></svg> Find</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="openCameraModal()" title="Take photo"><svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg></button>
           </div>
           <div class="img-preview-wrap" id="img-preview-wrap" style="display:none">
             <img id="img-preview" class="img-preview" src="" alt="Product image">
@@ -1879,25 +1877,12 @@
           </div>
         </div>
         <div class="field form-full">
-          <label>Store name <span style="font-weight:400;color:var(--muted)">(auto-detected from URL, or enter manually)</span></label>
-          <input type="text" id="f-store" placeholder="e.g. Costco, Waitrose, Local Pharmacy..." oninput="this.dataset.manual=this.value?'1':''">
+          <label>Store name <span style="font-weight:400;color:var(--muted)">(auto-detected from URL)</span></label>
+          <input type="text" id="f-store" placeholder="e.g. Costco, Waitrose…" oninput="this.dataset.manual=this.value?'1':''">
         </div>
         <div class="field form-full"><label>Notes</label><input type="text" id="f-notes" placeholder="Any notes about this item..."></div>
         <div class="field"><label>Expiry date <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="date" id="f-expiry"></div>
-        <div class="field"><label>Warn threshold override <span style="font-weight:400;color:var(--muted)">(% — leave blank to use global)</span></label><input type="number" id="f-threshold" min="5" max="80" step="5" placeholder="e.g. 30"></div>
-        <div class="field form-full" style="padding-top:4px">
-          <label><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Replacement reminder <span style="font-weight:400;color:var(--muted)">(e.g. toothbrush head every 3 months)</span></label>
-          <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
-            <span style="font-size:13px;color:var(--muted)">Replace every</span>
-            <input type="number" id="f-replace-interval" min="1" max="52" step="1" placeholder="—"
-              style="width:64px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:13px;font-family:var(--mono)">
-            <select id="f-replace-unit" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-size:13px;font-family:var(--sans)">
-              <option value="days">days</option>
-              <option value="weeks">weeks</option>
-              <option value="months" selected>months</option>
-            </select>
-          </div>
-        </div>
+        <div class="field"><label>Warn threshold override <span style="font-weight:400;color:var(--muted)">(% — leave blank for global)</span></label><input type="number" id="f-threshold" min="5" max="80" step="5" placeholder="e.g. 30"></div>
         <div class="field form-full">
           <label>Product Rating</label>
           <div style="display:flex;align-items:center;gap:14px;margin-top:4px">
@@ -1914,18 +1899,13 @@
         </div>
       </div>
 
-      <div class="modal-section">
-        <p class="modal-section-label"><svg class="icon" aria-hidden="true"><use href="#i-calendar"></use></svg> Most Recent Purchase</p>
-        <div class="form-grid">
-          <div class="field"><label>Date purchased</label><input type="date" id="f-last-date"></div>
-          <div class="field"><label>Qty purchased</label><input type="number" id="f-last-qty" min="0.1" step="0.1" value="1"></div>
-          <div class="field"><label>Price paid</label><input type="text" id="f-last-price" placeholder="e.g. £12.99"></div>
-          <div class="field"><label>Started using</label><input type="date" id="f-started-using"></div>
-          <div class="field form-full" style="padding-top:2px">
-            <p style="font-size:12px;color:var(--muted);line-height:1.5">If bought before opening, set the date you actually started using it.</p>
-          </div>
-        </div>
-      </div>
+      <!-- Hidden fields kept for saveItem() compatibility -->
+      <input type="hidden" id="f-last-date">
+      <input type="hidden" id="f-last-qty" value="1">
+      <input type="hidden" id="f-last-price">
+      <input type="hidden" id="f-started-using">
+      <input type="hidden" id="f-replace-interval">
+      <input type="hidden" id="f-replace-unit" value="months">
 
       <div class="modal-section" id="store-prices-section" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
@@ -1937,7 +1917,7 @@
 
       <div class="modal-section">
         <p style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px"><svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg> Find Best Price</p>
-        <input type="text" id="price-search-input" placeholder="Search product name across stores..." style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none;margin-bottom:8px" oninput="updatePriceLinks()">
+        <input type="text" id="price-search-input" placeholder="Search product name across stores…" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none;margin-bottom:8px" oninput="updatePriceLinks()">
         <div class="price-links" id="price-links"></div>
       </div>
 
@@ -1950,7 +1930,215 @@
   </div>
 </div>
 
-<!-- ═══ PROFILE PICKER MODAL ═══ -->
+
+<!-- ═══ ADD ITEM WIZARD ═══ -->
+<div class="modal-backdrop" id="add-item-wizard-modal">
+  <div class="modal" style="max-width:540px;max-height:90vh;overflow-y:auto">
+    <!-- Progress bar -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px">
+      <div style="flex:1;display:flex;gap:4px">
+        <div class="wizard-prog-step active" id="wprog-1"></div>
+        <div class="wizard-prog-step" id="wprog-2"></div>
+        <div class="wizard-prog-step" id="wprog-3"></div>
+        <div class="wizard-prog-step" id="wprog-4"></div>
+      </div>
+      <span id="wizard-step-label" style="font-size:11px;color:var(--muted);font-family:var(--mono);white-space:nowrap">Step 1 of 4</span>
+    </div>
+
+    <!-- Step 1: Item Information -->
+    <div id="wiz-step-1" class="wiz-step">
+      <h2><svg class="icon icon-md" aria-hidden="true"><use href="#i-package"></use></svg> Item Information</h2>
+      <p class="subtitle">Tell us what you track and how you buy it.</p>
+      <div class="form-grid">
+        <div class="field form-full">
+          <label>Item Name *</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="text" id="wiz-name" placeholder="e.g. Coffee Beans (1kg)" style="flex:1" oninput="document.getElementById('wiz-price-search').value=this.value;wizUpdatePriceLinks()">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="openBarcodeScanner()" title="Scan barcode"><svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg> Scan</button>
+          </div>
+        </div>
+        <div class="field"><label>Category</label>
+          <select id="wiz-category">
+            <option>Kitchen</option><option>Bathroom</option><option>Cleaning</option>
+            <option>Food &amp; Drink</option><option>Health</option><option>Garden</option>
+            <option>Office</option><option>Other</option>
+          </select>
+        </div>
+        <div class="field"><label>Purchase Cadence</label>
+          <select id="wiz-cadence">
+            <option value="monthly">Monthly supply</option>
+            <option value="bulk">Bulk (multi-month)</option>
+          </select>
+        </div>
+        <div class="field"><label>Units per purchase</label><input type="number" id="wiz-qty" min="0.1" step="0.1" value="1"></div>
+        <div class="field"><label>Months supply / purchase</label><input type="number" id="wiz-months" min="0.5" step="0.5" value="1"></div>
+        <div class="field form-full">
+          <label>Product URL <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="url" id="wiz-url" placeholder="https://amazon.co.uk/..." oninput="wizAutoFillStore()" style="flex:1">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="wizFetchProductImage()" title="Find product image"><svg class="icon" aria-hidden="true"><use href="#i-image"></use></svg></button>
+          </div>
+          <div class="img-preview-wrap" id="wiz-img-preview-wrap" style="display:none;margin-top:8px">
+            <img id="wiz-img-preview" class="img-preview" src="" alt="Product image">
+            <div>
+              <div id="wiz-img-status" style="font-size:12px;color:var(--ok);margin-bottom:4px"></div>
+              <button type="button" onclick="wizClearImage()" style="font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer;text-decoration:underline;padding:0">Remove</button>
+            </div>
+          </div>
+        </div>
+        <div class="field form-full">
+          <label>Store <span style="font-weight:400;color:var(--muted)">(auto-detected from URL)</span></label>
+          <input type="text" id="wiz-store" placeholder="e.g. Costco, Amazon, Tesco…" oninput="this.dataset.manual=this.value?'1':''">
+        </div>
+        <div class="field form-full"><label>Notes <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="wiz-notes" placeholder="Brand, variant, anything useful…"></div>
+        <div class="field form-full">
+          <label>Product Rating</label>
+          <div style="display:flex;align-items:center;gap:14px;margin-top:4px">
+            <div class="star-rating" id="wiz-star-rating">
+              <span class="star" data-val="1" onclick="wizSetRating(1)" onmouseover="wizPreviewStars(1)" onmouseout="wizResetStars()">★</span>
+              <span class="star" data-val="2" onclick="wizSetRating(2)" onmouseover="wizPreviewStars(2)" onmouseout="wizResetStars()">★</span>
+              <span class="star" data-val="3" onclick="wizSetRating(3)" onmouseover="wizPreviewStars(3)" onmouseout="wizResetStars()">★</span>
+              <span class="star" data-val="4" onclick="wizSetRating(4)" onmouseover="wizPreviewStars(4)" onmouseout="wizResetStars()">★</span>
+              <span class="star" data-val="5" onclick="wizSetRating(5)" onmouseover="wizPreviewStars(5)" onmouseout="wizResetStars()">★</span>
+            </div>
+            <span id="wiz-rating-label" style="font-size:12px;color:var(--muted)">Not rated</span>
+            <button type="button" onclick="wizSetRating(0)" style="font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer;text-decoration:underline;padding:0">Clear</button>
+          </div>
+        </div>
+        <div class="field form-full">
+          <label>Find Best Price</label>
+          <input type="text" id="wiz-price-search" placeholder="Search product name across stores…" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none;margin-bottom:8px" oninput="wizUpdatePriceLinks()">
+          <div class="price-links" id="wiz-price-links"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2: Most Recent Purchase -->
+    <div id="wiz-step-2" class="wiz-step" style="display:none">
+      <h2><svg class="icon icon-md" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Most Recent Purchase</h2>
+      <p class="subtitle">When did you last buy this, and when did you start using it? We'll use this to estimate how much stock you have left.</p>
+      <div class="form-grid">
+        <div class="field"><label>Date purchased</label><input type="date" id="wiz-last-date"></div>
+        <div class="field"><label>Quantity</label><input type="number" id="wiz-last-qty" min="0.1" step="0.1" value="1"></div>
+        <div class="field"><label>Price paid <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="wiz-last-price" placeholder="e.g. £12.99"></div>
+        <div class="field"><label>Started using <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="date" id="wiz-started-using"></div>
+        <div class="field form-full">
+          <p style="font-size:12px;color:var(--muted);line-height:1.5;margin:0">If you bought it before opening it, set the date you actually started using it — this keeps the stock estimate accurate.</p>
+        </div>
+      </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-top:4px">
+        <p style="font-size:12px;font-weight:700;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">No recent purchase?</p>
+        <p style="font-size:12px;color:var(--muted);line-height:1.5;margin:0">That's fine — skip this step. You can log a purchase later from the item card.</p>
+      </div>
+    </div>
+
+    <!-- Step 3: Replacement Reminders -->
+    <div id="wiz-step-3" class="wiz-step" style="display:none">
+      <h2><svg class="icon icon-md" aria-hidden="true"><use href="#i-bell"></use></svg> Replacement Reminders</h2>
+      <p class="subtitle">Set reminders for when this item needs replacing. You can add multiple — useful when tracking replacements for each person.</p>
+      <div id="wiz-reminders-list" style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px"></div>
+      <button class="btn btn-ghost btn-sm" onclick="wizAddReminder()" style="width:100%">
+        <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add a reminder
+      </button>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-top:16px">
+        <p style="font-size:12px;font-weight:700;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Examples</p>
+        <p style="font-size:12px;color:var(--muted);line-height:1.6;margin:0">
+          Toothbrush head: "Pete" every 3 months, "Sarah" every 3 months<br>
+          Water filter: "Main filter" every 2 months<br>
+          Smoke alarm: "Living room" every 12 months
+        </p>
+      </div>
+    </div>
+
+    <!-- Step 4: Timeline Preview -->
+    <div id="wiz-step-4" class="wiz-step" style="display:none">
+      <h2><svg class="icon icon-md" aria-hidden="true"><use href="#i-calendar"></use></svg> Your Stock Timeline</h2>
+      <p class="subtitle">Here's an estimate based on what you've told us. You can refine this at any time.</p>
+      <div id="wiz-timeline-content" style="margin-bottom:16px"></div>
+      <div style="background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.2);border-radius:10px;padding:14px">
+        <p style="font-size:12px;color:var(--muted);line-height:1.5;margin:0">
+          <svg class="icon" aria-hidden="true" style="vertical-align:middle"><use href="#i-info"></use></svg>
+          This is an <strong>estimate</strong> based on the purchase date and supply duration you provided. As you log more purchases STOCKROOM will build a more accurate picture.
+        </p>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="modal-footer" style="margin-top:20px;justify-content:space-between">
+      <button class="btn btn-ghost" id="wiz-back-btn" onclick="wizBack()" style="display:none">← Back</button>
+      <button class="btn btn-ghost" id="wiz-skip-btn" onclick="wizSkip()">Skip step</button>
+      <div style="display:flex;gap:8px;margin-left:auto">
+        <button class="btn btn-ghost" onclick="closeModal('add-item-wizard-modal')">Cancel</button>
+        <button class="btn btn-primary" id="wiz-next-btn" onclick="wizNext()">Next →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ REPLACEMENT REMINDERS MODAL ═══ -->
+<div class="modal-backdrop" id="repl-reminders-modal">
+  <div class="modal" style="max-width:480px">
+    <h2><svg class="icon icon-md" aria-hidden="true"><use href="#i-bell"></use></svg> Replacement Reminders</h2>
+    <p class="subtitle" id="repl-reminders-subtitle"></p>
+    <div id="repl-reminders-list" style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px"></div>
+    <button class="btn btn-ghost btn-sm" onclick="replAddReminder()" style="width:100%">
+      <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add a reminder
+    </button>
+    <div class="modal-footer" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeModal('repl-reminders-modal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ ORDER FLOW MODAL ═══ -->
+<div class="modal-backdrop" id="order-flow-modal">
+  <div class="modal" style="max-width:460px">
+    <h2 id="order-flow-title"><svg class="icon icon-md" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Log Purchase</h2>
+    <p class="subtitle" id="order-flow-subtitle"></p>
+
+    <!-- Stage: Log Purchase -->
+    <div id="order-stage-purchase">
+      <div class="form-grid">
+        <div class="field"><label>Date purchased</label><input type="date" id="of-date"></div>
+        <div class="field"><label>Quantity</label><input type="number" id="of-qty" min="0.1" step="0.1" value="1"></div>
+        <div class="field"><label>Price paid <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="of-price" placeholder="e.g. £12.99"></div>
+        <div class="field"><label>Store <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="of-store" placeholder="Amazon, Tesco…"></div>
+      </div>
+      <div id="of-purchase-history" style="margin-top:12px"></div>
+    </div>
+
+    <!-- Stage: Delivered -->
+    <div id="order-stage-delivered" style="display:none">
+      <div class="form-grid">
+        <div class="field"><label>Delivery date</label><input type="date" id="of-delivered-date"></div>
+        <div class="field"><label>Quantity delivered</label><input type="number" id="of-delivered-qty" min="0.1" step="0.1" value="1"></div>
+      </div>
+      <div style="margin-top:14px;padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border)">
+        <label style="font-size:13px;font-weight:700;display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="of-started-now" onchange="ofToggleStarted()" style="width:16px;height:16px">
+          I'm starting to use this straight away
+        </label>
+        <div id="of-started-row" style="display:none;margin-top:10px">
+          <div class="field"><label>Started using date</label><input type="date" id="of-started-date"></div>
+        </div>
+        <p id="of-started-hint" style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5">If not using it immediately, leave this unchecked — you'll be prompted to set the date when you open it.</p>
+      </div>
+    </div>
+
+    <!-- Stage: Start Using -->
+    <div id="order-stage-startusing" style="display:none">
+      <p style="font-size:14px;color:var(--text);margin-bottom:16px;line-height:1.6">When did you start using this item? This anchors the stock clock so your estimates stay accurate.</p>
+      <div class="field"><label>Started using date</label><input type="date" id="of-startusing-date"></div>
+    </div>
+
+    <div class="modal-footer" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeModal('order-flow-modal')">Cancel</button>
+      <button class="btn btn-primary" id="of-save-btn" onclick="ofSave()">Save</button>
+    </div>
+  </div>
+</div>
+
+
 <div class="modal-backdrop" id="profile-modal">
   <div class="modal" style="max-width:440px">
     <h2><svg class="icon icon-md" aria-hidden="true"><use href="#i-home"></use></svg> Households</h2>
@@ -2071,7 +2259,7 @@
 <!-- ═══ SHARE ITEM MODAL ═══ -->
 <div class="modal-backdrop" id="share-modal">
   <div class="modal" style="max-width:420px">
-    <h2>↗️ Share Item</h2>
+    <h2><svg class="icon icon-md" aria-hidden="true"><use href="#i-share-2"></use></svg> Share Item</h2>
     <p class="subtitle" id="share-modal-subtitle"></p>
     <!-- Canvas preview of the share card -->
     <canvas id="share-canvas" style="width:100%;border-radius:12px;display:block;margin-bottom:14px"></canvas>
@@ -2348,7 +2536,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
   </div>
   <div style="position:relative;margin-bottom:12px">
     <input type="text" id="notes-search" class="grocery-search" placeholder="Search notes…" oninput="filterNotes(this.value)" autocomplete="off" style="padding-left:36px">
-    <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:14px;pointer-events:none">🔍</span>
+    <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none;display:flex;align-items:center"><svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg></span>
   </div>
   <div id="notes-chips" style="display:flex;gap:8px;margin-bottom:16px;overflow-x:auto;padding-bottom:2px">
     <button class="note-chip active" onclick="setNotesFilter('all',this)">All</button>
@@ -2358,8 +2546,8 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
   </div>
   <div id="notes-grid"></div>
   <div id="notes-empty" style="display:none;text-align:center;padding:60px 20px;color:var(--muted)">
-    <div style="font-size:48px;margin-bottom:12px">📝</div>
-    <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--text)">No notes yet</div>
+    <div style="margin-bottom:16px;opacity:0.4"><svg style="width:48px;height:48px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/><path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/></svg></div>
+    <div style="font-size:16px;font-weight:700;margin-bottom:8px;color:var(--text);font-family:var(--sans)">No notes yet</div>
     <p style="font-size:13px;line-height:1.6;margin-bottom:20px">Jot down anything — shopping info, instructions, ideas. Mark a note as secure to require authentication before the content loads.</p>
     <button class="btn btn-primary" onclick="openNoteEditor(null)">+ Add your first note</button>
   </div>
@@ -2420,7 +2608,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
   </div>
   <!-- Lock screen -->
   <div id="note-lock-screen" style="display:none;flex:1;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:32px">
-    <div style="font-size:48px">🔒</div>
+    <div style="opacity:0.5"><svg style="width:48px;height:48px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
     <div id="note-lock-title" style="font-size:18px;font-weight:700;color:var(--text);text-align:center"></div>
     <p style="font-size:13px;color:var(--muted);text-align:center;max-width:280px;line-height:1.6">This note requires authentication to view.</p>
     <button class="btn btn-primary" onclick="unlockCurrentNote()" id="note-unlock-btn"><svg class="icon" aria-hidden="true"><use href="#i-unlock"></use></svg> Unlock note</button>
@@ -2535,7 +2723,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     <div id="mfa-setup-email-section">
       <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:12px">A 6-digit code will be sent to your email address each time you sign in.</p>
       <div style="background:var(--surface2);border-radius:10px;padding:12px;font-size:12px;color:var(--muted);margin-bottom:16px">
-        📧 Codes sent to: <strong style="color:var(--text)" id="mfa-setup-email-display"></strong>
+        <svg class="icon" aria-hidden="true"><use href="#i-mail"></use></svg> Codes sent to: <strong style="color:var(--text)" id="mfa-setup-email-display"></strong>
       </div>
       <!-- Code input — hidden until test code is sent -->
       <div id="mfa-setup-email-test" style="display:none;margin-bottom:12px">
