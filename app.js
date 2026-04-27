@@ -8189,10 +8189,13 @@ async function kvLoginWithPasskey() {
     const loginExt   = assertion.getClientExtensionResults?.() || {};
     const loginPrf   = loginExt?.prf?.results?.first || null;
 
-    // Finish auth on server
+    // Finish auth on server — send rememberMe so the server can mint a 30-day token
+    const _cb1 = document.getElementById('remember-me-checkbox');
+    const _cb2 = document.getElementById('remember-me-checkbox-auth');
+    const rememberMe = _rememberMeChecked || !!_cb1?.checked || !!_cb2?.checked || getCookieConsent() === 'granted';
     const finishRes = await fetchKV(`${WORKER_URL}/passkey/auth/finish`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, credentialId: credId, clientDataJSON, authenticatorData, signature }),
+      body: JSON.stringify({ emailHash, credentialId: credId, clientDataJSON, authenticatorData, signature, rememberMe }),
     });
     const finishData = await finishRes.json();
     if (!finishRes.ok) throw new Error(finishData.error || 'Sign-in failed');
@@ -8247,9 +8250,21 @@ async function kvLoginWithPasskey() {
       }
     }
 
-    await kvStorePasskeySession(email, emailHash, sessionToken, dataKey);
+    await kvStorePasskeySession(email, emailHash, sessionToken, dataKey, { rememberMe });
     if(errEl) errEl.style.display = 'none';
     persistLoginCookies(email, true);
+    if (rememberMe) {
+      // Register this device server-side so the user can remove it from
+      // Account & Security to break the 30-day session.
+      const _devId = getOrCreateDeviceId();
+      fetchKV(`${WORKER_URL}/device/register`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          emailHash, sessionToken, deviceId: _devId,
+          name: getDeviceName(), addedAt: new Date().toISOString(),
+        }),
+      }).catch(() => {});
+    }
     // Stamp permanent setup flags — these survive sign-out
     await setProtectSeenForDevice();
     await setCountrySetForDevice();
@@ -9331,7 +9346,7 @@ async function _getKeyViaPassphrase(emailHash, sessionToken, credentialId, errEl
   }
 }
 
-async function kvStorePasskeySession(email, emailHash, sessionToken, dataKey) {
+async function kvStorePasskeySession(email, emailHash, sessionToken, dataKey, opts = {}) {
   _kvEmail        = email;
   _kvEmailHash    = emailHash;
   _kvSessionToken = sessionToken;
@@ -9339,19 +9354,28 @@ async function kvStorePasskeySession(email, emailHash, sessionToken, dataKey) {
   _kvAuthMethod   = 'passkey';
   kvConnected     = true;
   _kvKey = dataKey || null;
+  // "Remember me" → 30 day cache; otherwise 24h.
+  const cb1 = document.getElementById('remember-me-checkbox');
+  const cb2 = document.getElementById('remember-me-checkbox-auth');
+  const rememberMe = opts.rememberMe === true
+    || _rememberMeChecked
+    || !!cb1?.checked
+    || !!cb2?.checked
+    || getCookieConsent() === 'granted';
 
   // Store session
   try {
-    const sessionJson = JSON.stringify({ email, emailHash, sessionToken, authMethod: 'passkey' });
+    const sessionJson = JSON.stringify({ email, emailHash, sessionToken, authMethod: 'passkey', rememberMe });
     localStorage.setItem('stockroom_kv_session', sessionJson);
     // Also persist to IDB so session survives localStorage/cookie clears
     dbPut('settings', 'stockroom_kv_session', sessionJson).catch(() => {});
-    // Cache key for 24h
+    // Cache key — 30 days when remember-me opted in, else 24h
     const exported = await crypto.subtle.exportKey('raw', _kvKey);
     const keyData  = btoa(String.fromCharCode(...new Uint8Array(exported)));
+    const ttlMs    = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
     await lsSetEncrypted('stockroom_kv_session_key', {
       keyData, emailHash,
-      expiry: Date.now() + 24 * 60 * 60 * 1000,
+      expiry: Date.now() + ttlMs,
     });
   } catch(e) {}
   const el = document.getElementById('kv-account-email');
@@ -10142,16 +10166,46 @@ async function loadTrustedDevices() {
 }
 
 async function removeTrustedDevice(deviceId) {
-  if (!confirm('Remove this device? It will need to sign in with a passphrase or passkey next time.')) return;
+  const isThisDevice = deviceId === getOrCreateDeviceId();
+  const msg = isThisDevice
+    ? 'Remove this device?\n\nYou will be signed out and need to sign in again with your passphrase or passkey.'
+    : 'Remove this device? It will need to sign in with a passphrase or passkey next time.';
+  if (!confirm(msg)) return;
   try {
     await fetchKV(`${WORKER_URL}/device/remove`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ emailHash: _kvEmailHash, ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }, deviceId }),
     });
-    // If removing this device, clear local trust data too
-    if (deviceId === getOrCreateDeviceId()) {
+    if (isThisDevice) {
+      // Removing the current device breaks the 30-day persistent session.
+      // Revoke the server-side passkey session, wipe all local key/session
+      // caches, then return to the login screen.
+      if (_kvSessionToken && _kvEmailHash) {
+        try {
+          await fetchKV(`${WORKER_URL}/passkey/session/revoke`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ emailHash: _kvEmailHash, sessionToken: _kvSessionToken }),
+          });
+        } catch(e) {}
+      }
       await removeWrappedKey(deviceId);
       localStorage.removeItem('stockroom_device_secret');
+      localStorage.removeItem('stockroom_kv_key_fallback');
+      localStorage.removeItem('stockroom_kv_session_key');
+      localStorage.removeItem('stockroom_kv_session');
+      localStorage.removeItem('stockroom_trust_ts');
+      try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
+      dbPut('settings', 'stockroom_kv_session', null).catch(() => {});
+      kvConnected     = false;
+      _kvEmail        = '';
+      _kvEmailHash    = '';
+      _kvVerifier     = '';
+      _kvSessionToken = null;
+      _kvAuthMethod   = null;
+      _kvKey          = null;
+      toast('Device removed — signed out');
+      setTimeout(() => location.reload(), 600);
+      return;
     }
     toast('Device removed ✓');
     loadTrustedDevices();
@@ -10874,6 +10928,15 @@ async function kvSignOut() {
   }
   // Clear the per-session verified flag — next login must verify MFA again
   try { sessionStorage.removeItem(_MFA_SESSION_KEY); } catch(e) {}
+  // Revoke server-side passkey session so a stale 30-day token cannot be reused
+  if (_kvSessionToken && _kvEmailHash) {
+    try {
+      await fetchKV(`${WORKER_URL}/passkey/session/revoke`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash: _kvEmailHash, sessionToken: _kvSessionToken }),
+      });
+    } catch(e) { console.warn('Could not revoke session token:', e.message); }
+  }
   // Dismiss any decrypt error banner — no need to show it after an intentional sign-out
   document.getElementById('kv-decrypt-error-banner')?.remove();
   // Clean up any grocery drag UI
@@ -10909,12 +10972,14 @@ async function kvSignOut() {
   await dbPut('reminders',  'reminders', []);
   await dbPut('departments','departments', []);
   // Reset in-memory state
-  kvConnected  = false;
-  _kvEmail     = '';
-  _kvEmailHash = '';
-  _kvVerifier  = '';
-  _kvKey       = null;
-  _shareState  = null;
+  kvConnected     = false;
+  _kvEmail        = '';
+  _kvEmailHash    = '';
+  _kvVerifier     = '';
+  _kvSessionToken = null;
+  _kvAuthMethod   = null;
+  _kvKey          = null;
+  _shareState     = null;
   // Show login screen
   document.body.classList.add('wizard-active'); document.getElementById('wizard').style.display = 'flex';
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));

@@ -364,10 +364,12 @@ Deno.serve(async (request) => {
   // ── Device: register trusted device ─────────────────
   if (url.pathname === '/device/register' && request.method === 'POST') {
     try {
-      const { emailHash, verifier, deviceId, name, addedAt } = await request.json();
-      if (!emailHash || !verifier || !deviceId) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', emailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { emailHash, verifier, sessionToken, deviceId, name, addedAt } = await request.json();
+      if (!emailHash || !deviceId) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const authed = sessionToken
+        ? !!(await kvGet(['passkey_session', emailHash, sessionToken])).value
+        : verifier && (await kvGet(['user', emailHash, 'verifier'])).value === verifier;
+      if (!authed) return json({ error: 'Unauthorised' }, corsHeaders, 401);
       await kvSet(['device', emailHash, deviceId], JSON.stringify({
         deviceId, name: name || 'Unknown device',
         addedAt: addedAt || new Date().toISOString(),
@@ -767,7 +769,7 @@ Deno.serve(async (request) => {
   // ── Passkey: finish authentication ────────────────────
   if (url.pathname === '/passkey/auth/finish' && request.method === 'POST') {
     try {
-      const { emailHash, credentialId, clientDataJSON, authenticatorData, signature } = await request.json();
+      const { emailHash, credentialId, clientDataJSON, authenticatorData, signature, rememberMe } = await request.json();
       if (!emailHash || !credentialId || !clientDataJSON || !authenticatorData) {
         return json({ error: 'Missing fields' }, corsHeaders, 400);
       }
@@ -875,14 +877,16 @@ Deno.serve(async (request) => {
       await kvSet(['passkey', emailHash, credentialId], JSON.stringify(credData));
       await kvDel(['passkey_challenge', emailHash, 'auth']);
 
-      // Issue 24h session token
+      // Issue session token — 30 days when remember-me opt-in, 24h otherwise
+      const remember     = rememberMe === true;
+      const sessionTtlMs = remember ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
       const sessionToken = Array.from(crypto.getRandomValues(new Uint8Array(32)))
         .map(b => b.toString(16).padStart(2,'0')).join('');
       await kvSet(['passkey_session', emailHash, sessionToken], JSON.stringify({
-        credentialId, issuedAt: new Date().toISOString()
-      }), { expireIn: 24 * 60 * 60 * 1000 });
+        credentialId, issuedAt: new Date().toISOString(), rememberMe: remember
+      }), { expireIn: sessionTtlMs });
 
-      return json({ ok: true, sessionToken }, corsHeaders);
+      return json({ ok: true, sessionToken, rememberMe: remember, expiresInMs: sessionTtlMs }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
@@ -894,8 +898,21 @@ Deno.serve(async (request) => {
       if (!emailHash || !sessionToken) return json({ error: 'Missing fields' }, corsHeaders, 400);
       const stored = await kvGet(['passkey_session', emailHash, sessionToken]);
       if (!stored.value) return json({ error: 'Session expired' }, corsHeaders, 401);
-      // Extend session by another 24h on activity
-      await kvSet(['passkey_session', emailHash, sessionToken], stored.value, { expireIn: 24 * 60 * 60 * 1000 });
+      // Extend on activity — 30 days for remember-me sessions, 24h otherwise
+      let remember = false;
+      try { remember = !!JSON.parse(stored.value).rememberMe; } catch(e) {}
+      const extendMs = remember ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+      await kvSet(['passkey_session', emailHash, sessionToken], stored.value, { expireIn: extendMs });
+      return json({ ok: true, rememberMe: remember }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Passkey: revoke session token (explicit sign-out) ─
+  if (url.pathname === '/passkey/session/revoke' && request.method === 'POST') {
+    try {
+      const { emailHash, sessionToken } = await request.json();
+      if (!emailHash || !sessionToken) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      await kvDel(['passkey_session', emailHash, sessionToken]);
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
