@@ -89,6 +89,7 @@
     <button id="btn-probe">Run backend probe</button>
     <button id="btn-local" class="secondary">Inspect local state</button>
   </div>
+  <button id="btn-trace" class="secondary" style="margin-top:8px">Test restore path (run this on stckrm.fly.dev)</button>
 
   <div id="checks" class="checks"></div>
   <div id="summary" class="summary" style="display:none"></div>
@@ -322,6 +323,120 @@ function inspectLocal() {
 
 $('btn-probe').addEventListener('click', runProbe);
 $('btn-local').addEventListener('click', inspectLocal);
+$('btn-trace').addEventListener('click', traceRestore);
+
+// Simulates the key parts of kvRestoreSession to find where it would bail.
+// Run this on the same origin as the app (stckrm.fly.dev) right after a
+// sign-in with Remember me, BEFORE refreshing.
+async function traceRestore() {
+  reset();
+
+  // 1. session JSON
+  const rawSess = localStorage.getItem('stockroom_kv_session');
+  if (!rawSess) {
+    row('fail', 'stockroom_kv_session', '(absent) — kvRestoreSession returns false here');
+    return;
+  }
+  let sess;
+  try { sess = JSON.parse(rawSess); }
+  catch(e) { row('fail', 'stockroom_kv_session', 'malformed JSON: ' + e.message); return; }
+  if (!sess.email || !sess.emailHash) {
+    row('fail', 'session validity', 'missing email or emailHash');
+    return;
+  }
+  row('ok', 'session JSON parses', `email=${sess.email}, hasVerifier=${!!sess.verifier}, authMethod=${sess.authMethod || '(passphrase)'}`);
+
+  // 2. trusted_session
+  const ts = localStorage.getItem('stockroom_trusted_session');
+  if (!ts) {
+    row('warn', 'no trusted_session flag', 'restore would not trigger silent path');
+  } else {
+    try {
+      const t = JSON.parse(ts);
+      if (t.emailHash !== sess.emailHash)
+        row('fail', 'trusted_session emailHash mismatch', `flag=${t.emailHash}, session=${sess.emailHash}`);
+      else
+        row('ok', 'trusted_session matches session', `${((t.expiresAt-Date.now())/86400000).toFixed(1)} days remaining`);
+    } catch(e) { row('fail', 'trusted_session malformed', e.message); }
+  }
+
+  // 3. Device secret + IDB wrapped key — the primary restore path
+  const secret = localStorage.getItem('stockroom_device_secret');
+  if (!secret) {
+    row('fail', 'stockroom_device_secret', '(absent) — IDB-wrapped-key path will fail');
+  } else {
+    row('ok', 'stockroom_device_secret', `${secret.length} chars`);
+  }
+
+  const deviceId = localStorage.getItem('stockroom_device_id');
+  if (!deviceId) {
+    row('fail', 'stockroom_device_id', '(absent) — IDB lookup needs this');
+  } else {
+    // Open the actual IDB store the app uses: 'stockroom-kv-device' / 'keys'
+    try {
+      const db = await new Promise((res, rej) => {
+        const r = indexedDB.open('stockroom-kv-device', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('keys');
+        r.onsuccess = () => res(r.result);
+        r.onerror   = () => rej(r.error);
+      });
+      const stored = await new Promise((res, rej) => {
+        const tx = db.transaction('keys', 'readonly');
+        const r  = tx.objectStore('keys').get(deviceId);
+        r.onsuccess = () => res(r.result);
+        r.onerror   = () => rej(r.error);
+      });
+      db.close();
+      if (!stored) {
+        row('fail', 'IDB wrapped key',
+          'NO RECORD for deviceId ' + deviceId.slice(0,12) + '… in stockroom-kv-device/keys. Trust was set up but the wrapped key never made it to IDB. Likely cause: saveWrappedKey() threw or the key wasn\'t extractable.');
+      } else {
+        const combined  = Uint8Array.from(atob(stored), c => c.charCodeAt(0));
+        row('ok', 'IDB wrapped key', `present (${combined.length} bytes encoded)`);
+
+        if (secret && combined.length > 12) {
+          try {
+            const iv        = combined.slice(0, 12);
+            const encrypted = combined.slice(12);
+            const enc = new TextEncoder();
+            const baseKey = await crypto.subtle.importKey('raw', enc.encode(secret),
+              'PBKDF2', false, ['deriveKey']);
+            const wrapKey = await crypto.subtle.deriveKey(
+              { name: 'PBKDF2', salt: enc.encode('stockroom-device-wrap-v1'), iterations: 50000, hash: 'SHA-256' },
+              baseKey, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+            const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wrapKey, encrypted);
+            await crypto.subtle.importKey('raw', plain, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+            row('ok', 'wrapped key unwraps successfully',
+              'AES-GCM key derived OK — kvRestoreSession PATH 1 (trusted-device-idb) should succeed');
+          } catch(e) {
+            row('fail', 'wrapped key unwrap failed',
+              e.message + ' — device_secret in localStorage does not match the one used to wrap the key. This means trust was set up with a DIFFERENT secret than the one currently stored. Sign out, sign back in, watch this trace immediately.');
+          }
+        }
+      }
+    } catch(e) {
+      row('fail', 'IDB open/read', e.message);
+    }
+  }
+
+  // 4. localStorage key fallback (PATH 1.5)
+  const fb = localStorage.getItem('stockroom_kv_key_fallback');
+  if (fb) {
+    try {
+      const f = JSON.parse(fb);
+      if (f.emailHash !== sess.emailHash)
+        row('fail', 'key_fallback emailHash mismatch', `fb=${f.emailHash}, session=${sess.emailHash}`);
+      else if (Date.now() >= f.expiresAt)
+        row('fail', 'key_fallback expired', new Date(f.expiresAt).toISOString());
+      else
+        row('ok', 'key_fallback valid', `${((f.expiresAt-Date.now())/86400000).toFixed(1)}d remaining`);
+    } catch(e) { row('fail', 'key_fallback malformed', e.message); }
+  }
+
+  // 5. Final verdict
+  row('ok', '─── Verdict ───',
+    'If everything above is OK but the app still shows the login screen on refresh, the issue is downstream of kvRestoreSession (init/_mfaGate routing). Check DevTools console for [DIAG] lines after refresh and report back.');
+}
 </script>
 </body>
 </html>
