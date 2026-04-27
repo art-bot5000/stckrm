@@ -1,21 +1,50 @@
 // ═══════════════════════════════════════════
-//  RUNTIME STYLE FIX — inline SVG icons inside buttons/clickables must
-//  not absorb clicks (Safari + iOS especially). Without this, taps land
-//  on the <svg> or <use> and the button/link onclick never fires.
+//  DIAGNOSTIC — surface silent errors from inline onclick handlers
+//  so we can see exactly what's failing on Log Purchase / pencil edit /
+//  Replacement Reminders. Remove this block once the bugs are fixed.
 // ═══════════════════════════════════════════
-(function injectIconClickFix() {
-  if (document.getElementById('_stockroom_icon_clickfix')) return;
-  const s = document.createElement('style');
-  s.id = '_stockroom_icon_clickfix';
-  s.textContent = `
-    button svg, button svg *,
-    a svg, a svg *,
-    .btn svg, .btn svg *,
-    .btn-icon svg, .btn-icon svg *,
-    [onclick] svg, [onclick] svg *,
-    [role="button"] svg, [role="button"] svg * { pointer-events: none; }
-  `;
-  (document.head || document.documentElement).appendChild(s);
+(function installClickDiagnostic() {
+  if (window._stockroomClickDiagInstalled) return;
+  window._stockroomClickDiagInstalled = true;
+
+  // Catch any uncaught synchronous error (e.g. `openLogModal is not defined`,
+  // `Cannot read properties of null (reading 'value')`). These normally vanish
+  // into the console with no UI feedback.
+  window.addEventListener('error', e => {
+    try {
+      const msg = e.message || (e.error && e.error.message) || 'Unknown error';
+      const where = e.filename ? ` @${(e.filename + '').split('/').pop()}:${e.lineno}` : '';
+      // Use a raw banner instead of toast() because toast's DOM element may
+      // not yet exist when this fires.
+      let bar = document.getElementById('_diag-bar');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = '_diag-bar';
+        bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#7a1d1d;color:#fff;padding:10px 14px;font:600 12px/1.4 monospace;z-index:99999;cursor:pointer';
+        bar.onclick = () => bar.remove();
+        document.body && document.body.appendChild(bar);
+      }
+      bar.textContent = `⚠ ${msg}${where} — tap to dismiss`;
+      console.error('[stockroom diag]', e);
+    } catch (_) {}
+  });
+
+  // Promise rejections (async onclicks like archiveItem)
+  window.addEventListener('unhandledrejection', e => {
+    try {
+      const msg = (e.reason && (e.reason.message || e.reason)) || 'Unknown promise rejection';
+      let bar = document.getElementById('_diag-bar');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = '_diag-bar';
+        bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#7a1d1d;color:#fff;padding:10px 14px;font:600 12px/1.4 monospace;z-index:99999;cursor:pointer';
+        bar.onclick = () => bar.remove();
+        document.body && document.body.appendChild(bar);
+      }
+      bar.textContent = `⚠ ${msg} — tap to dismiss`;
+      console.error('[stockroom diag rejection]', e);
+    } catch (_) {}
+  });
 })();
 
 // ═══════════════════════════════════════════
