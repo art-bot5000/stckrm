@@ -1,53 +1,4 @@
 // ═══════════════════════════════════════════
-//  DIAGNOSTIC — surface silent errors from inline onclick handlers
-//  so we can see exactly what's failing on Log Purchase / pencil edit /
-//  Replacement Reminders. Remove this block once the bugs are fixed.
-// ═══════════════════════════════════════════
-(function installClickDiagnostic() {
-  if (window._stockroomClickDiagInstalled) return;
-  window._stockroomClickDiagInstalled = true;
-
-  // Catch any uncaught synchronous error (e.g. `openLogModal is not defined`,
-  // `Cannot read properties of null (reading 'value')`). These normally vanish
-  // into the console with no UI feedback.
-  window.addEventListener('error', e => {
-    try {
-      const msg = e.message || (e.error && e.error.message) || 'Unknown error';
-      const where = e.filename ? ` @${(e.filename + '').split('/').pop()}:${e.lineno}` : '';
-      // Use a raw banner instead of toast() because toast's DOM element may
-      // not yet exist when this fires.
-      let bar = document.getElementById('_diag-bar');
-      if (!bar) {
-        bar = document.createElement('div');
-        bar.id = '_diag-bar';
-        bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#7a1d1d;color:#fff;padding:10px 14px;font:600 12px/1.4 monospace;z-index:99999;cursor:pointer';
-        bar.onclick = () => bar.remove();
-        document.body && document.body.appendChild(bar);
-      }
-      bar.textContent = `⚠ ${msg}${where} — tap to dismiss`;
-      console.error('[stockroom diag]', e);
-    } catch (_) {}
-  });
-
-  // Promise rejections (async onclicks like archiveItem)
-  window.addEventListener('unhandledrejection', e => {
-    try {
-      const msg = (e.reason && (e.reason.message || e.reason)) || 'Unknown promise rejection';
-      let bar = document.getElementById('_diag-bar');
-      if (!bar) {
-        bar = document.createElement('div');
-        bar.id = '_diag-bar';
-        bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#7a1d1d;color:#fff;padding:10px 14px;font:600 12px/1.4 monospace;z-index:99999;cursor:pointer';
-        bar.onclick = () => bar.remove();
-        document.body && document.body.appendChild(bar);
-      }
-      bar.textContent = `⚠ ${msg} — tap to dismiss`;
-      console.error('[stockroom diag rejection]', e);
-    } catch (_) {}
-  });
-})();
-
-// ═══════════════════════════════════════════
 //  DATA
 // ═══════════════════════════════════════════
 const CATEGORIES = ['Kitchen','Bathroom','Cleaning','Food & Drink','Health','Garden','Office','Other'];
@@ -16754,9 +16705,16 @@ function _showNoteBody(n) {
   if (editorBody) editorBody.style.display = 'flex';
 
   const unlocked = _noteUnlocked.get(n.id);
-  const body = unlocked ? unlocked.body : (n.body || '');
+  let body = unlocked ? unlocked.body : (n.body || '');
 
   if (n.tickBoxesVisible) {
+    // Defensive: if the body contains HTML markup (e.g. saved by an older
+    // build that stored innerHTML even in tick mode), convert it to plain
+    // text now so the renderer doesn't show "<div>Test</div>" literally.
+    if (/<(?:div|p|br|li)\b/i.test(body)) {
+      body = _richTextToPlainLines(body);
+      n.body = body; // normalise so the next save persists in plain form
+    }
     _renderTickBody(n, body);
   } else {
     const ticksBody = document.getElementById('note-ticks-body');
@@ -16981,30 +16939,64 @@ async function toggleNoteTicks() {
   const ticksEl = document.getElementById('note-ticks-body');
 
   if (n.tickBoxesVisible) {
-    // Switching to tick view — extract plain-text lines from current HTML body
+    // Switching to tick view — convert the rich-text body into a list of
+    // plain-text lines. Chrome's contenteditable produces HTML like
+    //   "Test<div>Test</div><div>Test</div>"
+    // where the first line has no wrapper and subsequent lines are each in a
+    // <div>. Earlier versions just appended a newline after each <div>, which
+    // collapsed the first two lines into "TestTest" (no separator before the
+    // first <div>). We instead walk the DOM and emit a newline at the START
+    // of every block element — that handles all common shapes from typed
+    // input (top-level <div>, <p>, <li>, plus <br>).
     const rawHTML = bodyEl ? bodyEl.innerHTML : (n.body || '');
-    // Convert <br> / block tags to newlines then strip remaining tags
-    const tmp = document.createElement('div'); tmp.innerHTML = rawHTML;
-    tmp.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
-    tmp.querySelectorAll('p,div,li').forEach(el => { el.insertAdjacentText('afterend', '\n'); });
-    const plainText = (tmp.textContent || '').trim();
+    const plainText = _richTextToPlainLines(rawHTML);
     if (bodyEl) bodyEl.style.display = 'none';
+    // Persist the plain-text form into n.body so a later save (or a reopen
+    // before an edit happens) doesn't leave HTML markup sitting in the body
+    // for _renderTickBody to render literally.
+    n.body = plainText;
     _renderTickBody(n, plainText);
   } else {
     // Switching back to rich text — collect tick row texts back into the
     // contenteditable body. Strip the zero-width-space placeholders we used
-    // to keep empty rows clickable.
+    // to keep empty rows clickable. Persist as HTML (with <br>s) so the next
+    // save keeps the body in rich-text form.
     if (ticksEl) {
       const labels = ticksEl.querySelectorAll('.tick-row-text');
       const lines  = [...labels].map(s => (s.textContent || '').replace(/\u200B/g, '')).join('\n');
-      if (bodyEl) { bodyEl.style.display = ''; bodyEl.innerHTML = lines.replace(/\n/g, '<br>'); }
+      const html   = lines.replace(/\n/g, '<br>');
+      if (bodyEl) { bodyEl.style.display = ''; bodyEl.innerHTML = html; }
       ticksEl.style.display = 'none';
+      n.body = html;
     } else {
       if (bodyEl) bodyEl.style.display = '';
     }
   }
   n.updatedAt = new Date().toISOString();
   await saveNotes();
+}
+
+// Convert contenteditable innerHTML into a "\n"-separated plain text string
+// while preserving line breaks introduced by block elements (<div>, <p>, <li>)
+// and explicit <br>s. Trims trailing empties; collapses runs of empties to a
+// single newline so we don't render dozens of empty tick rows.
+function _richTextToPlainLines(html) {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html || '';
+  // Replace every <br> with a literal newline
+  tmp.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+  // For every block element, prepend a newline to its text content. Doing
+  // this BEFORE rather than after means the first <div> in
+  //   "Test<div>Second</div>"
+  // produces "Test\nSecond" instead of "TestSecond\n".
+  tmp.querySelectorAll('p,div,li').forEach(el => {
+    el.insertAdjacentText('beforebegin', '\n');
+  });
+  // Read out the text. Decode entities (&nbsp; etc.) by going via textContent
+  let text = (tmp.textContent || '');
+  // Replace non-breaking space with regular space and collapse runs of \n
+  text = text.replace(/\u00A0/g, ' ').replace(/\n{2,}/g, '\n').replace(/^\n+/, '');
+  return text.replace(/\s+$/, '');
 }
 
 function _renderTickBody(n, body) {
