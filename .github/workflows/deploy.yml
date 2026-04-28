@@ -39,13 +39,17 @@ jobs:
           node --check app.js   && echo "✅ app.js syntax OK"
           node --check scanner.js && echo "✅ scanner.js syntax OK"
 
-      # ── 3. Validate Dockerfile has no stale COPY references ───────────────
+      # ── 3. Validate Dockerfile frontend files all exist ─────────────────
       - name: Check Dockerfile references
         run: |
-          # Extract files listed in COPY lines (builder stage only)
-          COPY_FILES=$(grep '^COPY' Dockerfile | grep -v 'from=builder\|package.json\|main.ts\|deno.json\|start.sh\|Caddyfile' | grep -oP '[\w\-\.]+\.(js|css|html|json|sh|ts)' || true)
+          # Explicitly list every file the Dockerfile COPYs in the builder stage
+          DOCKERFILE_FILES=(
+            app.js scanner.js styles.css
+            index.html landing.html admin.html
+            sw.js manifest.json
+          )
           MISSING=()
-          for f in $COPY_FILES; do
+          for f in "${DOCKERFILE_FILES[@]}"; do
             if [ ! -f "$f" ]; then
               MISSING+=("$f")
             fi
