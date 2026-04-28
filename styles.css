@@ -695,13 +695,19 @@
     #view-settings .settings-content { flex:1; min-width:0; }
 
     /* ── Pending + Quick Added side by side on desktop ── */
-    #stock-top-sections { flex-direction:row !important; }
+    #stock-top-sections { display:flex; flex-direction:row; gap:16px; }
     #pending-deliveries-section, #incomplete-section { flex:1; min-width:0; }
 
     /* ── Inline search replaces standalone search bar on desktop ── */
     #stock-search-mobile { display:none; }
     #stock-search-inline { display:flex !important; }
     #stock-toolbar-row { flex-wrap:nowrap; }
+    /* Cap the search bar and the filters/sort row to roughly one item card
+       width (~360px), so they don't sprawl across the full content area on
+       desktop. Both wrappers share the same max-width so the search visually
+       lines up with the filters/sort row beneath it. */
+    #stock-search-wrap,
+    #stock-toolbar-wrap { max-width: 360px; }
     #view-report { max-width: 100%; }
     #view-grocery { max-width: 720px; }
     #view-reminders { max-width: 720px; }
@@ -973,6 +979,27 @@
 #stock-toolbar-row select {
   box-sizing: border-box;
 }
+
+/* ── Stock top action bars (Pending Deliveries, Quick Added) ──────────
+   Each bar shows itself only when it has content (handled by the render
+   functions). On mobile they stack vertically and take full width; on
+   desktop the @media (min-width:900px) rule above flips them to side-by-side
+   with equal flex:1 widths.
+
+   The wrapper hides itself when both children are empty so we don't reserve
+   blank vertical space at the top of the stockroom view. The "both empty"
+   state is signalled by the data-empty="1" attribute on the wrapper, which
+   the render functions toggle on every update. */
+#stock-top-sections {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 0;
+}
+@media (max-width: 899px) {
+  /* Mobile: stack the two bars on top of each other so each gets full width */
+  #stock-top-sections { flex-direction: column; }
+}
+#stock-top-sections[data-empty="1"] { display: none; }
 
 /* ── Remove stale Account & Sync selector (section removed from HTML) ── */
 #settings-account-body, [onclick="toggleSettings('settings-account-body',this)"] { display:none !important; }

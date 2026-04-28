@@ -443,10 +443,8 @@ async function loadData() {
   }
   // Hide Amazon banner immediately if previously dismissed (avoid flash)
   if (settings._amazonBannerDismissed) {
-    const desktop = document.getElementById('amazon-banner-desktop');
-    const mobile  = document.getElementById('amazon-banner-mobile');
-    if (desktop) desktop.style.display = 'none';
-    if (mobile)  mobile.style.display  = 'none';
+    const banner = document.getElementById('amazon-banner-mobile');
+    if (banner) banner.style.display = 'none';
   }
 }
 
@@ -1438,6 +1436,7 @@ function renderPendingDeliveries() {
         </div>`;
     }
   }
+  _updateStockTopSectionsVisibility();
 }
 
 function renderIncompleteSection() {
@@ -1451,6 +1450,7 @@ function renderIncompleteSection() {
   if (!incomplete.length) {
     if (section) section.style.display = 'none';
     if (banner)  banner.style.display  = 'none';
+    _updateStockTopSectionsVisibility();
     return;
   }
 
@@ -1479,6 +1479,7 @@ function renderIncompleteSection() {
         </div>
       </div>`).join('');
   }
+  _updateStockTopSectionsVisibility();
 }
 
 function scrollToIncomplete() {
@@ -1490,6 +1491,25 @@ function scrollToIncomplete() {
     const section = document.getElementById('incomplete-section');
     if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, 100);
+}
+
+// Keep the wrapper's data-empty attribute in sync with the visibility of its
+// two children. CSS hides the wrapper entirely when data-empty="1" so the
+// stockroom view doesn't reserve any vertical space when there's nothing to
+// show. Called by renderPendingDeliveries and renderIncompleteSection after
+// they toggle their own visibility.
+function _updateStockTopSectionsVisibility() {
+  const wrap = document.getElementById('stock-top-sections');
+  if (!wrap) return;
+  const pending    = document.getElementById('pending-deliveries-section');
+  const incomplete = document.getElementById('incomplete-section');
+  const pendingShown    = pending    && pending.style.display    !== 'none';
+  const incompleteShown = incomplete && incomplete.style.display !== 'none';
+  if (!pendingShown && !incompleteShown) {
+    wrap.setAttribute('data-empty', '1');
+  } else {
+    wrap.removeAttribute('data-empty');
+  }
 }
 
 // When an item is saved via the full edit form, clear quickAdded flag
@@ -2136,6 +2156,10 @@ async function deleteReminder(id) {
     const confirmed = confirm(`Delete "${name}"?\n\nThis cannot be undone.`);
     if (!confirmed) return;
     reminders = reminders.filter(r => r.id !== id);
+    // Write a tombstone so the reminder doesn't get resurrected when other
+    // devices push their (still-stale) copy of the reminders list. The
+    // tombstone is included in our own next push and respected on every pull.
+    await addTombstone(id);
     await saveReminders();
     _syncQueue.enqueue();
     renderReminders();
@@ -2999,19 +3023,18 @@ async function installPWA() {
 }
 
 // ── Amazon Order History Import banner ───────────────────────────────────────
+// One banner only, sits under the "Your Stockroom" title on every screen size.
+// Dismissed flag stored on the synced settings object so it persists across
+// devices.
 function _showAmazonBanners() {
-  if (settings._amazonBannerDismissed) return;
-  const desktop = document.getElementById('amazon-banner-desktop');
-  const mobile  = document.getElementById('amazon-banner-mobile');
-  if (desktop) desktop.style.display = 'block';
-  if (mobile)  mobile.style.display  = 'block';
+  const banner = document.getElementById('amazon-banner-mobile');
+  if (!banner) return;
+  banner.style.display = settings._amazonBannerDismissed ? 'none' : 'block';
 }
 
 function dismissAmazonBanner() {
-  const desktop = document.getElementById('amazon-banner-desktop');
-  const mobile  = document.getElementById('amazon-banner-mobile');
-  if (desktop) desktop.style.display = 'none';
-  if (mobile)  mobile.style.display  = 'none';
+  const banner = document.getElementById('amazon-banner-mobile');
+  if (banner) banner.style.display = 'none';
   settings._amazonBannerDismissed = true;
   _saveSettings().then(() => kvPush().catch(() => {}));
   setTimeout(() => toast('Amazon order import is available anytime in Account & Security → Data'), 400);
@@ -7316,12 +7339,18 @@ async function syncNow() {
         }
       }
       if (remote.reminders && Array.isArray(remote.reminders)) {
+        // Respect tombstones: a reminder we've explicitly deleted locally must
+        // not come back through the merge, even if a stale device pushed its
+        // copy after our deletion. The tombstone set is itself synced via
+        // remote.deletedIds further down.
+        const tombstones = await loadDeletedIds();
+        const remoteR = remote.reminders.filter(r => !tombstones.has(r.id));
         const localREmpty = reminders.length === 0;
         if (remoteWins || localREmpty) {
-          reminders = remote.reminders; await saveReminders();
+          reminders = remoteR; await saveReminders();
         } else {
           const localRIds = new Set(reminders.map(r => r.id));
-          const newR = remote.reminders.filter(r => !localRIds.has(r.id));
+          const newR = remoteR.filter(r => !localRIds.has(r.id));
           if (newR.length) { reminders = [...reminders, ...newR]; await saveReminders(); }
         }
       }
@@ -11257,12 +11286,18 @@ async function kvSyncNow(silent = false) {
         }
       }
       if (remote.reminders && Array.isArray(remote.reminders)) {
+        // Respect tombstones: a reminder we've explicitly deleted locally must
+        // not come back through the merge, even if a stale device pushed its
+        // copy after our deletion. The tombstone set is itself synced via
+        // remote.deletedIds further down.
+        const tombstones = await loadDeletedIds();
+        const remoteR = remote.reminders.filter(r => !tombstones.has(r.id));
         const localREmpty = reminders.length === 0;
         if (remoteWins || localREmpty) {
-          reminders = remote.reminders; await saveReminders();
+          reminders = remoteR; await saveReminders();
         } else {
           const localRIds = new Set(reminders.map(r => r.id));
-          const newR = remote.reminders.filter(r => !localRIds.has(r.id));
+          const newR = remoteR.filter(r => !localRIds.has(r.id));
           if (newR.length) { reminders = [...reminders, ...newR]; await saveReminders(); }
         }
       }
@@ -16975,18 +17010,37 @@ function _renderTickBody(n, body) {
   if (!container) return;
   container.style.display = 'block';
   const paragraphs = (body || '').split('\n').filter(p => p.trim());
+  // Even with no lines, render the empty state PLUS an "add line" affordance so
+  // the user can start adding tick rows directly. Previously this view was
+  // strictly read-only when tickboxes were on.
   if (!paragraphs.length) {
-    container.innerHTML = `<p style="color:var(--muted);font-size:13px">Add some lines — each line becomes a tick box.</p>`;
+    container.innerHTML = `
+      <p style="color:var(--muted);font-size:13px;margin:8px 0 4px">Add lines to start ticking off — each line is its own tick box.</p>
+      ${_tickAddRowButtonHTML()}`;
     return;
   }
-  container.innerHTML = paragraphs.map((p, i) => {
-    const checked = !!(n.tickBoxes || {})[i];
-    return `<label style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
-      <input type="checkbox" ${checked ? 'checked' : ''} onchange="onNoteTick(${i},this.checked)"
-        style="margin-top:3px;width:18px;height:18px;min-width:18px;accent-color:var(--accent)">
-      <span style="${checked ? 'text-decoration:line-through;color:var(--muted)' : 'color:var(--text)'};font-size:14px;line-height:1.5">${esc(p)}</span>
-    </label>`;
-  }).join('');
+  container.innerHTML = paragraphs.map((p, i) => _tickRowHTML(n, p, i)).join('') + _tickAddRowButtonHTML();
+}
+
+// HTML for one tick row. Span is editable so the user can correct typos /
+// extend lines without leaving tick view. ENTER inside the span splits the line
+// into a new tick row; BACKSPACE on an empty span removes the row.
+function _tickRowHTML(n, text, i) {
+  const checked = !!(n.tickBoxes || {})[i];
+  const struck  = checked ? 'text-decoration:line-through;color:var(--muted);opacity:0.65' : 'color:var(--text)';
+  return `<label data-tick-row="${i}" style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+    <input type="checkbox" ${checked ? 'checked' : ''} onchange="onNoteTick(${i},this.checked)"
+      style="margin-top:3px;width:18px;height:18px;min-width:18px;accent-color:var(--accent);cursor:pointer">
+    <span class="tick-row-text" data-idx="${i}" contenteditable="true" spellcheck="true"
+      onkeydown="onTickRowKeydown(event,${i})" oninput="onTickRowInput(${i},this)"
+      style="flex:1;${struck};font-size:14px;line-height:1.5;outline:none;min-width:0;word-break:break-word">${esc(text)}</span>
+  </label>`;
+}
+
+function _tickAddRowButtonHTML() {
+  return `<button type="button" onclick="addTickRow()"
+    style="display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px 4px;background:transparent;border:none;color:var(--muted);font-size:13px;cursor:pointer">
+    <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add a line</button>`;
 }
 
 async function onNoteTick(idx, checked) {
@@ -16994,8 +17048,171 @@ async function onNoteTick(idx, checked) {
   if (!n.tickBoxes) n.tickBoxes = {};
   n.tickBoxes[idx] = checked;
   n.updatedAt = new Date().toISOString();
+  // Apply visual change directly without re-rendering — this preserves the
+  // user's caret position if they were editing another row, and keeps the
+  // checkbox-toggle smooth.
+  const row = document.querySelector(`#note-ticks-body label[data-tick-row="${idx}"] .tick-row-text`);
+  if (row) {
+    if (checked) {
+      row.style.textDecoration = 'line-through';
+      row.style.color          = 'var(--muted)';
+      row.style.opacity        = '0.65';
+    } else {
+      row.style.textDecoration = '';
+      row.style.color          = 'var(--text)';
+      row.style.opacity        = '';
+    }
+  }
   await saveNotes();
   if (n.locked) _resetNoteActivity(n.id);
+}
+
+// When the user types inside a tick row's editable span, capture the new text
+// and persist it back to the note's body. Body remains the source of truth so
+// switching back to rich-text view reflects edits.
+function onTickRowInput(idx, span) {
+  _captureTickBodyToNote();
+  _noteBodyDirty = true;
+  // Debounced auto-save (same mechanism the rich text body uses)
+  if (typeof onNoteBodyInput === 'function') {
+    clearTimeout(_noteAutoSaveTimer);
+    _noteAutoSaveTimer = setTimeout(() => _autoSaveNote(), 800);
+  }
+}
+
+// Pull the current tick rows back into the note's body field as plain text,
+// one line per row. tickBoxes indices stay in sync with row positions.
+function _captureTickBodyToNote() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  const rows = document.querySelectorAll('#note-ticks-body .tick-row-text');
+  const lines = [...rows].map(s => (s.textContent || '').replace(/\n/g, ' '));
+  n.body = lines.join('\n');
+  n.updatedAt = new Date().toISOString();
+}
+
+// Enter on a row → split into a new row below (default contenteditable handles
+// the visible split poorly, so we capture + re-render). Backspace at start of
+// an empty row → remove it and focus the previous row.
+function onTickRowKeydown(ev, idx) {
+  if (ev.key === 'Enter' && !ev.shiftKey) {
+    ev.preventDefault();
+    const span = ev.currentTarget;
+    const fullText = span.textContent || '';
+    // Split at caret position
+    const sel = window.getSelection();
+    let caret = fullText.length;
+    if (sel && sel.rangeCount) {
+      const range = sel.getRangeAt(0);
+      if (span.contains(range.startContainer)) {
+        caret = _caretOffsetWithin(span, range.endContainer, range.endOffset);
+      }
+    }
+    const before = fullText.slice(0, caret);
+    const after  = fullText.slice(caret);
+    span.textContent = before;
+    _insertTickRowAfter(idx, after);
+    return;
+  }
+  if (ev.key === 'Backspace') {
+    const span = ev.currentTarget;
+    if ((span.textContent || '') === '') {
+      ev.preventDefault();
+      _removeTickRow(idx);
+    }
+  }
+}
+
+function _caretOffsetWithin(parent, node, offset) {
+  let total = 0;
+  const walker = document.createTreeWalker(parent, NodeFilter.SHOW_TEXT, null);
+  let cur;
+  while ((cur = walker.nextNode())) {
+    if (cur === node) return total + offset;
+    total += cur.nodeValue.length;
+  }
+  return total;
+}
+
+function _insertTickRowAfter(idx, text) {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  // Read all current rows, insert a new one at idx+1, then re-render
+  const rows = [...document.querySelectorAll('#note-ticks-body .tick-row-text')]
+    .map(s => s.textContent || '');
+  rows.splice(idx + 1, 0, text || '');
+  // Shift tickBoxes indices >= idx+1 by 1
+  const newTicks = {};
+  Object.keys(n.tickBoxes || {}).forEach(k => {
+    const ki = parseInt(k, 10);
+    if (ki <= idx) newTicks[ki] = n.tickBoxes[k];
+    else           newTicks[ki + 1] = n.tickBoxes[k];
+  });
+  n.tickBoxes = newTicks;
+  n.body = rows.join('\n');
+  n.updatedAt = new Date().toISOString();
+  _renderTickBody(n, n.body);
+  _noteBodyDirty = true;
+  // Focus the new row
+  setTimeout(() => {
+    const newSpan = document.querySelector(`#note-ticks-body label[data-tick-row="${idx + 1}"] .tick-row-text`);
+    if (newSpan) {
+      newSpan.focus();
+      // Caret at start
+      const range = document.createRange();
+      range.setStart(newSpan, 0); range.collapse(true);
+      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    }
+  }, 0);
+  saveNotes();
+}
+
+function _removeTickRow(idx) {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  const rows = [...document.querySelectorAll('#note-ticks-body .tick-row-text')]
+    .map(s => s.textContent || '');
+  if (rows.length <= 1) return;
+  rows.splice(idx, 1);
+  // Rebuild tickBoxes shifting indices > idx down by 1
+  const newTicks = {};
+  Object.keys(n.tickBoxes || {}).forEach(k => {
+    const ki = parseInt(k, 10);
+    if (ki < idx)      newTicks[ki]     = n.tickBoxes[k];
+    else if (ki > idx) newTicks[ki - 1] = n.tickBoxes[k];
+    // ki === idx is dropped
+  });
+  n.tickBoxes = newTicks;
+  n.body = rows.join('\n');
+  n.updatedAt = new Date().toISOString();
+  _renderTickBody(n, n.body);
+  _noteBodyDirty = true;
+  setTimeout(() => {
+    const targetIdx = Math.max(0, idx - 1);
+    const focusSpan = document.querySelector(`#note-ticks-body label[data-tick-row="${targetIdx}"] .tick-row-text`);
+    if (focusSpan) {
+      focusSpan.focus();
+      const range = document.createRange();
+      range.selectNodeContents(focusSpan); range.collapse(false);
+      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    }
+  }, 0);
+  saveNotes();
+}
+
+// "+ Add a line" button below the last row
+function addTickRow() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  const rows = [...document.querySelectorAll('#note-ticks-body .tick-row-text')]
+    .map(s => s.textContent || '');
+  rows.push('');
+  n.body = rows.join('\n');
+  n.updatedAt = new Date().toISOString();
+  _renderTickBody(n, n.body);
+  _noteBodyDirty = true;
+  setTimeout(() => {
+    const newIdx = rows.length - 1;
+    const newSpan = document.querySelector(`#note-ticks-body label[data-tick-row="${newIdx}"] .tick-row-text`);
+    if (newSpan) newSpan.focus();
+  }, 0);
+  saveNotes();
 }
 
 function toggleNoteColourPicker() {
@@ -17991,14 +18208,22 @@ function _updateMfaSettingsUI() {
 
 function _maybeShowMfaPrompt() {
   if (_mfaEnabled()) return;
+  // Stored both in settings (synced across devices) AND localStorage (legacy).
+  // Either being set means the user has already dismissed it.
+  if (settings._mfaPromptDismissed) return;
   if (localStorage.getItem(_MFA_DISMISSED_KEY)) return;
   if (!kvConnected) return;
   openModal('mfa-prompt-modal');
 }
 
 function dismissMfaPrompt() {
-  localStorage.setItem(_MFA_DISMISSED_KEY, 'dismissed');
+  // Persist to synced settings so the prompt doesn't reappear on other devices
+  settings._mfaPromptDismissed = true;
+  _saveSettings().then(() => { if (kvConnected) kvPush().catch(() => {}); });
+  // Also keep the localStorage flag for resilience if the sync fails
+  try { localStorage.setItem(_MFA_DISMISSED_KEY, 'dismissed'); } catch(e) {}
   closeModal('mfa-prompt-modal');
+  setTimeout(() => toast('You can enable two-factor authentication anytime in Account & Security'), 400);
 }
 function renderAccountSecurity() {
   // Your Details
