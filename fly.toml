@@ -15,6 +15,7 @@ primary_region = 'lhr'
   source = 'stockroom_data'
   destination = '/data'
   initial_size = '1gb'
+  snapshot_retention = 5
 
 [http_service]
   internal_port = 8080

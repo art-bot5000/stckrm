@@ -11,6 +11,7 @@ const env = {
   WORKER_URL:    Deno.env.get('WORKER_URL')    || '',
   RESEND_API_KEY:Deno.env.get('RESEND_API_KEY')|| '',
   FROM_EMAIL:    Deno.env.get('FROM_EMAIL')    || 'onboarding@resend.dev',
+  ADMIN_EMAIL:   Deno.env.get('ADMIN_EMAIL')   || 'pete@artbot5000.com',
 };
 
 // ── Crypto migration config ───────────────────────────────
@@ -1123,7 +1124,7 @@ Deno.serve(async (request) => {
   // Step 2: POST /admin/otp/verify { adminSecret, otp } → { adminToken } (15min TTL)
   // All other /admin/* routes require { adminSecret, adminToken }
 
-  const ADMIN_EMAIL = 'pete@artbot5000.com';
+  const ADMIN_EMAIL = env.ADMIN_EMAIL;
 
   async function verifyAdminRequest(body: Record<string,string>): Promise<boolean> {
     const { adminSecret, adminToken } = body;
@@ -2582,6 +2583,84 @@ Deno.cron('stockroom-deactivation-check', '0 10 * * *', async () => {
       }
 
     } catch(e) { console.error('Deactivation cron error for', emailHash, e); }
+  }
+});
+
+// ── Daily database backup cron (runs at 03:00 UTC) ──────────
+// Reads the raw sqlite db file from the volume, base64-encodes it,
+// and emails it to the admin address via Resend. Data is already
+// AES-GCM encrypted at rest so it is safe to store externally.
+Deno.cron('stockroom-daily-backup', '0 3 * * *', async () => {
+  if (!env.RESEND_API_KEY) { console.log('Backup: no Resend key, skipping'); return; }
+
+  const dbPath = Deno.env.get('DENO_KV_PATH');
+  if (!dbPath) { console.log('Backup: no DENO_KV_PATH, skipping (not on Fly)'); return; }
+
+  try {
+    console.log('Backup: starting daily db backup');
+
+    // Read the db file and WAL (write-ahead log) — WAL contains recent uncommitted writes
+    const dbBytes  = await Deno.readFile(dbPath).catch(() => null);
+    const walBytes = await Deno.readFile(dbPath + '-wal').catch(() => null);
+
+    if (!dbBytes) { console.error('Backup: db file not found at', dbPath); return; }
+
+    // Base64-encode for email attachment
+    const dbB64  = btoa(String.fromCharCode(...dbBytes));
+    const walB64 = walBytes ? btoa(String.fromCharCode(...walBytes)) : null;
+
+    const now      = new Date();
+    const dateStr  = now.toISOString().slice(0, 10);
+    const sizeKB   = Math.round(dbBytes.length / 1024);
+    const walKB    = walBytes ? Math.round(walBytes.length / 1024) : 0;
+
+    // Count KV entries as a basic integrity check
+    let entryCount = 0;
+    const iter = kv.list({ prefix: [] });
+    for await (const _ of iter) entryCount++;
+
+    const attachments: { filename: string; content: string }[] = [
+      { filename: `stockroom_${dateStr}.db`,     content: dbB64 },
+    ];
+    if (walB64) {
+      attachments.push({ filename: `stockroom_${dateStr}.db-wal`, content: walB64 });
+    }
+
+    const html = `
+      <div style="font-family:monospace;background:#0f1117;color:#f0f2f7;padding:24px;border-radius:8px">
+        <h2 style="color:#e8a838;margin-bottom:16px">STOCKROOM — Daily Backup</h2>
+        <table style="border-collapse:collapse;width:100%">
+          <tr><td style="color:#7a8097;padding:4px 12px 4px 0">Date</td><td style="color:#f0f2f7">${dateStr}</td></tr>
+          <tr><td style="color:#7a8097;padding:4px 12px 4px 0">DB size</td><td style="color:#f0f2f7">${sizeKB} KB</td></tr>
+          <tr><td style="color:#7a8097;padding:4px 12px 4px 0">WAL size</td><td style="color:#f0f2f7">${walKB} KB</td></tr>
+          <tr><td style="color:#7a8097;padding:4px 12px 4px 0">KV entries</td><td style="color:#4cbb8a">${entryCount}</td></tr>
+        </table>
+        <p style="color:#7a8097;font-size:12px;margin-top:16px">
+          Data is AES-GCM encrypted — this backup is safe but only useful alongside user passphrases.<br>
+          To restore: <code>fly volume snapshot restore</code> or replace /data/stockroom.db on the volume.
+        </p>
+      </div>`;
+
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from:        env.FROM_EMAIL,
+        to:          [env.ADMIN_EMAIL],
+        subject:     `STOCKROOM backup ${dateStr} — ${entryCount} entries, ${sizeKB}KB`,
+        html,
+        attachments,
+      }),
+    });
+
+    if (res.ok) {
+      console.log(`Backup: sent successfully — ${entryCount} entries, ${sizeKB}KB db, ${walKB}KB wal`);
+    } else {
+      const err = await res.text();
+      console.error('Backup: Resend error', res.status, err);
+    }
+  } catch(e) {
+    console.error('Backup: unexpected error', e);
   }
 });
 
