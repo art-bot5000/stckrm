@@ -955,10 +955,10 @@
     }
 
     if (isSignedIn) {
-      document.body.classList.add('signed-in');
-      // CSS handles showing/hiding both header and hero signed-in CTAs.
-      // Hero "Log in" still works for users who want to switch accounts —
-      // it just routes through the normal flow.
+      // Signed-in users never need the marketing page — go straight to the app.
+      // The app's own init will restore the session and land on the Stockroom view.
+      window.location.replace('/app');
+      return;
     } else if (rememberedEmail) {
       // Show the welcome-back card with the remembered email
       var emailEl = document.getElementById('wb-email-text');
