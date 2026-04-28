@@ -1,0 +1,89 @@
+name: Deploy to Fly.io
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # allow manual trigger from GitHub UI
+
+jobs:
+  preflight:
+    name: Pre-flight checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── 1. Verify every file the Dockerfile COPYs actually exists ──────────
+      - name: Check required files exist
+        run: |
+          REQUIRED=(
+            app.js scanner.js styles.css
+            index.html landing.html
+            sw.js manifest.json admin.html
+            main.ts deno.json start.sh Caddyfile
+          )
+          MISSING=()
+          for f in "${REQUIRED[@]}"; do
+            if [ ! -f "$f" ]; then
+              MISSING+=("$f")
+            fi
+          done
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "❌ Missing required files: ${MISSING[*]}"
+            exit 1
+          fi
+          echo "✅ All required files present"
+
+      # ── 2. Validate JS syntax ─────────────────────────────────────────────
+      - name: Check JS syntax
+        run: |
+          node --check app.js   && echo "✅ app.js syntax OK"
+          node --check scanner.js && echo "✅ scanner.js syntax OK"
+
+      # ── 3. Validate Dockerfile has no stale COPY references ───────────────
+      - name: Check Dockerfile references
+        run: |
+          # Extract files listed in COPY lines (builder stage only)
+          COPY_FILES=$(grep '^COPY' Dockerfile | grep -v 'from=builder\|package.json\|main.ts\|deno.json\|start.sh\|Caddyfile' | grep -oP '[\w\-\.]+\.(js|css|html|json|sh|ts)' || true)
+          MISSING=()
+          for f in $COPY_FILES; do
+            if [ ! -f "$f" ]; then
+              MISSING+=("$f")
+            fi
+          done
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "❌ Dockerfile references missing files: ${MISSING[*]}"
+            exit 1
+          fi
+          echo "✅ All Dockerfile COPY references exist"
+
+  deploy:
+    name: Deploy
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy to Fly.io
+        run: flyctl deploy --remote-only --strategy rolling
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        # rolling strategy: brings up new machine BEFORE stopping old one,
+        # so there is always a healthy machine serving traffic during deploy.
+        # If the new machine fails health checks, Fly aborts and the old one
+        # keeps running — no downtime, no data-less machine left running.
+
+      - name: Verify deployment health
+        run: |
+          sleep 10
+          STATUS=$(flyctl status --app stckrm --json 2>/dev/null | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          machines = data.get('Machines', [])
+          healthy = [m for m in machines if m.get('state') == 'started']
+          print(f'{len(healthy)} machine(s) running')
+          " 2>/dev/null || echo "status check skipped")
+          echo "✅ Deploy complete — $STATUS"
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

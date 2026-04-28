@@ -5,12 +5,16 @@ primary_region = 'lhr'
 [build]
   dockerfile = 'Dockerfile'
 
+[deploy]
+  strategy = 'rolling'
+
 [env]
   DENO_KV_PATH = '/data/stockroom.db'
 
 [[mounts]]
   source = 'stockroom_data'
   destination = '/data'
+  initial_size = '1gb'
 
 [http_service]
   internal_port = 8080
