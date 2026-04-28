@@ -16991,10 +16991,12 @@ async function toggleNoteTicks() {
     if (bodyEl) bodyEl.style.display = 'none';
     _renderTickBody(n, plainText);
   } else {
-    // Switching back to rich text — collect tick labels back to text
+    // Switching back to rich text — collect tick row texts back into the
+    // contenteditable body. Strip the zero-width-space placeholders we used
+    // to keep empty rows clickable.
     if (ticksEl) {
-      const labels = ticksEl.querySelectorAll('label span');
-      const lines  = [...labels].map(s => s.textContent).join('\n');
+      const labels = ticksEl.querySelectorAll('.tick-row-text');
+      const lines  = [...labels].map(s => (s.textContent || '').replace(/\u200B/g, '')).join('\n');
       if (bodyEl) { bodyEl.style.display = ''; bodyEl.innerHTML = lines.replace(/\n/g, '<br>'); }
       ticksEl.style.display = 'none';
     } else {
@@ -17009,32 +17011,40 @@ function _renderTickBody(n, body) {
   const container = document.getElementById('note-ticks-body');
   if (!container) return;
   container.style.display = 'block';
-  const paragraphs = (body || '').split('\n').filter(p => p.trim());
-  // Even with no lines, render the empty state PLUS an "add line" affordance so
-  // the user can start adding tick rows directly. Previously this view was
-  // strictly read-only when tickboxes were on.
-  if (!paragraphs.length) {
+  // Split on newlines but keep empty entries — a user-created empty row is a
+  // real intentional state (e.g. just-pressed-Enter, or the new row from
+  // "+ Add a line"). The toggle-into-tick-mode path normalises trailing
+  // newlines before calling us.
+  const lines = (body || '').split('\n');
+  // True empty: no body at all, or single blank line. Show only the add button.
+  if (lines.length === 0 || (lines.length === 1 && lines[0] === '')) {
     container.innerHTML = `
       <p style="color:var(--muted);font-size:13px;margin:8px 0 4px">Add lines to start ticking off — each line is its own tick box.</p>
       ${_tickAddRowButtonHTML()}`;
     return;
   }
-  container.innerHTML = paragraphs.map((p, i) => _tickRowHTML(n, p, i)).join('') + _tickAddRowButtonHTML();
+  container.innerHTML = lines.map((p, i) => _tickRowHTML(n, p, i)).join('') + _tickAddRowButtonHTML();
 }
 
-// HTML for one tick row. Span is editable so the user can correct typos /
-// extend lines without leaving tick view. ENTER inside the span splits the line
-// into a new tick row; BACKSPACE on an empty span removes the row.
+// HTML for one tick row. Uses a <div> wrapper, NOT a <label>, because <label>
+// associates clicks on its descendants (including the contenteditable span)
+// with the input checkbox — that would toggle the box every time the user
+// clicked into the text to edit it. Clicking the text now just places the
+// caret; only clicks on the checkbox itself toggle the tick state.
 function _tickRowHTML(n, text, i) {
   const checked = !!(n.tickBoxes || {})[i];
   const struck  = checked ? 'text-decoration:line-through;color:var(--muted);opacity:0.65' : 'color:var(--text)';
-  return `<label data-tick-row="${i}" style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
-    <input type="checkbox" ${checked ? 'checked' : ''} onchange="onNoteTick(${i},this.checked)"
-      style="margin-top:3px;width:18px;height:18px;min-width:18px;accent-color:var(--accent);cursor:pointer">
+  // Empty rows would collapse visually with no text content, so we render
+  // a zero-width-space when empty just so the editable area has clickable
+  // height. The caret sits before/after it cleanly.
+  const display = text === '' ? '\u200B' : esc(text);
+  return `<div data-tick-row="${i}" style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+    <input type="checkbox" ${checked ? 'checked' : ''} onclick="event.stopPropagation();onNoteTick(${i},this.checked)"
+      style="margin-top:3px;width:18px;height:18px;min-width:18px;accent-color:var(--accent);cursor:pointer;flex-shrink:0">
     <span class="tick-row-text" data-idx="${i}" contenteditable="true" spellcheck="true"
       onkeydown="onTickRowKeydown(event,${i})" oninput="onTickRowInput(${i},this)"
-      style="flex:1;${struck};font-size:14px;line-height:1.5;outline:none;min-width:0;word-break:break-word">${esc(text)}</span>
-  </label>`;
+      style="flex:1;${struck};font-size:14px;line-height:1.5;outline:none;min-width:0;word-break:break-word;cursor:text">${display}</span>
+  </div>`;
 }
 
 function _tickAddRowButtonHTML() {
@@ -17051,7 +17061,7 @@ async function onNoteTick(idx, checked) {
   // Apply visual change directly without re-rendering — this preserves the
   // user's caret position if they were editing another row, and keeps the
   // checkbox-toggle smooth.
-  const row = document.querySelector(`#note-ticks-body label[data-tick-row="${idx}"] .tick-row-text`);
+  const row = document.querySelector(`#note-ticks-body [data-tick-row="${idx}"] .tick-row-text`);
   if (row) {
     if (checked) {
       row.style.textDecoration = 'line-through';
@@ -17082,10 +17092,16 @@ function onTickRowInput(idx, span) {
 
 // Pull the current tick rows back into the note's body field as plain text,
 // one line per row. tickBoxes indices stay in sync with row positions.
+// Zero-width-space placeholders (used so empty rows have clickable height) are
+// stripped so they don't accumulate in the saved body.
 function _captureTickBodyToNote() {
   const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
   const rows = document.querySelectorAll('#note-ticks-body .tick-row-text');
-  const lines = [...rows].map(s => (s.textContent || '').replace(/\n/g, ' '));
+  const lines = [...rows].map(s =>
+    (s.textContent || '')
+      .replace(/\u200B/g, '')   // strip our placeholders
+      .replace(/\n/g, ' ')      // collapse any stray newlines into spaces
+  );
   n.body = lines.join('\n');
   n.updatedAt = new Date().toISOString();
 }
@@ -17153,7 +17169,7 @@ function _insertTickRowAfter(idx, text) {
   _noteBodyDirty = true;
   // Focus the new row
   setTimeout(() => {
-    const newSpan = document.querySelector(`#note-ticks-body label[data-tick-row="${idx + 1}"] .tick-row-text`);
+    const newSpan = document.querySelector(`#note-ticks-body [data-tick-row="${idx + 1}"] .tick-row-text`);
     if (newSpan) {
       newSpan.focus();
       // Caret at start
@@ -17186,7 +17202,7 @@ function _removeTickRow(idx) {
   _noteBodyDirty = true;
   setTimeout(() => {
     const targetIdx = Math.max(0, idx - 1);
-    const focusSpan = document.querySelector(`#note-ticks-body label[data-tick-row="${targetIdx}"] .tick-row-text`);
+    const focusSpan = document.querySelector(`#note-ticks-body [data-tick-row="${targetIdx}"] .tick-row-text`);
     if (focusSpan) {
       focusSpan.focus();
       const range = document.createRange();
@@ -17209,7 +17225,7 @@ function addTickRow() {
   _noteBodyDirty = true;
   setTimeout(() => {
     const newIdx = rows.length - 1;
-    const newSpan = document.querySelector(`#note-ticks-body label[data-tick-row="${newIdx}"] .tick-row-text`);
+    const newSpan = document.querySelector(`#note-ticks-body [data-tick-row="${newIdx}"] .tick-row-text`);
     if (newSpan) newSpan.focus();
   }, 0);
   saveNotes();
@@ -17292,7 +17308,7 @@ async function deleteCurrentNote() {
 // ── Body editing ──────────────────────────
 function _getCurrentEditorBody(n) {
   if (n.tickBoxesVisible) {
-    const labels = document.querySelectorAll('#note-ticks-body label span');
+    const labels = document.querySelectorAll('#note-ticks-body .tick-row-text');
     return [...labels].map(s => s.textContent).join('\n');
   }
   return document.getElementById('note-body-input')?.innerHTML || '';
