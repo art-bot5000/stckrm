@@ -8,10 +8,6 @@ primary_region = 'lhr'
 [deploy]
   strategy = 'rolling'
 
-[machines]
-  min_machines_running = 1
-  max_machines_running = 1
-
 [env]
   DENO_KV_PATH = '/data/stockroom.db'
 
@@ -26,7 +22,7 @@ primary_region = 'lhr'
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
   processes = ['app']
 
   [http_service.concurrency]
@@ -37,4 +33,3 @@ primary_region = 'lhr'
 [[vm]]
   memory = '256mb'
   cpus = 1
-  memory_mb = 256
