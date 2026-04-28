@@ -918,6 +918,16 @@
     <div id="sns-banner" style="display:none"></div>
     <div id="items-grid"></div>
 
+    <!-- Recently Deleted — Stockroom items -->
+    <div id="recently-deleted-section" style="display:none;margin-top:32px;padding-top:24px;border-top:1px solid var(--border)">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
+        <span><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Recently Deleted</span>
+        <button class="btn btn-ghost btn-sm" style="color:var(--danger);font-size:11px" onclick="purgeAllDeletedItems()">Empty</button>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">Items are permanently deleted after 30 days.</p>
+      <div id="recently-deleted-items"></div>
+    </div>
+
     <!-- Shopping panel — shown when switchToShopping() is called, inside view-stock -->
     <div id="shopping-panel" style="display:none">
       <div style="display:flex;justify-content:flex-end;align-items:center;margin-bottom:12px;gap:8px">
@@ -971,6 +981,16 @@
     <div id="reminders-upcoming-section" style="display:none;margin-bottom:24px">
       <div style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:10px"><span class="status-dot status-none" style="display:inline-block;margin-right:6px"></span>Upcoming</div>
       <div id="reminders-upcoming-list"></div>
+    </div>
+
+    <!-- Recently Deleted — Reminders -->
+    <div id="recently-deleted-reminders-section" style="display:none;margin-top:32px;padding-top:24px;border-top:1px solid var(--border)">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
+        <span><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Recently Deleted</span>
+        <button class="btn btn-ghost btn-sm" style="color:var(--danger);font-size:11px" onclick="purgeAllDeletedReminders()">Empty</button>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:12px">Reminders are permanently deleted after 30 days.</p>
+      <div id="recently-deleted-reminders"></div>
     </div>
 
     <!-- Empty state -->
@@ -1194,8 +1214,6 @@
 
 
   <div class="view" id="view-settings">
-    <!-- Mobile-only page heading — mirrors Account & Security style -->
-    <h2 class="settings-mobile-heading"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-settings"></use></svg> Settings</h2>
     <!-- Fly.io-style: left nav sidebar + right scrollable content -->
     <div class="settings-layout">
       <div class="settings-content" id="settings-content">
@@ -1436,7 +1454,7 @@
     </div>
 
     <!-- Data -->
-    <div class="settings-card full-width" id="settings-data-card">
+    <div class="settings-card full-width">
       <h3><svg class="icon icon-md" aria-hidden="true"><use href="#i-package"></use></svg> Data</h3>
       <div class="setting-row">
         <div class="setting-info"><h4><svg class="icon icon-md" aria-hidden="true"><use href="#i-package"></use></svg> Import Amazon order history</h4><p>Auto-populate items from your Amazon purchase history CSV</p></div>
@@ -1503,6 +1521,16 @@
   <div class="grocery-interval-info" id="grocery-interval-info"></div>
   </div><!-- /grocery-sticky-header -->
   <div id="grocery-list-body"></div>
+
+  <!-- Recently Deleted — Groceries -->
+  <div id="recently-deleted-groceries-section" style="display:none;margin-top:32px;padding-top:24px;border-top:1px solid var(--border)">
+    <div style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
+      <span><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Recently Deleted</span>
+      <button class="btn btn-ghost btn-sm" style="color:var(--danger);font-size:11px" onclick="purgeAllDeletedGroceryItems()">Empty</button>
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:12px">Grocery items are permanently deleted after 30 days.</p>
+    <div id="recently-deleted-groceries"></div>
+  </div>
   <div style="display:flex;align-items:center;gap:8px;padding:0 2px;margin-top:4px;flex-wrap:wrap">
     <button id="grocery-hide-checked-btn" onclick="toggleGroceryHideChecked()"
       style="display:none;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--border);border-radius:20px;background:transparent;color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;transition:all 0.15s;font-family:var(--sans)">
