@@ -3775,78 +3775,103 @@ function renderGrid() {
 }
 
 function cardHTML(item, threshold) {
-  const s = calcStock(item);
-  const pct = s?.pct ?? null;
+  const s        = calcStock(item);
+  const pct      = s?.pct ?? null;
   const daysLeft = s?.daysLeft ?? null;
-  const status = getStatus(pct, threshold);
-  const color = STATUS_COLOR[status];
-  const lastLog = item.logs?.at(-1);
+  const status   = getStatus(pct, threshold);
+  const color    = STATUS_COLOR[status];
+  const lastLog  = item.logs?.at(-1);
 
-  const fillColor = status === 'critical' ? '#e85050' : status === 'warn' ? '#e8a838' : '#4cbb8a';
-  const cadenceBadge = item.cadence === 'bulk'
-    ? `<span class="cadence-badge badge-bulk"><svg class="icon" aria-hidden="true"><use href="#i-package"></use></svg> Bulk</span>`
-    : `<span class="cadence-badge badge-monthly"><svg class="icon" aria-hidden="true"><use href="#i-calendar-days"></use></svg> Monthly</span>`;
-  const statusBadge = `<span class="status-badge" style="background:${color}22;color:${color}">${STATUS_LABEL[status]}</span>`;
+  // Status badge — compact, no dot
+  const statusLabel = { critical:'Critical', warn:'Low', ok:'Good', nodata:'No data' }[status] ?? 'No data';
+
+  // Ordered / expiry badges
+  const orderedBadge = item.ordered
+    ? `<span class="card-badge card-badge-ordered"><svg class="icon" aria-hidden="true"><use href="#i-truck"></use></svg> Ordered</span>` : '';
+  const expiryBadge = (() => {
+    const ex = getExpiryStatus(item);
+    return ex ? `<span class="card-badge" style="background:rgba(232,168,56,0.1);border-color:rgba(232,168,56,0.3);color:${ex.color}" title="${fmtDate(item.expiry)}">⏰ ${ex.label}</span>` : '';
+  })();
+
+  // +1 button label adapts to order stage (same logic as old _cardOrderButton)
+  const hasPending          = (item.logs||[]).some(l => l.pendingDelivery);
+  const hasDeliveredNoStart = (item.logs||[]).some(l => !l.pendingDelivery && l.deliveredDate) && !item.startedUsing;
+  const plusLabel = hasPending ? 'Delivered' : hasDeliveredNoStart ? 'Start using' : '+1';
+  const plusStage = hasPending ? 'delivered' : hasDeliveredNoStart ? 'startusing' : 'purchase';
+  const plusStyle = hasPending
+    ? 'card-plus-btn card-plus-delivered'
+    : hasDeliveredNoStart
+      ? 'card-plus-btn card-plus-startusing'
+      : 'card-plus-btn';
+
+  // Desktop-only: last bought + best store price
+  const bestPrice = (() => {
+    const prices = (item.storePrices||[]).filter(sp => sp.store && sp.price);
+    if (!prices.length) return '';
+    const vals = prices.map(sp => ({ ...sp, val: parsePriceValue(sp.price) })).filter(p => p.val !== null);
+    if (!vals.length) return '';
+    const best = vals.reduce((a,b) => a.val < b.val ? a : b);
+    return best.price;
+  })();
+
+  // Star rating row (desktop only via CSS)
+  const starsHTML = `
+    <div class="card-stars-row" onclick="event.stopPropagation()">
+      ${[1,2,3,4,5].map(n => `<span class="card-star${(item.rating||0)>=n?' on':''}" onclick="rateItem('${item.id}',${n})" data-id="${item.id}" data-val="${n}"
+        onmouseover="previewCardStars('${item.id}',${n})" onmouseout="resetCardStars('${item.id}')">★</span>`).join('')}
+    </div>`;
 
   return `
   <div class="item-card" style="border-left:3px solid ${color}" data-id="${item.id}"
+    onclick="openEditModal('${item.id}')"
     ontouchstart="swipeStart(event,'${item.id}')" ontouchmove="swipeMove(event,'${item.id}')" ontouchend="swipeEnd(event,'${item.id}')">
     <div class="swipe-hint" id="swipe-hint-${item.id}"><svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg></div>
-    ${item.imageUrl ? `<img class="card-image" src="${esc(item.imageUrl)}" alt="${esc(item.name)}" onerror="this.style.display='none'">` : ''}
-    <div class="card-top">
-      <div class="card-category">${item.category||'Other'}</div>
-      <div class="card-btns">
-        <button class="btn-icon" title="Update stock count" onclick="openStockCountModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-hash"></use></svg></button>
-        <button class="btn-icon" title="Usage analytics" onclick="openAnalyticsModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-bar-chart-2"></use></svg></button>
-        <button class="btn-icon" title="Price history" onclick="openPriceHistoryModal('${item.id}')" ${getPriceHistory(item).length < 2 ? 'style="opacity:0.35;cursor:default"' : ''}><svg class="icon" aria-hidden="true"><use href="#i-banknote"></use></svg></button>
-        <button class="btn-icon" title="Share item" onclick="shareItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg></button>
-        <button class="btn-icon" title="Edit" onclick="openEditModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
-        ${item._archived
-          ? `<button class="btn-icon" title="Restore from archive" onclick="restoreItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-refresh-ccw"></use></svg></button>
-             <button class="btn-icon" title="Delete permanently" onclick="deleteItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>`
-          : `<button class="btn-icon" title="Archive item" onclick="archiveItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg></button>`}
+
+    <div class="card-inner">
+      <!-- Top row: category + status badge + desktop stars -->
+      <div class="card-top">
+        <div class="card-category">${esc(item.category||'Other')}</div>
+        <div class="card-top-right">
+          ${starsHTML}
+          <span class="card-status-badge" style="background:${color}22;color:${color}">${statusLabel}</span>
+        </div>
       </div>
-    </div>
-    <div class="card-name" style="margin-bottom:12px">${esc(item.name)}</div>
-    <div class="stock-bar-wrap">
-      <div class="stock-bar-label">
-        <span>STOCK</span>
-        <span style="color:${color}">${pct !== null ? pct+'%' : '?'}</span>
+
+      <!-- Name -->
+      <div class="card-name">${esc(item.name)}</div>
+
+      <!-- Hero: days remaining -->
+      ${daysLeft !== null
+        ? `<div class="card-hero">
+             <span class="card-days-num" style="color:${color}">${daysLeft}</span>
+             <span class="card-days-unit">days left</span>
+           </div>`
+        : `<div class="card-nodata">No stock data yet</div>`}
+
+      <!-- Stock bar — slim, no label -->
+      ${pct !== null
+        ? `<div class="card-bar-wrap">
+             <div class="card-bar">
+               <div class="card-bar-fill" style="width:${pct}%;background:${color}"></div>
+             </div>
+           </div>`
+        : ''}
+
+      <!-- Desktop-only meta: last bought + price -->
+      ${(lastLog?.date || bestPrice) ? `
+        <div class="card-meta-desktop">
+          ${lastLog?.date ? `<span class="card-meta-chip">Last: <strong>${timeAgo(lastLog.date)}</strong></span>` : ''}
+          ${bestPrice     ? `<span class="card-meta-chip">Best: <strong>${esc(bestPrice)}</strong></span>` : ''}
+        </div>` : ''}
+
+      <!-- Footer: qty + badges + +1 -->
+      <div class="card-footer">
+        ${item.stockCount != null
+          ? `<span class="card-qty"><strong>${item.stockCount}</strong> left</span>`
+          : pct !== null ? `<span class="card-qty"><strong>${pct}%</strong></span>` : ''}
+        ${orderedBadge}${expiryBadge}
+        <button class="${plusStyle}" onclick="event.stopPropagation();openOrderFlow('${item.id}','${plusStage}')">${plusLabel}</button>
       </div>
-      <div class="stock-bar">
-        <div class="stock-bar-fill" style="width:${pct??0}%;background:${fillColor}"></div>
-      </div>
-    </div>
-    <div class="card-meta">
-      <div class="meta-item"><strong>${daysLeft !== null ? daysLeft+'d left' : 'No data'}</strong>Est. remaining</div>
-      <div class="meta-item" title="${fmtDate(lastLog?.date)}"><strong>${timeAgo(lastLog?.date)}</strong>Last bought</div>
-      <div class="meta-item"><strong>${item.startedUsing ? fmtDate(item.startedUsing) : '—'}</strong>Started using</div>
-      <div class="meta-item"><strong>${item.months||1}mo</strong>Per purchase</div>
-    </div>
-    ${item.stockCount != null ? `<div style="font-size:11px;color:var(--accent2);font-family:var(--mono);margin-bottom:8p"><svg class="icon" aria-hidden="true"><use href="#i-hash"></use></svg> Stock count: ${item.stockCount} units remaining · counted ${fmtDate(item.stockCountDate)}</div>` : ''}
-    ${priceTrendHTML(item)}
-    ${frequencyInsightHTML(item)}
-    <div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      ${cadenceBadge}${statusBadge}
-      ${item.ordered ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(91,141,238,0.15);border:1px solid rgba(91,141,238,0.3);color:#5b8dee;font-family:var(--mono"><svg class="icon" aria-hidden="true"><use href="#i-truck"></use></svg> Ordered</span>` : ''}
-      ${(() => { const ex = getExpiryStatus(item); return ex ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(232,168,56,0.1);border:1px solid rgba(232,168,56,0.3);color:${ex.color};font-family:var(--mono)" title="${fmtDate(item.expiry)}">⏰ ${ex.label}</span>` : ''; })()}
-    </div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-      <div class="card-star-rating" title="Click to rate">
-        ${[1,2,3,4,5].map(n => `<span class="card-star${(item.rating||0)>=n?' on':''}" onclick="rateItem('${item.id}',${n})" data-id="${item.id}" data-val="${n}"
-          onmouseover="previewCardStars('${item.id}',${n})" onmouseout="resetCardStars('${item.id}')">★</span>`).join('')}
-      </div>
-      <span class="card-rating-label" id="rl-${item.id}" style="font-size:11px;color:${!item.rating?'var(--muted)':item.rating<=2?'var(--danger)':item.rating>=4?'var(--ok)':'var(--muted)'}">
-        ${item.rating ? RATING_LABELS[item.rating] : 'Not rated'}
-      </span>
-    </div>
-    ${cardTagsHTML(item)}
-    ${item.notes ? `<div class="card-notes"><svg class="icon" aria-hidden="true"><use href="#i-message-square"></use></svg> ${esc(item.notes)}</div>` : ''}
-    ${storePricesCardHTML(item)}
-    ${item.url ? `<a class="card-link" href="${esc(item.url)}" target="_blank" rel="noopener"><svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Buy now ↗</a>` : ''}
-    <div style="display:flex;gap:6px;margin-top:10px">
-      ${_cardOrderButton(item)}
-      <button class="btn btn-ghost btn-sm log-btn" style="flex:1" onclick="openReplRemindersModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Replacement Reminders</button>
     </div>
   </div>`;
 }
@@ -17601,34 +17626,15 @@ function _updateMfaSettingsUI() {
 
 function _maybeShowMfaPrompt() {
   if (_mfaEnabled()) return;
-  if (settings._mfaPromptDismissed) return;
-  if (localStorage.getItem(_MFA_DISMISSED_KEY)) return; // legacy fallback
+  if (localStorage.getItem(_MFA_DISMISSED_KEY)) return;
   if (!kvConnected) return;
   openModal('mfa-prompt-modal');
 }
 
 function dismissMfaPrompt() {
-  // Persist to the synced settings blob so it survives cookie/storage clears
-  settings._mfaPromptDismissed = true;
-  _saveSettings().then(() => { if (kvConnected) kvPush().catch(() => {}); });
-  // Also set localStorage for immediate effect within this session
-  try { localStorage.setItem(_MFA_DISMISSED_KEY, 'dismissed'); } catch(e) {}
+  localStorage.setItem(_MFA_DISMISSED_KEY, 'dismissed');
   closeModal('mfa-prompt-modal');
 }
-function resetFirstRunPrompts() {
-  // Clear all first-run/onboarding dismissed flags from the synced settings blob.
-  // On next login the Protecting Your Data, Country, Amazon import and
-  // Enable MFA prompts will all show again as if it were a first-time setup.
-  settings._setupProtectSeen     = false;
-  settings._setupCountrySet      = false;
-  settings._amazonBannerDismissed = false;
-  settings._mfaPromptDismissed   = false;
-  // Also clear the legacy localStorage key for MFA
-  try { localStorage.removeItem(_MFA_DISMISSED_KEY); } catch(e) {}
-  _saveSettings().then(() => { if (kvConnected) kvPush().catch(() => {}); });
-  toast('First-run prompts reset — they will show again on next login ✓');
-}
-
 function renderAccountSecurity() {
   // Your Details
   const nameEl = document.getElementById('setting-display-name-sec');

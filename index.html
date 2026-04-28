@@ -1194,6 +1194,8 @@
 
 
   <div class="view" id="view-settings">
+    <!-- Mobile-only page heading — mirrors Account & Security style -->
+    <h2 class="settings-mobile-heading"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-settings"></use></svg> Settings</h2>
     <!-- Fly.io-style: left nav sidebar + right scrollable content -->
     <div class="settings-layout">
       <div class="settings-content" id="settings-content">
@@ -1434,7 +1436,7 @@
     </div>
 
     <!-- Data -->
-    <div class="settings-card full-width">
+    <div class="settings-card full-width" id="settings-data-card">
       <h3><svg class="icon icon-md" aria-hidden="true"><use href="#i-package"></use></svg> Data</h3>
       <div class="setting-row">
         <div class="setting-info"><h4><svg class="icon icon-md" aria-hidden="true"><use href="#i-package"></use></svg> Import Amazon order history</h4><p>Auto-populate items from your Amazon purchase history CSV</p></div>
@@ -1468,13 +1470,6 @@
         Stock estimates are calculated from your purchase history, quantity per purchase, and months-of-supply settings.<br>
         Data syncs securely to the cloud, encrypted on your device. Export regularly as an additional backup.
       </p>
-      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px">
-        <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">First-run prompts</div>
-        <p style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:10px">Reset the dismissed state of all onboarding prompts — Protecting Your Data, Country &amp; language, Amazon order import, and Enable MFA. They will show again on next login.</p>
-        <button class="btn btn-ghost btn-sm" onclick="resetFirstRunPrompts()" style="color:var(--muted)">
-          <svg class="icon" aria-hidden="true"><use href="#i-rotate-ccw"></use></svg> Reset first-run prompts
-        </button>
-      </div>
     </div>
       </div><!-- /settings-content -->
     </div><!-- /settings-layout -->
