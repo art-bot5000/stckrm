@@ -3,7 +3,7 @@ name: Deploy to Fly.io
 on:
   push:
     branches: [main]
-  workflow_dispatch:  # allow manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
   preflight:
@@ -64,27 +64,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
-      # Diagnostic: show flyctl version and current state before deploying
-      - name: Flyctl diagnostics
-        run: |
-          echo "=== flyctl version ==="
-          flyctl version
-
-          echo ""
-          echo "=== Machine list ==="
-          flyctl machine list --app stckrm
-
-          echo ""
-          echo "=== Volume list ==="
-          flyctl volume list --app stckrm
-
-          echo ""
-          echo "=== App status ==="
-          flyctl status --app stckrm
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-
-      # Wake the existing machine before deploying
       - name: Wake existing machine
         run: |
           MACHINE_ID=$(flyctl machine list --app stckrm --json | python3 -c "
@@ -94,28 +73,22 @@ jobs:
               print(machines[0]['id'])
           ")
           if [ -n "$MACHINE_ID" ]; then
-            echo "Starting machine $MACHINE_ID (no-op if already running)"
+            echo "Starting machine $MACHINE_ID"
             flyctl machine start "$MACHINE_ID" --app stckrm || true
             sleep 5
-          else
-            echo "No existing machine found"
-            exit 1
           fi
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
       - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only --strategy immediate --update-only --verbose
+        run: flyctl deploy --remote-only --strategy immediate
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        # --strategy immediate: update existing machine in place, no orchestration
-        # --update-only: only update existing machines, never create new ones
-        # --verbose: show what flyctl is actually doing
 
       - name: Verify deployment health
         if: always()
         run: |
-          sleep 10
+          sleep 5
           flyctl status --app stckrm
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
