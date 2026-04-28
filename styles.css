@@ -1021,3 +1021,61 @@
 [title*="Critical"] .icon, .filter-btn-critical .icon { color: var(--danger); }
 [title*="Low"] .icon, .filter-btn-low .icon { color: var(--accent); }
 [title*="Good"] .icon, .filter-btn-good .icon { color: var(--ok); }
+
+/* ── Note editor: desktop modal layout ────────────────────────────────
+   On large screens we present an open note as a centered modal card with
+   the rest of the app blurred behind it. The overlay element is at body
+   level (z-index 400) so it sits above everything else.
+
+   Mobile (<900px): overlay stays full-screen with no backdrop — the
+   default behavior baked into the inline style.
+
+   Scroll lock on body.note-open prevents background scrolling on every
+   screen size; without it iOS and Android browsers will rubber-band
+   scroll the underlying page when you try to scroll inside the note. */
+body.note-open { overflow: hidden; touch-action: none; }
+
+@media (min-width: 900px) {
+  /* Soft backdrop: a single ::before pseudo-element on the overlay paints
+     a translucent darkening layer across the viewport behind the card.
+     Blur is applied to the actual page content (the wizard or main app)
+     via the body.note-open rules below. */
+  #note-editor-overlay {
+    /* Center the card */
+    inset: auto !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%);
+    width: min(820px, calc(100vw - 64px));
+    height: min(85vh, 900px);
+    max-height: 85vh;
+    border-radius: 16px;
+    box-shadow: 0 24px 72px rgba(0,0,0,0.55), 0 0 0 1px var(--border);
+  }
+  /* Painted backdrop covering the whole viewport behind the modal.
+     Sits at -1 so the modal contents render above it. */
+  #note-editor-overlay::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: -1;
+    border-radius: 0;
+  }
+  /* Round the toolbar corners to match the modal */
+  #note-editor-overlay > #note-editor-toolbar { border-top-left-radius: 16px; border-top-right-radius: 16px; }
+  /* Backdrop blur on the page behind the modal. Apply to the top-level
+     wrappers, not the overlay itself. The note overlay sits at body level
+     alongside #app-header, .view containers, and the FAB. */
+  body.note-open #app-header,
+  body.note-open #app-nav,
+  body.note-open .view,
+  body.note-open #wizard {
+    filter: blur(6px);
+    pointer-events: none;
+  }
+  /* The FAB sits at z-index 1099 — higher than the note overlay's 400 — so
+     blurring isn't enough; we hide it outright while a note is open. */
+  body.note-open #fab-btn,
+  body.note-open #fab-container { display: none !important; }
+}

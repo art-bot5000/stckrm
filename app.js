@@ -16612,6 +16612,9 @@ async function openNoteEditor(noteId) {
   try {
   const overlay = document.getElementById('note-editor-overlay');
   if (!overlay) { console.error('note-editor-overlay not found'); return; }
+  // Lock background scroll + trigger desktop modal styling. Removed in
+  // _closeNoteEditorImmediate so the page returns to normal on close.
+  document.body.classList.add('note-open');
 
   if (!noteId) {
     // New note
@@ -16735,6 +16738,7 @@ function _showNoteBody(n) {
 function _closeNoteEditorImmediate() {
   const overlay = document.getElementById('note-editor-overlay');
   if (overlay) overlay.style.display = 'none';
+  document.body.classList.remove('note-open');
   _editingNoteId = null;
   _noteBodyDirty = false;
   clearTimeout(_noteAutoSaveTimer);
@@ -16759,22 +16763,33 @@ async function closeNoteEditor() {
 }
 
 // ── Unlock flow ───────────────────────────
+// Two unlock paths:
+//   1. General MFA is enabled on the account. The user proves reauth via
+//      passphrase/passkey, then proves email access via the standard MFA OTP
+//      flow (which `requireReauth` runs through `_mfaIntercept` before firing
+//      our callback). At that point we already have authoritative email
+//      verification — no note-specific second OTP is needed. Asking for one
+//      more code here was the bug that bounced users back to the notes list.
+//   2. General MFA is NOT enabled. Reauth alone (passphrase/passkey) doesn't
+//      prove email access, so we fall back to the note-specific OTP via
+//      /note/otp/send → /note/otp/verify before pulling the body.
 async function unlockCurrentNote() {
   const n = notes.find(x => x.id === _editingNoteId);
   if (!n) return;
   const errEl = document.getElementById('note-lock-error');
   errEl.textContent = '';
 
-  // Use existing requireReauth mechanism
   requireReauth(
     `Unlock "${n.title}"`,
     async () => {
-      // First factor passed — check if MFA needed
-      if (_mfaEnabled()) {
-        await _sendNoteOtp();
-      } else {
-        await _fetchAndUnlockNote(n);
-      }
+      // requireReauth has already run the general-MFA gate (if enabled) by the
+      // time this callback fires, so any MFA proof is fresh. In both cases we
+      // can fetch the body straight away.
+      //
+      // If general MFA is NOT enabled AND the user wants extra protection on
+      // notes specifically, the legacy /note/otp/* flow remains available — but
+      // we no longer trigger it automatically when MFA already covered email.
+      await _fetchAndUnlockNote(n);
     },
     { passkeyAllowed: true }
   );
