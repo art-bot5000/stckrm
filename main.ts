@@ -258,20 +258,14 @@ Deno.serve(async (request) => {
   // ── Device: register trusted device ─────────────────
   if (url.pathname === '/device/register' && request.method === 'POST') {
     try {
-      const { emailHash, verifier, sessionToken, deviceId, name, addedAt, trustExpiresAt } = await request.json();
-      if (!emailHash || !deviceId) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      // Accept verifier OR sessionToken (passkey users have no verifier)
-      const authed = sessionToken
-        ? !!(await kvGet(['passkey_session', emailHash, sessionToken])).value
-        : verifier && (await kvGet(['user', emailHash, 'verifier'])).value === verifier;
-      if (!authed) return json({ error: 'Unauthorised' }, corsHeaders, 401);
-      // Default trust window = 30 days
-      const expiresAt = trustExpiresAt || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      const { emailHash, verifier, deviceId, name, addedAt } = await request.json();
+      if (!emailHash || !verifier || !deviceId) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const stored = await kvGet(['user', emailHash, 'verifier']);
+      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
       await kvSet(['device', emailHash, deviceId], JSON.stringify({
         deviceId, name: name || 'Unknown device',
         addedAt: addedAt || new Date().toISOString(),
         lastSeen: new Date().toISOString(),
-        trustExpiresAt: expiresAt,
       }));
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
@@ -298,12 +292,10 @@ Deno.serve(async (request) => {
   // ── Device: update last seen ──────────────────────────
   if (url.pathname === '/device/seen' && request.method === 'POST') {
     try {
-      const { emailHash, verifier, sessionToken, deviceId } = await request.json();
-      if (!emailHash || !deviceId) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const authed = sessionToken
-        ? !!(await kvGet(['passkey_session', emailHash, sessionToken])).value
-        : verifier && (await kvGet(['user', emailHash, 'verifier'])).value === verifier;
-      if (!authed) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { emailHash, verifier, deviceId } = await request.json();
+      if (!emailHash || !verifier || !deviceId) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const stored = await kvGet(['user', emailHash, 'verifier']);
+      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
       const existing = await kvGet(['device', emailHash, deviceId]);
       if (existing.value) {
         const data = { ...JSON.parse(existing.value), lastSeen: new Date().toISOString() };
@@ -340,29 +332,6 @@ Deno.serve(async (request) => {
       for await (const entry of entries) await kv.delete(entry.key);
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
-  }
-
-  // ── Device: check trust status ────────────────────────
-  // Lightweight endpoint used on every app load by trusted-session devices
-  // to confirm: (a) the device is still in the trusted list, (b) trust hasn't
-  // expired server-side. Returns { trusted: bool, expiresAt?: string }.
-  // No auth required — only the deviceId is needed; if it's not in the
-  // trusted list the answer is just "not trusted" and the client signs out.
-  if (url.pathname === '/device/check' && request.method === 'POST') {
-    try {
-      const { emailHash, deviceId } = await request.json();
-      if (!emailHash || !deviceId) return json({ trusted: false }, corsHeaders);
-      const entry = await kvGet(['device', emailHash, deviceId]);
-      if (!entry.value) return json({ trusted: false }, corsHeaders);
-      const data = JSON.parse(entry.value as string);
-      // Honour server-side expiry if present
-      if (data.trustExpiresAt && new Date(data.trustExpiresAt).getTime() < Date.now()) {
-        // Expired — clean up server-side record
-        await kvDel(['device', emailHash, deviceId]);
-        return json({ trusted: false, reason: 'expired' }, corsHeaders);
-      }
-      return json({ trusted: true, expiresAt: data.trustExpiresAt || null }, corsHeaders);
-    } catch(err) { return json({ trusted: false, error: err.message }, corsHeaders); }
   }
 
 

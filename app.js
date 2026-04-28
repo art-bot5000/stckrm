@@ -17601,15 +17601,34 @@ function _updateMfaSettingsUI() {
 
 function _maybeShowMfaPrompt() {
   if (_mfaEnabled()) return;
-  if (localStorage.getItem(_MFA_DISMISSED_KEY)) return;
+  if (settings._mfaPromptDismissed) return;
+  if (localStorage.getItem(_MFA_DISMISSED_KEY)) return; // legacy fallback
   if (!kvConnected) return;
   openModal('mfa-prompt-modal');
 }
 
 function dismissMfaPrompt() {
-  localStorage.setItem(_MFA_DISMISSED_KEY, 'dismissed');
+  // Persist to the synced settings blob so it survives cookie/storage clears
+  settings._mfaPromptDismissed = true;
+  _saveSettings().then(() => { if (kvConnected) kvPush().catch(() => {}); });
+  // Also set localStorage for immediate effect within this session
+  try { localStorage.setItem(_MFA_DISMISSED_KEY, 'dismissed'); } catch(e) {}
   closeModal('mfa-prompt-modal');
 }
+function resetFirstRunPrompts() {
+  // Clear all first-run/onboarding dismissed flags from the synced settings blob.
+  // On next login the Protecting Your Data, Country, Amazon import and
+  // Enable MFA prompts will all show again as if it were a first-time setup.
+  settings._setupProtectSeen     = false;
+  settings._setupCountrySet      = false;
+  settings._amazonBannerDismissed = false;
+  settings._mfaPromptDismissed   = false;
+  // Also clear the legacy localStorage key for MFA
+  try { localStorage.removeItem(_MFA_DISMISSED_KEY); } catch(e) {}
+  _saveSettings().then(() => { if (kvConnected) kvPush().catch(() => {}); });
+  toast('First-run prompts reset — they will show again on next login ✓');
+}
+
 function renderAccountSecurity() {
   // Your Details
   const nameEl = document.getElementById('setting-display-name-sec');

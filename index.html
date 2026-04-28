@@ -742,6 +742,15 @@
       <div class="logo" style="font-size:11px;letter-spacing:3px;cursor:pointer;flex-shrink:0" onclick="openProfilePicker()">STOCKROOM</div>
       <span id="app-nav-profile" style="font-size:12px;color:var(--muted);font-family:var(--sans);cursor:pointer;white-space:nowrap" onclick="openProfilePicker()"></span>
     </div>
+    <!-- Amazon import banner — desktop, dismissed via user data -->
+    <div id="amazon-banner-desktop" style="display:none;margin-top:10px;padding:8px 10px;background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.25);border-radius:8px;text-align:center">
+      <div style="font-size:11px;color:var(--accent);font-weight:700;margin-bottom:4px"><svg class="icon" aria-hidden="true"><use href="#i-package"></use></svg> Import Amazon orders</div>
+      <div style="font-size:10px;color:var(--muted);line-height:1.5;margin-bottom:6px">Auto-populate your stockroom from your purchase history</div>
+      <div style="display:flex;gap:6px">
+        <button onclick="openAmazonImporter()" style="flex:1;padding:5px 0;background:var(--accent);color:#111;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">Get started</button>
+        <button onclick="dismissAmazonBanner()" title="Dismiss" style="padding:5px 8px;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:6px;font-size:12px;cursor:pointer"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
+      </div>
+    </div>
   </div>
   <div class="app-nav-links">
     <button class="app-nav-link active" data-view="stock"      onclick="navTo('stock')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-package"></use></svg> <span>Stockroom</span></button>
@@ -817,13 +826,9 @@
     </div>
   </div>
 
-    <!-- Pending deliveries + Quick Added action bars.
-         Each child is hidden by JS when its content is empty, and the wrapper
-         is purely structural (CSS handles row vs stack layout).
-         data-empty="1" on first render hides the wrapper until a render call
-         determines at least one section has content. -->
-    <div id="stock-top-sections" data-empty="1">
-    <div id="pending-deliveries-section" style="display:none;margin-bottom:20px">
+    <!-- Pending deliveries section -->
+    <div id="stock-top-sections" style="display:flex;gap:16px;margin-bottom:0">
+    <div id="pending-deliveries-section" style="display:none;flex:1;margin-bottom:20px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:13px;font-weight:700;color:#5b8dee"><svg class="icon" aria-hidden="true"><use href="#i-truck"></use></svg> Pending Deliveries</span>
@@ -851,14 +856,15 @@
     <!-- Health dashboard -->
     <div id="health-dashboard" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px"></div>
 
-    <!-- Stockroom search — full width on mobile; capped to one-item width on desktop. -->
-    <div id="stock-search-wrap" style="margin-bottom:8px">
+    <!-- Stockroom search — shown on mobile; on desktop it moves inline with filters -->
+    <!-- Search always first, full width -->
+    <div style="margin-bottom:8px">
       <input id="stock-search" type="search" placeholder="Search items…" autocomplete="off"
         class="grocery-search" style="width:100%;box-sizing:border-box"
         oninput="renderGrid()">
     </div>
 
-    <div id="stock-toolbar-wrap" style="margin-bottom:18px">
+    <div style="margin-bottom:18px">
       <!-- Filters + Sort on same line, equal width -->
       <div id="stock-toolbar-row" style="display:flex;align-items:stretch;gap:8px;margin-bottom:8px">
         <button class="btn btn-ghost btn-sm" id="filter-toggle-btn" onclick="toggleFilters()"
@@ -1462,6 +1468,13 @@
         Stock estimates are calculated from your purchase history, quantity per purchase, and months-of-supply settings.<br>
         Data syncs securely to the cloud, encrypted on your device. Export regularly as an additional backup.
       </p>
+      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px">
+        <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">First-run prompts</div>
+        <p style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:10px">Reset the dismissed state of all onboarding prompts — Protecting Your Data, Country &amp; language, Amazon order import, and Enable MFA. They will show again on next login.</p>
+        <button class="btn btn-ghost btn-sm" onclick="resetFirstRunPrompts()" style="color:var(--muted)">
+          <svg class="icon" aria-hidden="true"><use href="#i-rotate-ccw"></use></svg> Reset first-run prompts
+        </button>
+      </div>
     </div>
       </div><!-- /settings-content -->
     </div><!-- /settings-layout -->
