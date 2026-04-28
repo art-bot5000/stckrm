@@ -1,51 +1,3 @@
-// ═══════════════════════════════════════════
-//  DIAGNOSTIC — surface silent errors from inline onclick handlers
-//  so we can see exactly what's failing on Log Purchase / pencil edit /
-//  Replacement Reminders. Remove this block once the bugs are fixed.
-// ═══════════════════════════════════════════
-(function installClickDiagnostic() {
-  if (window._stockroomClickDiagInstalled) return;
-  window._stockroomClickDiagInstalled = true;
-
-  // Catch any uncaught synchronous error (e.g. `openLogModal is not defined`,
-  // `Cannot read properties of null (reading 'value')`). These normally vanish
-  // into the console with no UI feedback.
-  window.addEventListener('error', e => {
-    try {
-      const msg = e.message || (e.error && e.error.message) || 'Unknown error';
-      const where = e.filename ? ` @${(e.filename + '').split('/').pop()}:${e.lineno}` : '';
-      // Use a raw banner instead of toast() because toast's DOM element may
-      // not yet exist when this fires.
-      let bar = document.getElementById('_diag-bar');
-      if (!bar) {
-        bar = document.createElement('div');
-        bar.id = '_diag-bar';
-        bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#7a1d1d;color:#fff;padding:10px 14px;font:600 12px/1.4 monospace;z-index:99999;cursor:pointer';
-        bar.onclick = () => bar.remove();
-        document.body && document.body.appendChild(bar);
-      }
-      bar.textContent = `⚠ ${msg}${where} — tap to dismiss`;
-      console.error('[stockroom diag]', e);
-    } catch (_) {}
-  });
-
-  // Promise rejections (async onclicks like archiveItem)
-  window.addEventListener('unhandledrejection', e => {
-    try {
-      const msg = (e.reason && (e.reason.message || e.reason)) || 'Unknown promise rejection';
-      let bar = document.getElementById('_diag-bar');
-      if (!bar) {
-        bar = document.createElement('div');
-        bar.id = '_diag-bar';
-        bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#7a1d1d;color:#fff;padding:10px 14px;font:600 12px/1.4 monospace;z-index:99999;cursor:pointer';
-        bar.onclick = () => bar.remove();
-        document.body && document.body.appendChild(bar);
-      }
-      bar.textContent = `⚠ ${msg} — tap to dismiss`;
-      console.error('[stockroom diag rejection]', e);
-    } catch (_) {}
-  });
-})();
 
 // ═══════════════════════════════════════════
 //  DATA
@@ -2097,7 +2049,7 @@ async function deleteReminder(id) {
       // New array format — remove specific reminder
       item.replacementReminders = item.replacementReminders.filter(r => r.id !== remEntry.id);
       // Sync legacy fields to first remaining reminder
-      if (item.replacementReminders.length) {
+      if (item.replacementReminders?.length) {
         item.replacementInterval = item.replacementReminders[0].interval;
         item.replacementUnit     = item.replacementReminders[0].unit;
       } else {
@@ -5953,7 +5905,7 @@ async function wizSave() {
     updatedAt:            new Date().toISOString(),
   };
   // Backwards compat: copy first reminder to replacementInterval/Unit
-  if (newItem.replacementReminders.length) {
+  if (newItem.replacementReminders?.length) {
     newItem.replacementInterval = newItem.replacementReminders[0].interval;
     newItem.replacementUnit     = newItem.replacementReminders[0].unit;
   }
