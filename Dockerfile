@@ -6,7 +6,6 @@ RUN npm install
 # Dockerfile copied from src/ which silently became stale, so root-level
 # edits never reached production.
 COPY app.js scanner.js styles.css index.html landing.html sw.js manifest.json admin.html ./
-COPY diag-trusted.html ./
 RUN mkdir -p public && \
     npx terser app.js --compress --mangle --comments false -o public/app.js && \
     npx terser scanner.js --compress --mangle --comments false -o public/scanner.js && \
@@ -23,8 +22,7 @@ RUN mkdir -p public && \
       -o public/landing.html && \
     cp sw.js public/sw.js && \
     cp manifest.json public/manifest.json && \
-    cp admin.html public/admin.html && \
-    cp diag-trusted.html public/diag-trusted.html
+    cp admin.html public/admin.html
 
 FROM denoland/deno:2.3.1
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && \
