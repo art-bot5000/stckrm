@@ -6,7 +6,7 @@
   "scripts": {
     "build:js":   "terser app.js --compress --mangle --comments false -o public/app.js && terser scanner.js --compress --mangle --comments false -o public/scanner.js",
     "build:css":  "cleancss -o public/styles.css styles.css",
-    "build:html": "html-minifier-terser index.html --collapse-whitespace --remove-comments --remove-optional-tags --remove-redundant-attributes --remove-script-type-attributes --remove-tag-whitespace --minify-css true --minify-js true -o public/index.html",
+    "build:html": "html-minifier-terser index.html --collapse-whitespace --remove-comments --remove-optional-tags --remove-redundant-attributes --remove-script-type-attributes --remove-tag-whitespace --minify-css true --minify-js true -o public/index.html && html-minifier-terser landing.html --collapse-whitespace --remove-comments --remove-optional-tags --remove-redundant-attributes --remove-script-type-attributes --remove-tag-whitespace --minify-css true --minify-js true -o public/landing.html",
     "build:copy": "cp sw.js public/sw.js && cp manifest.json public/manifest.json && cp admin.html public/admin.html && cp diag-trusted.html public/diag-trusted.html",
     "build":      "mkdir -p public && npm run build:js && npm run build:css && npm run build:html && npm run build:copy"
   },

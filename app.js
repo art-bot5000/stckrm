@@ -1,4 +1,53 @@
 // ═══════════════════════════════════════════
+//  DIAGNOSTIC — surface silent errors from inline onclick handlers
+//  so we can see exactly what's failing on Log Purchase / pencil edit /
+//  Replacement Reminders. Remove this block once the bugs are fixed.
+// ═══════════════════════════════════════════
+(function installClickDiagnostic() {
+  if (window._stockroomClickDiagInstalled) return;
+  window._stockroomClickDiagInstalled = true;
+
+  // Catch any uncaught synchronous error (e.g. `openLogModal is not defined`,
+  // `Cannot read properties of null (reading 'value')`). These normally vanish
+  // into the console with no UI feedback.
+  window.addEventListener('error', e => {
+    try {
+      const msg = e.message || (e.error && e.error.message) || 'Unknown error';
+      const where = e.filename ? ` @${(e.filename + '').split('/').pop()}:${e.lineno}` : '';
+      // Use a raw banner instead of toast() because toast's DOM element may
+      // not yet exist when this fires.
+      let bar = document.getElementById('_diag-bar');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = '_diag-bar';
+        bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#7a1d1d;color:#fff;padding:10px 14px;font:600 12px/1.4 monospace;z-index:99999;cursor:pointer';
+        bar.onclick = () => bar.remove();
+        document.body && document.body.appendChild(bar);
+      }
+      bar.textContent = `⚠ ${msg}${where} — tap to dismiss`;
+      console.error('[stockroom diag]', e);
+    } catch (_) {}
+  });
+
+  // Promise rejections (async onclicks like archiveItem)
+  window.addEventListener('unhandledrejection', e => {
+    try {
+      const msg = (e.reason && (e.reason.message || e.reason)) || 'Unknown promise rejection';
+      let bar = document.getElementById('_diag-bar');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = '_diag-bar';
+        bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#7a1d1d;color:#fff;padding:10px 14px;font:600 12px/1.4 monospace;z-index:99999;cursor:pointer';
+        bar.onclick = () => bar.remove();
+        document.body && document.body.appendChild(bar);
+      }
+      bar.textContent = `⚠ ${msg} — tap to dismiss`;
+      console.error('[stockroom diag rejection]', e);
+    } catch (_) {}
+  });
+})();
+
+// ═══════════════════════════════════════════
 //  DATA
 // ═══════════════════════════════════════════
 const CATEGORIES = ['Kitchen','Bathroom','Cleaning','Food & Drink','Health','Garden','Office','Other'];
@@ -394,8 +443,10 @@ async function loadData() {
   }
   // Hide Amazon banner immediately if previously dismissed (avoid flash)
   if (settings._amazonBannerDismissed) {
-    const banner = document.getElementById('amazon-banner-mobile');
-    if (banner) banner.style.display = 'none';
+    const desktop = document.getElementById('amazon-banner-desktop');
+    const mobile  = document.getElementById('amazon-banner-mobile');
+    if (desktop) desktop.style.display = 'none';
+    if (mobile)  mobile.style.display  = 'none';
   }
 }
 
@@ -1387,7 +1438,6 @@ function renderPendingDeliveries() {
         </div>`;
     }
   }
-  _updateStockTopSectionsVisibility();
 }
 
 function renderIncompleteSection() {
@@ -1401,7 +1451,6 @@ function renderIncompleteSection() {
   if (!incomplete.length) {
     if (section) section.style.display = 'none';
     if (banner)  banner.style.display  = 'none';
-    _updateStockTopSectionsVisibility();
     return;
   }
 
@@ -1430,7 +1479,6 @@ function renderIncompleteSection() {
         </div>
       </div>`).join('');
   }
-  _updateStockTopSectionsVisibility();
 }
 
 function scrollToIncomplete() {
@@ -1442,25 +1490,6 @@ function scrollToIncomplete() {
     const section = document.getElementById('incomplete-section');
     if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, 100);
-}
-
-// Keep the wrapper's data-empty attribute in sync with the visibility of its
-// two children. CSS hides the wrapper entirely when data-empty="1" so the
-// stockroom view doesn't reserve any vertical space when there's nothing to
-// show. Called by renderPendingDeliveries and renderIncompleteSection after
-// they toggle their own visibility.
-function _updateStockTopSectionsVisibility() {
-  const wrap = document.getElementById('stock-top-sections');
-  if (!wrap) return;
-  const pending    = document.getElementById('pending-deliveries-section');
-  const incomplete = document.getElementById('incomplete-section');
-  const pendingShown    = pending    && pending.style.display    !== 'none';
-  const incompleteShown = incomplete && incomplete.style.display !== 'none';
-  if (!pendingShown && !incompleteShown) {
-    wrap.setAttribute('data-empty', '1');
-  } else {
-    wrap.removeAttribute('data-empty');
-  }
 }
 
 // When an item is saved via the full edit form, clear quickAdded flag
@@ -1709,23 +1738,13 @@ function _resolveReminderId(id) {
   if (!id.startsWith('item_')) return null;
 
   const rest = id.slice('item_'.length); // either "itemId" or "itemId_remId"
+  const underIdx = rest.indexOf('_');
 
-  // Strategy: itemId and remId both come from uid() and contain underscores
-  // (e.g. "id_1730123456789_a3xyz"), so we can't just split on the first
-  // underscore. Instead, try matching prefixes against actual item IDs:
-  //   1. If `rest` is itself an item ID → legacy single-reminder format.
-  //   2. Otherwise iterate possible split points and look for an item whose
-  //      ID matches the prefix and which has a replacement reminder whose
-  //      ID matches the remaining suffix.
-  // This also stays compatible with future IDs that don't use uid()'s
-  // exact pattern.
-  const fallbackForItem = (item) =>
-    item.startedUsing || item.logs?.filter(l => !l.pendingDelivery)[0]?.date || null;
-
-  // 1. Legacy: rest IS the item ID
-  let item = items.find(i => i.id === rest);
-  if (item) {
-    const fallbackDate = fallbackForItem(item);
+  if (underIdx === -1) {
+    // Legacy: item_${itemId}
+    const item = items.find(i => i.id === rest);
+    if (!item) return null;
+    const fallbackDate = item.startedUsing || item.logs?.filter(l => !l.pendingDelivery)[0]?.date || null;
     return {
       r: {
         id, name: item.name, itemName: item.name, reminderName: '',
@@ -1736,18 +1755,15 @@ function _resolveReminderId(id) {
       },
       item, remEntry: null,
     };
-  }
-
-  // 2. Multi-reminder: rest is "${itemId}_${remId}" but both parts can
-  //    contain underscores. Find every underscore split point that matches.
-  for (let idx = rest.indexOf('_'); idx !== -1; idx = rest.indexOf('_', idx + 1)) {
-    const itemId = rest.slice(0, idx);
-    const remId  = rest.slice(idx + 1);
-    item = items.find(i => i.id === itemId);
-    if (!item) continue;
+  } else {
+    // New: item_${itemId}_${remId}
+    const itemId = rest.slice(0, underIdx);
+    const remId  = rest.slice(underIdx + 1);
+    const item   = items.find(i => i.id === itemId);
+    if (!item) return null;
     const remEntry = item.replacementReminders?.find(r => r.id === remId);
-    if (!remEntry) continue;
-    const fallbackDate = fallbackForItem(item);
+    if (!remEntry) return null;
+    const fallbackDate = item.startedUsing || item.logs?.filter(l => !l.pendingDelivery)[0]?.date || null;
     return {
       r: {
         id, name: remEntry.name ? `${item.name} — ${remEntry.name}` : item.name,
@@ -1760,8 +1776,6 @@ function _resolveReminderId(id) {
       item, remEntry,
     };
   }
-
-  return null;
 }
 
 // ── Reminder Timeline ──────────────────────
@@ -2107,10 +2121,6 @@ async function deleteReminder(id) {
     const confirmed = confirm(`Delete "${name}"?\n\nThis cannot be undone.`);
     if (!confirmed) return;
     reminders = reminders.filter(r => r.id !== id);
-    // Write a tombstone so the reminder doesn't get resurrected when other
-    // devices push their (still-stale) copy of the reminders list. The
-    // tombstone is included in our own next push and respected on every pull.
-    await addTombstone(id);
     await saveReminders();
     _syncQueue.enqueue();
     renderReminders();
@@ -2974,18 +2984,19 @@ async function installPWA() {
 }
 
 // ── Amazon Order History Import banner ───────────────────────────────────────
-// One banner only, sits under the "Your Stockroom" title on every screen size.
-// Dismissed flag stored on the synced settings object so it persists across
-// devices.
 function _showAmazonBanners() {
-  const banner = document.getElementById('amazon-banner-mobile');
-  if (!banner) return;
-  banner.style.display = settings._amazonBannerDismissed ? 'none' : 'block';
+  if (settings._amazonBannerDismissed) return;
+  const desktop = document.getElementById('amazon-banner-desktop');
+  const mobile  = document.getElementById('amazon-banner-mobile');
+  if (desktop) desktop.style.display = 'block';
+  if (mobile)  mobile.style.display  = 'block';
 }
 
 function dismissAmazonBanner() {
-  const banner = document.getElementById('amazon-banner-mobile');
-  if (banner) banner.style.display = 'none';
+  const desktop = document.getElementById('amazon-banner-desktop');
+  const mobile  = document.getElementById('amazon-banner-mobile');
+  if (desktop) desktop.style.display = 'none';
+  if (mobile)  mobile.style.display  = 'none';
   settings._amazonBannerDismissed = true;
   _saveSettings().then(() => kvPush().catch(() => {}));
   setTimeout(() => toast('Amazon order import is available anytime in Account & Security → Data'), 400);
@@ -3683,10 +3694,8 @@ function _flushRender() {
       const sd = document.getElementById('setting-email-start');
       const st = document.getElementById('setting-email-start-time');
       if (t)  t.value  = settings.threshold;
-      // Re-populate country options if empty. Only valid for <select>; the
-      // primary 'setting-country' element is a hidden <input> without .options,
-      // so we guard with tagName.
-      if (c && c.tagName === 'SELECT' && c.options.length === 0) buildSettingsCountrySelect();
+      // Re-populate country options if empty (e.g. first render after sign-in)
+      if (c && c.options.length === 0) buildSettingsCountrySelect();
       if (c)  c.value  = settings.country || 'GB';
       if (e)  e.value  = settings.email || '';
       if (iv) iv.value = settings.emailInterval ?? 30;
@@ -6941,11 +6950,7 @@ function buildSettingsCountrySelect() {
   ['setting-country', 'setting-country-sec'].forEach(id => {
     const sel = document.getElementById(id);
     if (!sel) return;
-    // Only <select> has .options. The primary 'setting-country' is a hidden
-    // <input>, where we just set the value.
-    if (sel.tagName === 'SELECT') {
-      if (!sel.options.length) sel.innerHTML = options;
-    }
+    if (!sel.options.length) sel.innerHTML = options;
     sel.value = val;
   });
 }
@@ -7290,18 +7295,12 @@ async function syncNow() {
         }
       }
       if (remote.reminders && Array.isArray(remote.reminders)) {
-        // Respect tombstones: a reminder we've explicitly deleted locally must
-        // not come back through the merge, even if a stale device pushed its
-        // copy after our deletion. The tombstone set is itself synced via
-        // remote.deletedIds further down.
-        const tombstones = await loadDeletedIds();
-        const remoteR = remote.reminders.filter(r => !tombstones.has(r.id));
         const localREmpty = reminders.length === 0;
         if (remoteWins || localREmpty) {
-          reminders = remoteR; await saveReminders();
+          reminders = remote.reminders; await saveReminders();
         } else {
           const localRIds = new Set(reminders.map(r => r.id));
-          const newR = remoteR.filter(r => !localRIds.has(r.id));
+          const newR = remote.reminders.filter(r => !localRIds.has(r.id));
           if (newR.length) { reminders = [...reminders, ...newR]; await saveReminders(); }
         }
       }
@@ -7801,69 +7800,6 @@ window.stockroomDiag = async function() {
     } catch(e) { out.push(`server data/pull error: ${e.message}`); }
   } else {
     out.push('Cannot check server — no emailHash/verifier in session');
-  }
-  out.push('=== END ===');
-  console.log(out.join('\n'));
-  return out.join('\n');
-};
-
-// ── Trusted-session diagnostic — run window.trustDiag() in browser console ──
-window.trustDiag = async function() {
-  const out = [];
-  out.push('=== TRUSTED SESSION DIAGNOSTIC ===');
-  out.push(`kvConnected:           ${kvConnected}`);
-  out.push(`_kvEmailHash:          ${_kvEmailHash || '(empty)'}`);
-  out.push(`device_id:             ${localStorage.getItem('stockroom_device_id') || '(none)'}`);
-  out.push(`device_secret:         ${localStorage.getItem('stockroom_device_secret') ? 'SET' : 'absent'}`);
-  out.push(`trust_ts:              ${localStorage.getItem('stockroom_trust_ts') || '(none)'}`);
-  out.push(`kv_session present:    ${!!localStorage.getItem('stockroom_kv_session')}`);
-  out.push(`key_fallback present:  ${!!localStorage.getItem('stockroom_kv_key_fallback')}`);
-
-  const tsRaw = localStorage.getItem('stockroom_trusted_session');
-  if (tsRaw) {
-    try {
-      const ts = JSON.parse(tsRaw);
-      const ageMin = Math.round((Date.now() - ts.establishedAt) / 60000);
-      const remainDays = Math.round((ts.expiresAt - Date.now()) / 86400000);
-      out.push(`trusted_session:       SET — established ${ageMin}min ago, ${remainDays}d remaining, emailHash match: ${ts.emailHash === _kvEmailHash}`);
-    } catch(e) { out.push(`trusted_session:       SET (parse error)`); }
-  } else {
-    out.push(`trusted_session:       absent`);
-  }
-
-  const mfaRaw = localStorage.getItem('stockroom_mfa_verified_trusted');
-  if (mfaRaw) {
-    try {
-      const m = JSON.parse(mfaRaw);
-      const remainDays = Math.round((m.expiresAt - Date.now()) / 86400000);
-      out.push(`mfa_trusted:           SET — ${remainDays}d remaining, emailHash match: ${m.emailHash === _kvEmailHash}`);
-    } catch(e) { out.push(`mfa_trusted:           SET (parse error)`); }
-  } else {
-    out.push(`mfa_trusted:           absent`);
-  }
-
-  if (_kvEmailHash) {
-    try {
-      const deviceId = localStorage.getItem('stockroom_device_id') || '';
-      const r = await fetch(`${WORKER_URL}/device/check`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailHash: _kvEmailHash, deviceId }),
-      });
-      const d = await r.json();
-      out.push(`server /device/check:  status ${r.status}, body=${JSON.stringify(d)}`);
-    } catch(e) { out.push(`server /device/check error: ${e.message}`); }
-
-    try {
-      const r = await fetch(`${WORKER_URL}/device/list`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          emailHash: _kvEmailHash,
-          ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
-        }),
-      });
-      const d = await r.json();
-      out.push(`server /device/list:   status ${r.status}, ${d.devices?.length || 0} device(s): ${(d.devices || []).map(x => `${x.deviceId.slice(0,8)}…(${x.name})`).join(', ') || 'none'}`);
-    } catch(e) { out.push(`server /device/list error: ${e.message}`); }
   }
   out.push('=== END ===');
   console.log(out.join('\n'));
@@ -8502,8 +8438,6 @@ async function kvLoginWithPasskey() {
     await kvStorePasskeySession(email, emailHash, sessionToken, dataKey);
     if(errEl) errEl.style.display = 'none';
     persistLoginCookies(email, true);
-    // Trust this device if Remember me was ticked — same rules as passphrase login
-    await _trustIfRemembered(email, emailHash, '', dataKey);
     // Stamp permanent setup flags — these survive sign-out
     await setProtectSeenForDevice();
     await setCountrySetForDevice();
@@ -9601,7 +9535,8 @@ async function kvStorePasskeySession(email, emailHash, sessionToken, dataKey) {
   try {
     const sessionJson = JSON.stringify({ email, emailHash, sessionToken, authMethod: 'passkey' });
     localStorage.setItem('stockroom_kv_session', sessionJson);
-    // Note: deliberately NOT mirroring to IDB — clearing cookies must sign out.
+    // Also persist to IDB so session survives localStorage/cookie clears
+    dbPut('settings', 'stockroom_kv_session', sessionJson).catch(() => {});
     // Cache key for 24h
     const exported = await crypto.subtle.exportKey('raw', _kvKey);
     const keyData  = btoa(String.fromCharCode(...new Uint8Array(exported)));
@@ -10286,77 +10221,6 @@ async function removeWrappedKey(deviceId) {
   } catch(e) {}
 }
 
-// ── Trusted Session helpers ────────────────────────────────
-// A "trusted session" means the user ticked Remember me on a successful
-// login. The device key is wrapped in IDB (via trustThisDeviceWith) AND
-// a localStorage flag is set with a 30-day expiry. While the flag is valid:
-//   • Page refreshes and tab closes restore the session silently
-//   • MFA is skipped for the entire 30-day window (not just the tab session)
-//   • The server-side /device/{emailHash}/{deviceId} record exists with matching expiry
-// Trust ends on:
-//   • Sign out (this device only)             → _clearTrustedSession() + /device/remove
-//   • Clear all trusted devices                → backend wipes all + local clears here
-//   • Browser cookie/storage clear (this device) → flag gone, falls back to login
-//   • 30-day expiry (auto)                     → next load detects expiry, signs out
-
-const _TRUSTED_SESSION_KEY = 'stockroom_trusted_session';
-const _MFA_TRUSTED_KEY     = 'stockroom_mfa_verified_trusted';
-const _TRUST_WINDOW_MS     = 30 * 24 * 60 * 60 * 1000;
-
-function _markTrustedSession(emailHash) {
-  try {
-    const expiresAt = Date.now() + _TRUST_WINDOW_MS;
-    localStorage.setItem(_TRUSTED_SESSION_KEY, JSON.stringify({
-      emailHash, expiresAt, establishedAt: Date.now(),
-    }));
-    // Suppress the periodic trust check in kvSyncNow for the first interval
-    // after sign-in. The server's KV write may not have propagated yet, and
-    // we already have a deferred check scheduled by kvRestoreSession.
-    if (typeof _lastTrustCheckAt !== 'undefined') _lastTrustCheckAt = Date.now();
-  } catch(e) {}
-}
-
-function _isTrustedSession(emailHash) {
-  try {
-    const raw = localStorage.getItem(_TRUSTED_SESSION_KEY);
-    if (!raw) return false;
-    const data = JSON.parse(raw);
-    if (!data?.emailHash || !data?.expiresAt) return false;
-    if (emailHash && data.emailHash !== emailHash) return false;
-    if (Date.now() >= data.expiresAt) {
-      // Expired — clean up
-      localStorage.removeItem(_TRUSTED_SESSION_KEY);
-      localStorage.removeItem(_MFA_TRUSTED_KEY);
-      return false;
-    }
-    return true;
-  } catch(e) { return false; }
-}
-
-function _clearTrustedSession() {
-  try { localStorage.removeItem(_TRUSTED_SESSION_KEY); } catch(e) {}
-  try { localStorage.removeItem(_MFA_TRUSTED_KEY); } catch(e) {}
-}
-
-// Verify with the server that this device is still in the trusted-devices list.
-// Used on app load (before silent restore) and periodically during sync to detect
-// "Clear all trusted devices" performed on another device. If the server says no,
-// we sign out locally to keep the rule "Clear all = closed for all devices" honest.
-async function _verifyDeviceTrustWithServer(emailHash) {
-  if (!emailHash) return { trusted: false };
-  try {
-    const deviceId = getOrCreateDeviceId();
-    const res = await fetchKV(`${WORKER_URL}/device/check`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, deviceId }),
-    });
-    if (!res.ok) return { trusted: true, networkFailed: true }; // Don't punish offline users
-    return await res.json();
-  } catch(e) {
-    return { trusted: true, networkFailed: true }; // Offline — trust local flag
-  }
-}
-
 // Silent trust — called after successful passphrase login.
 // If the user ticked "Remember me", trust the device without any popup.
 // This replaces the old offerTrustDevice() confirm dialog entirely.
@@ -10373,20 +10237,10 @@ async function _trustIfRemembered(email, emailHash, verifier, key) {
   if (secret) {
     const existing = await loadWrappedKey(getOrCreateDeviceId(), secret);
     console.log('[DIAG] _trustIfRemembered: existing IDB key=', !!existing);
-    if (existing) {
-      // Key already wrapped — but still ensure the trusted-session flag is set
-      // (covers the case where the user previously trusted this device but the
-      // flag was never written, e.g. older versions or after a partial clear).
-      _markTrustedSession(emailHash);
-      return;
-    }
+    if (existing) return;
   }
   console.log('[DIAG] _trustIfRemembered: calling trustThisDeviceWith');
   await trustThisDeviceWith(email, emailHash, verifier, key);
-  // Mark the trusted session immediately after successful trust.
-  // trustThisDeviceWith() writes IDB + localStorage key material; this flag is
-  // what lets _mfaGate skip MFA and kvRestoreSession take the silent fast path.
-  _markTrustedSession(emailHash);
 }
 
 async function offerTrustDevice(email, emailHash, verifier, key) {
@@ -10427,39 +10281,15 @@ async function trustThisDeviceWith(email, emailHash, verifier, key) {
       const keyB64   = btoa(String.fromCharCode(...new Uint8Array(exported)));
       localStorage.setItem('stockroom_kv_key_fallback', JSON.stringify({
         keyB64, emailHash,
-        expiresAt: Date.now() + _TRUST_WINDOW_MS,
+        expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
       }));
     } catch(e) {}
-    // Register on backend — accept either passphrase verifier OR passkey sessionToken
-    // so passkey users can be trusted too. Backend stores trustExpiresAt and
-    // returns "not trusted" via /device/check once that time passes.
-    //
-    // We AWAIT this on purpose: the deferred /device/check on next refresh will
-    // see a missing record as "trust revoked" and sign the user out, so the
-    // local trust flag and the server record must be set up together. If the
-    // network fails the await still completes (catch swallows) and we proceed —
-    // the deferred check tolerates network errors with networkFailed:true.
-    const name           = getDeviceName();
-    const trustExpiresAt = new Date(Date.now() + _TRUST_WINDOW_MS).toISOString();
-    const body = {
-      emailHash, deviceId, name,
-      addedAt: new Date().toISOString(),
-      trustExpiresAt,
-      ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: verifier || _kvVerifier }),
-    };
-    try {
-      const res = await fetchKV(`${WORKER_URL}/device/register`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        console.warn('[DIAG] /device/register returned', res.status);
-      } else {
-        console.log('[DIAG] /device/register OK');
-      }
-    } catch(e) {
-      console.warn('[DIAG] /device/register network error:', e.message);
-    }
+    // Register on backend
+    const name = getDeviceName();
+    fetchKV(`${WORKER_URL}/device/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailHash, verifier, deviceId, name, addedAt: new Date().toISOString() }),
+    }).catch(() => {});
     toast('This device is now trusted ✓');
     loadTrustedDevices();
   } catch(e) {
@@ -10529,14 +10359,10 @@ async function removeTrustedDevice(deviceId) {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ emailHash: _kvEmailHash, ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }, deviceId }),
     });
-    // If removing this device, clear local trust data + the trusted-session flag
-    // (so the next page load goes through the normal sign-in wizard)
+    // If removing this device, clear local trust data too
     if (deviceId === getOrCreateDeviceId()) {
       await removeWrappedKey(deviceId);
       localStorage.removeItem('stockroom_device_secret');
-      localStorage.removeItem('stockroom_kv_key_fallback');
-      localStorage.removeItem('stockroom_trust_ts');
-      _clearTrustedSession();
     }
     toast('Device removed ✓');
     loadTrustedDevices();
@@ -10553,15 +10379,10 @@ async function clearAllTrustedDevices() {
       body: JSON.stringify({ emailHash: _kvEmailHash, ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier } }),
     });
     if (!res.ok) throw new Error('Could not clear devices');
-    // Clear local trust data + trusted-session flag for THIS device.
-    // Other devices will discover they're untrusted on their next /device/check
-    // (called from kvRestoreSession on app load) and will be signed out then.
+    // Clear local trust data for this device too
     const myDeviceId = getOrCreateDeviceId();
     await removeWrappedKey(myDeviceId).catch(() => {});
     localStorage.removeItem('stockroom_device_secret');
-    localStorage.removeItem('stockroom_kv_key_fallback');
-    localStorage.removeItem('stockroom_trust_ts');
-    _clearTrustedSession();
     toast('All trusted devices removed ✓');
     loadTrustedDevices();
     // Sync to acc-sec panel
@@ -10584,9 +10405,8 @@ async function kvStoreSession(email, emailHash, verifier, key) {
   try {
     const sessionJson = JSON.stringify({ email, emailHash, verifier });
     localStorage.setItem('stockroom_kv_session', sessionJson);
-    // Note: deliberately NOT mirroring to IDB. Clearing browser cookies/storage
-    // for this site must fully sign the user out on this device — that is the
-    // documented Trusted Session contract.
+    // Also persist to IDB so session survives localStorage/cookie clears
+    dbPut('settings', 'stockroom_kv_session', sessionJson).catch(() => {});
   } catch(e) {}
   // Cache key — 4 hours normally, 30 days if user asked to stay signed in
   if (key) {
@@ -10615,60 +10435,6 @@ async function kvRestoreSession() {
     const { email, emailHash, verifier, sessionToken, authMethod } = JSON.parse(raw);
     console.log('[DIAG] kvRestoreSession: email=', email, 'authMethod=', authMethod, 'hasVerifier=', !!verifier, 'hasToken=', !!sessionToken);
     if (!email || !emailHash) return false;
-
-    // ── Deferred server-side trust validation ────────────────────
-    // We DON'T block the silent restore on the server's view of trust.
-    // Reasons:
-    //  • On the very first refresh after first sign-in, /device/register may
-    //    not yet be visible to /device/check due to KV consistency lag — the
-    //    server would legitimately say "not trusted" and falsely sign the
-    //    user out.
-    //  • Network errors and slow servers shouldn't keep the user out.
-    // Instead: schedule an async check ~10s after restore, and only if the
-    // session was established more than 60s ago. Recently-established trust
-    // is exempt from the deferred check entirely. The kvSyncNow path also
-    // runs this check periodically.
-    if (_isTrustedSession(emailHash)) {
-      let establishedAt = 0;
-      try {
-        const ts = JSON.parse(localStorage.getItem(_TRUSTED_SESSION_KEY) || '{}');
-        establishedAt = ts.establishedAt || 0;
-      } catch(e) {}
-      const ageMs = Date.now() - establishedAt;
-      if (ageMs > 60 * 1000) {
-        setTimeout(() => {
-          _verifyDeviceTrustWithServer(emailHash).then(trustResult => {
-            if (!trustResult.trusted && !trustResult.networkFailed) {
-              console.log('[DIAG] deferred trust check: server says trust revoked');
-              _clearTrustedSession();
-              const dId = getOrCreateDeviceId();
-              removeWrappedKey(dId).catch(() => {});
-              localStorage.removeItem('stockroom_device_secret');
-              localStorage.removeItem('stockroom_kv_key_fallback');
-              localStorage.removeItem('stockroom_trust_ts');
-              localStorage.removeItem('stockroom_kv_session_key');
-              localStorage.removeItem('stockroom_kv_session');
-              kvConnected     = false;
-              _kvEmail        = '';
-              _kvEmailHash    = '';
-              _kvVerifier     = '';
-              _kvSessionToken = '';
-              _kvAuthMethod   = '';
-              _kvKey          = null;
-              toast('Signed out — trusted devices were cleared');
-              document.body.classList.add('wizard-active');
-              const wiz = document.getElementById('wizard');
-              if (wiz) wiz.style.display = 'flex';
-              document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
-              if (typeof showKvLogin === 'function') showKvLogin();
-              updateSyncUI();
-            }
-          }).catch(() => {});
-        }, 10000);
-      } else {
-        console.log('[DIAG] kvRestoreSession: trust established', Math.round(ageMs/1000), 's ago — skipping deferred check');
-      }
-    }
 
     // Back-fill device passkey flag from stored credential map (for users pre-dating this flag)
     try {
@@ -10714,7 +10480,7 @@ async function kvRestoreSession() {
             localStorage.setItem('stockroom_kv_key_fallback', JSON.stringify({
               keyB64,
               emailHash,
-              expiresAt: Date.now() + _TRUST_WINDOW_MS,
+              expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000, // 30 days
             }));
           } catch(e) {}
           fetch(`${WORKER_URL}/device/seen`, {
@@ -11118,62 +10884,12 @@ async function kvPull() {
 }
 
 // ── syncNow for KV mode ────────────────────
-// Throttle so the server-trust check fires at most once every 5 minutes per session.
-// This catches "Clear all trusted devices" performed on another device without
-// requiring a full app reload, but doesn't add a network call to every sync tick.
-let _lastTrustCheckAt = 0;
-const _TRUST_CHECK_INTERVAL_MS = 5 * 60 * 1000;
-
 async function kvSyncNow(silent = false) {
   if (!kvConnected && !_shareState) return;
   if (kvConnected && (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken))) {
     console.warn('kvSyncNow: missing credentials, skipping');
     return;
   }
-
-  // ── Trusted-session revocation check ─────────────────────────────────
-  // If this device claims to be a trusted-session device, periodically
-  // verify with the server. If the device has been removed from the trusted
-  // list (Clear all from another device, or Remove for this device), sign
-  // out locally so the rules from the spec hold:
-  //   "Trusted Session would be closed for the specific device when Sign out
-  //    is used, [and] for all devices when trusted devices is cleared"
-  if (kvConnected && _kvEmailHash && _isTrustedSession(_kvEmailHash)) {
-    const now = Date.now();
-    if (now - _lastTrustCheckAt > _TRUST_CHECK_INTERVAL_MS) {
-      _lastTrustCheckAt = now;
-      const trustResult = await _verifyDeviceTrustWithServer(_kvEmailHash);
-      if (!trustResult.trusted && !trustResult.networkFailed) {
-        console.log('[DIAG] kvSyncNow: server says trust revoked — signing out locally');
-        // Mirror sign-out without the confirm() prompt
-        _clearTrustedSession();
-        const dId = getOrCreateDeviceId();
-        await removeWrappedKey(dId).catch(() => {});
-        localStorage.removeItem('stockroom_device_secret');
-        localStorage.removeItem('stockroom_kv_key_fallback');
-        localStorage.removeItem('stockroom_trust_ts');
-        localStorage.removeItem('stockroom_kv_session_key');
-        localStorage.removeItem('stockroom_kv_session');
-        kvConnected     = false;
-        _kvEmail        = '';
-        _kvEmailHash    = '';
-        _kvVerifier     = '';
-        _kvSessionToken = '';
-        _kvAuthMethod   = '';
-        _kvKey          = null;
-        toast('Signed out — trusted devices were cleared');
-        // Bring the wizard back up
-        document.body.classList.add('wizard-active');
-        const wiz = document.getElementById('wizard');
-        if (wiz) wiz.style.display = 'flex';
-        document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
-        if (typeof showKvLogin === 'function') showKvLogin();
-        updateSyncUI();
-        return;
-      }
-    }
-  }
-
   if (!silent) updateSyncPill('syncing');
   const _wasSilent = silent;
   try {
@@ -11237,18 +10953,12 @@ async function kvSyncNow(silent = false) {
         }
       }
       if (remote.reminders && Array.isArray(remote.reminders)) {
-        // Respect tombstones: a reminder we've explicitly deleted locally must
-        // not come back through the merge, even if a stale device pushed its
-        // copy after our deletion. The tombstone set is itself synced via
-        // remote.deletedIds further down.
-        const tombstones = await loadDeletedIds();
-        const remoteR = remote.reminders.filter(r => !tombstones.has(r.id));
         const localREmpty = reminders.length === 0;
         if (remoteWins || localREmpty) {
-          reminders = remoteR; await saveReminders();
+          reminders = remote.reminders; await saveReminders();
         } else {
           const localRIds = new Set(reminders.map(r => r.id));
-          const newR = remoteR.filter(r => !localRIds.has(r.id));
+          const newR = remote.reminders.filter(r => !localRIds.has(r.id));
           if (newR.length) { reminders = [...reminders, ...newR]; await saveReminders(); }
         }
       }
@@ -11380,40 +11090,25 @@ async function kvSignOut() {
   } else {
     localStorage.removeItem('stockroom_mfa_was_active');
   }
-  // Clear the per-session and trusted MFA verification flags — next login must verify again
+  // Clear the per-session verified flag — next login must verify MFA again
   try { sessionStorage.removeItem(_MFA_SESSION_KEY); } catch(e) {}
-  try { localStorage.removeItem(_MFA_TRUSTED_KEY); } catch(e) {}
-  // Drop the trusted-session flag so the next load goes through the wizard
-  _clearTrustedSession();
   // Dismiss any decrypt error banner — no need to show it after an intentional sign-out
   document.getElementById('kv-decrypt-error-banner')?.remove();
   // Clean up any grocery drag UI
   document.getElementById('grocery-change-dept-zone')?.remove();
   document.getElementById('grocery-dept-picker-overlay')?.remove();
   groceryEditMode = false;
-  // Sign-out closes the trusted session for THIS device only — drop the
-  // server-side trusted-device record so the device picker on other devices
-  // shows the up-to-date list. Fire-and-forget; the local clear must happen
-  // regardless of whether the network call succeeds.
+  // Clear device trust
   const deviceId = getOrCreateDeviceId();
-  if (_kvEmailHash && (_kvVerifier || _kvSessionToken)) {
-    fetchKV(`${WORKER_URL}/device/remove`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        emailHash: _kvEmailHash, deviceId,
-        ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
-      }),
-    }).catch(() => {});
-  }
-  // Clear device trust (local)
   await removeWrappedKey(deviceId);
   localStorage.removeItem('stockroom_device_secret');
   localStorage.removeItem('stockroom_kv_key_fallback');
-  localStorage.removeItem('stockroom_trust_ts');
   localStorage.removeItem('stockroom_kv_session_key');
   try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
   // Clear session credentials (but keep permanent setup flags)
   localStorage.removeItem('stockroom_kv_session');
+  // Also clear IDB session copy so the user is fully signed out
+  dbPut('settings', 'stockroom_kv_session', null).catch(() => {});
   localStorage.removeItem('stockroom_seen');
   // Note: keep stockroom_protect_seen and stockroom_country_set — they are permanent
   // one-time setup flags, not session data. Removing them causes the protect/country
@@ -11432,14 +11127,12 @@ async function kvSignOut() {
   await dbPut('reminders',  'reminders', []);
   await dbPut('departments','departments', []);
   // Reset in-memory state
-  kvConnected     = false;
-  _kvEmail        = '';
-  _kvEmailHash    = '';
-  _kvVerifier     = '';
-  _kvSessionToken = '';
-  _kvAuthMethod   = '';
-  _kvKey          = null;
-  _shareState     = null;
+  kvConnected  = false;
+  _kvEmail     = '';
+  _kvEmailHash = '';
+  _kvVerifier  = '';
+  _kvKey       = null;
+  _shareState  = null;
   // Show login screen
   document.body.classList.add('wizard-active'); document.getElementById('wizard').style.display = 'flex';
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
@@ -15370,12 +15063,17 @@ async function init() {
     } catch(e) {}
   }
 
-  // ── kv_session lives ONLY in localStorage now ─────────────────────────────
-  // Previously we mirrored it to IDB so a localStorage/cookie clear would
-  // not force a re-login, but the Trusted Session contract requires that
-  // clearing cookies on a device fully signs the user out. The session JSON
-  // is small and recreated on next sign-in, so localStorage is the single
-  // source of truth.
+  // ── Restore kv_session from IDB if localStorage was cleared ──────────────
+  // stockroom_kv_session is the gating key for kvRestoreSession(). We also
+  // persist it to IDB so a cookie/localStorage clear doesn't force a re-login.
+  if (!localStorage.getItem('stockroom_kv_session')) {
+    try {
+      const savedSession = await dbGet('settings', 'stockroom_kv_session');
+      if (savedSession) {
+        localStorage.setItem('stockroom_kv_session', savedSession);
+      }
+    } catch(e) {}
+  }
 
   // Load all data from IndexedDB (migrates from localStorage on first run)
   await loadData();
@@ -15498,8 +15196,18 @@ async function init() {
     wizardNext();
   } else if (countrySet) {
     wizardNext();
+  } else if (window._landingAction === 'register') {
+    // Came from landing page "Create account" — go straight to register flow.
+    // If a remembered email is present (user clicked Create account anyway),
+    // clear it so registration starts fresh.
+    try {
+      localStorage.removeItem('stockroom_remembered_email');
+      localStorage.removeItem('stockroom_remembered_passkey');
+    } catch(e) {}
+    showKvRegister();
   } else {
-    // No session, no seen flag — show login (will auto-skip to auth if remembered)
+    // No session, no seen flag — show login (will auto-skip to auth if remembered).
+    // Includes the ?action=login path from the landing page.
     showKvLogin();
   }
 
@@ -16218,6 +15926,17 @@ function handleURLAction() {
   const action = params.get('action');
   if (!action) return;
 
+  // ── Landing-page entry points: ?action=login / ?action=register ──
+  // These are recorded as a flag for the init flow to honour, then
+  // returned early so the rest of init can route the user appropriately.
+  // We don't strip these from the URL until init has consumed them, so
+  // a refresh on /app?action=register still does the right thing.
+  if (action === 'login' || action === 'register') {
+    window._landingAction = action;
+    history.replaceState(null, '', location.pathname);
+    return;
+  }
+
   history.replaceState(null, '', location.pathname);
 
   setTimeout(() => {
@@ -16368,11 +16087,11 @@ async function renderNotes() {
 
   visible.forEach(n => {
     if (showHeaders && n.pinned && !inPinned) {
-      html += `<div class="notes-section-label"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg> Pinned</div>`;
+      html += `<div class="notes-section-label" style="padding:8px 0 4px"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg> Pinned</div>`;
       inPinned = true;
     }
     if (showHeaders && !n.pinned && inPinned) {
-      html += `<div class="notes-section-label"><svg class="icon" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> Notes</div>`;
+      html += `<div class="notes-section-label" style="padding:8px 0 4px"><svg class="icon" aria-hidden="true" style="vertical-align:-3px"><use href="#i-notebook-pen"></use></svg> Notes</div>`;
       inPinned = false;
     }
     html += _noteCardHTML(n);
@@ -16598,9 +16317,6 @@ async function openNoteEditor(noteId) {
   try {
   const overlay = document.getElementById('note-editor-overlay');
   if (!overlay) { console.error('note-editor-overlay not found'); return; }
-  // Lock background scroll + trigger desktop modal styling. Removed in
-  // _closeNoteEditorImmediate so the page returns to normal on close.
-  document.body.classList.add('note-open');
 
   if (!noteId) {
     // New note
@@ -16705,16 +16421,9 @@ function _showNoteBody(n) {
   if (editorBody) editorBody.style.display = 'flex';
 
   const unlocked = _noteUnlocked.get(n.id);
-  let body = unlocked ? unlocked.body : (n.body || '');
+  const body = unlocked ? unlocked.body : (n.body || '');
 
   if (n.tickBoxesVisible) {
-    // Defensive: if the body contains HTML markup (e.g. saved by an older
-    // build that stored innerHTML even in tick mode), convert it to plain
-    // text now so the renderer doesn't show "<div>Test</div>" literally.
-    if (/<(?:div|p|br|li)\b/i.test(body)) {
-      body = _richTextToPlainLines(body);
-      n.body = body; // normalise so the next save persists in plain form
-    }
     _renderTickBody(n, body);
   } else {
     const ticksBody = document.getElementById('note-ticks-body');
@@ -16731,7 +16440,6 @@ function _showNoteBody(n) {
 function _closeNoteEditorImmediate() {
   const overlay = document.getElementById('note-editor-overlay');
   if (overlay) overlay.style.display = 'none';
-  document.body.classList.remove('note-open');
   _editingNoteId = null;
   _noteBodyDirty = false;
   clearTimeout(_noteAutoSaveTimer);
@@ -16756,33 +16464,22 @@ async function closeNoteEditor() {
 }
 
 // ── Unlock flow ───────────────────────────
-// Two unlock paths:
-//   1. General MFA is enabled on the account. The user proves reauth via
-//      passphrase/passkey, then proves email access via the standard MFA OTP
-//      flow (which `requireReauth` runs through `_mfaIntercept` before firing
-//      our callback). At that point we already have authoritative email
-//      verification — no note-specific second OTP is needed. Asking for one
-//      more code here was the bug that bounced users back to the notes list.
-//   2. General MFA is NOT enabled. Reauth alone (passphrase/passkey) doesn't
-//      prove email access, so we fall back to the note-specific OTP via
-//      /note/otp/send → /note/otp/verify before pulling the body.
 async function unlockCurrentNote() {
   const n = notes.find(x => x.id === _editingNoteId);
   if (!n) return;
   const errEl = document.getElementById('note-lock-error');
   errEl.textContent = '';
 
+  // Use existing requireReauth mechanism
   requireReauth(
     `Unlock "${n.title}"`,
     async () => {
-      // requireReauth has already run the general-MFA gate (if enabled) by the
-      // time this callback fires, so any MFA proof is fresh. In both cases we
-      // can fetch the body straight away.
-      //
-      // If general MFA is NOT enabled AND the user wants extra protection on
-      // notes specifically, the legacy /note/otp/* flow remains available — but
-      // we no longer trigger it automatically when MFA already covered email.
-      await _fetchAndUnlockNote(n);
+      // First factor passed — check if MFA needed
+      if (_mfaEnabled()) {
+        await _sendNoteOtp();
+      } else {
+        await _fetchAndUnlockNote(n);
+      }
     },
     { passkeyAllowed: true }
   );
@@ -16939,35 +16636,22 @@ async function toggleNoteTicks() {
   const ticksEl = document.getElementById('note-ticks-body');
 
   if (n.tickBoxesVisible) {
-    // Switching to tick view — convert the rich-text body into a list of
-    // plain-text lines. Chrome's contenteditable produces HTML like
-    //   "Test<div>Test</div><div>Test</div>"
-    // where the first line has no wrapper and subsequent lines are each in a
-    // <div>. Earlier versions just appended a newline after each <div>, which
-    // collapsed the first two lines into "TestTest" (no separator before the
-    // first <div>). We instead walk the DOM and emit a newline at the START
-    // of every block element — that handles all common shapes from typed
-    // input (top-level <div>, <p>, <li>, plus <br>).
+    // Switching to tick view — extract plain-text lines from current HTML body
     const rawHTML = bodyEl ? bodyEl.innerHTML : (n.body || '');
-    const plainText = _richTextToPlainLines(rawHTML);
+    // Convert <br> / block tags to newlines then strip remaining tags
+    const tmp = document.createElement('div'); tmp.innerHTML = rawHTML;
+    tmp.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+    tmp.querySelectorAll('p,div,li').forEach(el => { el.insertAdjacentText('afterend', '\n'); });
+    const plainText = (tmp.textContent || '').trim();
     if (bodyEl) bodyEl.style.display = 'none';
-    // Persist the plain-text form into n.body so a later save (or a reopen
-    // before an edit happens) doesn't leave HTML markup sitting in the body
-    // for _renderTickBody to render literally.
-    n.body = plainText;
     _renderTickBody(n, plainText);
   } else {
-    // Switching back to rich text — collect tick row texts back into the
-    // contenteditable body. Strip the zero-width-space placeholders we used
-    // to keep empty rows clickable. Persist as HTML (with <br>s) so the next
-    // save keeps the body in rich-text form.
+    // Switching back to rich text — collect tick labels back to text
     if (ticksEl) {
-      const labels = ticksEl.querySelectorAll('.tick-row-text');
-      const lines  = [...labels].map(s => (s.textContent || '').replace(/\u200B/g, '')).join('\n');
-      const html   = lines.replace(/\n/g, '<br>');
-      if (bodyEl) { bodyEl.style.display = ''; bodyEl.innerHTML = html; }
+      const labels = ticksEl.querySelectorAll('label span');
+      const lines  = [...labels].map(s => s.textContent).join('\n');
+      if (bodyEl) { bodyEl.style.display = ''; bodyEl.innerHTML = lines.replace(/\n/g, '<br>'); }
       ticksEl.style.display = 'none';
-      n.body = html;
     } else {
       if (bodyEl) bodyEl.style.display = '';
     }
@@ -16976,73 +16660,23 @@ async function toggleNoteTicks() {
   await saveNotes();
 }
 
-// Convert contenteditable innerHTML into a "\n"-separated plain text string
-// while preserving line breaks introduced by block elements (<div>, <p>, <li>)
-// and explicit <br>s. Trims trailing empties; collapses runs of empties to a
-// single newline so we don't render dozens of empty tick rows.
-function _richTextToPlainLines(html) {
-  const tmp = document.createElement('div');
-  tmp.innerHTML = html || '';
-  // Replace every <br> with a literal newline
-  tmp.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
-  // For every block element, prepend a newline to its text content. Doing
-  // this BEFORE rather than after means the first <div> in
-  //   "Test<div>Second</div>"
-  // produces "Test\nSecond" instead of "TestSecond\n".
-  tmp.querySelectorAll('p,div,li').forEach(el => {
-    el.insertAdjacentText('beforebegin', '\n');
-  });
-  // Read out the text. Decode entities (&nbsp; etc.) by going via textContent
-  let text = (tmp.textContent || '');
-  // Replace non-breaking space with regular space and collapse runs of \n
-  text = text.replace(/\u00A0/g, ' ').replace(/\n{2,}/g, '\n').replace(/^\n+/, '');
-  return text.replace(/\s+$/, '');
-}
-
 function _renderTickBody(n, body) {
   const container = document.getElementById('note-ticks-body');
   if (!container) return;
   container.style.display = 'block';
-  // Split on newlines but keep empty entries — a user-created empty row is a
-  // real intentional state (e.g. just-pressed-Enter, or the new row from
-  // "+ Add a line"). The toggle-into-tick-mode path normalises trailing
-  // newlines before calling us.
-  const lines = (body || '').split('\n');
-  // True empty: no body at all, or single blank line. Show only the add button.
-  if (lines.length === 0 || (lines.length === 1 && lines[0] === '')) {
-    container.innerHTML = `
-      <p style="color:var(--muted);font-size:13px;margin:8px 0 4px">Add lines to start ticking off — each line is its own tick box.</p>
-      ${_tickAddRowButtonHTML()}`;
+  const paragraphs = (body || '').split('\n').filter(p => p.trim());
+  if (!paragraphs.length) {
+    container.innerHTML = `<p style="color:var(--muted);font-size:13px">Add some lines — each line becomes a tick box.</p>`;
     return;
   }
-  container.innerHTML = lines.map((p, i) => _tickRowHTML(n, p, i)).join('') + _tickAddRowButtonHTML();
-}
-
-// HTML for one tick row. Uses a <div> wrapper, NOT a <label>, because <label>
-// associates clicks on its descendants (including the contenteditable span)
-// with the input checkbox — that would toggle the box every time the user
-// clicked into the text to edit it. Clicking the text now just places the
-// caret; only clicks on the checkbox itself toggle the tick state.
-function _tickRowHTML(n, text, i) {
-  const checked = !!(n.tickBoxes || {})[i];
-  const struck  = checked ? 'text-decoration:line-through;color:var(--muted);opacity:0.65' : 'color:var(--text)';
-  // Empty rows would collapse visually with no text content, so we render
-  // a zero-width-space when empty just so the editable area has clickable
-  // height. The caret sits before/after it cleanly.
-  const display = text === '' ? '\u200B' : esc(text);
-  return `<div data-tick-row="${i}" style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
-    <input type="checkbox" ${checked ? 'checked' : ''} onclick="event.stopPropagation();onNoteTick(${i},this.checked)"
-      style="margin-top:3px;width:18px;height:18px;min-width:18px;accent-color:var(--accent);cursor:pointer;flex-shrink:0">
-    <span class="tick-row-text" data-idx="${i}" contenteditable="true" spellcheck="true"
-      onkeydown="onTickRowKeydown(event,${i})" oninput="onTickRowInput(${i},this)"
-      style="flex:1;${struck};font-size:14px;line-height:1.5;outline:none;min-width:0;word-break:break-word;cursor:text">${display}</span>
-  </div>`;
-}
-
-function _tickAddRowButtonHTML() {
-  return `<button type="button" onclick="addTickRow()"
-    style="display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px 4px;background:transparent;border:none;color:var(--muted);font-size:13px;cursor:pointer">
-    <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add a line</button>`;
+  container.innerHTML = paragraphs.map((p, i) => {
+    const checked = !!(n.tickBoxes || {})[i];
+    return `<label style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
+      <input type="checkbox" ${checked ? 'checked' : ''} onchange="onNoteTick(${i},this.checked)"
+        style="margin-top:3px;width:18px;height:18px;min-width:18px;accent-color:var(--accent)">
+      <span style="${checked ? 'text-decoration:line-through;color:var(--muted)' : 'color:var(--text)'};font-size:14px;line-height:1.5">${esc(p)}</span>
+    </label>`;
+  }).join('');
 }
 
 async function onNoteTick(idx, checked) {
@@ -17050,177 +16684,8 @@ async function onNoteTick(idx, checked) {
   if (!n.tickBoxes) n.tickBoxes = {};
   n.tickBoxes[idx] = checked;
   n.updatedAt = new Date().toISOString();
-  // Apply visual change directly without re-rendering — this preserves the
-  // user's caret position if they were editing another row, and keeps the
-  // checkbox-toggle smooth.
-  const row = document.querySelector(`#note-ticks-body [data-tick-row="${idx}"] .tick-row-text`);
-  if (row) {
-    if (checked) {
-      row.style.textDecoration = 'line-through';
-      row.style.color          = 'var(--muted)';
-      row.style.opacity        = '0.65';
-    } else {
-      row.style.textDecoration = '';
-      row.style.color          = 'var(--text)';
-      row.style.opacity        = '';
-    }
-  }
   await saveNotes();
   if (n.locked) _resetNoteActivity(n.id);
-}
-
-// When the user types inside a tick row's editable span, capture the new text
-// and persist it back to the note's body. Body remains the source of truth so
-// switching back to rich-text view reflects edits.
-function onTickRowInput(idx, span) {
-  _captureTickBodyToNote();
-  _noteBodyDirty = true;
-  // Debounced auto-save (same mechanism the rich text body uses)
-  if (typeof onNoteBodyInput === 'function') {
-    clearTimeout(_noteAutoSaveTimer);
-    _noteAutoSaveTimer = setTimeout(() => _autoSaveNote(), 800);
-  }
-}
-
-// Pull the current tick rows back into the note's body field as plain text,
-// one line per row. tickBoxes indices stay in sync with row positions.
-// Zero-width-space placeholders (used so empty rows have clickable height) are
-// stripped so they don't accumulate in the saved body.
-function _captureTickBodyToNote() {
-  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
-  const rows = document.querySelectorAll('#note-ticks-body .tick-row-text');
-  const lines = [...rows].map(s =>
-    (s.textContent || '')
-      .replace(/\u200B/g, '')   // strip our placeholders
-      .replace(/\n/g, ' ')      // collapse any stray newlines into spaces
-  );
-  n.body = lines.join('\n');
-  n.updatedAt = new Date().toISOString();
-}
-
-// Enter on a row → split into a new row below (default contenteditable handles
-// the visible split poorly, so we capture + re-render). Backspace at start of
-// an empty row → remove it and focus the previous row.
-function onTickRowKeydown(ev, idx) {
-  if (ev.key === 'Enter' && !ev.shiftKey) {
-    ev.preventDefault();
-    const span = ev.currentTarget;
-    const fullText = span.textContent || '';
-    // Split at caret position
-    const sel = window.getSelection();
-    let caret = fullText.length;
-    if (sel && sel.rangeCount) {
-      const range = sel.getRangeAt(0);
-      if (span.contains(range.startContainer)) {
-        caret = _caretOffsetWithin(span, range.endContainer, range.endOffset);
-      }
-    }
-    const before = fullText.slice(0, caret);
-    const after  = fullText.slice(caret);
-    span.textContent = before;
-    _insertTickRowAfter(idx, after);
-    return;
-  }
-  if (ev.key === 'Backspace') {
-    const span = ev.currentTarget;
-    if ((span.textContent || '') === '') {
-      ev.preventDefault();
-      _removeTickRow(idx);
-    }
-  }
-}
-
-function _caretOffsetWithin(parent, node, offset) {
-  let total = 0;
-  const walker = document.createTreeWalker(parent, NodeFilter.SHOW_TEXT, null);
-  let cur;
-  while ((cur = walker.nextNode())) {
-    if (cur === node) return total + offset;
-    total += cur.nodeValue.length;
-  }
-  return total;
-}
-
-function _insertTickRowAfter(idx, text) {
-  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
-  // Read all current rows, insert a new one at idx+1, then re-render
-  const rows = [...document.querySelectorAll('#note-ticks-body .tick-row-text')]
-    .map(s => s.textContent || '');
-  rows.splice(idx + 1, 0, text || '');
-  // Shift tickBoxes indices >= idx+1 by 1
-  const newTicks = {};
-  Object.keys(n.tickBoxes || {}).forEach(k => {
-    const ki = parseInt(k, 10);
-    if (ki <= idx) newTicks[ki] = n.tickBoxes[k];
-    else           newTicks[ki + 1] = n.tickBoxes[k];
-  });
-  n.tickBoxes = newTicks;
-  n.body = rows.join('\n');
-  n.updatedAt = new Date().toISOString();
-  _renderTickBody(n, n.body);
-  _noteBodyDirty = true;
-  // Focus the new row
-  setTimeout(() => {
-    const newSpan = document.querySelector(`#note-ticks-body [data-tick-row="${idx + 1}"] .tick-row-text`);
-    if (newSpan) {
-      newSpan.focus();
-      // Caret at start
-      const range = document.createRange();
-      range.setStart(newSpan, 0); range.collapse(true);
-      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-    }
-  }, 0);
-  saveNotes();
-}
-
-function _removeTickRow(idx) {
-  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
-  const rows = [...document.querySelectorAll('#note-ticks-body .tick-row-text')]
-    .map(s => s.textContent || '');
-  if (rows.length <= 1) return;
-  rows.splice(idx, 1);
-  // Rebuild tickBoxes shifting indices > idx down by 1
-  const newTicks = {};
-  Object.keys(n.tickBoxes || {}).forEach(k => {
-    const ki = parseInt(k, 10);
-    if (ki < idx)      newTicks[ki]     = n.tickBoxes[k];
-    else if (ki > idx) newTicks[ki - 1] = n.tickBoxes[k];
-    // ki === idx is dropped
-  });
-  n.tickBoxes = newTicks;
-  n.body = rows.join('\n');
-  n.updatedAt = new Date().toISOString();
-  _renderTickBody(n, n.body);
-  _noteBodyDirty = true;
-  setTimeout(() => {
-    const targetIdx = Math.max(0, idx - 1);
-    const focusSpan = document.querySelector(`#note-ticks-body [data-tick-row="${targetIdx}"] .tick-row-text`);
-    if (focusSpan) {
-      focusSpan.focus();
-      const range = document.createRange();
-      range.selectNodeContents(focusSpan); range.collapse(false);
-      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-    }
-  }, 0);
-  saveNotes();
-}
-
-// "+ Add a line" button below the last row
-function addTickRow() {
-  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
-  const rows = [...document.querySelectorAll('#note-ticks-body .tick-row-text')]
-    .map(s => s.textContent || '');
-  rows.push('');
-  n.body = rows.join('\n');
-  n.updatedAt = new Date().toISOString();
-  _renderTickBody(n, n.body);
-  _noteBodyDirty = true;
-  setTimeout(() => {
-    const newIdx = rows.length - 1;
-    const newSpan = document.querySelector(`#note-ticks-body [data-tick-row="${newIdx}"] .tick-row-text`);
-    if (newSpan) newSpan.focus();
-  }, 0);
-  saveNotes();
 }
 
 function toggleNoteColourPicker() {
@@ -17300,7 +16765,7 @@ async function deleteCurrentNote() {
 // ── Body editing ──────────────────────────
 function _getCurrentEditorBody(n) {
   if (n.tickBoxesVisible) {
-    const labels = document.querySelectorAll('#note-ticks-body .tick-row-text');
+    const labels = document.querySelectorAll('#note-ticks-body label span');
     return [...labels].map(s => s.textContent).join('\n');
   }
   return document.getElementById('note-body-input')?.innerHTML || '';
@@ -17711,13 +17176,8 @@ async function mfaVerifySubmit() {
 
   _mfaVerifyAltMode = false;
   localStorage.removeItem('stockroom_mfa_was_active');
-  // Mark MFA as verified for this browser session (per-tab fallback)
+  // Mark MFA as verified for this browser session (allows trusted devices to skip on reload)
   try { sessionStorage.setItem(_MFA_SESSION_KEY, _kvEmailHash || '1'); } catch(e) {}
-  // If this is a trusted-session device (Remember me), also persist for 30 days
-  // so MFA does not fire on every tab open during the trust window.
-  if (_isTrustedSession(_kvEmailHash)) {
-    _markMfaTrustedVerified(_kvEmailHash);
-  }
   closeModal('mfa-verify-modal');
   if (codeEl) codeEl.value = '';
   if (_pendingMfaCallback) { const cb = _pendingMfaCallback; _pendingMfaCallback = null; cb(); }
@@ -17753,42 +17213,15 @@ let _mfaEmailTestSent    = false;
 // ── MFA gate — single hard checkpoint for all login paths ────────────────────
 // Every path into the app calls _mfaGate(callback). It:
 //   1. Pulls the latest settings from the server (so MFA state is always fresh)
-//   2. If MFA is enabled AND not already verified, shows verify modal
-//   3. If disabled OR already verified, runs callback immediately
+//   2. If MFA is enabled AND not already verified this session, shows verify modal
+//   3. If disabled OR already verified this session, runs callback immediately
 //
-// Two "already verified" stores:
-//   • Untrusted devices → sessionStorage (per browser session, current behaviour)
-//   • Trusted-session devices (Remember me) → localStorage with 30-day expiry,
-//     so MFA does not fire on every tab open during the trust window.
-//
-// Trusted-session MFA verification is cleared by:
-//   • Sign out / Clear all trusted devices / cookie clear / 30-day expiry
-//   • Disabling MFA (handled by the existing was-active flag flow)
+// "Stay signed in" behaviour with MFA:
+//   - First load after sign-in: MFA fires, user verifies → flag set in sessionStorage
+//   - Subsequent page loads in same browser session: flag present → MFA skipped
+//   - Sign out or cookie/storage clear: sessionStorage wiped → MFA fires again next load
+//   - Explicit sign-out always clears the flag
 const _MFA_SESSION_KEY = 'stockroom_mfa_verified';
-
-function _mfaTrustedVerifiedFor(emailHash) {
-  if (!emailHash) return false;
-  try {
-    const raw = localStorage.getItem(_MFA_TRUSTED_KEY);
-    if (!raw) return false;
-    const data = JSON.parse(raw);
-    if (!data || data.emailHash !== emailHash) return false;
-    if (Date.now() >= data.expiresAt) {
-      localStorage.removeItem(_MFA_TRUSTED_KEY);
-      return false;
-    }
-    return true;
-  } catch(e) { return false; }
-}
-
-function _markMfaTrustedVerified(emailHash) {
-  if (!emailHash) return;
-  try {
-    localStorage.setItem(_MFA_TRUSTED_KEY, JSON.stringify({
-      emailHash, expiresAt: Date.now() + _TRUST_WINDOW_MS,
-    }));
-  } catch(e) {}
-}
 
 async function _mfaGate(callback) {
   // Pull fresh settings from server — MFA state must be authoritative from server.
@@ -17826,11 +17259,11 @@ async function _mfaGate(callback) {
     return;
   }
 
-  // MFA is enabled — check both the per-session flag (untrusted devices) and
-  // the 30-day trusted-session flag. Either one is enough to skip MFA.
-  const sessionVerified = sessionStorage.getItem(_MFA_SESSION_KEY) === _kvEmailHash;
-  const trustedVerified = _isTrustedSession(_kvEmailHash) && _mfaTrustedVerifiedFor(_kvEmailHash);
-  if (sessionVerified || trustedVerified) {
+  // MFA is enabled — check if already verified this browser session
+  // sessionStorage is wiped on tab/browser close AND on cookie clear,
+  // so "stay signed in" users only verify once per session.
+  const alreadyVerified = sessionStorage.getItem(_MFA_SESSION_KEY) === _kvEmailHash;
+  if (alreadyVerified) {
     await callback();
     return;
   }
@@ -18216,22 +17649,14 @@ function _updateMfaSettingsUI() {
 
 function _maybeShowMfaPrompt() {
   if (_mfaEnabled()) return;
-  // Stored both in settings (synced across devices) AND localStorage (legacy).
-  // Either being set means the user has already dismissed it.
-  if (settings._mfaPromptDismissed) return;
   if (localStorage.getItem(_MFA_DISMISSED_KEY)) return;
   if (!kvConnected) return;
   openModal('mfa-prompt-modal');
 }
 
 function dismissMfaPrompt() {
-  // Persist to synced settings so the prompt doesn't reappear on other devices
-  settings._mfaPromptDismissed = true;
-  _saveSettings().then(() => { if (kvConnected) kvPush().catch(() => {}); });
-  // Also keep the localStorage flag for resilience if the sync fails
-  try { localStorage.setItem(_MFA_DISMISSED_KEY, 'dismissed'); } catch(e) {}
+  localStorage.setItem(_MFA_DISMISSED_KEY, 'dismissed');
   closeModal('mfa-prompt-modal');
-  setTimeout(() => toast('You can enable two-factor authentication anytime in Account & Security'), 400);
 }
 function renderAccountSecurity() {
   // Your Details

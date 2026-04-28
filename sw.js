@@ -1,12 +1,14 @@
-const CACHE_VERSION = 'stockroom-kv-v199';
+const CACHE_VERSION = 'stockroom-kv-v184';
 const CACHE_NAME    = CACHE_VERSION;
 
 const CACHE_URLS = [
-  './',
-  './index.html',
-  './app.js',
-  './styles.css',
-  './manifest.json',
+  '/',                  // landing page
+  '/landing.html',      // direct hit on landing
+  '/app',               // app shell
+  '/index.html',        // app shell direct
+  '/app.js',
+  '/styles.css',
+  '/manifest.json',
 ];
 
 const SYNC_TAG = 'stockroom-sync';
@@ -86,12 +88,11 @@ self.addEventListener('fetch', event => {
     '/reminder','/status','/register','/unregister','/unsubscribe',
     '/check-now','/send-now','/debug-schedule','/reset-schedule',
     '/set-schedule','/send-reminder',
-    '/note/','/mfa/',
   ];
   if (apiPaths.some(p => url.pathname === p || url.pathname.startsWith(p + '/'))) return;
 
   // Diagnostic and admin pages — always network
-  if (['/diag.html', '/admin.html', '/diag-trusted.html'].includes(url.pathname)) return;
+  if (['/diag.html', '/admin.html'].includes(url.pathname)) return;
 
   // App shell — network first, cache fallback for offline
   event.respondWith(
@@ -105,7 +106,14 @@ self.addEventListener('fetch', event => {
       .catch(() =>
         caches.match(event.request).then(cached => {
           if (cached) return cached;
-          if (event.request.mode === 'navigate') return caches.match('./index.html');
+          if (event.request.mode === 'navigate') {
+            // Navigation fallback: app paths get the app shell, others get landing
+            const path = new URL(event.request.url).pathname;
+            if (path === '/app' || path.startsWith('/app/')) {
+              return caches.match('/index.html') || caches.match('/app');
+            }
+            return caches.match('/landing.html') || caches.match('/');
+          }
         })
       )
   );

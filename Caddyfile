@@ -48,12 +48,6 @@
     handle /email/* {
         reverse_proxy localhost:8000
     }
-    handle /note/* {
-        reverse_proxy localhost:8000
-    }
-    handle /mfa/* {
-        reverse_proxy localhost:8000
-    }
     handle /invite/* {
         reverse_proxy localhost:8000
     }
@@ -102,6 +96,14 @@
 
     handle {
         root * /app/public
+
+        # ── Landing page at root, app at /app ─────────────────
+        # / serves the marketing landing page. /app is the PWA shell.
+        # Other paths fall through to file_server (assets at /app.js,
+        # /styles.css, /sw.js, etc., all served from /app/public/<path>).
+        rewrite / /landing.html
+        rewrite /app /index.html
+
         file_server
 
         @html path *.html

@@ -5,7 +5,7 @@ RUN npm install
 # Frontend source files live at the repo root, not in src/. The previous
 # Dockerfile copied from src/ which silently became stale, so root-level
 # edits never reached production.
-COPY app.js scanner.js styles.css index.html sw.js manifest.json admin.html ./
+COPY app.js scanner.js styles.css index.html landing.html sw.js manifest.json admin.html ./
 COPY diag-trusted.html ./
 RUN mkdir -p public && \
     npx terser app.js --compress --mangle --comments false -o public/app.js && \
@@ -16,6 +16,11 @@ RUN mkdir -p public && \
       --remove-redundant-attributes --remove-script-type-attributes \
       --minify-css true \
       -o public/index.html && \
+    npx html-minifier-terser landing.html \
+      --collapse-whitespace --remove-comments \
+      --remove-redundant-attributes --remove-script-type-attributes \
+      --minify-css true --minify-js true \
+      -o public/landing.html && \
     cp sw.js public/sw.js && \
     cp manifest.json public/manifest.json && \
     cp admin.html public/admin.html && \

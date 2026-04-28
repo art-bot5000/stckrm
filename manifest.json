@@ -2,7 +2,7 @@
   "name": "STOCKROOM",
   "short_name": "Stockroom",
   "description": "Household consumables tracker",
-  "start_url": "./",
+  "start_url": "/app",
   "display": "standalone",
   "background_color": "#0f1117",
   "theme_color": "#0f1117",
