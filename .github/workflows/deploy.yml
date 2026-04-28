@@ -3,7 +3,7 @@ name: Deploy to Fly.io
 on:
   push:
     branches: [main]
-  workflow_dispatch: # allow manual trigger from GitHub UI
+  workflow_dispatch:  # allow manual trigger from GitHub UI
 
 jobs:
   preflight:
@@ -66,16 +66,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
       - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only --ha=false --update-only
+        run: flyctl deploy --remote-only --strategy rolling
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        # --update-only: never create new machines, only update existing ones.
-        # This prevents the "unattached volume" error when Fly tries to
-        # provision a second machine during deploy.
+        # Rolling strategy updates the existing machine in place rather than
+        # creating a new one, avoiding the "unattached volume" error.
 
       - name: Verify deployment health
         run: |
