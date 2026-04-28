@@ -12,7 +12,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ── 1. Verify every file the Dockerfile COPYs actually exists ──────────
       - name: Check required files exist
         run: |
           REQUIRED=(
@@ -33,13 +32,11 @@ jobs:
           fi
           echo "✅ All required files present"
 
-      # ── 2. Validate JS syntax ─────────────────────────────────────────────
       - name: Check JS syntax
         run: |
           node --check app.js   && echo "✅ app.js syntax OK"
           node --check scanner.js && echo "✅ scanner.js syntax OK"
 
-      # ── 3. Validate Dockerfile frontend files all exist ─────────────────
       - name: Check Dockerfile references
         run: |
           DOCKERFILE_FILES=(
@@ -67,8 +64,27 @@ jobs:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
-      # Wake the existing machine before deploying. If it has been auto-stopped,
-      # flyctl deploy may try to provision a new one instead of updating it.
+      # Diagnostic: show flyctl version and current state before deploying
+      - name: Flyctl diagnostics
+        run: |
+          echo "=== flyctl version ==="
+          flyctl version
+
+          echo ""
+          echo "=== Machine list ==="
+          flyctl machine list --app stckrm
+
+          echo ""
+          echo "=== Volume list ==="
+          flyctl volume list --app stckrm
+
+          echo ""
+          echo "=== App status ==="
+          flyctl status --app stckrm
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      # Wake the existing machine before deploying
       - name: Wake existing machine
         run: |
           MACHINE_ID=$(flyctl machine list --app stckrm --json | python3 -c "
@@ -82,30 +98,24 @@ jobs:
             flyctl machine start "$MACHINE_ID" --app stckrm || true
             sleep 5
           else
-            echo "No existing machine found — deploy will create one"
+            echo "No existing machine found"
+            exit 1
           fi
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
       - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only --strategy rolling --update-only
+        run: flyctl deploy --remote-only --strategy immediate --update-only --verbose
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        # --update-only: only update existing machines, never create new ones.
-        # --strategy rolling: update in place rather than blue/green.
-        # Combined with the wake step above, this prevents the "unattached
-        # volume" error when the machine has been auto-stopped.
+        # --strategy immediate: update existing machine in place, no orchestration
+        # --update-only: only update existing machines, never create new ones
+        # --verbose: show what flyctl is actually doing
 
       - name: Verify deployment health
+        if: always()
         run: |
           sleep 10
-          STATUS=$(flyctl status --app stckrm --json 2>/dev/null | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          machines = data.get('Machines', [])
-          healthy = [m for m in machines if m.get('state') == 'started']
-          print(f'{len(healthy)} machine(s) running')
-          " 2>/dev/null || echo "status check skipped")
-          echo "✅ Deploy complete — $STATUS"
+          flyctl status --app stckrm
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
