@@ -70,13 +70,12 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
       - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only --strategy rolling --ha=false
+        run: flyctl deploy --remote-only --ha=false --update-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        # rolling strategy: brings up new machine BEFORE stopping old one,
-        # so there is always a healthy machine serving traffic during deploy.
-        # If the new machine fails health checks, Fly aborts and the old one
-        # keeps running — no downtime, no data-less machine left running.
+        # --update-only: never create new machines, only update existing ones.
+        # This prevents the "unattached volume" error when Fly tries to
+        # provision a second machine during deploy.
 
       - name: Verify deployment health
         run: |
