@@ -42,7 +42,6 @@ jobs:
       # ── 3. Validate Dockerfile frontend files all exist ─────────────────
       - name: Check Dockerfile references
         run: |
-          # Explicitly list every file the Dockerfile COPYs in the builder stage
           DOCKERFILE_FILES=(
             app.js scanner.js styles.css
             index.html landing.html admin.html
@@ -68,12 +67,34 @@ jobs:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
-      - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only --strategy rolling
+      # Wake the existing machine before deploying. If it has been auto-stopped,
+      # flyctl deploy may try to provision a new one instead of updating it.
+      - name: Wake existing machine
+        run: |
+          MACHINE_ID=$(flyctl machine list --app stckrm --json | python3 -c "
+          import sys, json
+          machines = json.load(sys.stdin)
+          if machines:
+              print(machines[0]['id'])
+          ")
+          if [ -n "$MACHINE_ID" ]; then
+            echo "Starting machine $MACHINE_ID (no-op if already running)"
+            flyctl machine start "$MACHINE_ID" --app stckrm || true
+            sleep 5
+          else
+            echo "No existing machine found — deploy will create one"
+          fi
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        # Rolling strategy updates the existing machine in place rather than
-        # creating a new one, avoiding the "unattached volume" error.
+
+      - name: Deploy to Fly.io
+        run: flyctl deploy --remote-only --strategy rolling --update-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        # --update-only: only update existing machines, never create new ones.
+        # --strategy rolling: update in place rather than blue/green.
+        # Combined with the wake step above, this prevents the "unattached
+        # volume" error when the machine has been auto-stopped.
 
       - name: Verify deployment health
         run: |
