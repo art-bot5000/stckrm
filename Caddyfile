@@ -63,6 +63,12 @@
     handle /reminder* {
         reverse_proxy localhost:8000
     }
+    handle /note/* {
+        reverse_proxy localhost:8000
+    }
+    handle /mfa/* {
+        reverse_proxy localhost:8000
+    }
     handle /status {
         reverse_proxy localhost:8000
     }
