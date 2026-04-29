@@ -1,3 +1,51 @@
+// ═══════════════════════════════════════════
+//  DIAGNOSTIC — surface silent errors from inline onclick handlers
+//  so we can see exactly what's failing on Log Purchase / pencil edit /
+//  Replacement Reminders. Remove this block once the bugs are fixed.
+// ═══════════════════════════════════════════
+(function installClickDiagnostic() {
+  if (window._stockroomClickDiagInstalled) return;
+  window._stockroomClickDiagInstalled = true;
+
+  // Catch any uncaught synchronous error (e.g. `openLogModal is not defined`,
+  // `Cannot read properties of null (reading 'value')`). These normally vanish
+  // into the console with no UI feedback.
+  window.addEventListener('error', e => {
+    try {
+      const msg = e.message || (e.error && e.error.message) || 'Unknown error';
+      const where = e.filename ? ` @${(e.filename + '').split('/').pop()}:${e.lineno}` : '';
+      // Use a raw banner instead of toast() because toast's DOM element may
+      // not yet exist when this fires.
+      let bar = document.getElementById('_diag-bar');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = '_diag-bar';
+        bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#7a1d1d;color:#fff;padding:10px 14px;font:600 12px/1.4 monospace;z-index:99999;cursor:pointer';
+        bar.onclick = () => bar.remove();
+        document.body && document.body.appendChild(bar);
+      }
+      bar.textContent = `⚠ ${msg}${where} — tap to dismiss`;
+      console.error('[stockroom diag]', e);
+    } catch (_) {}
+  });
+
+  // Promise rejections (async onclicks like archiveItem)
+  window.addEventListener('unhandledrejection', e => {
+    try {
+      const msg = (e.reason && (e.reason.message || e.reason)) || 'Unknown promise rejection';
+      let bar = document.getElementById('_diag-bar');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = '_diag-bar';
+        bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#7a1d1d;color:#fff;padding:10px 14px;font:600 12px/1.4 monospace;z-index:99999;cursor:pointer';
+        bar.onclick = () => bar.remove();
+        document.body && document.body.appendChild(bar);
+      }
+      bar.textContent = `⚠ ${msg} — tap to dismiss`;
+      console.error('[stockroom diag rejection]', e);
+    } catch (_) {}
+  });
+})();
 
 // ═══════════════════════════════════════════
 //  DATA
@@ -1535,7 +1583,6 @@ function getReminderStatus(reminder) {
 // ── Render ────────────────────────────────
 async function renderReminders() {
   await loadReminders();
-  renderDeletedReminders();
 
   // Also collect reminders embedded in items — supports both old single and new array format
   const allReminders = [
@@ -1577,14 +1624,13 @@ async function renderReminders() {
     }),
   ];
 
-  const visibleReminders = allReminders.filter(r => !r._deletedAt);
-  const overdue  = visibleReminders.filter(r => getReminderStatus(r) === 'overdue');
-  const soon     = visibleReminders.filter(r => getReminderStatus(r) === 'soon');
-  const upcoming = visibleReminders.filter(r => getReminderStatus(r) === 'upcoming');
-  const unknown  = visibleReminders.filter(r => getReminderStatus(r) === 'unknown');
+  const overdue  = allReminders.filter(r => getReminderStatus(r) === 'overdue');
+  const soon     = allReminders.filter(r => getReminderStatus(r) === 'soon');
+  const upcoming = allReminders.filter(r => getReminderStatus(r) === 'upcoming');
+  const unknown  = allReminders.filter(r => getReminderStatus(r) === 'unknown');
 
   const empty = document.getElementById('reminders-empty');
-  if (visibleReminders.length === 0) {
+  if (allReminders.length === 0) {
     if (empty) empty.style.display = 'block';
     ['overdue-section','soon-section','upcoming-section'].forEach(s => {
       const el = document.getElementById('reminders-' + s);
@@ -2051,7 +2097,7 @@ async function deleteReminder(id) {
       // New array format — remove specific reminder
       item.replacementReminders = item.replacementReminders.filter(r => r.id !== remEntry.id);
       // Sync legacy fields to first remaining reminder
-      if (item.replacementReminders?.length) {
+      if (item.replacementReminders.length) {
         item.replacementInterval = item.replacementReminders[0].interval;
         item.replacementUnit     = item.replacementReminders[0].unit;
       } else {
@@ -3231,82 +3277,30 @@ async function restoreItem(id) {
 }
 
 async function deleteItem(id) {
-  const item = items.find(i => i.id === id);
+  const idx  = items.findIndex(i => i.id === id);
+  const item = items[idx];
   if (!item) return;
-  // Soft delete — mark with _deletedAt, keep in data for 30 days
-  // Do NOT tombstone yet — tombstone added only on permanent purge
-  item._deletedAt = new Date().toISOString();
-  item.updatedAt  = new Date().toISOString();
+
+  // Stash for undo
+  deletedItem  = item;
+  deletedIndex = idx;
+  items.splice(idx, 1);
+  await addTombstone(id);
   await saveData();
   scheduleRender('grid', 'dashboard', 'shopping');
   setTimeout(syncAll, 400);
-  toast(`"${esc(item.name)}" moved to Recently Deleted — recoverable for 30 days`);
-}
 
-async function restoreDeletedItem(id) {
-  const item = items.find(i => i.id === id);
-  if (!item) return;
-  delete item._deletedAt;
-  item.updatedAt = new Date().toISOString();
-  await saveData();
-  scheduleRender('grid', 'dashboard');
-  setTimeout(syncAll, 400);
-  toast(`"${esc(item.name)}" restored ✓`);
-}
-
-async function purgeDeletedItem(id) {
-  const item = items.find(i => i.id === id);
-  if (!item) return;
-  if (!confirm(`Permanently delete "${item.name}"? This cannot be undone.`)) return;
-  items = items.filter(i => i.id !== id);
-  await addTombstone(id);
-  await saveData();
-  renderDeletedItems();
-  setTimeout(syncAll, 400);
-  toast('Item permanently deleted');
-}
-
-async function purgeAllDeletedItems() {
-  const deleted = items.filter(i => i._deletedAt);
-  if (!deleted.length) return;
-  if (!confirm(`Permanently delete all ${deleted.length} items in Recently Deleted? This cannot be undone.`)) return;
-  const ids = deleted.map(i => i.id);
-  items = items.filter(i => !i._deletedAt);
-  await Promise.all(ids.map(id => addTombstone(id)));
-  await saveData();
-  renderDeletedItems();
-  setTimeout(syncAll, 400);
-  toast('Recently Deleted cleared');
-}
-
-function renderDeletedItems() {
-  const container = document.getElementById('recently-deleted-items');
-  if (!container) return;
-  const now = Date.now();
-  const thirtyDays = 30 * 24 * 60 * 60 * 1000;
-  // Auto-purge items deleted >30 days ago
-  const toAutoDelete = items.filter(i => i._deletedAt && (now - new Date(i._deletedAt).getTime()) >= thirtyDays);
-  if (toAutoDelete.length) {
-    toAutoDelete.forEach(async i => { items = items.filter(x => x.id !== i.id); await addTombstone(i.id); });
-    saveData();
-  }
-  const deleted = items.filter(i => i._deletedAt && (now - new Date(i._deletedAt).getTime()) < thirtyDays);
-  const section = document.getElementById('recently-deleted-section');
-  if (section) section.style.display = deleted.length ? 'block' : 'none';
-  if (!deleted.length) { container.innerHTML = ''; return; }
-  container.innerHTML = deleted.map(item => {
-    const daysLeft = Math.max(0, 30 - Math.floor((now - new Date(item._deletedAt).getTime()) / 86400000));
-    return `<div class="deleted-row">
-      <div class="deleted-row-info">
-        <div class="deleted-row-name">${esc(item.name)}</div>
-        <div class="deleted-row-meta">${item.category||'Other'} · ${daysLeft}d remaining</div>
-      </div>
-      <div class="deleted-row-actions">
-        <button class="btn btn-ghost btn-sm" onclick="restoreDeletedItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-refresh-ccw"></use></svg> Restore</button>
-        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="purgeDeletedItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
-      </div>
-    </div>`;
-  }).join('');
+  // Show undo toast
+  clearTimeout(undoTimer);
+  const t = document.getElementById('undo-toast');
+  const m = document.getElementById('undo-msg');
+  if (m) m.textContent = `"${item.name}" removed`;
+  if (t) t.classList.add('show');
+  undoTimer = setTimeout(() => {
+    if (t) t.classList.remove('show');
+    deletedItem  = null;
+    deletedIndex = null;
+  }, 5000);
 }
 
 async function undoDelete() {
@@ -3314,9 +3308,14 @@ async function undoDelete() {
   const t = document.getElementById('undo-toast');
   if (t) t.classList.remove('show');
   if (!deletedItem) return;
-  await restoreDeletedItem(deletedItem.id);
+  // Remove tombstone so the item can come back
+  await removeTombstone(deletedItem.id);
+  items.splice(deletedIndex, 0, deletedItem);
   deletedItem  = null;
   deletedIndex = null;
+  await saveData();
+  scheduleRender('grid', 'dashboard', 'shopping');
+  setTimeout(syncAll, 400);
   toast('Restored ✓');
 }
 
@@ -3729,8 +3728,6 @@ function renderGrid() {
     // Quick-added items live in their own section
     if (item.quickAdded) return false;
     // Archived items only shown when archive filter is active
-    if (item._deletedAt && activeFilter !== 'deleted') return false;
-    if (!item._deletedAt && activeFilter === 'deleted') return false;
     if (item._archived && activeFilter !== 'archived') return false;
     if (!item._archived && activeFilter === 'archived') return false;
     if (activeFilter === 'archived') {
@@ -3839,79 +3836,66 @@ function cardHTML(item, threshold) {
     : `<span class="cadence-badge badge-monthly"><svg class="icon" aria-hidden="true"><use href="#i-calendar-days"></use></svg> Monthly</span>`;
   const statusBadge = `<span class="status-badge" style="background:${color}22;color:${color}">${STATUS_LABEL[status]}</span>`;
 
+  // ── REDESIGNED CARD: tap-to-edit, hero days remaining, slim bar, +1 button ──
+  // Best price (lowest) helper — desktop meta row
+  const _prices = (item.storePrices || []).filter(sp => sp.store && sp.price);
+  const _parsed = _prices.map(sp => parsePriceValue(sp.price)).filter(v => v !== null);
+  const bestPrice = _parsed.length ? Math.min(..._parsed) : null;
+  const bestPriceStr = bestPrice !== null ? '£' + bestPrice.toFixed(2) : null;
+  const lastBoughtAgo = lastLog?.date ? timeAgo(lastLog.date) : null;
+  const expiry = getExpiryStatus(item);
+  const stars = [1,2,3,4,5].map(n => `<span class="card-star${(item.rating||0)>=n?' on':''}" onclick="event.stopPropagation();rateItem('${item.id}',${n})" data-id="${item.id}" data-val="${n}" onmouseover="previewCardStars('${item.id}',${n})" onmouseout="resetCardStars('${item.id}')">★</span>`).join('');
+  const orderBtn = _cardOrderButton(item);
+  const qtyText = item.stockCount != null
+    ? `<strong>${item.stockCount}</strong> left`
+    : (daysLeft !== null ? `<strong>${item.months||1}mo</strong> per purchase` : '');
+
   return `
   <div class="item-card" style="border-left:3px solid ${color}" data-id="${item.id}"
+    onclick="openEditModal('${item.id}')"
     ontouchstart="swipeStart(event,'${item.id}')" ontouchmove="swipeMove(event,'${item.id}')" ontouchend="swipeEnd(event,'${item.id}')">
     <div class="swipe-hint" id="swipe-hint-${item.id}"><svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg></div>
-    ${item.imageUrl ? `<img class="card-image" src="${esc(item.imageUrl)}" alt="${esc(item.name)}" onerror="this.style.display='none'">` : ''}
-    <div class="card-top">
-      <div class="card-category">${item.category||'Other'}</div>
-      <div class="card-btns">
-        <button class="btn-icon" title="Update stock count" onclick="openStockCountModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-hash"></use></svg></button>
-        <button class="btn-icon" title="Usage analytics" onclick="openAnalyticsModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-bar-chart-2"></use></svg></button>
-        <button class="btn-icon" title="Price history" onclick="openPriceHistoryModal('${item.id}')" ${getPriceHistory(item).length < 2 ? 'style="opacity:0.35;cursor:default"' : ''}><svg class="icon" aria-hidden="true"><use href="#i-banknote"></use></svg></button>
-        <button class="btn-icon" title="Share item" onclick="shareItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg></button>
-        <button class="btn-icon" title="Edit" onclick="openEditModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
-        ${item._archived
-          ? `<button class="btn-icon" title="Restore from archive" onclick="restoreItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-refresh-ccw"></use></svg></button>
-             <button class="btn-icon" title="Delete permanently" onclick="deleteItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>`
-          : `<button class="btn-icon" title="Archive item" onclick="archiveItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg></button>`}
+    <div class="card-inner">
+      <div class="card-top">
+        <div class="card-category">${item.category||'Other'}</div>
+        <div class="card-stars-row" onclick="event.stopPropagation()">${stars}</div>
+        <div class="card-status" style="background:${color}22;color:${color}">${STATUS_LABEL[status]}</div>
       </div>
-    </div>
-    <div class="card-name" style="margin-bottom:12px">${esc(item.name)}</div>
-    <div class="stock-bar-wrap">
-      <div class="stock-bar-label">
-        <span>STOCK</span>
-        <span style="color:${color}">${pct !== null ? pct+'%' : '?'}</span>
+      <div class="card-name">${esc(item.name)}</div>
+      ${daysLeft !== null
+        ? `<div class="card-hero">
+             <span class="card-days-num" style="color:${color}">${daysLeft}</span>
+             <span class="card-days-unit">days left</span>
+           </div>`
+        : `<div class="card-nodata">No stock data yet</div>`}
+      ${pct !== null
+        ? `<div class="card-bar"><div class="card-bar-fill" style="width:${pct}%;background:${fillColor}"></div></div>`
+        : ''}
+      ${(lastBoughtAgo || bestPriceStr) ? `
+        <div class="card-meta-desktop">
+          ${lastBoughtAgo ? `<div class="card-meta-item">Last: <strong>${lastBoughtAgo}</strong></div>` : ''}
+          ${bestPriceStr ? `<div class="card-meta-item">Best: <strong>${bestPriceStr}</strong></div>` : ''}
+        </div>` : ''}
+      <div class="card-footer">
+        ${qtyText ? `<div class="card-qty">${qtyText}</div>` : ''}
+        ${item.ordered ? `<div class="card-ordered"><svg class="icon" aria-hidden="true"><use href="#i-truck"></use></svg> Ordered</div>` : ''}
+        ${expiry ? `<div class="card-expiry" style="color:${expiry.color};border-color:${expiry.color}55" title="${fmtDate(item.expiry)}">⏰ ${expiry.label}</div>` : ''}
+        <div class="card-plus-btn-wrap" onclick="event.stopPropagation()">${orderBtn}</div>
       </div>
-      <div class="stock-bar">
-        <div class="stock-bar-fill" style="width:${pct??0}%;background:${fillColor}"></div>
-      </div>
-    </div>
-    <div class="card-meta">
-      <div class="meta-item"><strong>${daysLeft !== null ? daysLeft+'d left' : 'No data'}</strong>Est. remaining</div>
-      <div class="meta-item" title="${fmtDate(lastLog?.date)}"><strong>${timeAgo(lastLog?.date)}</strong>Last bought</div>
-      <div class="meta-item"><strong>${item.startedUsing ? fmtDate(item.startedUsing) : '—'}</strong>Started using</div>
-      <div class="meta-item"><strong>${item.months||1}mo</strong>Per purchase</div>
-    </div>
-    ${item.stockCount != null ? `<div style="font-size:11px;color:var(--accent2);font-family:var(--mono);margin-bottom:8p"><svg class="icon" aria-hidden="true"><use href="#i-hash"></use></svg> Stock count: ${item.stockCount} units remaining · counted ${fmtDate(item.stockCountDate)}</div>` : ''}
-    ${priceTrendHTML(item)}
-    ${frequencyInsightHTML(item)}
-    <div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      ${cadenceBadge}${statusBadge}
-      ${item.ordered ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(91,141,238,0.15);border:1px solid rgba(91,141,238,0.3);color:#5b8dee;font-family:var(--mono"><svg class="icon" aria-hidden="true"><use href="#i-truck"></use></svg> Ordered</span>` : ''}
-      ${(() => { const ex = getExpiryStatus(item); return ex ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:rgba(232,168,56,0.1);border:1px solid rgba(232,168,56,0.3);color:${ex.color};font-family:var(--mono)" title="${fmtDate(item.expiry)}">⏰ ${ex.label}</span>` : ''; })()}
-    </div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-      <div class="card-star-rating" title="Click to rate">
-        ${[1,2,3,4,5].map(n => `<span class="card-star${(item.rating||0)>=n?' on':''}" onclick="rateItem('${item.id}',${n})" data-id="${item.id}" data-val="${n}"
-          onmouseover="previewCardStars('${item.id}',${n})" onmouseout="resetCardStars('${item.id}')">★</span>`).join('')}
-      </div>
-      <span class="card-rating-label" id="rl-${item.id}" style="font-size:11px;color:${!item.rating?'var(--muted)':item.rating<=2?'var(--danger)':item.rating>=4?'var(--ok)':'var(--muted)'}">
-        ${item.rating ? RATING_LABELS[item.rating] : 'Not rated'}
-      </span>
-    </div>
-    ${cardTagsHTML(item)}
-    ${item.notes ? `<div class="card-notes"><svg class="icon" aria-hidden="true"><use href="#i-message-square"></use></svg> ${esc(item.notes)}</div>` : ''}
-    ${storePricesCardHTML(item)}
-    ${item.url ? `<a class="card-link" href="${esc(item.url)}" target="_blank" rel="noopener"><svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Buy now ↗</a>` : ''}
-    <div style="display:flex;gap:6px;margin-top:10px">
-      ${_cardOrderButton(item)}
-      <button class="btn btn-ghost btn-sm log-btn" style="flex:1" onclick="openReplRemindersModal('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Replacement Reminders</button>
     </div>
   </div>`;
 }
 
-// Smart order button for item cards — shows correct stage based on order progress
+// Smart order button for item cards — compact pill matching the redesign mockup
 function _cardOrderButton(item) {
-  const hasPending         = (item.logs || []).some(l => l.pendingDelivery);
-  const hasDeliveredNoStart= (item.logs || []).some(l => !l.pendingDelivery && l.deliveredDate) && !item.startedUsing;
+  const hasPending          = (item.logs || []).some(l => l.pendingDelivery);
+  const hasDeliveredNoStart = (item.logs || []).some(l => !l.pendingDelivery && l.deliveredDate) && !item.startedUsing;
   if (hasPending) {
-    return `<button class="btn btn-sm log-btn" style="flex:1;background:rgba(76,187,138,0.15);color:var(--ok);border:1px solid rgba(76,187,138,0.3)" onclick="openOrderFlow('${item.id}','delivered')"><svg class="icon" aria-hidden="true"><use href="#i-package-check"></use></svg> Mark Delivered</button>`;
+    return `<button class="card-plus-btn card-plus-btn-delivered" onclick="openOrderFlow('${item.id}','delivered')" title="Mark delivered"><svg class="icon" aria-hidden="true"><use href="#i-package-check"></use></svg> Delivered</button>`;
   } else if (hasDeliveredNoStart) {
-    return `<button class="btn btn-sm log-btn" style="flex:1;background:rgba(91,141,238,0.15);color:#5b8dee;border:1px solid rgba(91,141,238,0.3)" onclick="openOrderFlow('${item.id}','startusing')"><svg class="icon" aria-hidden="true"><use href="#i-play"></use></svg> Start Using</button>`;
+    return `<button class="card-plus-btn card-plus-btn-start" onclick="openOrderFlow('${item.id}','startusing')" title="Start using"><svg class="icon" aria-hidden="true"><use href="#i-play"></use></svg> Start using</button>`;
   } else {
-    return `<button class="btn btn-ghost btn-sm log-btn" style="flex:1" onclick="openOrderFlow('${item.id}','purchase')"><svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> Log Purchase</button>`;
+    return `<button class="card-plus-btn" onclick="openOrderFlow('${item.id}','purchase')" title="Log purchase">+1</button>`;
   }
 }
 
@@ -5431,7 +5415,6 @@ function showView(name, btn) {
     setStockOnlyUI(true);
     document.getElementById('items-grid').style.display = '';
     document.getElementById('shopping-panel').style.display = 'none';
-    renderDeletedItems();
   }
   if (name === 'settings') {
     renderSettingsForUser();
@@ -5957,7 +5940,7 @@ async function wizSave() {
     updatedAt:            new Date().toISOString(),
   };
   // Backwards compat: copy first reminder to replacementInterval/Unit
-  if (newItem.replacementReminders?.length) {
+  if (newItem.replacementReminders.length) {
     newItem.replacementInterval = newItem.replacementReminders[0].interval;
     newItem.replacementUnit     = newItem.replacementReminders[0].unit;
   }
@@ -11773,7 +11756,7 @@ function saveGroceryManualOrder(order) {
 // Returns groceryItems sorted by manual order (items not in order go to end)
 function getGroceryItemsInOrder() {
   const order = getGroceryManualOrder();
-  const listFiltered = groceryItems.filter(i => (i.listId || 'default') === activeGroceryListId && !i._deletedAt);
+  const listFiltered = groceryItems.filter(i => (i.listId || 'default') === activeGroceryListId);
   if (!order.length) return [...listFiltered];
   const orderMap = new Map(order.map((id, i) => [id, i]));
   return [...listFiltered].sort((a, b) => {
