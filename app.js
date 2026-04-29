@@ -1352,6 +1352,18 @@ function getQuickAddItems() {
   return items.filter(i => i.quickAdded);
 }
 
+function _updateStockTopSectionsWrapper() {
+  // The wrapper has display:flex inline. When both child sections are hidden
+  // it still occupies space because of margins. Hide the wrapper when empty.
+  const wrap   = document.getElementById('stock-top-sections');
+  const pendEl = document.getElementById('pending-deliveries-section');
+  const incEl  = document.getElementById('incomplete-section');
+  if (!wrap) return;
+  const pendVisible = pendEl && pendEl.style.display !== 'none';
+  const incVisible  = incEl  && incEl.style.display  !== 'none';
+  wrap.style.display = (pendVisible || incVisible) ? 'flex' : 'none';
+}
+
 function renderPendingDeliveries() {
   const pending = items.filter(i => i.logs?.some(l => l.pendingDelivery));
 
@@ -1409,6 +1421,7 @@ function renderPendingDeliveries() {
         </div>`;
     }
   }
+  _updateStockTopSectionsWrapper();
 }
 
 function renderIncompleteSection() {
@@ -1450,6 +1463,7 @@ function renderIncompleteSection() {
         </div>
       </div>`).join('');
   }
+  _updateStockTopSectionsWrapper();
 }
 
 function scrollToIncomplete() {
@@ -3850,11 +3864,18 @@ function cardHTML(item, threshold) {
           ${lastBoughtAgo ? `<div class="card-meta-item">Last: <strong>${lastBoughtAgo}</strong></div>` : ''}
           ${bestPriceStr ? `<div class="card-meta-item">Best: <strong>${bestPriceStr}</strong></div>` : ''}
         </div>` : ''}
+      ${(() => {
+        const inline = cardSelectedTagsInline(item);
+        return inline ? `<div class="card-tags-row">${inline}</div>` : '';
+      })()}
       <div class="card-footer">
         ${qtyText ? `<div class="card-qty">${qtyText}</div>` : ''}
         ${item.ordered ? `<div class="card-ordered"><svg class="icon" aria-hidden="true"><use href="#i-truck"></use></svg> Ordered</div>` : ''}
         ${expiry ? `<div class="card-expiry" style="color:${expiry.color};border-color:${expiry.color}55" title="${fmtDate(item.expiry)}">⏰ ${expiry.label}</div>` : ''}
-        <div class="card-plus-btn-wrap" onclick="event.stopPropagation()">${orderBtn}</div>
+        <div class="card-action-btns" onclick="event.stopPropagation()">
+          <button class="card-tag-btn" onclick="event.stopPropagation();openCardTagPicker('${item.id}')" title="Add tag"><svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg> Tag</button>
+          ${orderBtn}
+        </div>
       </div>
     </div>
   </div>`;
@@ -3906,13 +3927,38 @@ const CATEGORY_EMOJI = {
 // ═══════════════════════════════════════════
 //  CUSTOM TAGS
 // ═══════════════════════════════════════════
+// Default fallback tag colours (kept for back-compat with items that have
+// tags but no per-tag colour assigned). Avoids red/green/orange to not clash
+// with status indicator pills.
 const TAG_COLORS = [
   { bg:'rgba(91,141,238,0.15)',  border:'rgba(91,141,238,0.5)',  text:'#5b8dee' },  // blue
-  { bg:'rgba(76,187,138,0.15)', border:'rgba(76,187,138,0.5)',  text:'#4cbb8a' },  // green
-  { bg:'rgba(232,168,56,0.15)', border:'rgba(232,168,56,0.5)',  text:'#e8a838' },  // amber
-  { bg:'rgba(193,100,232,0.15)',border:'rgba(193,100,232,0.5)', text:'#c164e8' },  // purple
-  { bg:'rgba(232,80,80,0.15)',  border:'rgba(232,80,80,0.5)',   text:'#e85050' },  // red
+  { bg:'rgba(193,100,232,0.15)', border:'rgba(193,100,232,0.5)', text:'#c164e8' },  // purple
+  { bg:'rgba(100,180,200,0.15)', border:'rgba(100,180,200,0.5)', text:'#64b4c8' },  // teal
+  { bg:'rgba(160,140,210,0.15)', border:'rgba(160,140,210,0.5)', text:'#a08cd2' },  // lavender
+  { bg:'rgba(140,160,180,0.15)', border:'rgba(140,160,180,0.5)', text:'#8ca0b4' },  // slate
 ];
+
+// Muted palette offered in the tag picker. Avoids red, orange, green which
+// are reserved for status indicator pills. Each entry has the trio used to
+// style the chip (bg / border / text).
+const TAG_PICKER_PALETTE = [
+  { name:'Blue',      bg:'rgba(91,141,238,0.15)',  border:'rgba(91,141,238,0.5)',  text:'#5b8dee' },
+  { name:'Purple',    bg:'rgba(193,100,232,0.15)', border:'rgba(193,100,232,0.5)', text:'#c164e8' },
+  { name:'Teal',      bg:'rgba(100,180,200,0.15)', border:'rgba(100,180,200,0.5)', text:'#64b4c8' },
+  { name:'Lavender',  bg:'rgba(160,140,210,0.15)', border:'rgba(160,140,210,0.5)', text:'#a08cd2' },
+  { name:'Slate',     bg:'rgba(140,160,180,0.15)', border:'rgba(140,160,180,0.5)', text:'#8ca0b4' },
+  { name:'Rose',      bg:'rgba(220,140,180,0.15)', border:'rgba(220,140,180,0.5)', text:'#dc8cb4' },
+  { name:'Pewter',    bg:'rgba(170,170,170,0.15)', border:'rgba(170,170,170,0.5)', text:'#aaaaaa' },
+  { name:'Indigo',    bg:'rgba(120,130,210,0.15)', border:'rgba(120,130,210,0.5)', text:'#7882d2' },
+];
+
+// Resolve the colour trio for a given tag index. Per-tag colour comes from
+// settings.tagColors[i] if set; otherwise fall back to TAG_COLORS[i].
+function getTagColor(i) {
+  const stored = settings.tagColors && settings.tagColors[i];
+  if (stored && stored.bg && stored.border && stored.text) return stored;
+  return TAG_COLORS[i % TAG_COLORS.length];
+}
 
 let activeTagFilter = null; // null = all, 0-4 = tag index
 
@@ -3928,7 +3974,7 @@ function cardTagsHTML(item) {
 
   const chips = tags.map((tag, i) => {
     if (!tag || !tag.trim()) return '';
-    const c = TAG_COLORS[i];
+    const c = getTagColor(i);
     const active = itemTags.includes(i);
     return `<span class="item-tag ${active ? 'active' : 'inactive'}"
       style="background:${active ? c.bg : 'transparent'};border-color:${c.border};color:${c.text}"
@@ -3937,6 +3983,21 @@ function cardTagsHTML(item) {
   }).join('');
 
   return `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">${chips}</div>`;
+}
+
+// Inline list of an item's selected tags (small pills) — used in the new
+// card footer next to the +Tag / +1 buttons.
+function cardSelectedTagsInline(item) {
+  const tags = getCustomTags();
+  const itemTags = item.tags || [];
+  if (!itemTags.length) return '';
+  const chips = itemTags.map(i => {
+    const tag = tags[i];
+    if (!tag || !tag.trim()) return '';
+    const c = getTagColor(i);
+    return `<span class="card-inline-tag" style="background:${c.bg};border:1px solid ${c.border};color:${c.text}">${esc(tag)}</span>`;
+  }).filter(Boolean).join('');
+  return chips;
 }
 
 async function toggleItemTag(itemId, tagIndex) {
@@ -3954,6 +4015,129 @@ async function toggleItemTag(itemId, tagIndex) {
   _syncQueue.enqueue();
 }
 
+
+// ── Card +Tag picker ────────────────────────────────────────────────
+// Opens a modal over the active item card so the user can: (a) toggle
+// existing tags on/off, (b) create a new tag with name + colour.
+let _cardTagPickerItemId = null;
+
+function openCardTagPicker(itemId) {
+  _cardTagPickerItemId = itemId;
+  _renderCardTagPicker();
+  const modal = document.getElementById('card-tag-picker-modal');
+  if (modal) modal.classList.add('active');
+}
+
+function closeCardTagPicker() {
+  const modal = document.getElementById('card-tag-picker-modal');
+  if (modal) modal.classList.remove('active');
+  _cardTagPickerItemId = null;
+  _resetTagPickerNewForm();
+}
+
+function _renderCardTagPicker() {
+  const item = items.find(i => i.id === _cardTagPickerItemId);
+  if (!item) return;
+  const list = document.getElementById('card-tag-picker-list');
+  if (!list) return;
+  const tags = getCustomTags();
+  const itemTags = item.tags || [];
+  const defined = tags.map((t, i) => ({ t, i })).filter(({ t }) => t && t.trim());
+  if (!defined.length) {
+    list.innerHTML = `<p style="font-size:12px;color:var(--muted);margin:0">No tags yet — create one below.</p>`;
+  } else {
+    list.innerHTML = defined.map(({ t, i }) => {
+      const c = getTagColor(i);
+      const active = itemTags.includes(i);
+      return `<button type="button" class="card-tag-toggle ${active ? 'active' : ''}"
+        style="background:${active ? c.bg : 'transparent'};border:1px solid ${c.border};color:${c.text}"
+        onclick="toggleItemTagFromPicker(${i})">${esc(t)}${active ? ' ✓' : ''}</button>`;
+    }).join('');
+  }
+  // Populate colour swatches if not already
+  const swatches = document.getElementById('card-tag-picker-swatches');
+  if (swatches && !swatches.dataset.built) {
+    swatches.innerHTML = TAG_PICKER_PALETTE.map((p, i) => {
+      const sel = i === 0 ? ' selected' : '';
+      return `<button type="button" class="tag-swatch${sel}"
+        data-idx="${i}"
+        style="background:${p.bg};border:1.5px solid ${p.border}"
+        onclick="_selectTagSwatch(${i})"
+        title="${p.name}"></button>`;
+    }).join('');
+    swatches.dataset.built = '1';
+  }
+  // Show "max tags reached" hint if 5 already defined
+  const newForm = document.getElementById('card-tag-picker-new-form');
+  if (newForm) newForm.style.display = (defined.length >= 5) ? 'none' : 'flex';
+  const maxNote = document.getElementById('card-tag-picker-max-note');
+  if (maxNote) maxNote.style.display = (defined.length >= 5) ? 'block' : 'none';
+}
+
+function _selectTagSwatch(idx) {
+  document.querySelectorAll('#card-tag-picker-swatches .tag-swatch').forEach((el, i) => {
+    el.classList.toggle('selected', i === idx);
+  });
+}
+
+function _getSelectedTagSwatch() {
+  const sel = document.querySelector('#card-tag-picker-swatches .tag-swatch.selected');
+  return sel ? parseInt(sel.dataset.idx, 10) : 0;
+}
+
+function _resetTagPickerNewForm() {
+  const inp = document.getElementById('card-tag-picker-new-name');
+  if (inp) inp.value = '';
+  const swatches = document.querySelectorAll('#card-tag-picker-swatches .tag-swatch');
+  swatches.forEach((el, i) => el.classList.toggle('selected', i === 0));
+}
+
+async function toggleItemTagFromPicker(tagIdx) {
+  if (_cardTagPickerItemId) {
+    await toggleItemTag(_cardTagPickerItemId, tagIdx);
+    _renderCardTagPicker();
+  }
+}
+
+async function createTagFromPicker() {
+  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
+  const inp = document.getElementById('card-tag-picker-new-name');
+  const name = (inp?.value || '').trim().slice(0, 20);
+  if (!name) {
+    if (inp) inp.focus();
+    return;
+  }
+  const tags = getCustomTags();
+  // Find first empty slot
+  const slot = tags.findIndex(t => !t || !t.trim());
+  if (slot === -1) {
+    toast('Maximum 5 tags — delete one first');
+    return;
+  }
+  // Also enforce duplicate prevention
+  if (tags.some(t => (t || '').trim().toLowerCase() === name.toLowerCase())) {
+    toast('A tag with that name already exists');
+    return;
+  }
+  // Apply
+  if (!settings.customTags) settings.customTags = ['','','','',''];
+  settings.customTags[slot] = name;
+  if (!settings.tagColors) settings.tagColors = [null, null, null, null, null];
+  const swatchIdx = _getSelectedTagSwatch();
+  settings.tagColors[slot] = TAG_PICKER_PALETTE[swatchIdx];
+  await _saveSettings();
+  _syncQueue.enqueue();
+  // Auto-apply the new tag to the current item
+  if (_cardTagPickerItemId) {
+    await toggleItemTag(_cardTagPickerItemId, slot);
+  }
+  _resetTagPickerNewForm();
+  _renderCardTagPicker();
+  buildTagFilterBar();
+  scheduleRender('grid');
+  toast('Tag created ✓');
+}
+
 function buildTagFilterBar() {
   const bar = document.getElementById('tag-filter-bar');
   if (!bar) return;
@@ -3966,7 +4150,7 @@ function buildTagFilterBar() {
     ? `<button class="tag-filter-chip${activeTagFilter===null?' active':''}" onclick="setTagFilter(null,this)">All</button>`
     : '';
   const chips = defined.map(({t,i}) => {
-    const c = TAG_COLORS[i];
+    const c = getTagColor(i);
     const isActive = activeTagFilter === i;
     return `<span class="tag-filter-chip${isActive?' active':''}"
       style="${isActive?`background:${c.bg};border-color:${c.border};color:${c.text}`:''}"
@@ -3993,7 +4177,7 @@ function buildShoppingTagFilterBarInline() {
     ? `<button class="tag-filter-chip${shoppingTagFilter===null?' active':''}" onclick="setShoppingTagFilter(null,this)">All</button>`
     : '';
   const chips = defined.map(({t,i}) => {
-    const c = TAG_COLORS[i];
+    const c = getTagColor(i);
     const isActive = shoppingTagFilter === i;
     return `<span class="tag-filter-chip${isActive?' active':''}"
       style="${isActive?`background:${c.bg};border-color:${c.border};color:${c.text}`:''}"
@@ -5284,11 +5468,26 @@ function _doTransition(direction, fn) {
 }
 
 function setStockOnlyUI(visible) {
-  const ids = ['health-dashboard', 'filter-toggle-btn', 'sort-select', 'tag-filter-bar', 'sns-banner', 'pending-deliveries-section', 'incomplete-section'];
-  ids.forEach(id => {
+  // pending-deliveries-section and incomplete-section have their own logic that
+  // hides them when there is nothing to show. We must NOT clear their inline
+  // display:none here — instead, let their renderers manage it.
+  const idsAlwaysToggle = ['health-dashboard', 'filter-toggle-btn', 'sort-select', 'tag-filter-bar', 'sns-banner'];
+  idsAlwaysToggle.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = visible ? '' : 'none';
   });
+  // For the top action sections: when leaving stock view, hide; when entering,
+  // re-run the renderers so they show or hide based on actual content.
+  if (!visible) {
+    ['pending-deliveries-section', 'incomplete-section'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+  } else {
+    // Defer to renderers — they hide the sections if nothing to show
+    try { renderPendingDeliveries(); } catch(_) {}
+    try { renderIncompleteSection(); } catch(_) {}
+  }
   // filter-panel visibility must respect filtersOpen state, not just show/hide blindly
   const filterPanel = document.getElementById('filter-panel');
   if (filterPanel) filterPanel.style.display = visible && filtersOpen ? 'flex' : 'none';

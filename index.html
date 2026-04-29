@@ -856,17 +856,16 @@
     <!-- Health dashboard -->
     <div id="health-dashboard" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px"></div>
 
-    <!-- Stockroom search — shown on mobile; on desktop it moves inline with filters -->
-    <!-- Search always first, full width -->
-    <div style="margin-bottom:8px">
-      <input id="stock-search" type="search" placeholder="Search items…" autocomplete="off"
-        class="grocery-search" style="width:100%;box-sizing:border-box"
-        oninput="renderGrid()">
-    </div>
-
-    <div style="margin-bottom:18px">
+    <!-- Stockroom search + filters/sort: stacked on mobile, side-by-side on desktop -->
+    <div id="stock-search-toolbar" style="display:flex;flex-direction:column;gap:8px;margin-bottom:18px">
+      <div id="stock-search-wrap" style="flex:1">
+        <input id="stock-search" type="search" placeholder="Search items…" autocomplete="off"
+          class="grocery-search" style="width:100%;box-sizing:border-box"
+          oninput="renderGrid()">
+      </div>
+      <div id="stock-toolbar-wrap" style="flex:1">
       <!-- Filters + Sort on same line, equal width -->
-      <div id="stock-toolbar-row" style="display:flex;align-items:stretch;gap:8px;margin-bottom:8px">
+      <div id="stock-toolbar-row" style="display:flex;align-items:stretch;gap:8px">
         <button class="btn btn-ghost btn-sm" id="filter-toggle-btn" onclick="toggleFilters()"
           style="display:flex;align-items:center;justify-content:center;gap:6px;flex:1;height:36px">
           <span id="filter-toggle-icon">▸</span> Filters
@@ -911,9 +910,10 @@
         <button class="btn btn-ghost btn-sm" style="align-self:flex-start;font-size:11px" onclick="resetAllFilters()">↺ Reset filters</button>
       </div>
 
-      <div id="tag-filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Tags:</span>
-      </div>
+      </div><!-- /stock-toolbar-wrap -->
+    </div><!-- /stock-search-toolbar -->
+    <div id="tag-filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Tags:</span>
     </div>
     <div id="sns-banner" style="display:none"></div>
     <div id="items-grid"></div>
@@ -2877,6 +2877,32 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     <div style="margin-bottom:10px;color:var(--ok)"><svg aria-hidden="true" style="width:40px;height:40px"><use href="#i-check-circle-2"></use></svg></div>
     <h3 style="font-size:16px;font-weight:700;margin-bottom:8px">Account deleted</h3>
     <p style="font-size:13px;color:var(--muted);line-height:1.6">Your account and all associated data has been permanently deleted from our servers. Thank you for using STOCKROOM.</p>
+  </div>
+</div>
+
+
+<!-- Card +Tag picker modal -->
+<div id="card-tag-picker-modal" class="modal-overlay" style="display:none">
+  <div class="modal" style="max-width:420px;padding:22px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <h3 style="font-size:15px;font-weight:700;margin:0"><svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg> Tags</h3>
+      <button class="btn-icon" onclick="closeCardTagPicker()" title="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.5">Tap a tag to add or remove it from this item.</p>
+    <div id="card-tag-picker-list" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:18px;min-height:24px"></div>
+    <div style="border-top:1px solid var(--border);padding-top:14px">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:8px">Create new tag</div>
+      <div id="card-tag-picker-new-form" style="display:flex;flex-direction:column;gap:10px">
+        <input type="text" id="card-tag-picker-new-name" maxlength="20" placeholder="Tag name (max 20 chars)"
+          style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 12px;font-family:var(--sans);font-size:13px;outline:none">
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Colour</div>
+          <div id="card-tag-picker-swatches" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="createTagFromPicker()" style="margin-top:4px"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add tag</button>
+      </div>
+      <div id="card-tag-picker-max-note" style="display:none;font-size:12px;color:var(--muted);font-style:italic">Maximum 5 tags. Delete one in Settings → Tags before creating another.</div>
+    </div>
   </div>
 </div>
 
