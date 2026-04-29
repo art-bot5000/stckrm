@@ -6886,6 +6886,41 @@ async function _doClearAll() {
 // ═══════════════════════════════════════════
 //  TOAST
 // ═══════════════════════════════════════════
+// Toast variant with an action button. msg is text; action = { label, onclick }.
+// Auto-dismisses after 8 seconds (longer than normal toast since the user may
+// need a moment to read + decide to click).
+function toastAction(msg, action) {
+  // Reuse the toast container if it exists
+  let container = document.getElementById('toast-action-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-action-container';
+    container.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:99998;display:flex;flex-direction:column;gap:8px;pointer-events:none;max-width:calc(100% - 32px)';
+    document.body.appendChild(container);
+  }
+  const el = document.createElement('div');
+  el.style.cssText = 'background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:12px;box-shadow:0 8px 24px rgba(0,0,0,0.4);font-size:13px;line-height:1.4;color:var(--text);pointer-events:auto;animation:toast-in 0.2s ease-out';
+  const text = document.createElement('span');
+  text.style.cssText = 'flex:1';
+  text.textContent = msg;
+  el.appendChild(text);
+  if (action && action.label) {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-ghost btn-sm';
+    btn.textContent = action.label;
+    btn.style.cssText = 'flex-shrink:0';
+    btn.onclick = () => { try { action.onclick && action.onclick(); } finally { el.remove(); } };
+    el.appendChild(btn);
+  }
+  const close = document.createElement('button');
+  close.textContent = '×';
+  close.style.cssText = 'background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:0 4px;line-height:1;flex-shrink:0';
+  close.onclick = () => el.remove();
+  el.appendChild(close);
+  container.appendChild(el);
+  setTimeout(() => { if (el.parentNode) el.remove(); }, 8000);
+}
+
 function toast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -16034,10 +16069,16 @@ async function renderNotes() {
   }
   if (empty) empty.style.display = 'none';
 
-  // Sort: pinned first, then by updatedAt desc
+  // Sort: pinned first, then secured (locked notes), then everything else
+  // Within each tier, most-recently-updated first.
+  function _noteTier(n) {
+    if (n.pinned) return 0;
+    if (n.locked) return 1;
+    return 2;
+  }
   visible.sort((a, b) => {
-    if (a.pinned && !b.pinned) return -1;
-    if (!a.pinned && b.pinned) return 1;
+    const ta = _noteTier(a), tb = _noteTier(b);
+    if (ta !== tb) return ta - tb;
     return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
   });
 
@@ -16058,22 +16099,29 @@ async function renderNotes() {
     ? `<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="emptyNotesTrash()"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Empty trash</button></div>`
     : '';
 
-  // Render pinned section header if mixed
-  const hasPinned   = visible.some(n => n.pinned);
-  const hasUnpinned = visible.some(n => !n.pinned);
-  const showHeaders = hasPinned && hasUnpinned && _notesFilter === 'all';
+  // Three-tier section headers: Pinned, Secured, Other notes.
+  // Headers only show when the 'all' filter is active and at least 2 of the
+  // tiers have content (otherwise a single tier doesn't need a label).
+  const hasPinned  = visible.some(n => n.pinned);
+  const hasSecured = visible.some(n => !n.pinned && n.locked);
+  const hasOther   = visible.some(n => !n.pinned && !n.locked);
+  const tiersInUse = (hasPinned ? 1 : 0) + (hasSecured ? 1 : 0) + (hasOther ? 1 : 0);
+  const showHeaders = tiersInUse >= 2 && _notesFilter === 'all';
 
   let html = trashBar;
-  let inPinned = false;
+  let lastTier = -1;
+
+  function _tierHeader(tier) {
+    if (tier === 0) return `<div class="notes-section-label" style="padding:8px 0 4px"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg> Pinned</div>`;
+    if (tier === 1) return `<div class="notes-section-label" style="padding:8px 0 4px"><svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg> Secure Notes</div>`;
+    return `<div class="notes-section-label" style="padding:8px 0 4px"><svg class="icon" aria-hidden="true" style="vertical-align:-3px"><use href="#i-notebook-pen"></use></svg> Notes</div>`;
+  }
 
   visible.forEach(n => {
-    if (showHeaders && n.pinned && !inPinned) {
-      html += `<div class="notes-section-label" style="padding:8px 0 4px"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg> Pinned</div>`;
-      inPinned = true;
-    }
-    if (showHeaders && !n.pinned && inPinned) {
-      html += `<div class="notes-section-label" style="padding:8px 0 4px"><svg class="icon" aria-hidden="true" style="vertical-align:-3px"><use href="#i-notebook-pen"></use></svg> Notes</div>`;
-      inPinned = false;
+    const tier = _noteTier(n);
+    if (showHeaders && tier !== lastTier) {
+      html += _tierHeader(tier);
+      lastTier = tier;
     }
     html += _noteCardHTML(n);
   });
@@ -16362,7 +16410,21 @@ function _renderNoteEditor(n, showLock) {
     : '<svg class="icon" aria-hidden="true"><use href="#i-unlock"></use></svg>';
   document.getElementById('note-btn-tick')?.classList.toggle('active', !!n.tickBoxesVisible);
   const secureBadge = document.getElementById('note-secure-badge');
-  if (secureBadge) secureBadge.style.display = n.locked ? 'block' : 'none';
+  const secureBadgeLabel = document.getElementById('note-secure-badge-label');
+  if (secureBadge) {
+    if (!n.locked) {
+      secureBadge.style.display = 'none';
+    } else {
+      // The badge is a flex button; use inline-flex so the icon+label align.
+      secureBadge.style.display = 'inline-flex';
+      const isOpen = _noteUnlocked.has(n.id);
+      if (secureBadgeLabel) {
+        secureBadgeLabel.textContent = isOpen ? 'OPEN — TAP TO LOCK' : 'SECURE NOTE';
+      }
+      secureBadge.title = isOpen ? 'Click to lock now' : 'This note is locked';
+      secureBadge.style.cursor = isOpen ? 'pointer' : 'default';
+    }
+  }
 
   // Colour swatches
   document.querySelectorAll('.note-swatch').forEach(s => {
@@ -16571,6 +16633,13 @@ async function _fetchAndUnlockNote(n) {
     _startNoteInactivityTimer(n.id);
     _showNoteBody(n);
     _renderNoteEditor(n, false);
+    // Advise the user how long the note will stay open + offer immediate re-lock.
+    setTimeout(() => {
+      toastAction('This note will stay open for 30 minutes', {
+        label: 'Secure now',
+        onclick: () => secureLockNote(n.id),
+      });
+    }, 200);
   } catch(e) {
     errEl.textContent = 'Could not unlock: ' + (e.message || 'unknown error');
   }
@@ -16579,6 +16648,26 @@ async function _fetchAndUnlockNote(n) {
 // Recovery: remove security from a note when the encrypted body is gone from
 // the server (e.g. push silently failed). Clears the locked flag locally so
 // the user can edit the note normally and add fresh content.
+// Click handler for the floating "SECURE NOTE" badge in the editor.
+// If the note is currently unlocked (plaintext in memory), lock it immediately.
+// Otherwise show a brief explanatory toast.
+async function _badgeLockNow() {
+  const id = _editingNoteId; if (!id) return;
+  const n = notes.find(x => x.id === id); if (!n) return;
+  if (n.locked && _noteUnlocked.has(id)) {
+    // Auto-save first so the latest edits are encrypted
+    if (_noteBodyDirty) {
+      clearTimeout(_noteAutoSaveTimer);
+      await _autoSaveNote();
+    }
+    await secureLockNote(id);
+  } else if (n.locked) {
+    toast('This note is already locked');
+  } else {
+    toast('Use the lock button in the toolbar to secure this note');
+  }
+}
+
 async function _removeNoteSecurity(noteId) {
   const n = notes.find(x => x.id === noteId); if (!n) return;
   if (!confirm('Remove security from this note?\n\nThe note will become editable but its previous content cannot be recovered.')) return;
@@ -16709,7 +16798,12 @@ async function toggleNoteLock() {
     n.locked = true;
     _noteUnlocked.set(n.id, { body, lastActivity: Date.now(), inactivityTimer: null });
     _startNoteInactivityTimer(n.id);
-    toast('Note is now secured 🔒');
+    setTimeout(() => {
+      toastAction('Note secured. It will stay open here for 30 minutes', {
+        label: 'Secure now',
+        onclick: () => secureLockNote(n.id),
+      });
+    }, 100);
   }
   n.updatedAt = new Date().toISOString();
   _renderNoteEditor(n, false);

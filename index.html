@@ -1194,290 +1194,267 @@
 
 
   <div class="view" id="view-settings">
-    <!-- Fly.io-style: left nav sidebar + right scrollable content -->
-    <div class="settings-layout">
-      <div class="settings-content" id="settings-content">
+    <h2 style="font-size:20px;font-weight:700;margin-bottom:24px"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-settings"></use></svg> Settings</h2>
 
-    <!-- 1. Households — first, it's a core feature -->
-    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-households-body',this)">
-      <span><svg class="icon icon-md" aria-hidden="true"><use href="#i-home"></use></svg> Households</span>
-      <span class="settings-chevron">▾</span>
-    </div>
-    <div id="settings-households-body" class="settings-collapsible-body settings-card full-width">
-      <h3 style="display:none"><svg class="icon icon-md" aria-hidden="true"><use href="#i-home"></use></svg> Households</h3>
-      <p style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6">Manage your households and share access with family, cleaners or guests.</p>
-
-      <!-- Households list -->
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-        <h4 style="font-size:13px;font-weight:700">Your Households</h4>
-        <button class="btn btn-ghost btn-sm" onclick="openProfilePicker()">All →</button>
-      </div>
-      <div id="settings-household-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px"></div>
-      <div style="display:flex;gap:8px;margin-bottom:16px">
-        <input type="text" id="settings-new-household-name" placeholder="New household name…"
-          style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none"
-          maxlength="24">
-        <button class="btn btn-primary btn-sm" onclick="addProfileFromSettings()">+ Add</button>
-      </div>
-
-      <!-- Divider -->
-      <div style="border-top:1px solid var(--glass-border);margin:0 0 16px"></div>
-
-      <!-- Share Access -->
-      <div id="share-targets-section">
-        <h4 style="font-size:13px;font-weight:700;margin-bottom:4px"><svg class="icon icon-md" aria-hidden="true"><use href="#i-link"></use></svg> Share Access</h4>
-        <p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.5">Give others a link to access specific households. Up to 5 people. Adding someone automatically enables live presence.</p>
-        <div id="share-targets-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px"></div>
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-          <button class="btn btn-ghost btn-sm" id="add-share-target-btn" onclick="openAddShareTarget()">+ Add person</button>
-          <button class="btn btn-ghost btn-sm" id="clear-all-shares-btn" onclick="clearAllShares()" style="color:var(--danger);border-color:var(--danger);display:none"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Clear all shares</button>
+    <!-- ── HOUSEHOLDS ─────────────────────────────────── -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-home"></use></svg> Households</div>
+      <div class="acc-sec-card">
+        <div class="acc-sec-row acc-sec-row-block">
+          <div class="acc-sec-label" style="width:100%">
+            <div class="acc-sec-h">Manage your households</div>
+            <div class="acc-sec-p">Share access with family, cleaners or guests.</div>
+          </div>
+          <div style="width:100%;margin-top:12px;display:flex;align-items:center;justify-content:space-between;gap:12px">
+            <div style="font-size:13px;font-weight:700">Your Households</div>
+            <button class="btn btn-ghost btn-sm" onclick="openProfilePicker()">All →</button>
+          </div>
+          <div id="settings-household-list" style="width:100%;display:flex;flex-direction:column;gap:8px;margin-top:10px"></div>
+          <div style="width:100%;display:flex;gap:8px;margin-top:10px">
+            <input type="text" id="settings-new-household-name" placeholder="New household name…"
+              style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none"
+              maxlength="24">
+            <button class="btn btn-primary btn-sm" onclick="addProfileFromSettings()">+ Add</button>
+          </div>
         </div>
+        <div class="acc-sec-row acc-sec-row-block">
+          <div class="acc-sec-label" style="width:100%">
+            <div class="acc-sec-h"><svg class="icon icon-md" aria-hidden="true"><use href="#i-link"></use></svg> Share Access</div>
+            <div class="acc-sec-p">Give others a link to access specific households. Up to 5 people. Adding someone automatically enables live presence.</div>
+          </div>
+          <div id="share-targets-section" style="width:100%;margin-top:12px">
+            <div id="share-targets-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px"></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+              <button class="btn btn-ghost btn-sm" id="add-share-target-btn" onclick="openAddShareTarget()">+ Add person</button>
+              <button class="btn btn-ghost btn-sm" id="clear-all-shares-btn" onclick="clearAllShares()" style="color:var(--danger);border-color:var(--danger);display:none"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Clear all shares</button>
+            </div>
+          </div>
+        </div>
+        <div class="acc-sec-row acc-sec-row-block" id="household-joined-section" style="display:none">
+          <div class="acc-sec-label" style="width:100%">
+            <div class="acc-sec-h"><svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg> Joined Household</div>
+            <div class="acc-sec-p" id="joined-status-text" style="color:var(--ok)">✓ Syncing to shared household</div>
+          </div>
+          <div style="margin-top:10px">
+            <button class="btn btn-ghost btn-sm" onclick="leaveShare()" style="color:var(--danger);border-color:var(--danger)">Leave shared household</button>
+          </div>
+        </div>
+        <div id="household-status" style="font-size:12px;color:var(--muted);font-family:var(--mono);padding:0 18px 14px"></div>
       </div>
-
-      <!-- Joined section — shown when this device has joined someone else's household -->
-      <div id="household-joined-section" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--glass-border)">
-        <h4 style="font-size:13px;font-weight:700;margin-bottom:8px"><svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg> Joined Household</h4>
-        <p style="font-size:12px;color:var(--ok);margin-bottom:4px" id="joined-status-text">✓ Syncing to shared household</p>
-        
-        <button class="btn btn-ghost btn-sm" onclick="leaveShare()" style="color:var(--danger);border-color:var(--danger)">Leave shared household</button>
-      </div>
-
-      <div id="household-status" style="margin-top:12px;font-size:12px;color:var(--muted);font-family:var(--mono)"></div>
     </div>
 
-    <!-- 3. Alerts — push + email reports merged -->
-    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-alerts-body',this)">
-      <span><svg class="icon icon-md" aria-hidden="true"><use href="#i-bell"></use></svg> Alerts &amp; Reports</span>
-      <span class="settings-chevron">▾</span>
+    <!-- ── ALERTS & REPORTS ───────────────────────────── -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-bell"></use></svg> Alerts &amp; Reports</div>
+      <div class="acc-sec-card">
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Push notifications</div>
+            <div class="acc-sec-p" id="notif-platform-note">Get notified on this device when items are running low.</div>
+          </div>
+        </div>
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Low stock alerts</div>
+            <div class="acc-sec-p" id="notif-status-text">Not enabled</div>
+          </div>
+          <button id="notif-btn" class="btn btn-ghost acc-sec-btn" onclick="toggleNotifications()">Enable</button>
+        </div>
+        <div class="acc-sec-row" id="notif-threshold-row" style="display:none">
+          <div class="acc-sec-label"><div class="acc-sec-h">Alert when items are within</div></div>
+          <select id="notif-days" onchange="saveNotifSettings()"
+            style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
+            <option value="7">7 days</option>
+            <option value="14" selected>14 days</option>
+            <option value="30">30 days</option>
+          </select>
+        </div>
+        <div class="acc-sec-row" id="install-prompt-row" style="display:none">
+          <div class="acc-sec-label" id="install-prompt-info">
+            <div class="acc-sec-h">Install to home screen</div>
+            <div class="acc-sec-p">Required for background notifications</div>
+          </div>
+          <button id="install-prompt-btn" class="btn btn-blue acc-sec-btn" onclick="installPWA()">Install App</button>
+        </div>
+        <div id="email-setup-needed" class="acc-sec-row" style="display:none">
+          <div class="acc-sec-label">
+            <div class="acc-sec-p">The email service requires a backend URL to be configured. Contact the app owner for setup details.</div>
+          </div>
+        </div>
+        <div id="email-not-registered" class="acc-sec-row acc-sec-row-block" style="display:none">
+          <div class="acc-sec-label" style="width:100%">
+            <div class="acc-sec-h">Email reports</div>
+            <div class="acc-sec-p">Receive a stock report by email on a schedule you choose.</div>
+          </div>
+          <div class="form-grid" style="width:100%;margin-top:12px;margin-bottom:12px">
+            <div class="field">
+              <label>Your email address</label>
+              <input type="email" id="email-input" placeholder="you@example.com">
+            </div>
+            <div class="field">
+              <label>Frequency</label>
+              <select id="email-frequency" onchange="updateEmailDayVisibility()">
+                <option value="daily">Daily</option>
+                <option value="weekly" selected>Weekly</option>
+                <option value="monthly">Monthly (1st of month)</option>
+              </select>
+            </div>
+            <div class="field" id="email-day-field">
+              <label>Day of week</label>
+              <select id="email-day">
+                <option value="monday">Monday</option><option value="tuesday">Tuesday</option>
+                <option value="wednesday">Wednesday</option><option value="thursday">Thursday</option>
+                <option value="friday">Friday</option><option value="saturday">Saturday</option>
+                <option value="sunday">Sunday</option>
+              </select>
+            </div>
+          </div>
+          <button class="btn btn-blue btn-sm" onclick="connectEmailReports()"><svg class="icon" aria-hidden="true"><use href="#i-cloud"></use></svg> Connect &amp; Enable Email Reports</button>
+        </div>
+        <div id="email-registered" style="display:none">
+          <div class="acc-sec-row">
+            <div class="acc-sec-label">
+              <div class="acc-sec-h" id="email-registered-label">Email reports active</div>
+              <div class="acc-sec-p" id="email-registered-detail"></div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0">
+              <button class="btn btn-ghost acc-sec-btn" onclick="sendEmailNow()">Send Now</button>
+              <button class="btn btn-danger acc-sec-btn" onclick="disableEmailReports()">Disable</button>
+            </div>
+          </div>
+          <div class="acc-sec-row">
+            <div class="acc-sec-label"><div class="acc-sec-h">Frequency</div></div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <select id="email-frequency-update" onchange="updateEmailSettings()" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+              <select id="email-day-update" onchange="updateEmailSettings()" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
+                <option value="monday">Monday</option><option value="tuesday">Tuesday</option>
+                <option value="wednesday">Wednesday</option><option value="thursday">Thursday</option>
+                <option value="friday">Friday</option><option value="saturday">Saturday</option>
+                <option value="sunday">Sunday</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
-    <div id="settings-alerts-body" class="settings-collapsible-body settings-card">
-      <h3 style="display:none"><svg class="icon icon-md" aria-hidden="true"><use href="#i-bell"></use></svg> Alerts &amp; Reports</h3>
 
-      <!-- Push notifications -->
-      <h4 style="font-size:13px;font-weight:700;margin-bottom:4px">Push Notifications</h4>
-      <p id="notif-platform-note" style="font-size:12px;color:var(--muted);margin-bottom:12px">Get notified on this device when items are running low.</p>
-      <div class="setting-row">
-        <div class="setting-info">
-          <h4>Low stock alerts</h4>
-          <p id="notif-status-text">Not enabled</p>
-        </div>
-        <button id="notif-btn" class="btn btn-ghost btn-sm" onclick="toggleNotifications()">Enable</button>
-      </div>
-      <div class="setting-row" id="notif-threshold-row" style="display:none">
-        <div class="setting-info"><h4>Alert when items are within</h4></div>
-        <select id="notif-days" onchange="saveNotifSettings()"
-          style="width:110px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
-          <option value="7">7 days</option>
-          <option value="14" selected>14 days</option>
-          <option value="30">30 days</option>
-        </select>
-      </div>
-      <div class="setting-row" id="install-prompt-row" style="display:none">
-        <div class="setting-info" id="install-prompt-info">
-          <h4>Install to home screen</h4>
-          <p>Required for background notifications</p>
-        </div>
-        <button id="install-prompt-btn" class="btn btn-blue btn-sm" onclick="installPWA()">Install App</button>
-      </div>
-
-      <!-- Divider -->
-      <div style="border-top:1px solid var(--glass-border);margin:16px 0"></div>
-
-      <!-- Email reports -->
-      <div id="email-setup-needed" style="display:none">
-        <p style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6">The email service requires a backend URL to be configured. Contact the app owner for setup details.</p>
-      </div>
-      <div id="email-not-registered" style="display:none">
-        <p style="font-size:13px;color:var(--muted);margin-bottom:14px">Receive a stock report by email on a schedule you choose.</p>
-        <div class="form-grid" style="margin-bottom:14px">
-          <div class="field">
-            <label>Your email address</label>
-            <input type="email" id="email-input" placeholder="you@example.com">
-          </div>
-          <div class="field">
-            <label>Frequency</label>
-            <select id="email-frequency" onchange="updateEmailDayVisibility()">
-              <option value="daily">Daily</option>
-              <option value="weekly" selected>Weekly</option>
-              <option value="monthly">Monthly (1st of month)</option>
-            </select>
-          </div>
-          <div class="field" id="email-day-field">
-            <label>Day of week</label>
-            <select id="email-day">
-              <option value="monday">Monday</option>
-              <option value="tuesday">Tuesday</option>
-              <option value="wednesday">Wednesday</option>
-              <option value="thursday">Thursday</option>
-              <option value="friday">Friday</option>
-              <option value="saturday">Saturday</option>
-              <option value="sunday">Sunday</option>
-            </select>
+    <!-- ── REMINDER SCHEDULES ─────────────────────────── -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-calendar"></use></svg> Reminder Schedules</div>
+      <div class="acc-sec-card">
+        <div class="acc-sec-row acc-sec-row-block">
+          <div class="acc-sec-label" style="width:100%">
+            <div class="acc-sec-h">In-app reminder schedules</div>
+            <div class="acc-sec-p">Configure when in-app reminders fire and where notifications are sent. Settings save automatically.</div>
           </div>
         </div>
-        <button class="btn btn-blue btn-sm" onclick="connectEmailReports()"><svg class="icon" aria-hidden="true"><use href="#i-cloud"></use></svg> Connect &amp; Enable Email Reports</button>
-      </div>
-      <div id="email-registered" style="display:none">
-        <div class="setting-row">
-          <div class="setting-info">
-            <h4 id="email-registered-label">Email reports active</h4>
-            <p id="email-registered-detail"></p>
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Notification email</div>
+            <div class="acc-sec-p">Where reminder alerts are sent</div>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-ghost btn-sm" onclick="sendEmailNow()">Send Now</button>
-            <button class="btn btn-danger btn-sm" onclick="disableEmailReports()">Disable</button>
-          </div>
+          <input type="email" id="setting-email" placeholder="you@example.com"
+            style="width:200px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-family:var(--sans);font-size:13px;outline:none"
+            onchange="saveSettings()">
         </div>
-        <div class="setting-row" style="border-top:none;padding-top:0">
-          <div class="setting-info"><h4>Frequency</h4></div>
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">First reminder date &amp; time</div>
+            <div class="acc-sec-p">When to send the first scheduled reminder</div>
+          </div>
           <div style="display:flex;gap:8px;align-items:center">
-            <select id="email-frequency-update" onchange="updateEmailSettings()" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
-            <select id="email-day-update" onchange="updateEmailSettings()" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
-              <option value="monday">Monday</option><option value="tuesday">Tuesday</option>
-              <option value="wednesday">Wednesday</option><option value="thursday">Thursday</option>
-              <option value="friday">Friday</option><option value="saturday">Saturday</option>
-              <option value="sunday">Sunday</option>
-            </select>
+            <input type="date" id="setting-email-start" onchange="saveSettings()"
+              style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-family:var(--sans);font-size:13px;outline:none">
+            <input type="time" id="setting-email-start-time" onchange="saveSettings()"
+              style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-family:var(--sans);font-size:13px;outline:none;width:100px">
+          </div>
+        </div>
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Repeat every</div>
+            <div class="acc-sec-p">How often to check after the first reminder</div>
+          </div>
+          <select id="setting-email-interval" onchange="saveSettings()"
+            style="width:140px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
+            <option value="0">Manual only</option>
+            <option value="7">Weekly</option>
+            <option value="14">Fortnightly</option>
+            <option value="30" selected>Monthly</option>
+            <option value="60">Every 2 months</option>
+          </select>
+        </div>
+        <div class="acc-sec-row" id="last-sent-row" style="display:none">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Schedule status</div>
+            <div class="acc-sec-p" id="last-sent-text">Not sent yet</div>
+          </div>
+          <button class="btn btn-ghost acc-sec-btn" onclick="resetLastSent()">Reset</button>
+        </div>
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Send now</div>
+            <div class="acc-sec-p">Send a reminder immediately with 7-day and 30-day items</div>
+          </div>
+          <button class="btn btn-primary acc-sec-btn" id="send-reminder-btn" onclick="sendReminderEmail(true)"><svg class="icon" aria-hidden="true"><use href="#i-mail"></use></svg> Send Now</button>
+        </div>
+        <div id="email-status" style="font-size:12px;padding:0 18px 8px;display:none"></div>
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Server schedule status</div>
+            <div class="acc-sec-p" id="kv-status-text" style="font-family:var(--mono)">Tap check to verify</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost acc-sec-btn" onclick="checkKVStatus()" id="kv-check-btn">Check</button>
+            <button class="btn btn-ghost acc-sec-btn" onclick="repushToServer()" id="kv-repush-btn" title="Re-send your email and schedule to the server">Re-push</button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 4. Reminders (renamed from "Email Reminders" — these are in-app reminder schedules) -->
-    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-reminders-body',this)">
-      <span><svg class="icon icon-md" aria-hidden="true"><use href="#i-calendar"></use></svg> Reminder Schedules</span>
-      <span class="settings-chevron">▾</span>
-    </div>
-    <div id="settings-reminders-body" class="settings-collapsible-body settings-card">
-      <h3 style="display:none"><svg class="icon icon-md" aria-hidden="true"><use href="#i-calendar"></use></svg> Reminder Schedules</h3>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:4px">Configure when in-app reminders fire and where notifications are sent. Settings save automatically.</p>
-      <div class="setting-row">
-        <div class="setting-info"><h4>Notification email</h4><p>Where reminder alerts are sent</p></div>
-        <input type="email" id="setting-email" placeholder="you@example.com"
-          style="width:200px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-family:var(--sans);font-size:13px;outline:none"
-          onchange="saveSettings()">
-      </div>
-      <div class="setting-row">
-        <div class="setting-info">
-          <h4>First reminder date &amp; time</h4>
-          <p>When to send the first scheduled reminder</p>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input type="date" id="setting-email-start" onchange="saveSettings()"
-            style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-family:var(--sans);font-size:13px;outline:none">
-          <input type="time" id="setting-email-start-time" onchange="saveSettings()"
-            style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-family:var(--sans);font-size:13px;outline:none;width:100px">
+    <!-- ── PREFERENCES ────────────────────────────────── -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-settings"></use></svg> Preferences</div>
+      <div class="acc-sec-card">
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Low stock warning</div>
+            <div class="acc-sec-p">Warn when stock drops below this %</div>
+          </div>
+          <select id="setting-threshold" onchange="saveSettings()" style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
+            <option value="10">10%</option><option value="15">15%</option><option value="20" selected>20%</option><option value="25">25%</option><option value="33">33%</option>
+          </select>
         </div>
       </div>
-      <div class="setting-row">
-        <div class="setting-info"><h4>Repeat every</h4><p>How often to check after the first reminder</p></div>
-        <select id="setting-email-interval" onchange="saveSettings()"
-          style="width:140px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
-          <option value="0">Manual only</option>
-          <option value="7">Weekly</option>
-          <option value="14">Fortnightly</option>
-          <option value="30" selected>Monthly</option>
-          <option value="60">Every 2 months</option>
-        </select>
-      </div>
-      <div class="setting-row" id="last-sent-row" style="display:none">
-        <div class="setting-info">
-          <h4>Schedule status</h4>
-          <p id="last-sent-text">Not sent yet</p>
-        </div>
-        <button class="btn btn-ghost btn-sm" onclick="resetLastSent()">Reset</button>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info">
-          <h4>Send now</h4>
-          <p>Send a reminder immediately with 7-day and 30-day items</p>
-        </div>
-        <button class="btn btn-primary btn-sm" id="send-reminder-btn" onclick="sendReminderEmail(true)"><svg class="icon" aria-hidden="true"><use href="#i-mail"></use></svg> Send Now</button>
-      </div>
-      <div id="email-status" style="font-size:12px;margin-top:8px;display:none"></div>
-      <div class="setting-row" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--glass-border)">
-        <div class="setting-info">
-          <h4>Server schedule status</h4>
-          <p id="kv-status-text" style="font-family:var(--mono);font-size:11px">Tap check to verify</p>
-        </div>
-        <div style="display:flex;gap:6px">
-          <button class="btn btn-ghost btn-sm" onclick="checkKVStatus()" id="kv-check-btn">Check</button>
-          <button class="btn btn-ghost btn-sm" onclick="repushToServer()" id="kv-repush-btn" title="Re-send your email and schedule to the server">Re-push</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Data section (renamed from Preferences & Data) -->
-    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-prefs-body',this)">
-      <span><svg class="icon icon-md" aria-hidden="true"><use href="#i-settings"></use></svg> Preferences</span>
-      <span class="settings-chevron">▾</span>
-    </div>
-    <div id="settings-prefs-body" class="settings-collapsible-body">
-    <div class="settings-card full-width">
-      <h3 style="display:none"><svg class="icon icon-md" aria-hidden="true"><use href="#i-settings"></use></svg> Preferences</h3>
-
-      <!-- Low stock warning — only preference not covered by Account & Security -->
-      <div class="setting-row">
-        <div class="setting-info"><h4>Low stock warning</h4><p>Warn when stock drops below this %</p></div>
-        <select id="setting-threshold" onchange="saveSettings()" style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
-          <option value="10">10%</option><option value="15">15%</option><option value="20" selected>20%</option><option value="25">25%</option><option value="33">33%</option>
-        </select>
-      </div>
-
       <!-- Hidden inputs kept for JS compat — real inputs live in Account & Security -->
       <input type="hidden" id="setting-display-name">
       <input type="hidden" id="setting-country" value="GB">
     </div>
 
-    <!-- Data -->
-    <div class="settings-card full-width">
-      <h3><svg class="icon icon-md" aria-hidden="true"><use href="#i-package"></use></svg> Data</h3>
-      <div class="setting-row">
-        <div class="setting-info"><h4><svg class="icon icon-md" aria-hidden="true"><use href="#i-package"></use></svg> Import Amazon order history</h4><p>Auto-populate items from your Amazon purchase history CSV</p></div>
-        <button class="btn btn-ghost acc-sec-btn" onclick="openAmazonImporter()">Import →</button>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info"><h4>Export data (JSON)</h4><p>Download all items as a backup file</p></div>
-        <button class="btn btn-ghost acc-sec-btn" onclick="exportData()">Export</button>
-      </div>
-      <div class="setting-row">
-        <div class="setting-info"><h4>Import data</h4><p>Restore from a previously exported file</p></div>
-        <button class="btn btn-ghost acc-sec-btn" onclick="document.getElementById('import-file').click()">Import</button>
-        <input type="file" id="import-file" style="display:none" accept=".json" onchange="importData(event)">
-      </div>
-      <div class="setting-row">
-        <div class="setting-info"><h4>Clear all data</h4><p>Remove all items and history from this household</p></div>
-        <button class="btn btn-danger acc-sec-btn" onclick="clearAll()">Clear All</button>
-      </div>
-    </div>
-    </div><!-- /settings-prefs-body -->
-
-    <!-- 7. About -->
-    <div class="settings-collapsible-header settings-section-header" onclick="toggleSettings('settings-about-body',this)">
-      <span>ℹ️ About</span>
-      <span class="settings-chevron">▾</span>
-    </div>
-    <div id="settings-about-body" class="settings-collapsible-body settings-card">
-      <h3 style="display:none">ℹ️ About</h3>
-      <p style="font-size:13px;color:var(--muted);line-height:1.8">
-        <strong style="color:var(--text)">STOCKROOM</strong> — Household Consumables Tracker.<br>
-        Stock estimates are calculated from your purchase history, quantity per purchase, and months-of-supply settings.<br>
-        Data syncs securely to the cloud, encrypted on your device. Export regularly as an additional backup.
-      </p>
-      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px">
-        <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">First-run prompts</div>
-        <p style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:10px">Reset the dismissed state of all onboarding prompts — Protecting Your Data, Country &amp; language, Amazon order import, and Enable MFA. They will show again on next login.</p>
-        <button class="btn btn-ghost btn-sm" onclick="resetFirstRunPrompts()" style="color:var(--muted)">
-          <svg class="icon" aria-hidden="true"><use href="#i-rotate-ccw"></use></svg> Reset first-run prompts
-        </button>
+    <!-- ── ABOUT ──────────────────────────────────────── -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-info"></use></svg> About</div>
+      <div class="acc-sec-card">
+        <div class="acc-sec-row acc-sec-row-block">
+          <div class="acc-sec-label" style="width:100%">
+            <div class="acc-sec-h">STOCKROOM</div>
+            <div class="acc-sec-p" style="line-height:1.7">Household Consumables Tracker. Stock estimates are calculated from your purchase history, quantity per purchase, and months-of-supply settings. Data syncs securely to the cloud, encrypted on your device. Export regularly as an additional backup.</div>
+          </div>
+        </div>
+        <div class="acc-sec-row acc-sec-row-block">
+          <div class="acc-sec-label" style="width:100%">
+            <div class="acc-sec-h">First-run prompts</div>
+            <div class="acc-sec-p">Reset the dismissed state of all onboarding prompts — Protecting Your Data, Country &amp; language, Amazon order import, and Enable MFA. They will show again on next login.</div>
+          </div>
+          <button class="btn btn-ghost acc-sec-btn" onclick="resetFirstRunPrompts()" style="color:var(--muted);margin-top:10px">
+            <svg class="icon" aria-hidden="true"><use href="#i-rotate-ccw"></use></svg> Reset first-run prompts
+          </button>
+        </div>
       </div>
     </div>
-      </div><!-- /settings-content -->
-    </div><!-- /settings-layout -->
   </div>
 
 <!-- ═══ GROCERY VIEW ═══ -->
@@ -2641,7 +2618,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
       style="flex:1;padding:14px 16px;background:transparent;color:var(--text);font-size:15px;line-height:1.7;outline:none;font-family:var(--sans);overflow-y:auto;min-height:0;word-break:break-word"
       oninput="onNoteBodyInput()"></div>
   </div>
-  <div id="note-secure-badge" style="display:none;position:absolute;bottom:16px;right:16px;background:rgba(232,168,56,0.15);border:1px solid rgba(232,168,56,0.3);border-radius:8px;padding:4px 10px;font-size:11px;color:var(--accent);font-family:var(--mono)"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-lock"></use></svg> SECURE NOTE</div>
+  <button id="note-secure-badge" type="button" onclick="_badgeLockNow()" title="Click to lock now" style="display:none;position:absolute;bottom:16px;right:16px;background:rgba(232,168,56,0.15);border:1px solid rgba(232,168,56,0.3);border-radius:8px;padding:4px 10px;font-size:11px;color:var(--accent);font-family:var(--mono);cursor:pointer;align-items:center;gap:6px"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-lock"></use></svg> <span id="note-secure-badge-label">SECURE NOTE</span></button>
 </div>
 
 <!-- NOTE REMINDER MODAL -->
