@@ -16647,17 +16647,64 @@ async function toggleNoteLock() {
     // Locking — push body to server and strip from local
     if (!n.body && !_noteUnlocked.get(n.id)?.body) { toast('Add some content first'); return; }
     const body = _noteUnlocked.get(n.id)?.body || n.body || '';
-    if (!await kvEnsureKey()) return;
-    const ciphertext = await kvEncrypt(_kvKey, body);
-    const res = await fetchKV(`${WORKER_URL}/note/body/push`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        emailHash: _kvEmailHash,
-        ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
-        noteId: n.id, ciphertext,
-      }),
-    });
-    if (!res.ok) { toast('Could not secure note — check connection'); return; }
+    // Pre-flight: secure note bodies require sync credentials. Without these,
+    // the body cannot be uploaded to the server — bail with a clear message
+    // rather than letting the request fail mysteriously.
+    if (!_kvEmailHash) {
+      toast('Sign in to enable secure notes');
+      console.warn('[note lock] _kvEmailHash is empty — user not fully authenticated');
+      return;
+    }
+    if (!_kvSessionToken && !_kvVerifier) {
+      toast('Session expired — please refresh and sign in again');
+      console.warn('[note lock] no sessionToken or verifier available');
+      return;
+    }
+    if (!await kvEnsureKey()) {
+      toast('Encryption key unavailable — try refreshing');
+      return;
+    }
+    let ciphertext;
+    try {
+      ciphertext = await kvEncrypt(_kvKey, body);
+    } catch (e) {
+      toast('Could not encrypt note: ' + (e.message || 'unknown error'));
+      console.error('[note lock] encrypt error:', e);
+      return;
+    }
+    let res, errText = '';
+    try {
+      res = await fetchKV(`${WORKER_URL}/note/body/push`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          emailHash: _kvEmailHash,
+          ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+          noteId: n.id, ciphertext,
+        }),
+      });
+    } catch (e) {
+      toast('Could not reach server: ' + (e.message || 'network error'));
+      console.error('[note lock] fetch error:', e);
+      return;
+    }
+    if (!res.ok) {
+      // Try to parse a JSON error body so the user sees the real reason
+      try {
+        const txt = await res.text();
+        if (txt && txt.trim()) {
+          try {
+            const d = JSON.parse(txt);
+            errText = d.error || txt.slice(0, 100);
+          } catch(_) { errText = txt.slice(0, 100); }
+        }
+      } catch(_) {}
+      const reason = errText
+        ? `${res.status}: ${errText}`
+        : `Server returned ${res.status}`;
+      toast('Could not secure note — ' + reason);
+      console.error('[note lock] push failed:', res.status, errText);
+      return;
+    }
     n.body   = undefined;
     n.locked = true;
     _noteUnlocked.set(n.id, { body, lastActivity: Date.now(), inactivityTimer: null });
