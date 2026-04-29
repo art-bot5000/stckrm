@@ -16095,9 +16095,9 @@ function _noteCardHTML(n) {
 
   // Status icons
   const icons = [];
-  if (n.pinned)  icons.push('📌');
+  if (n.pinned)  icons.push('<svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg>');
   if (n.locked)  icons.push(isUnlocked ? '<svg class="icon" aria-hidden="true"><use href="#i-unlock"></use></svg>' : '<svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>');
-  if (n.archived) icons.push('📦');
+  if (n.archived) icons.push('<svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg>');
   if (n.deletedAt) {
     const daysLeft = Math.max(0, 30 - Math.round((Date.now()-new Date(n.deletedAt).getTime())/86400000));
     icons.push(`<span style="font-size:10px;color:var(--danger);font-family:var(--mono)">🗑 ${daysLeft}d</span>`);
@@ -16408,11 +16408,7 @@ function _showNoteBody(n) {
     // If tickItems isn't yet populated (legacy notes saved before this refactor),
     // build it from the current body so the renderer has structured data.
     if (!n.tickItems || !n.tickItems.length) {
-      const tmp = document.createElement('div'); tmp.innerHTML = body || '';
-      tmp.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
-      tmp.querySelectorAll('p,div,li').forEach(el => { el.insertAdjacentText('afterend', '\n'); });
-      const plainText = (tmp.textContent || '').replace(/\n{2,}/g, '\n').trim();
-      const lines = plainText.split('\n').map(l => l.trim()).filter(Boolean);
+      const lines = _flattenContentEditableToLines(body || '');
       n.tickItems = lines.map((text, i) => ({
         text,
         checked: !!(n.tickBoxes||{})[i],
@@ -16551,6 +16547,14 @@ async function _fetchAndUnlockNote(n) {
     });
     const data = await _readJsonSafe(res);
     if (!res.ok) {
+      if (res.status === 404) {
+        // The note's encrypted body is missing from the server. This can happen
+        // if the note was locked but the body upload failed silently, or if
+        // the note metadata synced from another device but the body never did.
+        // Offer to remove security so the user can re-enter content.
+        errEl.innerHTML = `Note body is missing from server.<br><br>This can happen if security was enabled but the encrypted content was never uploaded. <a href="#" onclick="_removeNoteSecurity('${n.id}'); return false;" style="color:var(--accent);text-decoration:underline">Remove security from this note</a> so you can re-add the content.`;
+        return;
+      }
       // Common cause: empty body from a proxy error or auth middleware
       const msg = data?.error || data?._raw || `Server returned ${res.status}`;
       errEl.textContent = msg;
@@ -16570,6 +16574,33 @@ async function _fetchAndUnlockNote(n) {
   } catch(e) {
     errEl.textContent = 'Could not unlock: ' + (e.message || 'unknown error');
   }
+}
+
+// Recovery: remove security from a note when the encrypted body is gone from
+// the server (e.g. push silently failed). Clears the locked flag locally so
+// the user can edit the note normally and add fresh content.
+async function _removeNoteSecurity(noteId) {
+  const n = notes.find(x => x.id === noteId); if (!n) return;
+  if (!confirm('Remove security from this note?\n\nThe note will become editable but its previous content cannot be recovered.')) return;
+  n.locked = false;
+  n.body = ''; // empty body so user can type fresh content
+  n.updatedAt = new Date().toISOString();
+  _noteUnlocked.delete(noteId);
+  // Best-effort delete the (probably non-existent) server body so storage is clean
+  await fetchKV(`${WORKER_URL}/note/body/delete`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      emailHash: _kvEmailHash,
+      ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+      noteId,
+    }),
+  }).catch(() => {});
+  await saveNotes();
+  await _syncNoteIfConnected();
+  // Reload editor to show empty editable body
+  _showNoteBody(n);
+  _renderNoteEditor(n, false);
+  toast('Security removed — you can now edit this note');
 }
 
 // ── Toolbar actions ───────────────────────
@@ -16638,6 +16669,43 @@ async function toggleNoteLock() {
   await saveNotes(); await _syncNoteIfConnected();
 }
 
+// Flatten contenteditable HTML into an array of plain-text lines.
+// Browsers wrap pressed-Enter lines differently — Chrome wraps subsequent
+// lines in <div>, Firefox uses <br>. The naive
+// `replaceWith('\n')` + `insertAdjacentText('afterend', '\n')` approach
+// merges line 1 with line 2 when the first line is bare text without a wrapper:
+//     "foo<div>bar</div><div>baz</div>" → "foo" + "bar\n" + "baz\n"
+//                                       → "foobar\nbaz" ❌
+// This walker emits text + newlines for each block-level node correctly so
+// every hit-Enter line becomes its own item.
+function _flattenContentEditableToLines(html) {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html || '';
+  const BLOCKS = new Set(['P', 'DIV', 'LI', 'BLOCKQUOTE', 'PRE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
+  let out = '';
+  function walk(node) {
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        out += child.textContent;
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        const tag = child.tagName;
+        if (tag === 'BR') {
+          out += '\n';
+        } else if (BLOCKS.has(tag)) {
+          // Ensure block boundaries are preserved on both sides
+          if (out && !out.endsWith('\n')) out += '\n';
+          walk(child);
+          if (!out.endsWith('\n')) out += '\n';
+        } else {
+          walk(child);
+        }
+      }
+    }
+  }
+  walk(tmp);
+  return out.split('\n').map(l => l.trim()).filter(Boolean);
+}
+
 async function toggleNoteTicks() {
   const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
   n.tickBoxesVisible = !n.tickBoxesVisible;
@@ -16649,11 +16717,7 @@ async function toggleNoteTicks() {
   if (n.tickBoxesVisible) {
     // Switching ON — convert current rich-text body to ordered tickItems
     const rawHTML = bodyEl ? bodyEl.innerHTML : (n.body || '');
-    const tmp = document.createElement('div'); tmp.innerHTML = rawHTML;
-    tmp.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
-    tmp.querySelectorAll('p,div,li').forEach(el => { el.insertAdjacentText('afterend', '\n'); });
-    const plainText = (tmp.textContent || '').replace(/\n{2,}/g, '\n').trim();
-    const lines = plainText.split('\n').map(l => l.trim()).filter(Boolean);
+    const lines = _flattenContentEditableToLines(rawHTML);
     // Preserve previously-checked state if tickItems already exists; otherwise
     // fall back to the legacy n.tickBoxes index map.
     const prevByText = new Map((n.tickItems || []).map(it => [it.text, !!it.checked]));
@@ -16696,7 +16760,7 @@ function _renderTickBody(n, _legacyBody) {
 
   // Build tickItems from legacy body argument if not yet populated (back-compat)
   if ((!n.tickItems || !n.tickItems.length) && typeof _legacyBody === 'string') {
-    const lines = (_legacyBody || '').split('\n').map(l => l.trim()).filter(Boolean);
+    const lines = _flattenContentEditableToLines(_legacyBody);
     n.tickItems = lines.map((text, i) => ({
       text,
       checked: !!(n.tickBoxes||{})[i],
@@ -16710,19 +16774,29 @@ function _renderTickBody(n, _legacyBody) {
     return;
   }
 
-  // Display order: unchecked first (in original order), then checked (in original order)
+  // Display order: unchecked first (original order), then checked (original order)
   const sorted = [...items.entries()]
     .sort(([, a], [, b]) => {
       if (a.checked !== b.checked) return a.checked ? 1 : -1;
       return (a.originalIndex || 0) - (b.originalIndex || 0);
     });
 
+  // Layout note: NO <label> wrapper — wrapping in <label> means clicking the
+  // text bubbles to the checkbox and toggles it, making the text uneditable.
+  // We separate the checkbox into its own clickable area and put the text in
+  // a contenteditable span that captures clicks for focus/edit.
   container.innerHTML = sorted.map(([realIdx, it]) => {
-    return `<label style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
+    const lineStyle = it.checked
+      ? 'text-decoration:line-through;color:var(--muted)'
+      : 'color:var(--text)';
+    return `<div class="tick-row" style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
       <input type="checkbox" ${it.checked ? 'checked' : ''} onchange="onNoteTick(${realIdx},this.checked)"
-        style="margin-top:3px;width:18px;height:18px;min-width:18px;accent-color:var(--accent)">
-      <span style="${it.checked ? 'text-decoration:line-through;color:var(--muted)' : 'color:var(--text)'};font-size:14px;line-height:1.5">${esc(it.text)}</span>
-    </label>`;
+        style="margin-top:3px;width:18px;height:18px;min-width:18px;accent-color:var(--accent);cursor:pointer;flex-shrink:0">
+      <span class="tick-text" contenteditable="true" data-tickidx="${realIdx}"
+        oninput="onTickTextEdit(${realIdx}, this.textContent)"
+        onkeydown="return onTickTextKeydown(event, ${realIdx})"
+        style="flex:1;${lineStyle};font-size:14px;line-height:1.5;outline:none;cursor:text;min-height:21px">${esc(it.text)}</span>
+    </div>`;
   }).join('');
 }
 
@@ -16738,6 +16812,92 @@ async function onNoteTick(idx, checked) {
   _renderTickBody(n);
   await saveNotes();
   if (n.locked) _resetNoteActivity(n.id);
+}
+
+// Inline edit of a tick item's text. Updates the tickItem and triggers the
+// debounced autosave but does NOT re-render (would lose caret position).
+function onTickTextEdit(idx, text) {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  if (!n.tickItems || !n.tickItems[idx]) return;
+  n.tickItems[idx].text = text;
+  _noteBodyDirty = true;
+  clearTimeout(_noteAutoSaveTimer);
+  _noteAutoSaveTimer = setTimeout(_autoSaveNote, 1200);
+  if (n.locked) _resetNoteActivity(n.id);
+}
+
+// Handle Enter to add a new line below, Backspace on empty to merge with prev.
+function onTickTextKeydown(event, idx) {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return true;
+  if (!n.tickItems) return true;
+
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    // Insert a new empty tickItem right after this one in original order
+    const it = n.tickItems[idx];
+    const newOriginal = (it.originalIndex || 0) + 0.5; // fractional → re-stride later
+    n.tickItems.push({ text: '', checked: false, originalIndex: newOriginal });
+    // Re-stride originalIndex to integers
+    [...n.tickItems]
+      .sort((a, b) => (a.originalIndex || 0) - (b.originalIndex || 0))
+      .forEach((item, i) => { item.originalIndex = i; });
+    _renderTickBody(n);
+    // Focus the new line
+    setTimeout(() => {
+      const newIdx = n.tickItems.findIndex(t => t.originalIndex === Math.ceil(newOriginal));
+      const span = document.querySelector(`.tick-text[data-tickidx="${newIdx}"]`);
+      if (span) {
+        span.focus();
+        // Place caret at end (which is start since text is empty)
+        const range = document.createRange();
+        range.selectNodeContents(span);
+        range.collapse(false);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }, 0);
+    _noteBodyDirty = true;
+    clearTimeout(_noteAutoSaveTimer);
+    _noteAutoSaveTimer = setTimeout(_autoSaveNote, 1200);
+    return false;
+  }
+
+  if (event.key === 'Backspace') {
+    const span = event.target;
+    if (span && span.textContent === '' && n.tickItems.length > 1) {
+      event.preventDefault();
+      // Remove this item, focus the previous in original order
+      const removedOriginal = n.tickItems[idx].originalIndex;
+      n.tickItems.splice(idx, 1);
+      // Re-stride
+      [...n.tickItems]
+        .sort((a, b) => (a.originalIndex || 0) - (b.originalIndex || 0))
+        .forEach((item, i) => { item.originalIndex = i; });
+      _renderTickBody(n);
+      setTimeout(() => {
+        // Focus the item that was directly above (one less originalIndex)
+        const prevTarget = Math.max(0, removedOriginal - 1);
+        const prevIdx = n.tickItems.findIndex(t => t.originalIndex === prevTarget);
+        const prev = document.querySelector(`.tick-text[data-tickidx="${prevIdx}"]`);
+        if (prev) {
+          prev.focus();
+          const range = document.createRange();
+          range.selectNodeContents(prev);
+          range.collapse(false);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      }, 0);
+      _noteBodyDirty = true;
+      clearTimeout(_noteAutoSaveTimer);
+      _noteAutoSaveTimer = setTimeout(_autoSaveNote, 1200);
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function toggleNoteColourPicker() {
