@@ -115,7 +115,7 @@ function getStores(code) { return STORES_BY_COUNTRY[code] || STORES_BY_COUNTRY.O
 
 const DB_NAME    = 'stockroom';
 const DB_VERSION = 2;
-const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists'];
+const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists','reminderDeletedIds'];
 
 let _db = null;
 
@@ -609,6 +609,25 @@ async function addGroceryTombstone(id) {
     const arr = [...set];
     const trimmed = arr.slice(-500);
     await dbPut('groceryDeletedIds', 'groceryDeletedIds', trimmed);
+  } catch(e) {}
+}
+
+// ── Reminder tombstones — tracks deleted standalone reminder IDs so they
+// aren't re-added on next sync (item-linked reminders are tracked via the
+// item's own replacementReminders array and don't need this).
+async function loadReminderDeletedIds() {
+  try {
+    const stored = await dbGet('reminderDeletedIds', 'reminderDeletedIds');
+    return new Set(Array.isArray(stored) ? stored : []);
+  } catch(e) { return new Set(); }
+}
+async function addReminderTombstone(id) {
+  try {
+    const set = await loadReminderDeletedIds();
+    set.add(id);
+    const arr = [...set];
+    const trimmed = arr.slice(-500);
+    await dbPut('reminderDeletedIds', 'reminderDeletedIds', trimmed);
   } catch(e) {}
 }
 
@@ -2073,6 +2092,7 @@ async function deleteReminder(id) {
     const confirmed = confirm(`Delete "${name}"?\n\nThis cannot be undone.`);
     if (!confirmed) return;
     reminders = reminders.filter(r => r.id !== id);
+    await addReminderTombstone(id);
     await saveReminders();
     _syncQueue.enqueue();
     renderReminders();
@@ -7235,11 +7255,13 @@ async function syncNow() {
       }
       if (remote.reminders && Array.isArray(remote.reminders)) {
         const localREmpty = reminders.length === 0;
+        const rTombstones = await loadReminderDeletedIds();
         if (remoteWins || localREmpty) {
-          reminders = remote.reminders; await saveReminders();
+          reminders = remote.reminders.filter(r => !rTombstones.has(r.id));
+          await saveReminders();
         } else {
           const localRIds = new Set(reminders.map(r => r.id));
-          const newR = remote.reminders.filter(r => !localRIds.has(r.id));
+          const newR = remote.reminders.filter(r => !localRIds.has(r.id) && !rTombstones.has(r.id));
           if (newR.length) { reminders = [...reminders, ...newR]; await saveReminders(); }
         }
       }
@@ -7247,6 +7269,14 @@ async function syncNow() {
         const merged = await loadDeletedIds();
         remote.deletedIds.forEach(id => merged.add(id));
         await saveDeletedIds(merged);
+      }
+      if (remote.reminderDeletedIds && Array.isArray(remote.reminderDeletedIds)) {
+        const merged = await loadReminderDeletedIds();
+        remote.reminderDeletedIds.forEach(id => merged.add(id));
+        try {
+          const arr = [...merged].slice(-500);
+          await dbPut('reminderDeletedIds', 'reminderDeletedIds', arr);
+        } catch(_) {}
       }
       // Merge household directory
       if (remote.householdDir && typeof remote.householdDir === 'object') {
@@ -7305,6 +7335,8 @@ async function syncNow() {
       items, settings, lastSynced: settings.lastSynced,
       groceries: groceryItems, departments: groceryDepts,
       reminders, deletedIds: [...tombstones],
+      reminderDeletedIds: [...(await loadReminderDeletedIds())],
+      reminderDeletedIds: [...(await loadReminderDeletedIds())],
       householdDir, activeProfile,
       shareTargets: _shareTargets, // persists share targets to Drive
     });
@@ -10893,11 +10925,13 @@ async function kvSyncNow(silent = false) {
       }
       if (remote.reminders && Array.isArray(remote.reminders)) {
         const localREmpty = reminders.length === 0;
+        const rTombstones = await loadReminderDeletedIds();
         if (remoteWins || localREmpty) {
-          reminders = remote.reminders; await saveReminders();
+          reminders = remote.reminders.filter(r => !rTombstones.has(r.id));
+          await saveReminders();
         } else {
           const localRIds = new Set(reminders.map(r => r.id));
-          const newR = remote.reminders.filter(r => !localRIds.has(r.id));
+          const newR = remote.reminders.filter(r => !localRIds.has(r.id) && !rTombstones.has(r.id));
           if (newR.length) { reminders = [...reminders, ...newR]; await saveReminders(); }
         }
       }
@@ -10905,6 +10939,14 @@ async function kvSyncNow(silent = false) {
         const merged = await loadDeletedIds();
         remote.deletedIds.forEach(id => merged.add(id));
         await saveDeletedIds(merged);
+      }
+      if (remote.reminderDeletedIds && Array.isArray(remote.reminderDeletedIds)) {
+        const merged = await loadReminderDeletedIds();
+        remote.reminderDeletedIds.forEach(id => merged.add(id));
+        try {
+          const arr = [...merged].slice(-500);
+          await dbPut('reminderDeletedIds', 'reminderDeletedIds', arr);
+        } catch(_) {}
       }
       // Merge notes
       if (remote.notes && Array.isArray(remote.notes)) {
@@ -16363,7 +16405,21 @@ function _showNoteBody(n) {
   const body = unlocked ? unlocked.body : (n.body || '');
 
   if (n.tickBoxesVisible) {
-    _renderTickBody(n, body);
+    // If tickItems isn't yet populated (legacy notes saved before this refactor),
+    // build it from the current body so the renderer has structured data.
+    if (!n.tickItems || !n.tickItems.length) {
+      const tmp = document.createElement('div'); tmp.innerHTML = body || '';
+      tmp.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+      tmp.querySelectorAll('p,div,li').forEach(el => { el.insertAdjacentText('afterend', '\n'); });
+      const plainText = (tmp.textContent || '').replace(/\n{2,}/g, '\n').trim();
+      const lines = plainText.split('\n').map(l => l.trim()).filter(Boolean);
+      n.tickItems = lines.map((text, i) => ({
+        text,
+        checked: !!(n.tickBoxes||{})[i],
+        originalIndex: i,
+      }));
+    }
+    _renderTickBody(n);
   } else {
     const ticksBody = document.getElementById('note-ticks-body');
     if (ticksBody) ticksBody.style.display = 'none';
@@ -16473,7 +16529,18 @@ async function resendNoteOtp() {
 
 async function _fetchAndUnlockNote(n) {
   const errEl = document.getElementById('note-lock-error');
+  // Helper — read response body once, attempt JSON parse, tolerate empty/non-JSON
+  async function _readJsonSafe(res) {
+    let text = '';
+    try { text = await res.text(); } catch(_) { return null; }
+    if (!text || !text.trim()) return null;
+    try { return JSON.parse(text); } catch(_) { return { _raw: text }; }
+  }
   try {
+    if (!_kvSessionToken && !_kvVerifier) {
+      errEl.textContent = 'Not signed in — please refresh and try again';
+      return;
+    }
     const res = await fetchKV(`${WORKER_URL}/note/body/pull`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -16482,21 +16549,26 @@ async function _fetchAndUnlockNote(n) {
         noteId: n.id,
       }),
     });
+    const data = await _readJsonSafe(res);
     if (!res.ok) {
-      const d = await res.json();
-      errEl.textContent = d.error || 'Could not fetch note';
+      // Common cause: empty body from a proxy error or auth middleware
+      const msg = data?.error || data?._raw || `Server returned ${res.status}`;
+      errEl.textContent = msg;
       return;
     }
-    const { ciphertext } = await res.json();
+    if (!data || !data.ciphertext) {
+      errEl.textContent = 'Server returned an empty response — try again';
+      return;
+    }
     if (!await kvEnsureKey()) { errEl.textContent = 'Encryption key unavailable'; return; }
-    const body = await kvDecrypt(_kvKey, ciphertext);
+    const body = await kvDecrypt(_kvKey, data.ciphertext);
     // Cache in memory (body stored as innerHTML)
     _noteUnlocked.set(n.id, { body, lastActivity: Date.now(), inactivityTimer: null });
     _startNoteInactivityTimer(n.id);
     _showNoteBody(n);
     _renderNoteEditor(n, false);
   } catch(e) {
-    errEl.textContent = 'Could not unlock: ' + e.message;
+    errEl.textContent = 'Could not unlock: ' + (e.message || 'unknown error');
   }
 }
 
@@ -16575,45 +16647,81 @@ async function toggleNoteTicks() {
   const ticksEl = document.getElementById('note-ticks-body');
 
   if (n.tickBoxesVisible) {
-    // Switching to tick view — extract plain-text lines from current HTML body
+    // Switching ON — convert current rich-text body to ordered tickItems
     const rawHTML = bodyEl ? bodyEl.innerHTML : (n.body || '');
-    // Convert <br> / block tags to newlines then strip remaining tags
     const tmp = document.createElement('div'); tmp.innerHTML = rawHTML;
     tmp.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
     tmp.querySelectorAll('p,div,li').forEach(el => { el.insertAdjacentText('afterend', '\n'); });
-    const plainText = (tmp.textContent || '').trim();
+    const plainText = (tmp.textContent || '').replace(/\n{2,}/g, '\n').trim();
+    const lines = plainText.split('\n').map(l => l.trim()).filter(Boolean);
+    // Preserve previously-checked state if tickItems already exists; otherwise
+    // fall back to the legacy n.tickBoxes index map.
+    const prevByText = new Map((n.tickItems || []).map(it => [it.text, !!it.checked]));
+    n.tickItems = lines.map((text, i) => ({
+      text,
+      checked: prevByText.has(text) ? prevByText.get(text) : !!(n.tickBoxes||{})[i],
+      originalIndex: i,
+    }));
     if (bodyEl) bodyEl.style.display = 'none';
-    _renderTickBody(n, plainText);
+    _renderTickBody(n);
   } else {
-    // Switching back to rich text — collect tick labels back to text
-    if (ticksEl) {
-      const labels = ticksEl.querySelectorAll('label span');
-      const lines  = [...labels].map(s => s.textContent).join('\n');
-      if (bodyEl) { bodyEl.style.display = ''; bodyEl.innerHTML = lines.replace(/\n/g, '<br>'); }
-      ticksEl.style.display = 'none';
-    } else {
-      if (bodyEl) bodyEl.style.display = '';
+    // Switching OFF — reconstruct body in ORIGINAL order (not display order)
+    const items = (n.tickItems && n.tickItems.length)
+      ? [...n.tickItems].sort((a,b) => a.originalIndex - b.originalIndex)
+      : null;
+    if (bodyEl) {
+      bodyEl.style.display = '';
+      if (items) {
+        // Wrap each line in a <div> so contenteditable preserves line breaks
+        // reliably (the prior <br>-only approach merged the first two lines
+        // in some browsers).
+        bodyEl.innerHTML = items.map(it => `<div>${esc(it.text) || '<br>'}</div>`).join('');
+      } else if (ticksEl) {
+        // Fallback when there are no tickItems yet (legacy notes)
+        const labels = ticksEl.querySelectorAll('label span');
+        const lines  = [...labels].map(s => s.textContent);
+        bodyEl.innerHTML = lines.map(l => `<div>${esc(l) || '<br>'}</div>`).join('');
+      }
     }
+    if (ticksEl) ticksEl.style.display = 'none';
   }
   n.updatedAt = new Date().toISOString();
   await saveNotes();
 }
 
-function _renderTickBody(n, body) {
+function _renderTickBody(n, _legacyBody) {
   const container = document.getElementById('note-ticks-body');
   if (!container) return;
   container.style.display = 'block';
-  const paragraphs = (body || '').split('\n').filter(p => p.trim());
-  if (!paragraphs.length) {
+
+  // Build tickItems from legacy body argument if not yet populated (back-compat)
+  if ((!n.tickItems || !n.tickItems.length) && typeof _legacyBody === 'string') {
+    const lines = (_legacyBody || '').split('\n').map(l => l.trim()).filter(Boolean);
+    n.tickItems = lines.map((text, i) => ({
+      text,
+      checked: !!(n.tickBoxes||{})[i],
+      originalIndex: i,
+    }));
+  }
+
+  const items = n.tickItems || [];
+  if (!items.length) {
     container.innerHTML = `<p style="color:var(--muted);font-size:13px">Add some lines — each line becomes a tick box.</p>`;
     return;
   }
-  container.innerHTML = paragraphs.map((p, i) => {
-    const checked = !!(n.tickBoxes || {})[i];
+
+  // Display order: unchecked first (in original order), then checked (in original order)
+  const sorted = [...items.entries()]
+    .sort(([, a], [, b]) => {
+      if (a.checked !== b.checked) return a.checked ? 1 : -1;
+      return (a.originalIndex || 0) - (b.originalIndex || 0);
+    });
+
+  container.innerHTML = sorted.map(([realIdx, it]) => {
     return `<label style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
-      <input type="checkbox" ${checked ? 'checked' : ''} onchange="onNoteTick(${i},this.checked)"
+      <input type="checkbox" ${it.checked ? 'checked' : ''} onchange="onNoteTick(${realIdx},this.checked)"
         style="margin-top:3px;width:18px;height:18px;min-width:18px;accent-color:var(--accent)">
-      <span style="${checked ? 'text-decoration:line-through;color:var(--muted)' : 'color:var(--text)'};font-size:14px;line-height:1.5">${esc(p)}</span>
+      <span style="${it.checked ? 'text-decoration:line-through;color:var(--muted)' : 'color:var(--text)'};font-size:14px;line-height:1.5">${esc(it.text)}</span>
     </label>`;
   }).join('');
 }
@@ -16622,7 +16730,12 @@ async function onNoteTick(idx, checked) {
   const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
   if (!n.tickBoxes) n.tickBoxes = {};
   n.tickBoxes[idx] = checked;
+  if (n.tickItems && n.tickItems[idx]) {
+    n.tickItems[idx].checked = checked;
+  }
   n.updatedAt = new Date().toISOString();
+  // Re-render so strikethrough/grey applies and checked items move to bottom
+  _renderTickBody(n);
   await saveNotes();
   if (n.locked) _resetNoteActivity(n.id);
 }
@@ -16704,6 +16817,14 @@ async function deleteCurrentNote() {
 // ── Body editing ──────────────────────────
 function _getCurrentEditorBody(n) {
   if (n.tickBoxesVisible) {
+    // Source of truth in tick mode is n.tickItems (original order) so saves
+    // don't depend on the visual sort that puts checked items at the bottom.
+    if (n.tickItems && n.tickItems.length) {
+      return [...n.tickItems]
+        .sort((a,b) => (a.originalIndex||0) - (b.originalIndex||0))
+        .map(it => it.text)
+        .join('\n');
+    }
     const labels = document.querySelectorAll('#note-ticks-body label span');
     return [...labels].map(s => s.textContent).join('\n');
   }
