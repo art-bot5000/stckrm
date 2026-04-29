@@ -5537,8 +5537,12 @@ function setStockOnlyUI(visible) {
   // filter-panel visibility must respect filtersOpen state, not just show/hide blindly
   const filterPanel = document.getElementById('filter-panel');
   if (filterPanel) filterPanel.style.display = visible && filtersOpen ? 'flex' : 'none';
-  const filterWrap = document.querySelector('#view-stock > div:nth-child(5)');
-  if (filterWrap) filterWrap.style.display = visible ? '' : 'none';
+  // Note: previously this code also toggled `#view-stock > div:nth-child(5)`,
+  // but after the search/toolbar restructure that selector pointed to
+  // #stock-search-toolbar — wiping its inline display:flex on view re-entry
+  // and breaking the desktop layout. The elements that genuinely need
+  // toggling are already in idsAlwaysToggle above; the nth-child line was
+  // stale code from an older HTML structure.
 }
 
 function switchToStock() {
