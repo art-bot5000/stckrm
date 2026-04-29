@@ -856,23 +856,24 @@
     <!-- Health dashboard -->
     <div id="health-dashboard" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px"></div>
 
-    <!-- Stockroom search + filters/sort: stacked on mobile, side-by-side on desktop -->
-    <div id="stock-search-toolbar" style="display:flex;flex-direction:column;gap:8px;margin-bottom:18px">
-      <div id="stock-search-wrap" style="flex:1">
+    <!-- Stockroom search + filters/sort: stacked on mobile, side-by-side on desktop.
+         Three flex children: search (1 card width), filters button (½ card), sort select (½ card). -->
+    <div id="stock-search-toolbar" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+      <div id="stock-search-wrap">
         <input id="stock-search" type="search" placeholder="Search items…" autocomplete="off"
-          class="grocery-search" style="width:100%;box-sizing:border-box"
+          class="grocery-search" style="width:100%;box-sizing:border-box;height:36px"
           oninput="renderGrid()">
       </div>
-      <div id="stock-toolbar-wrap" style="flex:1">
-      <!-- Filters + Sort on same line, equal width -->
-      <div id="stock-toolbar-row" style="display:flex;align-items:stretch;gap:8px">
+      <div id="stock-toolbar-wrap">
         <button class="btn btn-ghost btn-sm" id="filter-toggle-btn" onclick="toggleFilters()"
-          style="display:flex;align-items:center;justify-content:center;gap:6px;flex:1;height:36px">
+          style="display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:36px">
           <span id="filter-toggle-icon">▸</span> Filters
           <span id="filter-active-badge" style="display:none;background:var(--accent);color:#111;font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;font-family:var(--mono)"></span>
         </button>
+      </div>
+      <div id="stock-sort-wrap">
         <select id="sort-select" onchange="setSort(this.value)"
-          style="flex:1;height:36px;font-size:12px;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:5px 8px;font-family:var(--sans);cursor:pointer;outline:none">
+          style="width:100%;height:36px;font-size:12px;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:5px 8px;font-family:var(--sans);cursor:pointer;outline:none">
           <option value="status">↕ Sort: Status</option>
           <option value="name">↕ Sort: Name</option>
           <option value="days">↕ Sort: Days left</option>
@@ -881,6 +882,7 @@
           <option value="added">↕ Sort: Date added</option>
         </select>
       </div>
+    </div>
 
       <div id="filter-panel" style="display:none;flex-direction:column;gap:8px;margin-bottom:10px;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:10px">
         <div id="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -910,8 +912,6 @@
         <button class="btn btn-ghost btn-sm" style="align-self:flex-start;font-size:11px" onclick="resetAllFilters()">↺ Reset filters</button>
       </div>
 
-      </div><!-- /stock-toolbar-wrap -->
-    </div><!-- /stock-search-toolbar -->
     <div id="tag-filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
       <span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Tags:</span>
     </div>

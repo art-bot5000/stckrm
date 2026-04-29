@@ -703,12 +703,14 @@
     #stock-search-inline { display:flex !important; }
     #stock-toolbar-row { flex-wrap:nowrap; }
     /* Search + filters/sort row layout:
-       - Mobile: stacked (default, set inline on the wrapper)
-       - Desktop ≥900px: side-by-side, each occupying roughly one card width */
-    #stock-search-toolbar { flex-direction: row !important; gap: 12px !important; }
-    #stock-search-wrap,
-    #stock-toolbar-wrap { flex: 1 1 0; max-width: 360px; min-width: 0; }
-    #stock-search-wrap input { height: 36px; }
+       - Mobile: stacked via flex-wrap (each child grows to 100% width)
+       - Desktop ≥900px: 3 cells on one row, search at 1 card width,
+         filters and sort each at half a card width.
+         Spacing matches #items-grid gap (10px). */
+    #stock-search-toolbar { flex-wrap: nowrap !important; gap: 10px !important; }
+    #stock-search-wrap     { flex: 0 0 280px; max-width: 280px; min-width: 0; }
+    #stock-toolbar-wrap    { flex: 0 0 135px; max-width: 135px; min-width: 0; }
+    #stock-sort-wrap       { flex: 0 0 135px; max-width: 135px; min-width: 0; }
     #view-report { max-width: 100%; }
     #view-grocery { max-width: 720px; }
     #view-reminders { max-width: 720px; }
@@ -1423,4 +1425,59 @@ body.note-open { overflow: hidden; touch-action: none; }
 .tag-swatch.selected {
   outline: 2px solid var(--text);
   outline-offset: 2px;
+}
+
+
+/* Mobile: stack search/filters/sort vertically, each full width */
+@media (max-width: 899px) {
+  #stock-search-toolbar { flex-wrap: wrap; }
+  #stock-search-wrap   { flex: 1 1 100%; max-width: 100%; }
+  #stock-toolbar-wrap  { flex: 1 1 calc(50% - 5px); max-width: calc(50% - 5px); }
+  #stock-sort-wrap     { flex: 1 1 calc(50% - 5px); max-width: calc(50% - 5px); }
+}
+
+
+/* Health dashboard merged into the unified Filters bar — hide the old container */
+#health-dashboard:empty { display: none; }
+
+/* Status pills inside the unified filter row */
+.tag-filter-chip.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+}
+.tag-filter-chip.status-pill .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.tag-filter-chip.status-pill strong {
+  font-family: var(--mono);
+  font-weight: 700;
+  margin-left: 2px;
+}
+
+/* Separator dot between built-in status pills and custom tag pills */
+.filter-bar-sep {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--muted);
+  opacity: 0.5;
+  margin: 0 6px;
+  align-self: center;
+  flex-shrink: 0;
+}
+
+/* +Tag chip styling */
+.tag-filter-chip.tag-filter-add {
+  border-style: dashed !important;
+  color: var(--muted);
+}
+.tag-filter-chip.tag-filter-add:hover {
+  color: var(--accent);
+  border-color: var(--accent) !important;
 }

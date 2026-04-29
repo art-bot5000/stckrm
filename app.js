@@ -2776,27 +2776,13 @@ function getOrCreateJoinCode() {
 }
 
 function renderHealthDashboard() {
+  // No-op: status counts are now rendered inline within buildTagFilterBar()
+  // as the first chips of the unified Filters row. We keep the function so
+  // existing scheduleRender('dashboard') calls don't error.
   const el = document.getElementById('health-dashboard');
-  if (!el || !items.length) { if (el) el.innerHTML = ''; return; }
-  const threshold = settings.threshold;
-  let critical = 0, warn = 0, ok = 0, nodata = 0;
-  items.forEach(item => {
-    const s = calcStock(item);
-    const status = getStatus(s?.pct ?? null, threshold);
-    if (status === 'critical') critical++;
-    else if (status === 'warn') warn++;
-    else if (status === 'ok') ok++;
-    else nodata++;
-  });
-  const pill = (count, label, color, filterVal) => count === 0 ? '' :
-    `<button onclick="setFilter('status','${filterVal}',this)" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:99px;border:1px solid ${color}33;background:${color}15;color:${color};font-size:12px;font-weight:700;cursor:pointer;font-family:var(--sans)">
-      ${label} <span style="font-size:14px;font-weight:800">${count}</span>
-    </button>`;
-  el.innerHTML =
-    pill(critical, `<span class='status-dot status-critical'></span> Critical`, '#e85050', 'critical') +
-    pill(warn,     `<span class='status-dot status-low'></span> Low`,      '#e8a838', 'warn') +
-    pill(ok,       `<span class='status-dot status-ok'></span> Good`,     '#4cbb8a', 'ok') +
-    (nodata ? `<span style="font-size:12px;color:var(--muted);padding:5px 4px">${nodata} no data</span>` : '');
+  if (el) el.innerHTML = '';
+  // Re-render tag filter bar so status counts stay current
+  try { buildTagFilterBar(); } catch(_) {}
 }
 
 // ═══════════════════════════════════════════
@@ -4028,6 +4014,33 @@ function openCardTagPicker(itemId) {
   if (modal) modal.classList.add('active');
 }
 
+
+// Clear both status filter and tag filter at once (the unified "All" chip).
+function clearAllInlineFilters(btn) {
+  if (!activeFilters) activeFilters = {};
+  activeFilters.status = 'all';
+  activeFilters.cadence = null;
+  activeTagFilter = null;
+  reconcileFilters?.();
+  buildTagFilterBar();
+  scheduleRender('grid');
+}
+
+// Open the tag picker without an item context — used for the +Tag chip in the
+// unified filter bar. Lets the user create a tag (with colour) without first
+// selecting an item card.
+function openCardTagPickerForCreate() {
+  _cardTagPickerItemId = null;
+  _renderCardTagPicker();
+  // Hide the toggle list (no item to toggle) and the helper text
+  const list = document.getElementById('card-tag-picker-list');
+  if (list) list.innerHTML = `<p style="font-size:12px;color:var(--muted);margin:0">Create a new tag below — you can apply it to items afterwards.</p>`;
+  const modal = document.getElementById('card-tag-picker-modal');
+  if (modal) modal.classList.add('active');
+  // Focus the name input
+  setTimeout(() => document.getElementById('card-tag-picker-new-name')?.focus(), 50);
+}
+
 function closeCardTagPicker() {
   const modal = document.getElementById('card-tag-picker-modal');
   if (modal) modal.classList.remove('active');
@@ -4145,24 +4158,53 @@ function buildTagFilterBar() {
   const defined = tags.map((t,i) => ({t,i})).filter(({t}) => t && t.trim());
   const hasRoom = defined.length < 5;
 
-  const label = `<span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Tags:</span>`;
-  const allChip = defined.length
-    ? `<button class="tag-filter-chip${activeTagFilter===null?' active':''}" onclick="setTagFilter(null,this)">All</button>`
+  // Compute status counts (same logic as the old health dashboard)
+  const threshold = settings.threshold;
+  let critical = 0, warn = 0, ok = 0;
+  items.forEach(item => {
+    const s = calcStock(item);
+    const status = getStatus(s?.pct ?? null, threshold);
+    if (status === 'critical') critical++;
+    else if (status === 'warn') warn++;
+    else if (status === 'ok') ok++;
+  });
+  const activeStatus = activeFilters?.status || 'all';
+  const statusPill = (count, key, label, color) => count === 0 ? '' :
+    `<button class="tag-filter-chip status-pill${activeStatus===key?' active':''}"
+       style="${activeStatus===key
+         ? `background:${color}26;border-color:${color}80;color:${color}`
+         : `border-color:${color}55;color:${color}`}"
+       onclick="setFilter('status','${key}',this)">
+       <span class="status-dot" style="background:${color}"></span> ${label} <strong>${count}</strong>
+     </button>`;
+  const statusPills =
+    statusPill(critical, 'critical', 'Critical', '#e85050') +
+    statusPill(warn,     'warn',     'Low',      '#e8a838') +
+    statusPill(ok,       'ok',       'Good',     '#4cbb8a');
+
+  const label = `<span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Filters:</span>`;
+  const allChip = (defined.length || statusPills)
+    ? `<button class="tag-filter-chip${activeTagFilter===null && activeStatus==='all'?' active':''}" onclick="clearAllInlineFilters(this)">All</button>`
+    : '';
+  const sep = (statusPills && defined.length)
+    ? `<span class="filter-bar-sep" aria-hidden="true"></span>`
     : '';
   const chips = defined.map(({t,i}) => {
     const c = getTagColor(i);
     const isActive = activeTagFilter === i;
     return `<span class="tag-filter-chip${isActive?' active':''}"
-      style="${isActive?`background:${c.bg};border-color:${c.border};color:${c.text}`:''}"
+      style="${isActive?`background:${c.bg};border-color:${c.border};color:${c.text}`:`border-color:${c.border}55;color:${c.text}`}"
       onclick="setTagFilter(${i},this)">
       ${esc(t)}
       <span class="tag-x" onclick="event.stopPropagation();deleteTag(${i})" title="Remove tag">×</span>
     </span>`;
   }).join('');
+
   const addBtn = hasRoom
-    ? `<button class="btn-add-tag" onclick="showAddTagInput('tag-filter-bar')">+ Tag</button>`
+    ? `<button class="tag-filter-chip tag-filter-add" onclick="openCardTagPickerForCreate()" title="Create tag">+ Tag</button>`
     : '';
-  bar.innerHTML = label + allChip + chips + addBtn;
+
+  bar.innerHTML = label + allChip + statusPills + sep + chips + addBtn;
 }
 
 function buildShoppingTagFilterBarInline() {
