@@ -826,6 +826,13 @@
 .note-card-preview { font-size:11px; color:var(--muted); line-height:1.5; overflow:hidden; display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; word-break:break-word; }
 .note-card-lock { font-size:11px; color:var(--accent); font-family:var(--mono); margin-top:auto; }
 .note-card-meta { display:flex; align-items:center; gap:6px; margin-top:auto; flex-wrap:wrap; }
+
+/* ── Recently Deleted rows ── */
+.deleted-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px; background:var(--surface); border:1px solid var(--border); border-radius:10px; margin-bottom:8px; }
+.deleted-row-info { flex:1; min-width:0; }
+.deleted-row-name { font-size:13px; font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:2px; }
+.deleted-row-meta { font-family:var(--mono); font-size:10px; color:var(--muted); }
+.deleted-row-actions { display:flex; gap:6px; flex-shrink:0; }
 .note-card-badge { font-size:10px; padding:1px 6px; border-radius:99px; font-family:var(--mono); }
 .note-chip { padding:5px 14px; border-radius:99px; border:1px solid var(--border); background:transparent;
   color:var(--muted); font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; transition:all 0.15s; }

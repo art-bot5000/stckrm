@@ -1,51 +1,3 @@
-// ═══════════════════════════════════════════
-//  DIAGNOSTIC — surface silent errors from inline onclick handlers
-//  so we can see exactly what's failing on Log Purchase / pencil edit /
-//  Replacement Reminders. Remove this block once the bugs are fixed.
-// ═══════════════════════════════════════════
-(function installClickDiagnostic() {
-  if (window._stockroomClickDiagInstalled) return;
-  window._stockroomClickDiagInstalled = true;
-
-  // Catch any uncaught synchronous error (e.g. `openLogModal is not defined`,
-  // `Cannot read properties of null (reading 'value')`). These normally vanish
-  // into the console with no UI feedback.
-  window.addEventListener('error', e => {
-    try {
-      const msg = e.message || (e.error && e.error.message) || 'Unknown error';
-      const where = e.filename ? ` @${(e.filename + '').split('/').pop()}:${e.lineno}` : '';
-      // Use a raw banner instead of toast() because toast's DOM element may
-      // not yet exist when this fires.
-      let bar = document.getElementById('_diag-bar');
-      if (!bar) {
-        bar = document.createElement('div');
-        bar.id = '_diag-bar';
-        bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#7a1d1d;color:#fff;padding:10px 14px;font:600 12px/1.4 monospace;z-index:99999;cursor:pointer';
-        bar.onclick = () => bar.remove();
-        document.body && document.body.appendChild(bar);
-      }
-      bar.textContent = `⚠ ${msg}${where} — tap to dismiss`;
-      console.error('[stockroom diag]', e);
-    } catch (_) {}
-  });
-
-  // Promise rejections (async onclicks like archiveItem)
-  window.addEventListener('unhandledrejection', e => {
-    try {
-      const msg = (e.reason && (e.reason.message || e.reason)) || 'Unknown promise rejection';
-      let bar = document.getElementById('_diag-bar');
-      if (!bar) {
-        bar = document.createElement('div');
-        bar.id = '_diag-bar';
-        bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#7a1d1d;color:#fff;padding:10px 14px;font:600 12px/1.4 monospace;z-index:99999;cursor:pointer';
-        bar.onclick = () => bar.remove();
-        document.body && document.body.appendChild(bar);
-      }
-      bar.textContent = `⚠ ${msg} — tap to dismiss`;
-      console.error('[stockroom diag rejection]', e);
-    } catch (_) {}
-  });
-})();
 
 // ═══════════════════════════════════════════
 //  DATA
@@ -1583,6 +1535,7 @@ function getReminderStatus(reminder) {
 // ── Render ────────────────────────────────
 async function renderReminders() {
   await loadReminders();
+  renderDeletedReminders();
 
   // Also collect reminders embedded in items — supports both old single and new array format
   const allReminders = [
@@ -1624,13 +1577,14 @@ async function renderReminders() {
     }),
   ];
 
-  const overdue  = allReminders.filter(r => getReminderStatus(r) === 'overdue');
-  const soon     = allReminders.filter(r => getReminderStatus(r) === 'soon');
-  const upcoming = allReminders.filter(r => getReminderStatus(r) === 'upcoming');
-  const unknown  = allReminders.filter(r => getReminderStatus(r) === 'unknown');
+  const visibleReminders = allReminders.filter(r => !r._deletedAt);
+  const overdue  = visibleReminders.filter(r => getReminderStatus(r) === 'overdue');
+  const soon     = visibleReminders.filter(r => getReminderStatus(r) === 'soon');
+  const upcoming = visibleReminders.filter(r => getReminderStatus(r) === 'upcoming');
+  const unknown  = visibleReminders.filter(r => getReminderStatus(r) === 'unknown');
 
   const empty = document.getElementById('reminders-empty');
-  if (allReminders.length === 0) {
+  if (visibleReminders.length === 0) {
     if (empty) empty.style.display = 'block';
     ['overdue-section','soon-section','upcoming-section'].forEach(s => {
       const el = document.getElementById('reminders-' + s);
@@ -2097,7 +2051,7 @@ async function deleteReminder(id) {
       // New array format — remove specific reminder
       item.replacementReminders = item.replacementReminders.filter(r => r.id !== remEntry.id);
       // Sync legacy fields to first remaining reminder
-      if (item.replacementReminders.length) {
+      if (item.replacementReminders?.length) {
         item.replacementInterval = item.replacementReminders[0].interval;
         item.replacementUnit     = item.replacementReminders[0].unit;
       } else {
@@ -3277,30 +3231,82 @@ async function restoreItem(id) {
 }
 
 async function deleteItem(id) {
-  const idx  = items.findIndex(i => i.id === id);
-  const item = items[idx];
+  const item = items.find(i => i.id === id);
   if (!item) return;
-
-  // Stash for undo
-  deletedItem  = item;
-  deletedIndex = idx;
-  items.splice(idx, 1);
-  await addTombstone(id);
+  // Soft delete — mark with _deletedAt, keep in data for 30 days
+  // Do NOT tombstone yet — tombstone added only on permanent purge
+  item._deletedAt = new Date().toISOString();
+  item.updatedAt  = new Date().toISOString();
   await saveData();
   scheduleRender('grid', 'dashboard', 'shopping');
   setTimeout(syncAll, 400);
+  toast(`"${esc(item.name)}" moved to Recently Deleted — recoverable for 30 days`);
+}
 
-  // Show undo toast
-  clearTimeout(undoTimer);
-  const t = document.getElementById('undo-toast');
-  const m = document.getElementById('undo-msg');
-  if (m) m.textContent = `"${item.name}" removed`;
-  if (t) t.classList.add('show');
-  undoTimer = setTimeout(() => {
-    if (t) t.classList.remove('show');
-    deletedItem  = null;
-    deletedIndex = null;
-  }, 5000);
+async function restoreDeletedItem(id) {
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  delete item._deletedAt;
+  item.updatedAt = new Date().toISOString();
+  await saveData();
+  scheduleRender('grid', 'dashboard');
+  setTimeout(syncAll, 400);
+  toast(`"${esc(item.name)}" restored ✓`);
+}
+
+async function purgeDeletedItem(id) {
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  if (!confirm(`Permanently delete "${item.name}"? This cannot be undone.`)) return;
+  items = items.filter(i => i.id !== id);
+  await addTombstone(id);
+  await saveData();
+  renderDeletedItems();
+  setTimeout(syncAll, 400);
+  toast('Item permanently deleted');
+}
+
+async function purgeAllDeletedItems() {
+  const deleted = items.filter(i => i._deletedAt);
+  if (!deleted.length) return;
+  if (!confirm(`Permanently delete all ${deleted.length} items in Recently Deleted? This cannot be undone.`)) return;
+  const ids = deleted.map(i => i.id);
+  items = items.filter(i => !i._deletedAt);
+  await Promise.all(ids.map(id => addTombstone(id)));
+  await saveData();
+  renderDeletedItems();
+  setTimeout(syncAll, 400);
+  toast('Recently Deleted cleared');
+}
+
+function renderDeletedItems() {
+  const container = document.getElementById('recently-deleted-items');
+  if (!container) return;
+  const now = Date.now();
+  const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+  // Auto-purge items deleted >30 days ago
+  const toAutoDelete = items.filter(i => i._deletedAt && (now - new Date(i._deletedAt).getTime()) >= thirtyDays);
+  if (toAutoDelete.length) {
+    toAutoDelete.forEach(async i => { items = items.filter(x => x.id !== i.id); await addTombstone(i.id); });
+    saveData();
+  }
+  const deleted = items.filter(i => i._deletedAt && (now - new Date(i._deletedAt).getTime()) < thirtyDays);
+  const section = document.getElementById('recently-deleted-section');
+  if (section) section.style.display = deleted.length ? 'block' : 'none';
+  if (!deleted.length) { container.innerHTML = ''; return; }
+  container.innerHTML = deleted.map(item => {
+    const daysLeft = Math.max(0, 30 - Math.floor((now - new Date(item._deletedAt).getTime()) / 86400000));
+    return `<div class="deleted-row">
+      <div class="deleted-row-info">
+        <div class="deleted-row-name">${esc(item.name)}</div>
+        <div class="deleted-row-meta">${item.category||'Other'} · ${daysLeft}d remaining</div>
+      </div>
+      <div class="deleted-row-actions">
+        <button class="btn btn-ghost btn-sm" onclick="restoreDeletedItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-refresh-ccw"></use></svg> Restore</button>
+        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="purgeDeletedItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 async function undoDelete() {
@@ -3308,14 +3314,9 @@ async function undoDelete() {
   const t = document.getElementById('undo-toast');
   if (t) t.classList.remove('show');
   if (!deletedItem) return;
-  // Remove tombstone so the item can come back
-  await removeTombstone(deletedItem.id);
-  items.splice(deletedIndex, 0, deletedItem);
+  await restoreDeletedItem(deletedItem.id);
   deletedItem  = null;
   deletedIndex = null;
-  await saveData();
-  scheduleRender('grid', 'dashboard', 'shopping');
-  setTimeout(syncAll, 400);
   toast('Restored ✓');
 }
 
@@ -3728,6 +3729,8 @@ function renderGrid() {
     // Quick-added items live in their own section
     if (item.quickAdded) return false;
     // Archived items only shown when archive filter is active
+    if (item._deletedAt && activeFilter !== 'deleted') return false;
+    if (!item._deletedAt && activeFilter === 'deleted') return false;
     if (item._archived && activeFilter !== 'archived') return false;
     if (!item._archived && activeFilter === 'archived') return false;
     if (activeFilter === 'archived') {
@@ -5415,6 +5418,7 @@ function showView(name, btn) {
     setStockOnlyUI(true);
     document.getElementById('items-grid').style.display = '';
     document.getElementById('shopping-panel').style.display = 'none';
+    renderDeletedItems();
   }
   if (name === 'settings') {
     renderSettingsForUser();
@@ -5940,7 +5944,7 @@ async function wizSave() {
     updatedAt:            new Date().toISOString(),
   };
   // Backwards compat: copy first reminder to replacementInterval/Unit
-  if (newItem.replacementReminders.length) {
+  if (newItem.replacementReminders?.length) {
     newItem.replacementInterval = newItem.replacementReminders[0].interval;
     newItem.replacementUnit     = newItem.replacementReminders[0].unit;
   }
@@ -11756,7 +11760,7 @@ function saveGroceryManualOrder(order) {
 // Returns groceryItems sorted by manual order (items not in order go to end)
 function getGroceryItemsInOrder() {
   const order = getGroceryManualOrder();
-  const listFiltered = groceryItems.filter(i => (i.listId || 'default') === activeGroceryListId);
+  const listFiltered = groceryItems.filter(i => (i.listId || 'default') === activeGroceryListId && !i._deletedAt);
   if (!order.length) return [...listFiltered];
   const orderMap = new Map(order.map((id, i) => [id, i]));
   return [...listFiltered].sort((a, b) => {
