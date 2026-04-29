@@ -707,10 +707,10 @@
        - Desktop ≥900px: 3 cells on one row, search at 1 card width,
          filters and sort each at half a card width.
          Spacing matches #items-grid gap (10px). */
-    #stock-search-toolbar { flex-wrap: nowrap !important; gap: 10px !important; }
-    #stock-search-wrap     { flex: 0 0 280px; max-width: 280px; min-width: 0; }
-    #stock-toolbar-wrap    { flex: 0 0 135px; max-width: 135px; min-width: 0; }
-    #stock-sort-wrap       { flex: 0 0 135px; max-width: 135px; min-width: 0; }
+    #view-stock #stock-search-toolbar { flex-direction: row; flex-wrap: nowrap; gap: 10px; }
+    #view-stock #stock-search-wrap   { flex: 0 0 280px; max-width: 280px; min-width: 0; }
+    #view-stock #stock-toolbar-wrap  { flex: 0 0 135px; max-width: 135px; min-width: 0; }
+    #view-stock #stock-sort-wrap     { flex: 0 0 135px; max-width: 135px; min-width: 0; }
     #view-report { max-width: 100%; }
     #view-grocery { max-width: 720px; }
     #view-reminders { max-width: 720px; }
@@ -1428,12 +1428,12 @@ body.note-open { overflow: hidden; touch-action: none; }
 }
 
 
-/* Mobile: stack search/filters/sort vertically, each full width */
+/* Mobile: search at 100% on row 1, filters+sort split 50/50 on row 2 */
 @media (max-width: 899px) {
-  #stock-search-toolbar { flex-wrap: wrap; }
-  #stock-search-wrap   { flex: 1 1 100%; max-width: 100%; }
-  #stock-toolbar-wrap  { flex: 1 1 calc(50% - 5px); max-width: calc(50% - 5px); }
-  #stock-sort-wrap     { flex: 1 1 calc(50% - 5px); max-width: calc(50% - 5px); }
+  #view-stock #stock-search-toolbar { flex-wrap: wrap; }
+  #view-stock #stock-search-wrap   { flex: 1 1 100%; max-width: 100%; }
+  #view-stock #stock-toolbar-wrap  { flex: 1 1 calc(50% - 5px); max-width: calc(50% - 5px); }
+  #view-stock #stock-sort-wrap     { flex: 1 1 calc(50% - 5px); max-width: calc(50% - 5px); }
 }
 
 
