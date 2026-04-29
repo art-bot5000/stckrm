@@ -3666,8 +3666,10 @@ function _flushRender() {
       const sd = document.getElementById('setting-email-start');
       const st = document.getElementById('setting-email-start-time');
       if (t)  t.value  = settings.threshold;
-      // Re-populate country options if empty (e.g. first render after sign-in)
-      if (c && c.options.length === 0) buildSettingsCountrySelect();
+      // Re-populate country options if empty (e.g. first render after sign-in).
+      // Skip the .options check for hidden inputs (Settings redesign moved the
+      // real selector to setting-country-sec in Account & Security).
+      if (c && c.tagName === 'SELECT' && c.options.length === 0) buildSettingsCountrySelect();
       if (c)  c.value  = settings.country || 'GB';
       if (e)  e.value  = settings.email || '';
       if (iv) iv.value = settings.emailInterval ?? 30;
@@ -6942,10 +6944,15 @@ function buildSettingsCountrySelect() {
   const options = COUNTRIES.map(c => `<option value="${c.code}">${c.flag} ${c.name}</option>`).join('');
   const val = settings.country || 'GB';
   ['setting-country', 'setting-country-sec'].forEach(id => {
-    const sel = document.getElementById(id);
-    if (!sel) return;
-    if (!sel.options.length) sel.innerHTML = options;
-    sel.value = val;
+    const el = document.getElementById(id);
+    if (!el) return;
+    // setting-country was changed to a hidden <input> in the Settings redesign
+    // (the real selector lives in Account & Security as setting-country-sec).
+    // Hidden inputs don't have an .options property, so guard before populating.
+    if (el.tagName === 'SELECT') {
+      if (!el.options.length) el.innerHTML = options;
+    }
+    el.value = val;
   });
 }
 
