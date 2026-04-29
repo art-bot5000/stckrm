@@ -81,9 +81,14 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
       - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only --strategy immediate
+        run: flyctl deploy --remote-only --ha=false --strategy immediate
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        # --ha=false: prevents Fly from auto-provisioning a 2nd HA machine.
+        # With a single volume, the spare machine has nothing to attach to
+        # and deploy fails with "unattached volume" error. This is the actual
+        # cause — confirmed by Fly community docs, not --update-only.
+        # --strategy immediate: update the existing machine directly.
 
       - name: Verify deployment health
         if: always()
