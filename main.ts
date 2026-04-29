@@ -124,6 +124,299 @@ async function hashEmail(email) {
   return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('').slice(0, 32);
 }
 
+// ═══════════════════════════════════════════════════════════
+//  CLOUDFLARE R2 BACKUP — every 5 min snapshot of KV durable data
+// ═══════════════════════════════════════════════════════════
+// Why R2: free tier (10GB storage, 1M Class A ops/month), data is
+// already AES-GCM encrypted client-side so the snapshot contains
+// only ciphertext. Geo-redundant — survives a Fly LHR outage.
+//
+// What gets backed up: only durable KV prefixes. Transient prefixes
+// (OTPs, challenges, sessions) are skipped — they expire naturally
+// and restoring stale ones would be confusing.
+const R2_DURABLE_PREFIXES = [
+  'user', 'device', 'passkey', 'passkey_prf_envelope',
+  'share', 'share_data', 'share_key',
+  'note_body',
+  'schedule', 'last_sent', 'user_email', 'user_items',
+  'deactivation', 'deactivation_reactivate',
+];
+
+const R2_CFG = {
+  accountId: Deno.env.get('R2_ACCOUNT_ID')        || '',
+  accessKey: Deno.env.get('R2_ACCESS_KEY_ID')     || '',
+  secretKey: Deno.env.get('R2_SECRET_ACCESS_KEY') || '',
+  bucket:    Deno.env.get('R2_BUCKET_NAME')       || '',
+  region:    'auto',
+  service:   's3',
+};
+const r2Configured = () => !!(R2_CFG.accountId && R2_CFG.accessKey && R2_CFG.secretKey && R2_CFG.bucket);
+
+// ── AWS SigV4 signing for R2 (S3-compatible) ──────────────
+// Hand-rolled because pulling in aws4fetch adds 50KB and the
+// signing algorithm is small enough to write inline.
+async function _hmac(key: ArrayBuffer | Uint8Array | string, msg: string): Promise<ArrayBuffer> {
+  const enc = new TextEncoder();
+  const keyBuf = typeof key === 'string' ? enc.encode(key) : key;
+  const cryptoKey = await crypto.subtle.importKey('raw', keyBuf, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return crypto.subtle.sign('HMAC', cryptoKey, enc.encode(msg));
+}
+async function _sha256Hex(data: string | Uint8Array): Promise<string> {
+  const buf = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+function _hex(buf: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function r2Fetch(method: string, key: string, body: Uint8Array | null = null, extraHeaders: Record<string,string> = {}): Promise<Response> {
+  if (!r2Configured()) throw new Error('R2 not configured');
+  const host = `${R2_CFG.accountId}.r2.cloudflarestorage.com`;
+  const url  = `https://${host}/${R2_CFG.bucket}/${key}`;
+  const now  = new Date();
+  const amzDate    = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+  const dateStamp  = amzDate.slice(0, 8);
+  const payloadHash = body ? await _sha256Hex(body) : await _sha256Hex('');
+
+  const headers: Record<string, string> = {
+    'host': host,
+    'x-amz-date': amzDate,
+    'x-amz-content-sha256': payloadHash,
+    ...extraHeaders,
+  };
+  // SSE-C / SSE — Cloudflare R2 always encrypts at rest by default; no header needed
+  // (server-side encryption-at-rest is automatic and free, per Cloudflare docs)
+
+  const signedHeaders = Object.keys(headers).sort().join(';');
+  const canonicalHeaders = Object.keys(headers).sort().map(h => `${h}:${headers[h]}`).join('\n') + '\n';
+  const canonicalUri = `/${R2_CFG.bucket}/${encodeURIComponent(key).replace(/%2F/g, '/')}`;
+  const canonicalRequest = [method, canonicalUri, '', canonicalHeaders, signedHeaders, payloadHash].join('\n');
+  const credentialScope  = `${dateStamp}/${R2_CFG.region}/${R2_CFG.service}/aws4_request`;
+  const stringToSign     = ['AWS4-HMAC-SHA256', amzDate, credentialScope, await _sha256Hex(canonicalRequest)].join('\n');
+
+  const kDate    = await _hmac('AWS4' + R2_CFG.secretKey, dateStamp);
+  const kRegion  = await _hmac(kDate, R2_CFG.region);
+  const kService = await _hmac(kRegion, R2_CFG.service);
+  const kSigning = await _hmac(kService, 'aws4_request');
+  const signature = _hex(await _hmac(kSigning, stringToSign));
+
+  const auth = `AWS4-HMAC-SHA256 Credential=${R2_CFG.accessKey}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+  const fetchHeaders: Record<string,string> = { ...headers, 'Authorization': auth };
+  delete fetchHeaders.host; // fetch sets it
+
+  return fetch(url, { method, headers: fetchHeaders, body: body || undefined });
+}
+
+// ── Snapshot KV durable data and upload to R2 ─────────────
+async function backupKVToR2(label: string = 'auto'): Promise<{ ok: boolean; key?: string; size?: number; entries?: number; error?: string }> {
+  if (!r2Configured()) return { ok: false, error: 'R2 not configured' };
+  try {
+    const snapshot: { meta: any; entries: Array<{ key: any; value: any }> } = {
+      meta: {
+        version: 1,
+        createdAt: new Date().toISOString(),
+        label,
+        prefixes: R2_DURABLE_PREFIXES,
+      },
+      entries: [],
+    };
+    for (const prefix of R2_DURABLE_PREFIXES) {
+      const iter = kv.list({ prefix: [prefix] });
+      for await (const entry of iter) {
+        snapshot.entries.push({ key: entry.key, value: entry.value });
+      }
+    }
+    const json = JSON.stringify(snapshot);
+    const body = new TextEncoder().encode(json);
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const key = `${label}/${ts}.json`;
+    const res = await r2Fetch('PUT', key, body, { 'content-type': 'application/json' });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      return { ok: false, error: `R2 PUT ${res.status}: ${text.slice(0, 200)}` };
+    }
+    return { ok: true, key, size: body.length, entries: snapshot.entries.length };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
+
+// ── List snapshots in R2 (parses ListObjectsV2 XML) ───────
+async function listR2Snapshots(prefix: string = ''): Promise<Array<{ key: string; size: number; lastModified: string }>> {
+  if (!r2Configured()) return [];
+  const host = `${R2_CFG.accountId}.r2.cloudflarestorage.com`;
+  const queryString = `list-type=2&prefix=${encodeURIComponent(prefix)}&max-keys=1000`;
+  const url  = `https://${host}/${R2_CFG.bucket}?${queryString}`;
+  const now  = new Date();
+  const amzDate    = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+  const dateStamp  = amzDate.slice(0, 8);
+  const payloadHash = await _sha256Hex('');
+  const headers: Record<string,string> = {
+    'host': host,
+    'x-amz-date': amzDate,
+    'x-amz-content-sha256': payloadHash,
+  };
+  const signedHeaders   = 'host;x-amz-content-sha256;x-amz-date';
+  const canonicalHeaders = Object.keys(headers).sort().map(h => `${h}:${headers[h]}`).join('\n') + '\n';
+  const canonicalRequest = ['GET', `/${R2_CFG.bucket}`, queryString, canonicalHeaders, signedHeaders, payloadHash].join('\n');
+  const credentialScope  = `${dateStamp}/${R2_CFG.region}/${R2_CFG.service}/aws4_request`;
+  const stringToSign     = ['AWS4-HMAC-SHA256', amzDate, credentialScope, await _sha256Hex(canonicalRequest)].join('\n');
+  const kDate    = await _hmac('AWS4' + R2_CFG.secretKey, dateStamp);
+  const kRegion  = await _hmac(kDate, R2_CFG.region);
+  const kService = await _hmac(kRegion, R2_CFG.service);
+  const kSigning = await _hmac(kService, 'aws4_request');
+  const signature = _hex(await _hmac(kSigning, stringToSign));
+  const auth = `AWS4-HMAC-SHA256 Credential=${R2_CFG.accessKey}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+  const res = await fetch(url, { method: 'GET', headers: { ...headers, 'Authorization': auth } });
+  if (!res.ok) {
+    console.warn('R2 list failed:', res.status, await res.text().catch(() => ''));
+    return [];
+  }
+  const xml = await res.text();
+  // Minimal XML parser — extract <Contents> blocks
+  const out: Array<{ key: string; size: number; lastModified: string }> = [];
+  const contentsRe = /<Contents>([\s\S]*?)<\/Contents>/g;
+  let m: RegExpExecArray | null;
+  while ((m = contentsRe.exec(xml)) !== null) {
+    const block = m[1];
+    const k = /<Key>([^<]+)<\/Key>/.exec(block)?.[1] || '';
+    const s = parseInt(/<Size>([^<]+)<\/Size>/.exec(block)?.[1] || '0', 10);
+    const lm = /<LastModified>([^<]+)<\/LastModified>/.exec(block)?.[1] || '';
+    if (k) out.push({ key: k, size: s, lastModified: lm });
+  }
+  return out.sort((a,b) => a.lastModified.localeCompare(b.lastModified));
+}
+
+// ── Fetch a snapshot's contents from R2 ───────────────────
+async function getR2Snapshot(key: string): Promise<{ ok: boolean; data?: any; error?: string }> {
+  if (!r2Configured()) return { ok: false, error: 'R2 not configured' };
+  try {
+    const res = await r2Fetch('GET', key);
+    if (!res.ok) return { ok: false, error: `R2 GET ${res.status}` };
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
+
+// ── Delete a snapshot ─────────────────────────────────────
+async function deleteR2Snapshot(key: string): Promise<boolean> {
+  if (!r2Configured()) return false;
+  try {
+    const res = await r2Fetch('DELETE', key);
+    return res.ok;
+  } catch (e) {
+    console.warn('R2 delete failed:', key, e?.message);
+    return false;
+  }
+}
+
+// ── Retention policy — keep recent dense, older sparse ────
+// 24h × 5-min  (most recent ~288)
+// 30d × daily  (next 30)
+// 90d × weekly (next 13)
+async function pruneR2Snapshots(): Promise<{ kept: number; pruned: number }> {
+  if (!r2Configured()) return { kept: 0, pruned: 0 };
+  const all = await listR2Snapshots('auto/');
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  const keep = new Set<string>();
+
+  // Bucket each snapshot by its retention tier
+  // Tier 1 — last 24h: keep all
+  // Tier 2 — 1d to 30d: keep one per UTC day
+  // Tier 3 — 30d to 90d: keep one per UTC week (Monday)
+  // Older than 90d: prune
+  const dailyChosen = new Map<string, string>();   // YYYY-MM-DD → key
+  const weeklyChosen = new Map<string, string>();  // YYYY-Www → key
+  for (const s of all) {
+    const t = new Date(s.lastModified).getTime();
+    const ageMs = now - t;
+    if (ageMs <= day) {
+      keep.add(s.key);
+    } else if (ageMs <= 30 * day) {
+      const d = new Date(t);
+      const dayKey = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+      // Keep the LATEST snapshot of each day (overwrite in iteration order)
+      dailyChosen.set(dayKey, s.key);
+    } else if (ageMs <= 90 * day) {
+      const d = new Date(t);
+      // ISO week number
+      const tmp = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+      tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay()||7));
+      const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(),0,1));
+      const weekNo = Math.ceil(((tmp.getTime()-yearStart.getTime())/86400000 + 1)/7);
+      const weekKey = `${tmp.getUTCFullYear()}-W${String(weekNo).padStart(2,'0')}`;
+      weeklyChosen.set(weekKey, s.key);
+    }
+  }
+  for (const k of dailyChosen.values()) keep.add(k);
+  for (const k of weeklyChosen.values()) keep.add(k);
+
+  let pruned = 0;
+  for (const s of all) {
+    if (!keep.has(s.key)) {
+      const ok = await deleteR2Snapshot(s.key);
+      if (ok) pruned++;
+    }
+  }
+  return { kept: keep.size, pruned };
+}
+
+// ── Restore from a snapshot ───────────────────────────────
+// SAFETY: takes a pre-restore snapshot first (labelled 'pre-restore')
+// so a bad restore can be undone. Restore overwrites only the durable
+// prefixes that were in the snapshot — does not touch transient data.
+async function restoreFromR2Snapshot(key: string): Promise<{ ok: boolean; restored?: number; preRestoreKey?: string; error?: string }> {
+  if (!r2Configured()) return { ok: false, error: 'R2 not configured' };
+  // 1. Take a safety snapshot of the current state
+  const pre = await backupKVToR2('pre-restore');
+  if (!pre.ok) return { ok: false, error: 'Pre-restore snapshot failed: ' + pre.error };
+  // 2. Fetch the target snapshot
+  const snap = await getR2Snapshot(key);
+  if (!snap.ok || !snap.data) return { ok: false, error: 'Fetch snapshot failed: ' + snap.error };
+  const entries = snap.data.entries as Array<{ key: any; value: any }>;
+  if (!Array.isArray(entries)) return { ok: false, error: 'Invalid snapshot format' };
+  // 3. Wipe durable prefixes from current KV
+  for (const prefix of R2_DURABLE_PREFIXES) {
+    const iter = kv.list({ prefix: [prefix] });
+    for await (const entry of iter) {
+      try { await kv.delete(entry.key); } catch (e) { console.warn('Restore wipe failed for', entry.key, e?.message); }
+    }
+  }
+  // 4. Write the snapshot's entries back
+  let restored = 0;
+  for (const e of entries) {
+    try {
+      await kv.set(e.key, e.value);
+      restored++;
+    } catch (err) {
+      console.warn('Restore write failed for', e.key, err?.message);
+    }
+  }
+  console.log(`R2 restore: ${restored}/${entries.length} entries restored from ${key}; pre-restore safety snapshot: ${pre.key}`);
+  return { ok: true, restored, preRestoreKey: pre.key };
+}
+
+// ── Crons: backup every 5 min, prune daily at 03:00 UTC ───
+Deno.cron('stockroom-r2-backup', '*/5 * * * *', async () => {
+  if (!r2Configured()) return; // silent no-op until R2 secrets are set
+  const result = await backupKVToR2('auto');
+  if (!result.ok) {
+    console.error('R2 backup failed:', result.error);
+  } else {
+    console.log(`R2 backup OK: ${result.key} (${result.entries} entries, ${(result.size!/1024).toFixed(1)} KB)`);
+  }
+});
+
+Deno.cron('stockroom-r2-prune', '0 3 * * *', async () => {
+  if (!r2Configured()) return;
+  const result = await pruneR2Snapshots();
+  console.log(`R2 prune: kept ${result.kept}, pruned ${result.pruned}`);
+});
+
 // ── Hourly cron ───────────────────────────────────────────
 Deno.cron('stockroom-kv-email-check', '0 * * * *', async () => {
   console.log('Cron: running');
@@ -1281,6 +1574,89 @@ Deno.serve(async (request) => {
       await _deleteAllUserData(kv, emailHash);
       console.log('ADMIN deleted account: ' + emailHash);
       return json({ ok: true, deleted: emailHash }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Admin: R2 backup status ───────────────────────────
+  if (url.pathname === '/admin/r2/status' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      if (!await verifyAdminRequest(body)) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      if (!r2Configured()) {
+        return json({ ok: true, configured: false, missing: [
+          R2_CFG.accountId ? null : 'R2_ACCOUNT_ID',
+          R2_CFG.accessKey ? null : 'R2_ACCESS_KEY_ID',
+          R2_CFG.secretKey ? null : 'R2_SECRET_ACCESS_KEY',
+          R2_CFG.bucket    ? null : 'R2_BUCKET_NAME',
+        ].filter(Boolean) }, corsHeaders);
+      }
+      const all = await listR2Snapshots('');
+      const auto    = all.filter(s => s.key.startsWith('auto/'));
+      const manual  = all.filter(s => s.key.startsWith('manual/'));
+      const preR    = all.filter(s => s.key.startsWith('pre-restore/'));
+      const totalSize = all.reduce((sum, s) => sum + s.size, 0);
+      const lastAuto  = auto.at(-1);
+      return json({
+        ok: true,
+        configured: true,
+        bucket: R2_CFG.bucket,
+        totalSnapshots: all.length,
+        autoCount: auto.length,
+        manualCount: manual.length,
+        preRestoreCount: preR.length,
+        totalSizeBytes: totalSize,
+        lastAuto: lastAuto ? { key: lastAuto.key, size: lastAuto.size, lastModified: lastAuto.lastModified } : null,
+      }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Admin: list R2 snapshots (most recent first) ──────
+  if (url.pathname === '/admin/r2/list' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      if (!await verifyAdminRequest(body)) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const prefix = (body.prefix || '').toString();
+      const all = await listR2Snapshots(prefix);
+      // Most recent first, capped to 200 entries to keep responses small
+      return json({ ok: true, snapshots: all.slice(-200).reverse() }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Admin: trigger immediate backup ───────────────────
+  if (url.pathname === '/admin/r2/backup-now' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      if (!await verifyAdminRequest(body)) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const result = await backupKVToR2('manual');
+      return json(result, corsHeaders, result.ok ? 200 : 500);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Admin: prune snapshots now (testing / manual cleanup) ─
+  if (url.pathname === '/admin/r2/prune' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      if (!await verifyAdminRequest(body)) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const result = await pruneR2Snapshots();
+      return json({ ok: true, ...result }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Admin: restore from a specific snapshot ───────────
+  // Body: { adminSecret, adminToken, snapshotKey, confirm: 'RESTORE' }
+  // Requires explicit confirm string to prevent accidents.
+  if (url.pathname === '/admin/r2/restore' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      if (!await verifyAdminRequest(body)) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { snapshotKey, confirm } = body;
+      if (confirm !== 'RESTORE') return json({ error: 'Confirmation phrase missing — body.confirm must equal "RESTORE"' }, corsHeaders, 400);
+      if (!snapshotKey || typeof snapshotKey !== 'string') return json({ error: 'Missing snapshotKey' }, corsHeaders, 400);
+      console.warn(`ADMIN R2 RESTORE initiated from snapshot: ${snapshotKey}`);
+      const result = await restoreFromR2Snapshot(snapshotKey);
+      if (!result.ok) return json({ error: result.error }, corsHeaders, 500);
+      console.warn(`ADMIN R2 RESTORE complete: ${result.restored} entries; safety snapshot at ${result.preRestoreKey}`);
+      return json(result, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
