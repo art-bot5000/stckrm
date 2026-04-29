@@ -246,8 +246,10 @@ async function backupKVToR2(label: string = 'auto'): Promise<{ ok: boolean; key?
 async function listR2Snapshots(prefix: string = ''): Promise<Array<{ key: string; size: number; lastModified: string }>> {
   if (!r2Configured()) return [];
   const host = `${R2_CFG.accountId}.r2.cloudflarestorage.com`;
-  const queryString = `list-type=2&prefix=${encodeURIComponent(prefix)}&max-keys=1000`;
-  const url  = `https://${host}/${R2_CFG.bucket}?${queryString}`;
+  // SigV4 requires query parameters sorted alphabetically in the canonical request
+  const queryString = `list-type=2&max-keys=1000&prefix=${encodeURIComponent(prefix)}`;
+  // Path-style bucket-level operation requires trailing slash on the bucket path
+  const url  = `https://${host}/${R2_CFG.bucket}/?${queryString}`;
   const now  = new Date();
   const amzDate    = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
   const dateStamp  = amzDate.slice(0, 8);
@@ -259,7 +261,7 @@ async function listR2Snapshots(prefix: string = ''): Promise<Array<{ key: string
   };
   const signedHeaders   = 'host;x-amz-content-sha256;x-amz-date';
   const canonicalHeaders = Object.keys(headers).sort().map(h => `${h}:${headers[h]}`).join('\n') + '\n';
-  const canonicalRequest = ['GET', `/${R2_CFG.bucket}`, queryString, canonicalHeaders, signedHeaders, payloadHash].join('\n');
+  const canonicalRequest = ['GET', `/${R2_CFG.bucket}/`, queryString, canonicalHeaders, signedHeaders, payloadHash].join('\n');
   const credentialScope  = `${dateStamp}/${R2_CFG.region}/${R2_CFG.service}/aws4_request`;
   const stringToSign     = ['AWS4-HMAC-SHA256', amzDate, credentialScope, await _sha256Hex(canonicalRequest)].join('\n');
   const kDate    = await _hmac('AWS4' + R2_CFG.secretKey, dateStamp);
