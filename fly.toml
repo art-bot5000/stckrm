@@ -6,7 +6,7 @@ primary_region = 'lhr'
   dockerfile = 'Dockerfile'
 
 [deploy]
-  strategy = 'immediate'
+  strategy = 'rolling'
 
 [env]
   DENO_KV_PATH = '/data/stockroom.db'
