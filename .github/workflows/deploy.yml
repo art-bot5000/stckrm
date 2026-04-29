@@ -64,31 +64,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
-      - name: Wake existing machine
-        run: |
-          MACHINE_ID=$(flyctl machine list --app stckrm --json | python3 -c "
-          import sys, json
-          machines = json.load(sys.stdin)
-          if machines:
-              print(machines[0]['id'])
-          ")
-          if [ -n "$MACHINE_ID" ]; then
-            echo "Starting machine $MACHINE_ID"
-            flyctl machine start "$MACHINE_ID" --app stckrm || true
-            sleep 5
-          fi
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-
       - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only --ha=false --strategy immediate
+        run: flyctl deploy --remote-only --strategy rolling --ha=false
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        # --ha=false: prevents Fly from auto-provisioning a 2nd HA machine.
-        # With a single volume, the spare machine has nothing to attach to
-        # and deploy fails with "unattached volume" error. This is the actual
-        # cause — confirmed by Fly community docs, not --update-only.
-        # --strategy immediate: update the existing machine directly.
 
       - name: Verify deployment health
         if: always()
