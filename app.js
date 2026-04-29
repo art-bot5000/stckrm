@@ -660,6 +660,85 @@ async function removeTombstone(id) {
   await saveDeletedIds(set);
 }
 
+// ═══════════════════════════════════════════
+//  RECYCLE BIN — soft-delete helpers
+// ═══════════════════════════════════════════
+// Items, grocery items, and standalone reminders use _deletedAt as the
+// soft-delete marker. After 30 days a one-time purge sweep at app start
+// hard-removes them and writes a tombstone (so sync can't resurrect them).
+
+const RECYCLE_BIN_DAYS = 30;
+const RECYCLE_BIN_MS   = RECYCLE_BIN_DAYS * 24 * 60 * 60 * 1000;
+
+function _isInRecycleBin(obj) {
+  return !!(obj && obj._deletedAt);
+}
+
+function _daysLeftInBin(obj) {
+  if (!obj?._deletedAt) return null;
+  const elapsed = Date.now() - new Date(obj._deletedAt).getTime();
+  return Math.max(0, RECYCLE_BIN_DAYS - Math.floor(elapsed / 86400000));
+}
+
+function _expiredFromBin(obj) {
+  if (!obj?._deletedAt) return false;
+  return (Date.now() - new Date(obj._deletedAt).getTime()) >= RECYCLE_BIN_MS;
+}
+
+// One-time hint after first soft-delete in each section, so users know
+// where deleted things go. Stored in localStorage so it persists.
+function _maybeShowBinHint(section) {
+  const key = `stockroom_bin_hint_${section}`;
+  if (localStorage.getItem(key)) return;
+  localStorage.setItem(key, '1');
+  const where = {
+    items: 'the bottom of the Stockroom view',
+    groceries: 'the bottom of the Groceries view',
+    reminders: 'the bottom of the Reminders view',
+  }[section] || 'the Recently Deleted section';
+  toast(`Tip: deleted things sit in ${where} for 30 days`);
+}
+
+async function purgeExpiredFromBins() {
+  // Purges items, grocery items, and standalone reminders whose 30-day
+  // recycle bin window has expired. Writes tombstones so sync doesn't
+  // resurrect them. Runs once at app start.
+  let dirtyItems = false, dirtyGrocery = false, dirtyReminders = false;
+
+  if (Array.isArray(items)) {
+    const expired = items.filter(_expiredFromBin);
+    if (expired.length) {
+      for (const it of expired) await addTombstone(it.id);
+      items = items.filter(i => !_expiredFromBin(i));
+      dirtyItems = true;
+    }
+  }
+
+  if (Array.isArray(groceryItems)) {
+    const expired = groceryItems.filter(_expiredFromBin);
+    if (expired.length) {
+      for (const g of expired) await addGroceryTombstone(g.id);
+      groceryItems = groceryItems.filter(i => !_expiredFromBin(i));
+      dirtyGrocery = true;
+    }
+  }
+
+  if (Array.isArray(reminders)) {
+    const expired = reminders.filter(_expiredFromBin);
+    if (expired.length) {
+      for (const r of expired) await addReminderTombstone(r.id);
+      reminders = reminders.filter(r => !_expiredFromBin(r));
+      dirtyReminders = true;
+    }
+  }
+
+  try {
+    if (dirtyItems)     await saveData();
+    if (dirtyGrocery)   await saveGrocery();
+    if (dirtyReminders) await saveReminders();
+  } catch(e) { console.warn('purgeExpiredFromBins save failed:', e); }
+}
+
 async function mergeItems(local, remote, remoteWins = false) {
   const deletedIds = await loadDeletedIds();
   const merged = new Map();
@@ -1349,7 +1428,7 @@ function applyTemplate(idx) {
 
 
 function getQuickAddItems() {
-  return items.filter(i => i.quickAdded);
+  return items.filter(i => i.quickAdded && !i._deletedAt);
 }
 
 function _updateStockTopSectionsWrapper() {
@@ -1365,7 +1444,7 @@ function _updateStockTopSectionsWrapper() {
 }
 
 function renderPendingDeliveries() {
-  const pending = items.filter(i => i.logs?.some(l => l.pendingDelivery));
+  const pending = items.filter(i => !i._deletedAt && i.logs?.some(l => l.pendingDelivery));
 
   // ── Stock view section ──────────────────────────────────
   const section = document.getElementById('pending-deliveries-section');
@@ -1571,8 +1650,8 @@ async function renderReminders() {
 
   // Also collect reminders embedded in items — supports both old single and new array format
   const allReminders = [
-    ...reminders,
-    ...items.flatMap(i => {
+    ...reminders.filter(r => !r._deletedAt),
+    ...items.filter(i => !i._deletedAt).flatMap(i => {
       const fallbackDate = i.startedUsing || i.logs?.filter(l => !l.pendingDelivery)[0]?.date || null;
       if (i.replacementReminders?.length) {
         // New array format — one entry per named reminder
@@ -1623,6 +1702,7 @@ async function renderReminders() {
     });
     const nudge = document.getElementById('reminders-nudge');
     if (nudge) nudge.style.display = 'none';
+    renderRemindersRecycleBin();
     return;
   }
   if (empty) empty.style.display = 'none';
@@ -1660,6 +1740,62 @@ async function renderReminders() {
 
   // Also update stock view badge if reminders are overdue
   updateRemindersBadge(overdue.length + soon.length);
+
+  renderRemindersRecycleBin();
+}
+
+function renderRemindersRecycleBin() {
+  const view = document.getElementById('view-reminders');
+  if (!view) return;
+  let bin = document.getElementById('reminders-recycle-bin');
+
+  // Only standalone reminders are soft-deleted; item-linked reminders are
+  // tied to the item's own data and follow the item's bin state.
+  const trashed = reminders
+    .filter(r => r._deletedAt && !_expiredFromBin(r))
+    .sort((a, b) => new Date(b._deletedAt) - new Date(a._deletedAt));
+
+  if (!trashed.length) {
+    if (bin) bin.style.display = 'none';
+    return;
+  }
+
+  if (!bin) {
+    bin = document.createElement('div');
+    bin.id = 'reminders-recycle-bin';
+    bin.className = 'recycle-bin-section';
+    view.appendChild(bin);
+  }
+  bin.style.display = 'block';
+
+  const headerHTML = `
+    <div class="recycle-bin-header">
+      <div class="recycle-bin-title">
+        <svg class="icon icon-md" aria-hidden="true"><use href="#i-trash-2"></use></svg>
+        Recently Deleted
+        <span class="recycle-bin-count">${trashed.length}</span>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="emptyRemindersBin()">Empty</button>
+    </div>
+    <div class="recycle-bin-subtitle">Reminders are permanently deleted after 30 days.</div>
+  `;
+  const rowsHTML = trashed.map(r => {
+    const days = _daysLeftInBin(r);
+    const interval = (r.interval && r.unit) ? `Every ${r.interval} ${r.unit}` : '';
+    return `
+      <div class="recycle-bin-row" data-id="${r.id}">
+        <div class="recycle-bin-row-info">
+          <div class="recycle-bin-row-name">${esc(r.name || 'Untitled reminder')}</div>
+          <div class="recycle-bin-row-meta">${interval ? interval + ' · ' : ''}${days} day${days===1?'':'s'} left</div>
+        </div>
+        <div class="recycle-bin-row-actions">
+          <button class="btn btn-ghost btn-sm" onclick="restoreReminder('${r.id}')">Restore</button>
+          <button class="btn btn-ghost btn-sm recycle-bin-delete" onclick="purgeReminderForever('${r.id}')" title="Delete permanently">✕</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  bin.innerHTML = headerHTML + rowsHTML;
 }
 
 function reminderCardHTML(r) {
@@ -2102,16 +2238,62 @@ async function deleteReminder(id) {
     toast('Reminder deleted');
   } else {
     const reminder = reminders.find(r => r.id === id);
-    const name = reminder?.name || 'this reminder';
-    const confirmed = confirm(`Delete "${name}"?\n\nThis cannot be undone.`);
+    if (!reminder) return;
+    const name = reminder.name || 'this reminder';
+    const confirmed = confirm(
+      `Move "${name}" to recycle bin?\n\n` +
+      `You can restore it within 30 days from the bottom of the Reminders view.`
+    );
     if (!confirmed) return;
-    reminders = reminders.filter(r => r.id !== id);
-    await addReminderTombstone(id);
+    reminder._deletedAt = new Date().toISOString();
+    if (typeof touchField === 'function') {
+      try { touchField(reminder, '_deletedAt'); } catch(e) {}
+    }
     await saveReminders();
     _syncQueue.enqueue();
     renderReminders();
-    toast('Reminder deleted');
+    toast('Moved to recycle bin');
+    _maybeShowBinHint('reminders');
   }
+}
+
+async function restoreReminder(id) {
+  const reminder = reminders.find(r => r.id === id);
+  if (!reminder) return;
+  delete reminder._deletedAt;
+  if (typeof touchField === 'function') {
+    try { touchField(reminder, '_deletedAt'); } catch(e) {}
+  }
+  await saveReminders();
+  _syncQueue.enqueue();
+  renderReminders();
+  toast('Reminder restored');
+}
+
+async function purgeReminderForever(id) {
+  const reminder = reminders.find(r => r.id === id);
+  if (!reminder) return;
+  if (!confirm(`Permanently delete "${reminder.name || 'this reminder'}"? This cannot be undone.`)) return;
+  reminders = reminders.filter(r => r.id !== id);
+  await addReminderTombstone(id);
+  await saveReminders();
+  _syncQueue.enqueue();
+  renderReminders();
+  toast('Permanently deleted');
+}
+
+async function emptyRemindersBin() {
+  const trashed = reminders.filter(_isInRecycleBin);
+  if (!trashed.length) return;
+  if (!confirm(
+    `Permanently delete ${trashed.length} reminder${trashed.length===1?'':'s'} from the recycle bin? This cannot be undone.`
+  )) return;
+  for (const r of trashed) await addReminderTombstone(r.id);
+  reminders = reminders.filter(r => !_isInRecycleBin(r));
+  await saveReminders();
+  _syncQueue.enqueue();
+  renderReminders();
+  toast('Recycle bin emptied');
 }
 
 // ── Log replacement ───────────────────────
@@ -2247,8 +2429,8 @@ async function checkReminderNotifications() {
   if (!notifEnabled || Notification.permission !== 'granted') return;
 
   const allReminders = [
-    ...reminders,
-    ...items.flatMap(i => {
+    ...reminders.filter(r => !r._deletedAt),
+    ...items.filter(i => !i._deletedAt).flatMap(i => {
       const base = { lastReplaced: i.lastReplaced || i.startedUsing || i.logs?.filter(l=>!l.pendingDelivery)[0]?.date || null };
       if (i.replacementReminders?.length) {
         return i.replacementReminders.map(r => ({
@@ -2408,6 +2590,8 @@ async function loadProfile(key) {
     await loadGrocery();
     await saveCurrentProfile();
   }
+  // Sweep expired items from the 30-day recycle bin
+  await purgeExpiredFromBins();
   updateProfileLabel();
   scheduleRender(...RENDER_REGIONS);
   updateSyncUI();
@@ -3218,11 +3402,8 @@ async function swipeEnd(e, id) {
 }
 
 // ═══════════════════════════════════════════
-//  UNDO DELETE
+//  ARCHIVE / UNARCHIVE ITEM
 // ═══════════════════════════════════════════
-let deletedItem   = null;
-let deletedIndex  = null;
-let undoTimer     = null;
 
 async function archiveItem(id) {
   if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
@@ -3246,49 +3427,6 @@ async function restoreItem(id) {
   scheduleRender('grid', 'dashboard');
   _syncQueue.enqueue();
   toast(`"${item.name}" restored`);
-}
-
-async function deleteItem(id) {
-  const idx  = items.findIndex(i => i.id === id);
-  const item = items[idx];
-  if (!item) return;
-
-  // Stash for undo
-  deletedItem  = item;
-  deletedIndex = idx;
-  items.splice(idx, 1);
-  await addTombstone(id);
-  await saveData();
-  scheduleRender('grid', 'dashboard', 'shopping');
-  setTimeout(syncAll, 400);
-
-  // Show undo toast
-  clearTimeout(undoTimer);
-  const t = document.getElementById('undo-toast');
-  const m = document.getElementById('undo-msg');
-  if (m) m.textContent = `"${item.name}" removed`;
-  if (t) t.classList.add('show');
-  undoTimer = setTimeout(() => {
-    if (t) t.classList.remove('show');
-    deletedItem  = null;
-    deletedIndex = null;
-  }, 5000);
-}
-
-async function undoDelete() {
-  clearTimeout(undoTimer);
-  const t = document.getElementById('undo-toast');
-  if (t) t.classList.remove('show');
-  if (!deletedItem) return;
-  // Remove tombstone so the item can come back
-  await removeTombstone(deletedItem.id);
-  items.splice(deletedIndex, 0, deletedItem);
-  deletedItem  = null;
-  deletedIndex = null;
-  await saveData();
-  scheduleRender('grid', 'dashboard', 'shopping');
-  setTimeout(syncAll, 400);
-  toast('Restored ✓');
 }
 
 
@@ -3634,9 +3772,12 @@ function _flushRender() {
   _dirty.clear();
 
   try {
-    // Always update item count
+    // Always update item count (excluding soft-deleted)
     const countEl = document.getElementById('item-count');
-    if (countEl) countEl.textContent = items.length + ' item' + (items.length!==1?'s':'');
+    if (countEl) {
+      const live = items.filter(i => !i._deletedAt).length;
+      countEl.textContent = live + ' item' + (live!==1?'s':'');
+    }
 
     if (regions.has('filters')) {
       buildStoreFilterBar();
@@ -3699,6 +3840,8 @@ function renderGrid() {
   }
 
   let filtered = items.filter(item => {
+    // Soft-deleted items live in the recycle bin section, not the main grid
+    if (item._deletedAt) return false;
     // Quick-added items live in their own section
     if (item.quickAdded) return false;
     // Archived items only shown when archive filter is active
@@ -3794,6 +3937,60 @@ function renderGrid() {
   });
 
   grid.innerHTML = filtered.map(item => cardHTML(item, threshold)).join('');
+
+  // Render Recently Deleted section after the main grid
+  renderItemsRecycleBin();
+}
+
+function renderItemsRecycleBin() {
+  let bin = document.getElementById('items-recycle-bin');
+  const grid = document.getElementById('items-grid');
+  if (!grid) return;
+  const trashed = items
+    .filter(i => i._deletedAt && !_expiredFromBin(i))
+    .sort((a, b) => new Date(b._deletedAt) - new Date(a._deletedAt));
+
+  if (!trashed.length) {
+    if (bin) bin.style.display = 'none';
+    return;
+  }
+
+  if (!bin) {
+    bin = document.createElement('div');
+    bin.id = 'items-recycle-bin';
+    bin.className = 'recycle-bin-section';
+    grid.parentNode.insertBefore(bin, grid.nextSibling);
+  }
+  bin.style.display = 'block';
+
+  const headerHTML = `
+    <div class="recycle-bin-header">
+      <div class="recycle-bin-title">
+        <svg class="icon icon-md" aria-hidden="true"><use href="#i-trash-2"></use></svg>
+        Recently Deleted
+        <span class="recycle-bin-count">${trashed.length}</span>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="emptyItemsBin()">Empty</button>
+    </div>
+    <div class="recycle-bin-subtitle">Items are permanently deleted after 30 days.</div>
+  `;
+  const rowsHTML = trashed.map(item => {
+    const days = _daysLeftInBin(item);
+    const cat  = item.category ? esc(item.category) : '';
+    return `
+      <div class="recycle-bin-row" data-id="${item.id}">
+        <div class="recycle-bin-row-info">
+          <div class="recycle-bin-row-name">${esc(item.name)}</div>
+          <div class="recycle-bin-row-meta">${cat ? cat + ' · ' : ''}${days} day${days===1?'':'s'} left</div>
+        </div>
+        <div class="recycle-bin-row-actions">
+          <button class="btn btn-ghost btn-sm" onclick="restoreItemFromBin('${item.id}')">Restore</button>
+          <button class="btn btn-ghost btn-sm recycle-bin-delete" onclick="purgeItemForever('${item.id}')" title="Delete permanently">✕</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  bin.innerHTML = headerHTML + rowsHTML;
 }
 
 function cardHTML(item, threshold) {
@@ -4166,6 +4363,8 @@ function buildTagFilterBar() {
   const threshold = settings.threshold;
   let critical = 0, warn = 0, ok = 0;
   items.forEach(item => {
+    if (item._deletedAt) return;
+    if (item._archived) return;
     const s = calcStock(item);
     const status = getStatus(s?.pct ?? null, threshold);
     if (status === 'critical') critical++;
@@ -5667,6 +5866,7 @@ function navTo(name) {
 
 function getShoppingItems() {
   return items.filter(item => {
+    if (item._deletedAt) return false;
     const s = calcStock(item);
     if (!s) return false;
     if (s.daysLeft > shoppingDays) return false;
@@ -5703,6 +5903,7 @@ function openStorePickerModal() {
   const countPerStore = {};
   stores.forEach(s => {
     countPerStore[s] = items.filter(item => {
+      if (item._deletedAt) return false;
       const st = calcStock(item);
       return st && st.daysLeft <= shoppingDays && (
         (item.store && item.store.trim() === s) ||
@@ -6970,14 +7171,60 @@ async function restoreItem(id) {
 
 async function deleteItem(id) {
   const item = items.find(i => i.id === id);
-  if (!item || !confirm('Remove "' + item.name + '" from your stockroom?')) return;
-  items = items.filter(i => i.id !== id);
-  await addTombstone(id);
+  if (!item) return;
+  if (!confirm(
+    `Move "${item.name}" to recycle bin?\n\n` +
+    `You can restore it within 30 days from the bottom of the Stockroom view.`
+  )) return;
+  item._deletedAt = new Date().toISOString();
+  if (typeof touchField === 'function') {
+    try { touchField(item, '_deletedAt'); } catch(e) {}
+  }
   await saveData();
   closeModal('item-modal');
   scheduleRender('grid', 'dashboard', 'shopping');
-  toast('Item removed');
-  _syncQueue.enqueue('Deleting item…');
+  toast('Moved to recycle bin');
+  _maybeShowBinHint('items');
+  _syncQueue.enqueue('Updating…');
+}
+
+async function restoreItemFromBin(id) {
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  delete item._deletedAt;
+  if (typeof touchField === 'function') {
+    try { touchField(item, '_deletedAt'); } catch(e) {}
+  }
+  await saveData();
+  scheduleRender('grid', 'dashboard', 'shopping');
+  toast('Item restored');
+  _syncQueue.enqueue('Updating…');
+}
+
+async function purgeItemForever(id) {
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  if (!confirm(`Permanently delete "${item.name}"? This cannot be undone.`)) return;
+  items = items.filter(i => i.id !== id);
+  await addTombstone(id);
+  await saveData();
+  scheduleRender('grid', 'dashboard', 'shopping');
+  toast('Permanently deleted');
+  _syncQueue.enqueue('Updating…');
+}
+
+async function emptyItemsBin() {
+  const trashed = items.filter(_isInRecycleBin);
+  if (!trashed.length) return;
+  if (!confirm(
+    `Permanently delete ${trashed.length} item${trashed.length===1?'':'s'} from the recycle bin? This cannot be undone.`
+  )) return;
+  for (const it of trashed) await addTombstone(it.id);
+  items = items.filter(i => !_isInRecycleBin(i));
+  await saveData();
+  scheduleRender('grid', 'dashboard', 'shopping');
+  toast('Recycle bin emptied');
+  _syncQueue.enqueue('Updating…');
 }
 
 // ═══════════════════════════════════════════
@@ -12041,7 +12288,7 @@ function saveGroceryManualOrder(order) {
 // Returns groceryItems sorted by manual order (items not in order go to end)
 function getGroceryItemsInOrder() {
   const order = getGroceryManualOrder();
-  const listFiltered = groceryItems.filter(i => (i.listId || 'default') === activeGroceryListId);
+  const listFiltered = groceryItems.filter(i => !i._deletedAt && (i.listId || 'default') === activeGroceryListId);
   if (!order.length) return [...listFiltered];
   const orderMap = new Map(order.map((id, i) => [id, i]));
   return [...listFiltered].sort((a, b) => {
@@ -12106,7 +12353,7 @@ async function _saveGroceryLists() {
 }
 
 function _activeGroceryListItems() {
-  return groceryItems.filter(i => (i.listId || 'default') === activeGroceryListId);
+  return groceryItems.filter(i => !i._deletedAt && (i.listId || 'default') === activeGroceryListId);
 }
 
 function _activeGroceryList() {
@@ -12138,7 +12385,7 @@ function renderGroceryListPicker() {
   body.innerHTML = `
     <div style="margin-bottom:16px">
       ${lists.map(l => {
-        const allListItems = groceryItems.filter(i => (i.listId||'default') === l.id);
+        const allListItems = groceryItems.filter(i => !i._deletedAt && (i.listId||'default') === l.id);
         const itemCount = allListItems.filter(i => !i.checked).length;
         const checked   = allListItems.filter(i =>  i.checked).length;
 
@@ -12777,6 +13024,8 @@ function renderGrocery() {
     const sub = document.getElementById('grocery-subtitle');
     if (sub) sub.textContent = `${groceryLists.length} lists · tap to open`;
     if (infoEl) infoEl.textContent = '';
+    const _binEl = document.getElementById('grocery-recycle-bin');
+    if (_binEl) _binEl.style.display = 'none';
     return;
   }
   // Single list mode — restore controls
@@ -12793,8 +13042,8 @@ function renderGrocery() {
     if (sb) sb.style.display = 'none';
   }
 
-  // Filter to active list only
-  const listItems = groceryItems.filter(i => (i.listId || 'default') === activeGroceryListId);
+  // Filter to active list only (exclude soft-deleted)
+  const listItems = groceryItems.filter(i => !i._deletedAt && (i.listId || 'default') === activeGroceryListId);
 
   // Interval info — scoped to active list
   const si = getGroceryShopInterval();
@@ -12821,7 +13070,7 @@ function renderGrocery() {
   // If hideChecked: hide checked items from main render (they can still be cleared)
   const checked   = groceryHideChecked ? [] : filtered.filter(i => i.checked);
 
-  const checkedCount = groceryItems.filter(i => i.checked).length;
+  const checkedCount = groceryItems.filter(i => !i._deletedAt && i.checked).length;
   if (checkedBar) {
     const actualCheckedCount = listItems.filter(i => i.checked).length;
     checkedBar.style.display = !groceryEditMode && actualCheckedCount > 0 && activeGroceryListId ? 'flex' : 'none';
@@ -12981,6 +13230,67 @@ function renderGrocery() {
   }
 
   body.innerHTML = html;
+
+  // Render Recently Deleted section after the main grocery body
+  renderGroceryRecycleBin();
+}
+
+function renderGroceryRecycleBin() {
+  const body = document.getElementById('grocery-list-body');
+  if (!body) return;
+  let bin = document.getElementById('grocery-recycle-bin');
+
+  // Only show items in the recycle bin that belong to the active list, so
+  // the bin doesn't leak across lists. If browsing the multi-list picker
+  // (no active list), hide it entirely.
+  const activeId = activeGroceryListId || '';
+  const trashed = activeId
+    ? groceryItems
+        .filter(i => i._deletedAt && !_expiredFromBin(i) && (i.listId || 'default') === activeId)
+        .sort((a, b) => new Date(b._deletedAt) - new Date(a._deletedAt))
+    : [];
+
+  if (!trashed.length) {
+    if (bin) bin.style.display = 'none';
+    return;
+  }
+
+  if (!bin) {
+    bin = document.createElement('div');
+    bin.id = 'grocery-recycle-bin';
+    bin.className = 'recycle-bin-section';
+    body.parentNode.insertBefore(bin, body.nextSibling);
+  }
+  bin.style.display = 'block';
+
+  const headerHTML = `
+    <div class="recycle-bin-header">
+      <div class="recycle-bin-title">
+        <svg class="icon icon-md" aria-hidden="true"><use href="#i-trash-2"></use></svg>
+        Recently Deleted
+        <span class="recycle-bin-count">${trashed.length}</span>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="emptyGroceryBin()">Empty</button>
+    </div>
+    <div class="recycle-bin-subtitle">Items are permanently deleted after 30 days.</div>
+  `;
+  const rowsHTML = trashed.map(item => {
+    const days = _daysLeftInBin(item);
+    const dept = item.dept ? esc(item.dept) : '';
+    return `
+      <div class="recycle-bin-row" data-id="${item.id}">
+        <div class="recycle-bin-row-info">
+          <div class="recycle-bin-row-name">${esc(item.name || 'Untitled')}</div>
+          <div class="recycle-bin-row-meta">${dept ? dept + ' · ' : ''}${days} day${days===1?'':'s'} left</div>
+        </div>
+        <div class="recycle-bin-row-actions">
+          <button class="btn btn-ghost btn-sm" onclick="restoreGroceryItem('${item.id}')">Restore</button>
+          <button class="btn btn-ghost btn-sm recycle-bin-delete" onclick="purgeGroceryForever('${item.id}')" title="Delete permanently">✕</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  bin.innerHTML = headerHTML + rowsHTML;
 }
 
 function _toggleDeptCollapse(deptId) {
@@ -13057,13 +13367,59 @@ async function _groceryNewItemBlur(id) {
 }
 
 async function deleteGroceryItem(id) {
-  if (!confirm('Remove this item from your grocery list?')) return;
-  groceryItems = groceryItems.filter(i => i.id !== id);
+  const item = groceryItems.find(i => i.id === id);
+  if (!item) return;
+  const name = item.name || 'this item';
+  if (!confirm(
+    `Move "${name}" to recycle bin?\n\n` +
+    `You can restore it within 30 days from the bottom of the Groceries view.`
+  )) return;
+  item._deletedAt = new Date().toISOString();
+  if (typeof touchField === 'function') {
+    try { touchField(item, '_deletedAt'); } catch(e) {}
+  }
   grocerySelected.delete(id);
-  await addGroceryTombstone(id);
   await saveGrocery();
   renderGrocery();
   _updateGrocerySelectionBar();
+  toast('Moved to recycle bin');
+  _maybeShowBinHint('groceries');
+}
+
+async function restoreGroceryItem(id) {
+  const item = groceryItems.find(i => i.id === id);
+  if (!item) return;
+  delete item._deletedAt;
+  if (typeof touchField === 'function') {
+    try { touchField(item, '_deletedAt'); } catch(e) {}
+  }
+  await saveGrocery();
+  renderGrocery();
+  toast('Item restored');
+}
+
+async function purgeGroceryForever(id) {
+  const item = groceryItems.find(i => i.id === id);
+  if (!item) return;
+  if (!confirm(`Permanently delete "${item.name||'this item'}"? This cannot be undone.`)) return;
+  groceryItems = groceryItems.filter(i => i.id !== id);
+  await addGroceryTombstone(id);
+  await saveGrocery();
+  renderGrocery();
+  toast('Permanently deleted');
+}
+
+async function emptyGroceryBin() {
+  const trashed = groceryItems.filter(_isInRecycleBin);
+  if (!trashed.length) return;
+  if (!confirm(
+    `Permanently delete ${trashed.length} item${trashed.length===1?'':'s'} from the recycle bin? This cannot be undone.`
+  )) return;
+  for (const g of trashed) await addGroceryTombstone(g.id);
+  groceryItems = groceryItems.filter(i => !_isInRecycleBin(i));
+  await saveGrocery();
+  renderGrocery();
+  toast('Recycle bin emptied');
 }
 
 // ── Multi-select (edit mode) ─────────────────────────────────────────
@@ -13171,14 +13527,26 @@ function _showDeptPickerForSelection() {
 async function _deleteSelected() {
   const ids = [...grocerySelected];
   if (!ids.length) return;
-  if (!confirm(`Delete ${ids.length} item${ids.length!==1?'s':''}?`)) return;
-  groceryItems = groceryItems.filter(i => !grocerySelected.has(i.id));
-  // Add all deleted IDs to tombstones so they don't return from sync
-  await Promise.all(ids.map(id => addGroceryTombstone(id)));
+  if (!confirm(
+    `Move ${ids.length} item${ids.length!==1?'s':''} to recycle bin?\n\n` +
+    `You can restore them within 30 days from the bottom of the Groceries view.`
+  )) return;
+  const stamp = new Date().toISOString();
+  const idSet = new Set(ids);
+  groceryItems.forEach(i => {
+    if (idSet.has(i.id)) {
+      i._deletedAt = stamp;
+      if (typeof touchField === 'function') {
+        try { touchField(i, '_deletedAt'); } catch(e) {}
+      }
+    }
+  });
   grocerySelected.clear();
   await saveGrocery();
   renderGrocery();
   _updateGrocerySelectionBar();
+  toast(`${ids.length} item${ids.length!==1?'s':''} moved to recycle bin`);
+  _maybeShowBinHint('groceries');
 }
 
 // ── Inline add (+ button) ────────────────────────────────────────────
@@ -13410,14 +13778,14 @@ function _showChangeDeptZone() {
   delBtn.addEventListener('drop', async e => {
     e.preventDefault(); delBtn.style.background='';
     const id = _dragSrcEl?.dataset?.id;
-    if (id) { groceryItems = groceryItems.filter(i => i.id !== id); await addGroceryTombstone(id); await saveGrocery(); renderGrocery(); }
+    if (id) await deleteGroceryItem(id);
     _hideChangeDeptZone(); _dragSrcEl = null;
   });
   delBtn.addEventListener('touchend', async e => {
     if (_dragSrcEl) {
       e.preventDefault();
       const id = _dragSrcEl.dataset.id;
-      if (id) { groceryItems = groceryItems.filter(i => i.id !== id); await addGroceryTombstone(id); await saveGrocery(); renderGrocery(); }
+      if (id) await deleteGroceryItem(id);
       _hideChangeDeptZone(); _dragSrcEl = null;
     }
   });
@@ -15510,6 +15878,8 @@ async function init() {
   await loadReminders();
   await loadNotes();
   await loadGrocery();
+  // Sweep any expired items from the 30-day recycle bin (no-op if loadProfile already did it)
+  await purgeExpiredFromBins();
   await checkGroceryRecurring();
   renderReminders(); // pre-render for badge count
 
@@ -17357,7 +17727,7 @@ async function deleteCurrentNote() {
       }).catch(() => {});
     }
   } else {
-    if (!confirm(`Move "${n.title}" to trash?`)) return;
+    if (!confirm(`Move "${n.title}" to trash?\n\nYou can restore it within 30 days from the Trash filter.`)) return;
     n.deletedAt  = new Date().toISOString();
     n.updatedAt  = new Date().toISOString();
     // Also remove from reminders
