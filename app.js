@@ -4017,10 +4017,14 @@ function openCardTagPicker(itemId) {
 
 // Clear both status filter and tag filter at once (the unified "All" chip).
 function clearAllInlineFilters(btn) {
-  if (!activeFilters) activeFilters = {};
-  activeFilters.status = 'all';
-  activeFilters.cadence = null;
+  activeFilter = 'all';
+  activeCadence = 'all';
   activeTagFilter = null;
+  // Reset checkbox UI in the collapsible filter panel too
+  document.querySelectorAll('#filter-bar .filter-chip').forEach(c => c.classList.remove('active'));
+  const allChip = document.querySelector('#filter-bar .filter-chip');
+  if (allChip) allChip.classList.add('active');
+  updateFilterBadge?.();
   reconcileFilters?.();
   buildTagFilterBar();
   scheduleRender('grid');
@@ -4168,7 +4172,7 @@ function buildTagFilterBar() {
     else if (status === 'warn') warn++;
     else if (status === 'ok') ok++;
   });
-  const activeStatus = activeFilters?.status || 'all';
+  const activeStatus = (typeof activeFilter !== 'undefined' && activeFilter) ? activeFilter : 'all';
   const statusPill = (count, key, label, color) => count === 0 ? '' :
     `<button class="tag-filter-chip status-pill${activeStatus===key?' active':''}"
        style="${activeStatus===key
