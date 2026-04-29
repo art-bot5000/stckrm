@@ -100,22 +100,21 @@
   </div>
 
   <div class="card">
-    <h2>⚠ Recent client errors (<span id="errorlog-count">0</span>)</h2>
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-      <button class="btn-ghost" style="margin:0" onclick="loadErrorLogs()">🔄 Refresh</button>
-      <span style="font-size:11px;color:var(--muted)">Last 7 days · newest first</span>
+    <h2>☁️ Backups & Restore</h2>
+    <div id="r2-status" style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.6">Loading…</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">
+      <button class="btn-ghost" style="margin:0" onclick="r2Refresh()">🔄 Refresh status</button>
+      <button class="btn-ghost" style="margin:0" onclick="r2BackupNow()">💾 Backup now</button>
+      <button class="btn-ghost" style="margin:0" onclick="r2ListSnapshots()">📜 List snapshots</button>
+      <button class="btn-ghost" style="margin:0" onclick="r2PruneNow()">🧹 Prune now</button>
     </div>
-    <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
-      <table>
-        <thead><tr><th>When</th><th>Kind</th><th>Message</th><th>Where</th><th>User</th></tr></thead>
-        <tbody id="errorlog-body"></tbody>
-      </table>
-    </div>
+    <div id="r2-snapshot-list" style="display:none;margin-bottom:14px;max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px"></div>
+    <div style="font-size:11px;color:var(--muted);font-style:italic">Auto backup runs every 5 minutes. Snapshots retained: 24h × 5min, 30d × daily, 90d × weekly. Data is AES-GCM encrypted client-side and encrypted at rest by R2.</div>
   </div>
 </div>
 
 <script>
-const WORKER_URL    = 'https://stckrm.fly.dev';
+const WORKER_URL    = 'https://stockroom2.art-bot5000.deno.net';
 let adminSecret     = '';
 let adminToken      = '';
 let allAccounts     = [];
@@ -195,7 +194,6 @@ async function verifyOtp() {
     document.getElementById('step-main').style.display = 'block';
     startSessionTimer();
     await refreshAccounts();
-    loadErrorLogs(); // fire-and-forget — don't block on it
   } catch(e) {
     otpErr('Error: ' + e.message, 'log-err');
   } finally {
@@ -289,42 +287,101 @@ async function loadCryptoStatus() {
   } catch(e) { log('Error: ' + e.message, 'log-err'); }
 }
 
-function _esc(s) {
-  return String(s == null ? '' : s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;');
+// ── R2 Backup admin ────────────────────────────────────
+function _fmtBytes(n) {
+  if (!n) return '0 B';
+  if (n < 1024) return n + ' B';
+  if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+  if (n < 1024*1024*1024) return (n/1024/1024).toFixed(2) + ' MB';
+  return (n/1024/1024/1024).toFixed(2) + ' GB';
 }
-
-async function loadErrorLogs() {
-  const body = document.getElementById('errorlog-body');
-  const count = document.getElementById('errorlog-count');
-  if (!body) return;
-  body.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">Loading…</td></tr>';
+function _fmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleString();
+}
+async function r2Refresh() {
+  const el = document.getElementById('r2-status');
+  if (el) el.textContent = 'Loading…';
   try {
-    const d = await adminPost('/admin/error-logs', { limit: 200 });
-    const logs = d.logs || [];
-    if (count) count.textContent = String(d.total || logs.length);
-    if (!logs.length) {
-      body.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">No errors logged.</td></tr>';
+    const s = await adminPost('/admin/r2/status');
+    if (!s.configured) {
+      el.innerHTML = `<span style="color:var(--danger)">⚠ R2 not configured.</span><br>Missing secrets: <code>${(s.missing||[]).join(', ')}</code><br>Set them with <code>flyctl secrets set R2_ACCOUNT_ID=… R2_ACCESS_KEY_ID=… R2_SECRET_ACCESS_KEY=… R2_BUCKET_NAME=… -a stckrm</code>`;
       return;
     }
-    body.innerHTML = logs.map(l => {
-      const when    = (l.ts || '').replace('T', ' ').slice(0, 19);
-      const kind    = l.kind === 'rejection' ? '<span class="badge v1">reject</span>' : '<span class="badge v2">error</span>';
-      const message = _esc(l.message || '').slice(0, 200);
-      const where   = _esc(l.where || '').slice(0, 80);
-      const user    = l.emailHash ? _esc(l.emailHash).slice(0, 8) + '…' : '<span style="color:var(--muted)">—</span>';
-      return `<tr title="${_esc(l.stack || '').slice(0, 1000)}">
-        <td>${_esc(when)}</td>
-        <td>${kind}</td>
-        <td style="white-space:normal;word-break:break-word">${message}</td>
-        <td>${where}</td>
-        <td>${user}</td>
-      </tr>`;
+    const lines = [
+      `<strong style="color:var(--text)">✓ Connected</strong> — bucket <code>${s.bucket}</code>`,
+      `Last auto backup: <strong style="color:var(--text)">${_fmtTime(s.lastAuto?.lastModified)}</strong>` + (s.lastAuto ? ` (${_fmtBytes(s.lastAuto.size)})` : ''),
+      `Snapshots: <strong>${s.totalSnapshots}</strong> total — ${s.autoCount} auto, ${s.manualCount} manual, ${s.preRestoreCount} pre-restore`,
+      `Total storage: <strong>${_fmtBytes(s.totalSizeBytes)}</strong> of 10 GB free tier`,
+    ];
+    el.innerHTML = lines.join('<br>');
+  } catch(e) {
+    el.innerHTML = `<span style="color:var(--danger)">Error: ${e.message}</span>`;
+  }
+}
+async function r2BackupNow() {
+  log('Triggering manual backup…');
+  try {
+    const r = await adminPost('/admin/r2/backup-now');
+    if (r.ok) {
+      log(`Backup OK — ${r.key} (${r.entries} entries, ${_fmtBytes(r.size)})`, 'log-ok');
+      r2Refresh();
+    } else {
+      log('Backup failed: ' + r.error, 'log-err');
+    }
+  } catch(e) { log('Error: ' + e.message, 'log-err'); }
+}
+async function r2PruneNow() {
+  if (!confirm('Run retention pruning now? This will delete old snapshots that fall outside the retention window.')) return;
+  log('Pruning…');
+  try {
+    const r = await adminPost('/admin/r2/prune');
+    log(`Prune complete — kept ${r.kept}, pruned ${r.pruned}`, 'log-ok');
+    r2Refresh();
+  } catch(e) { log('Error: ' + e.message, 'log-err'); }
+}
+async function r2ListSnapshots() {
+  const list = document.getElementById('r2-snapshot-list');
+  if (!list) return;
+  list.style.display = 'block';
+  list.innerHTML = '<div style="padding:10px;color:var(--muted);font-size:12px">Loading…</div>';
+  try {
+    const r = await adminPost('/admin/r2/list');
+    const snaps = r.snapshots || [];
+    if (!snaps.length) {
+      list.innerHTML = '<div style="padding:10px;color:var(--muted);font-size:12px">No snapshots yet.</div>';
+      return;
+    }
+    list.innerHTML = snaps.map(s => {
+      const isPreR = s.key.startsWith('pre-restore/');
+      return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px">
+        <div style="flex:1;min-width:0;overflow:hidden">
+          <div style="color:var(--text);font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${s.key}">${isPreR ? '⚠ ' : ''}${s.key}</div>
+          <div style="color:var(--muted);font-size:11px">${_fmtTime(s.lastModified)} · ${_fmtBytes(s.size)}</div>
+        </div>
+        <button class="btn-ghost" style="margin:0;font-size:11px;padding:5px 10px" onclick="r2Restore('${s.key}')">Restore</button>
+      </div>`;
     }).join('');
   } catch(e) {
-    body.innerHTML = `<tr><td colspan="5" style="color:var(--danger)">Error: ${_esc(e.message)}</td></tr>`;
+    list.innerHTML = `<div style="padding:10px;color:var(--danger);font-size:12px">Error: ${e.message}</div>`;
   }
+}
+async function r2Restore(snapshotKey) {
+  const ok = confirm(`⚠ RESTORE FROM SNAPSHOT\n\n${snapshotKey}\n\nThis will OVERWRITE all durable data in KV with the contents of this snapshot.\n\nA safety snapshot of the current state will be taken first (saved to pre-restore/) so this can be undone if needed.\n\nContinue?`);
+  if (!ok) return;
+  const phrase = prompt('Type RESTORE (uppercase) to confirm:');
+  if (phrase !== 'RESTORE') { log('Restore cancelled — confirmation phrase did not match.', 'log-err'); return; }
+  log(`Restoring from ${snapshotKey}…`);
+  try {
+    const r = await adminPost('/admin/r2/restore', { snapshotKey, confirm: 'RESTORE' });
+    if (r.ok) {
+      log(`✓ Restore complete — ${r.restored} entries restored. Pre-restore safety snapshot: ${r.preRestoreKey}`, 'log-ok');
+      r2Refresh();
+    } else {
+      log('Restore failed: ' + (r.error||'unknown'), 'log-err');
+    }
+  } catch(e) { log('Error: ' + e.message, 'log-err'); }
 }
 </script>
 </body>
