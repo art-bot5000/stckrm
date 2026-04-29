@@ -1535,7 +1535,6 @@ function getReminderStatus(reminder) {
 // ── Render ────────────────────────────────
 async function renderReminders() {
   await loadReminders();
-  renderDeletedReminders();
 
   // Also collect reminders embedded in items — supports both old single and new array format
   const allReminders = [
@@ -1577,14 +1576,13 @@ async function renderReminders() {
     }),
   ];
 
-  const visibleReminders = allReminders.filter(r => !r._deletedAt);
-  const overdue  = visibleReminders.filter(r => getReminderStatus(r) === 'overdue');
-  const soon     = visibleReminders.filter(r => getReminderStatus(r) === 'soon');
-  const upcoming = visibleReminders.filter(r => getReminderStatus(r) === 'upcoming');
-  const unknown  = visibleReminders.filter(r => getReminderStatus(r) === 'unknown');
+  const overdue  = allReminders.filter(r => getReminderStatus(r) === 'overdue');
+  const soon     = allReminders.filter(r => getReminderStatus(r) === 'soon');
+  const upcoming = allReminders.filter(r => getReminderStatus(r) === 'upcoming');
+  const unknown  = allReminders.filter(r => getReminderStatus(r) === 'unknown');
 
   const empty = document.getElementById('reminders-empty');
-  if (visibleReminders.length === 0) {
+  if (allReminders.length === 0) {
     if (empty) empty.style.display = 'block';
     ['overdue-section','soon-section','upcoming-section'].forEach(s => {
       const el = document.getElementById('reminders-' + s);
@@ -3231,82 +3229,30 @@ async function restoreItem(id) {
 }
 
 async function deleteItem(id) {
-  const item = items.find(i => i.id === id);
+  const idx  = items.findIndex(i => i.id === id);
+  const item = items[idx];
   if (!item) return;
-  // Soft delete — mark with _deletedAt, keep in data for 30 days
-  // Do NOT tombstone yet — tombstone added only on permanent purge
-  item._deletedAt = new Date().toISOString();
-  item.updatedAt  = new Date().toISOString();
+
+  // Stash for undo
+  deletedItem  = item;
+  deletedIndex = idx;
+  items.splice(idx, 1);
+  await addTombstone(id);
   await saveData();
   scheduleRender('grid', 'dashboard', 'shopping');
   setTimeout(syncAll, 400);
-  toast(`"${esc(item.name)}" moved to Recently Deleted — recoverable for 30 days`);
-}
 
-async function restoreDeletedItem(id) {
-  const item = items.find(i => i.id === id);
-  if (!item) return;
-  delete item._deletedAt;
-  item.updatedAt = new Date().toISOString();
-  await saveData();
-  scheduleRender('grid', 'dashboard');
-  setTimeout(syncAll, 400);
-  toast(`"${esc(item.name)}" restored ✓`);
-}
-
-async function purgeDeletedItem(id) {
-  const item = items.find(i => i.id === id);
-  if (!item) return;
-  if (!confirm(`Permanently delete "${item.name}"? This cannot be undone.`)) return;
-  items = items.filter(i => i.id !== id);
-  await addTombstone(id);
-  await saveData();
-  renderDeletedItems();
-  setTimeout(syncAll, 400);
-  toast('Item permanently deleted');
-}
-
-async function purgeAllDeletedItems() {
-  const deleted = items.filter(i => i._deletedAt);
-  if (!deleted.length) return;
-  if (!confirm(`Permanently delete all ${deleted.length} items in Recently Deleted? This cannot be undone.`)) return;
-  const ids = deleted.map(i => i.id);
-  items = items.filter(i => !i._deletedAt);
-  await Promise.all(ids.map(id => addTombstone(id)));
-  await saveData();
-  renderDeletedItems();
-  setTimeout(syncAll, 400);
-  toast('Recently Deleted cleared');
-}
-
-function renderDeletedItems() {
-  const container = document.getElementById('recently-deleted-items');
-  if (!container) return;
-  const now = Date.now();
-  const thirtyDays = 30 * 24 * 60 * 60 * 1000;
-  // Auto-purge items deleted >30 days ago
-  const toAutoDelete = items.filter(i => i._deletedAt && (now - new Date(i._deletedAt).getTime()) >= thirtyDays);
-  if (toAutoDelete.length) {
-    toAutoDelete.forEach(async i => { items = items.filter(x => x.id !== i.id); await addTombstone(i.id); });
-    saveData();
-  }
-  const deleted = items.filter(i => i._deletedAt && (now - new Date(i._deletedAt).getTime()) < thirtyDays);
-  const section = document.getElementById('recently-deleted-section');
-  if (section) section.style.display = deleted.length ? 'block' : 'none';
-  if (!deleted.length) { container.innerHTML = ''; return; }
-  container.innerHTML = deleted.map(item => {
-    const daysLeft = Math.max(0, 30 - Math.floor((now - new Date(item._deletedAt).getTime()) / 86400000));
-    return `<div class="deleted-row">
-      <div class="deleted-row-info">
-        <div class="deleted-row-name">${esc(item.name)}</div>
-        <div class="deleted-row-meta">${item.category||'Other'} · ${daysLeft}d remaining</div>
-      </div>
-      <div class="deleted-row-actions">
-        <button class="btn btn-ghost btn-sm" onclick="restoreDeletedItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-refresh-ccw"></use></svg> Restore</button>
-        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="purgeDeletedItem('${item.id}')"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
-      </div>
-    </div>`;
-  }).join('');
+  // Show undo toast
+  clearTimeout(undoTimer);
+  const t = document.getElementById('undo-toast');
+  const m = document.getElementById('undo-msg');
+  if (m) m.textContent = `"${item.name}" removed`;
+  if (t) t.classList.add('show');
+  undoTimer = setTimeout(() => {
+    if (t) t.classList.remove('show');
+    deletedItem  = null;
+    deletedIndex = null;
+  }, 5000);
 }
 
 async function undoDelete() {
@@ -3314,9 +3260,14 @@ async function undoDelete() {
   const t = document.getElementById('undo-toast');
   if (t) t.classList.remove('show');
   if (!deletedItem) return;
-  await restoreDeletedItem(deletedItem.id);
+  // Remove tombstone so the item can come back
+  await removeTombstone(deletedItem.id);
+  items.splice(deletedIndex, 0, deletedItem);
   deletedItem  = null;
   deletedIndex = null;
+  await saveData();
+  scheduleRender('grid', 'dashboard', 'shopping');
+  setTimeout(syncAll, 400);
   toast('Restored ✓');
 }
 
@@ -3729,8 +3680,6 @@ function renderGrid() {
     // Quick-added items live in their own section
     if (item.quickAdded) return false;
     // Archived items only shown when archive filter is active
-    if (item._deletedAt && activeFilter !== 'deleted') return false;
-    if (!item._deletedAt && activeFilter === 'deleted') return false;
     if (item._archived && activeFilter !== 'archived') return false;
     if (!item._archived && activeFilter === 'archived') return false;
     if (activeFilter === 'archived') {
@@ -5418,7 +5367,6 @@ function showView(name, btn) {
     setStockOnlyUI(true);
     document.getElementById('items-grid').style.display = '';
     document.getElementById('shopping-panel').style.display = 'none';
-    renderDeletedItems();
   }
   if (name === 'settings') {
     renderSettingsForUser();
@@ -11760,7 +11708,7 @@ function saveGroceryManualOrder(order) {
 // Returns groceryItems sorted by manual order (items not in order go to end)
 function getGroceryItemsInOrder() {
   const order = getGroceryManualOrder();
-  const listFiltered = groceryItems.filter(i => (i.listId || 'default') === activeGroceryListId && !i._deletedAt);
+  const listFiltered = groceryItems.filter(i => (i.listId || 'default') === activeGroceryListId);
   if (!order.length) return [...listFiltered];
   const orderMap = new Map(order.map((id, i) => [id, i]));
   return [...listFiltered].sort((a, b) => {
@@ -17640,15 +17588,34 @@ function _updateMfaSettingsUI() {
 
 function _maybeShowMfaPrompt() {
   if (_mfaEnabled()) return;
-  if (localStorage.getItem(_MFA_DISMISSED_KEY)) return;
+  if (settings._mfaPromptDismissed) return;
+  if (localStorage.getItem(_MFA_DISMISSED_KEY)) return; // legacy fallback
   if (!kvConnected) return;
   openModal('mfa-prompt-modal');
 }
 
 function dismissMfaPrompt() {
-  localStorage.setItem(_MFA_DISMISSED_KEY, 'dismissed');
+  // Persist to the synced settings blob so it survives cookie/storage clears
+  settings._mfaPromptDismissed = true;
+  _saveSettings().then(() => { if (kvConnected) kvPush().catch(() => {}); });
+  // Also set localStorage for immediate effect within this session
+  try { localStorage.setItem(_MFA_DISMISSED_KEY, 'dismissed'); } catch(e) {}
   closeModal('mfa-prompt-modal');
 }
+function resetFirstRunPrompts() {
+  // Clear all first-run/onboarding dismissed flags from the synced settings blob.
+  // On next login the Protecting Your Data, Country, Amazon import and
+  // Enable MFA prompts will all show again as if it were a first-time setup.
+  settings._setupProtectSeen     = false;
+  settings._setupCountrySet      = false;
+  settings._amazonBannerDismissed = false;
+  settings._mfaPromptDismissed   = false;
+  // Also clear the legacy localStorage key for MFA
+  try { localStorage.removeItem(_MFA_DISMISSED_KEY); } catch(e) {}
+  _saveSettings().then(() => { if (kvConnected) kvPush().catch(() => {}); });
+  toast('First-run prompts reset — they will show again on next login ✓');
+}
+
 function renderAccountSecurity() {
   // Your Details
   const nameEl = document.getElementById('setting-display-name-sec');

@@ -695,13 +695,19 @@
     #view-settings .settings-content { flex:1; min-width:0; }
 
     /* ── Pending + Quick Added side by side on desktop ── */
-    #stock-top-sections { flex-direction:row !important; }
+    #stock-top-sections { display:flex; flex-direction:row; gap:16px; }
     #pending-deliveries-section, #incomplete-section { flex:1; min-width:0; }
 
     /* ── Inline search replaces standalone search bar on desktop ── */
     #stock-search-mobile { display:none; }
     #stock-search-inline { display:flex !important; }
     #stock-toolbar-row { flex-wrap:nowrap; }
+    /* Cap the search bar and the filters/sort row to roughly one item card
+       width (~360px), so they don't sprawl across the full content area on
+       desktop. Both wrappers share the same max-width so the search visually
+       lines up with the filters/sort row beneath it. */
+    #stock-search-wrap,
+    #stock-toolbar-wrap { max-width: 360px; }
     #view-report { max-width: 100%; }
     #view-grocery { max-width: 720px; }
     #view-reminders { max-width: 720px; }
@@ -826,13 +832,6 @@
 .note-card-preview { font-size:11px; color:var(--muted); line-height:1.5; overflow:hidden; display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; word-break:break-word; }
 .note-card-lock { font-size:11px; color:var(--accent); font-family:var(--mono); margin-top:auto; }
 .note-card-meta { display:flex; align-items:center; gap:6px; margin-top:auto; flex-wrap:wrap; }
-
-/* ── Recently Deleted rows ── */
-.deleted-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px; background:var(--surface); border:1px solid var(--border); border-radius:10px; margin-bottom:8px; }
-.deleted-row-info { flex:1; min-width:0; }
-.deleted-row-name { font-size:13px; font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:2px; }
-.deleted-row-meta { font-family:var(--mono); font-size:10px; color:var(--muted); }
-.deleted-row-actions { display:flex; gap:6px; flex-shrink:0; }
 .note-card-badge { font-size:10px; padding:1px 6px; border-radius:99px; font-family:var(--mono); }
 .note-chip { padding:5px 14px; border-radius:99px; border:1px solid var(--border); background:transparent;
   color:var(--muted); font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; transition:all 0.15s; }
@@ -845,7 +844,13 @@
 .note-swatch { width:24px; height:24px; border-radius:6px; cursor:pointer; border:2px solid transparent; transition:border-color 0.15s; }
 .note-swatch:hover, .note-swatch.active { border-color:var(--accent); }
 .notes-section-label { font-size:11px; font-weight:700; color:var(--accent); font-family:var(--mono);
-  letter-spacing:1.5px; text-transform:uppercase; margin-bottom:10px; }
+  letter-spacing:1.5px; text-transform:uppercase; margin-bottom:10px;
+  /* When inside a CSS grid (#notes-grid), span the entire row so the heading
+     sits above the cards instead of being placed in a single cell. */
+  grid-column: 1 / -1;
+  display:flex; align-items:center; gap:8px;
+  padding-top:4px; }
+.notes-section-label .icon { width:14px; height:14px; }
 /* note overlay display controlled via JS inline style */
 /* Note formatting toolbar */
 .note-fmt-btn { background:transparent; border:1px solid transparent; border-radius:6px; padding:4px 8px; font-size:13px; font-weight:700; cursor:pointer; color:var(--text); transition:background 0.12s; line-height:1.4; min-width:28px; text-align:center; }
@@ -975,6 +980,27 @@
   box-sizing: border-box;
 }
 
+/* ── Stock top action bars (Pending Deliveries, Quick Added) ──────────
+   Each bar shows itself only when it has content (handled by the render
+   functions). On mobile they stack vertically and take full width; on
+   desktop the @media (min-width:900px) rule above flips them to side-by-side
+   with equal flex:1 widths.
+
+   The wrapper hides itself when both children are empty so we don't reserve
+   blank vertical space at the top of the stockroom view. The "both empty"
+   state is signalled by the data-empty="1" attribute on the wrapper, which
+   the render functions toggle on every update. */
+#stock-top-sections {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 0;
+}
+@media (max-width: 899px) {
+  /* Mobile: stack the two bars on top of each other so each gets full width */
+  #stock-top-sections { flex-direction: column; }
+}
+#stock-top-sections[data-empty="1"] { display: none; }
+
 /* ── Remove stale Account & Sync selector (section removed from HTML) ── */
 #settings-account-body, [onclick="toggleSettings('settings-account-body',this)"] { display:none !important; }
 
@@ -1022,6 +1048,64 @@
 [title*="Critical"] .icon, .filter-btn-critical .icon { color: var(--danger); }
 [title*="Low"] .icon, .filter-btn-low .icon { color: var(--accent); }
 [title*="Good"] .icon, .filter-btn-good .icon { color: var(--ok); }
+
+/* ── Note editor: desktop modal layout ────────────────────────────────
+   On large screens we present an open note as a centered modal card with
+   the rest of the app blurred behind it. The overlay element is at body
+   level (z-index 400) so it sits above everything else.
+
+   Mobile (<900px): overlay stays full-screen with no backdrop — the
+   default behavior baked into the inline style.
+
+   Scroll lock on body.note-open prevents background scrolling on every
+   screen size; without it iOS and Android browsers will rubber-band
+   scroll the underlying page when you try to scroll inside the note. */
+body.note-open { overflow: hidden; touch-action: none; }
+
+@media (min-width: 900px) {
+  /* Soft backdrop: a single ::before pseudo-element on the overlay paints
+     a translucent darkening layer across the viewport behind the card.
+     Blur is applied to the actual page content (the wizard or main app)
+     via the body.note-open rules below. */
+  #note-editor-overlay {
+    /* Center the card */
+    inset: auto !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%);
+    width: min(820px, calc(100vw - 64px));
+    height: min(85vh, 900px);
+    max-height: 85vh;
+    border-radius: 16px;
+    box-shadow: 0 24px 72px rgba(0,0,0,0.55), 0 0 0 1px var(--border);
+  }
+  /* Painted backdrop covering the whole viewport behind the modal.
+     Sits at -1 so the modal contents render above it. */
+  #note-editor-overlay::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: -1;
+    border-radius: 0;
+  }
+  /* Round the toolbar corners to match the modal */
+  #note-editor-overlay > #note-editor-toolbar { border-top-left-radius: 16px; border-top-right-radius: 16px; }
+  /* Backdrop blur on the page behind the modal. Apply to the top-level
+     wrappers, not the overlay itself. The note overlay sits at body level
+     alongside #app-header, .view containers, and the FAB. */
+  body.note-open #app-header,
+  body.note-open #app-nav,
+  body.note-open .view,
+  body.note-open #wizard {
+    filter: blur(6px);
+    pointer-events: none;
+  }
+  /* The FAB sits at z-index 1099 — higher than the note overlay's 400 — so
+     blurring isn't enough; we hide it outright while a note is open. */
+  body.note-open #fab-btn,
+  body.note-open #fab-container { display: none !important; }
+}
 
 
 /* ═══════════════════════════════════════════════════════════════════
