@@ -65,9 +65,13 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
       - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only --strategy rolling --ha=false
+        run: flyctl deploy --remote-only --strategy rolling --ha=false --no-cache
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        # --no-cache: forces a clean rebuild of all Docker layers. We had a
+        # bug where index.html updates weren't reaching production because
+        # Depot's remote builder was reusing cached minify-step output.
+        # Without this, frontend file changes can silently not deploy.
 
       - name: Verify deployment health
         if: always()
