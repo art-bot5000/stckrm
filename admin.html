@@ -122,17 +122,48 @@
       <button class="btn-ghost" style="margin:0" onclick="r2SendHeartbeat()">✉️ Send heartbeat email</button>
     </div>
     <div id="r2-snapshot-list" style="display:none;margin-bottom:14px;max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px"></div>
-    <div style="font-size:11px;color:var(--muted);font-style:italic">Auto backup runs every 5 minutes when data has changed; idle hours are skipped. A forced daily backup at 03:00 UTC ensures retention always has fresh material. Snapshots retained: 24h × 5min, 30d × daily, 90d × weekly. Data is AES-GCM encrypted client-side and encrypted at rest by R2.</div>
+    <div style="font-size:11px;color:var(--muted);font-style:italic">Auto backup runs every 5 minutes when data has changed; idle hours are skipped. A forced daily backup at 03:00 UTC ensures retention always has fresh material. Snapshots retained: 24h × 5min, 30d × daily, 90d × weekly. User data is AES-GCM encrypted in the user's browser before being sent to the server, so snapshots contain only ciphertext. R2 also encrypts at rest.</div>
   </div>
 </div>
 
 <script>
+// ── Secrets stored in a closure scope, accessed via an opaque object.
+//    Keeping them off `window` raises the bar for hostile scripts trying
+//    to read them via `window.adminSecret` etc. Not bulletproof against
+//    sophisticated XSS, but a meaningful defense-in-depth layer.
+const _auth = (() => {
+  let secret = '';
+  let token  = '';
+  return {
+    setSecret: v => { secret = v; },
+    setToken:  v => { token  = v; },
+    clear:     () => { secret = ''; token = ''; },
+    hasSecret: () => secret.length > 0,
+    hasToken:  () => token.length > 0,
+    // Auth handshake (otp/send + otp/verify) — sends BOTH secret and OTP/token.
+    authHandshakeBody: extra => ({ adminSecret: secret, ...extra }),
+    // All other admin requests — sends ONLY the token, never the master secret.
+    sessionBody:       extra => ({ adminToken: token, ...extra }),
+  };
+})();
+
 const WORKER_URL    = 'https://stckrm.fly.dev';
-let adminSecret     = '';
-let adminToken      = '';
 let allAccounts     = [];
 let sessionExpiry   = 0;
 let sessionTimerInt = null;
+
+// ── XSS-safe HTML escape — convert any string with HTML-significant chars
+//    into a literal text representation. Use this on every user-controlled
+//    string that gets dropped into innerHTML.
+function escapeHTML(s) {
+  if (s === null || s === undefined) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 let resendInt       = null;
 
 function log(msg, cls='') {
@@ -151,22 +182,23 @@ function otpErr(msg, cls='log-err') {
 }
 
 async function sendOtp(isResend=false) {
-  adminSecret = document.getElementById('admin-secret').value.trim();
-  if (!adminSecret) { log('Enter your admin secret first.','log-err'); return; }
+  const secret = document.getElementById('admin-secret').value.trim();
+  if (!secret) { log('Enter your admin secret first.','log-err'); return; }
+  _auth.setSecret(secret);
   const btn = document.getElementById('send-otp-btn');
   if (btn) { btn.disabled=true; btn.textContent='⏳ Sending…'; }
   if (!isResend) logClear();
   try {
     const res = await fetch(`${WORKER_URL}/admin/otp/send`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ adminSecret }),
+      body: JSON.stringify(_auth.authHandshakeBody({})),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     document.getElementById('step-secret').style.display = 'none';
     document.getElementById('step-otp').style.display    = 'block';
     setTimeout(() => document.getElementById('otp-input')?.focus(), 100);
-    otpErr('Code sent — check pete@artbot5000.com', 'log-ok');
+    otpErr('Code sent — check the admin email inbox', 'log-ok');
     startResendCountdown();
   } catch(e) {
     log('Error: ' + e.message, 'log-err');
@@ -197,11 +229,14 @@ async function verifyOtp() {
   try {
     const res = await fetch(`${WORKER_URL}/admin/otp/verify`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ adminSecret, otp }),
+      body: JSON.stringify(_auth.authHandshakeBody({ otp })),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-    adminToken    = data.adminToken;
+    _auth.setToken(data.adminToken);
+    // Drop the master secret from memory now that we have a session token.
+    // Subsequent requests use the token alone.
+    _auth.setSecret('');
     sessionExpiry = Date.now() + 15*60*1000;
     document.getElementById('step-otp').style.display  = 'none';
     document.getElementById('step-main').style.display = 'block';
@@ -225,7 +260,8 @@ function startSessionTimer() {
 }
 
 function signOut() {
-  adminToken=''; adminSecret=''; allAccounts=[];
+  _auth.clear();
+  allAccounts=[];
   if (sessionTimerInt) clearInterval(sessionTimerInt);
   if (resendInt) clearInterval(resendInt);
   document.getElementById('admin-secret').value='';
@@ -239,7 +275,7 @@ function signOut() {
 async function adminPost(path, extra={}) {
   const res = await fetch(WORKER_URL+path, {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ adminSecret, adminToken, ...extra }),
+    body: JSON.stringify(_auth.sessionBody(extra)),
   });
   const data = await res.json();
   if (!res.ok) {
@@ -247,8 +283,7 @@ async function adminPost(path, extra={}) {
     if (res.status === 401 && data.error && /sign in|Session IP/i.test(data.error)) {
       log('Session ended: ' + data.error + ' — please sign in again', 'log-err');
       setTimeout(() => {
-        adminToken  = '';
-        adminSecret = '';
+        _auth.clear();
         location.reload();
       }, 2000);
     }
@@ -269,15 +304,54 @@ async function refreshAccounts() {
 }
 
 function renderTable(accounts) {
-  document.getElementById('accounts-body').innerHTML = accounts.map(a => `
-    <tr>
-      <td>${a.email || '<span style="color:var(--muted)">unknown</span>'}</td>
-      <td style="color:var(--muted);font-size:10px">${a.emailHash}</td>
-      <td style="color:var(--muted)">${a.created ? new Date(a.created).toLocaleDateString() : '—'}</td>
-      <td><span class="badge ${a.cryptoVersion}">${a.cryptoVersion}${a.migrated?' ✓':''}</span></td>
-      <td><button class="btn-danger" style="padding:3px 9px;font-size:11px;margin:0"
-        onclick="confirmDelete('${a.emailHash}','${(a.email||a.emailHash).replace(/'/g,"\\'")}')">Delete</button></td>
-    </tr>`).join('');
+  const tbody = document.getElementById('accounts-body');
+  // Build with DOM methods so user-controlled values (especially `email`)
+  // are inserted as text, never as HTML. This is the primary XSS defence.
+  tbody.replaceChildren(); // clear safely
+  for (const a of accounts) {
+    const tr = document.createElement('tr');
+
+    // Email column — completely user-controlled; must be text, not HTML
+    const tdEmail = document.createElement('td');
+    if (a.email) {
+      tdEmail.textContent = a.email;
+    } else {
+      const span = document.createElement('span');
+      span.style.color = 'var(--muted)';
+      span.textContent = 'unknown';
+      tdEmail.appendChild(span);
+    }
+
+    // Email hash — server-controlled hex string, but escape on principle
+    const tdHash = document.createElement('td');
+    tdHash.style.color    = 'var(--muted)';
+    tdHash.style.fontSize = '10px';
+    tdHash.textContent    = a.emailHash || '';
+
+    // Created date — formatted from server-controlled ISO string
+    const tdCreated = document.createElement('td');
+    tdCreated.style.color = 'var(--muted)';
+    tdCreated.textContent = a.created ? new Date(a.created).toLocaleDateString() : '—';
+
+    // Crypto version badge
+    const tdVersion = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className   = 'badge ' + (a.cryptoVersion || '');
+    badge.textContent = (a.cryptoVersion || '') + (a.migrated ? ' ✓' : '');
+    tdVersion.appendChild(badge);
+
+    // Delete button — bind handler in JS so user data never enters an attribute
+    const tdAction = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.className   = 'btn-danger';
+    btn.style.cssText = 'padding:3px 9px;font-size:11px;margin:0';
+    btn.textContent = 'Delete';
+    btn.addEventListener('click', () => confirmDelete(a.emailHash, a.email || a.emailHash));
+    tdAction.appendChild(btn);
+
+    tr.append(tdEmail, tdHash, tdCreated, tdVersion, tdAction);
+    tbody.appendChild(tr);
+  }
 }
 
 function filterAccounts() {
@@ -324,8 +398,7 @@ async function revokeAllSessions() {
     log(`✓ ${r.revoked} session(s) revoked. Signing out…`, 'log-ok');
     // Clear the tokens from this tab and bounce back to sign-in screen
     setTimeout(() => {
-      adminToken  = '';
-      adminSecret = '';
+      _auth.clear();
       try { sessionStorage.removeItem('stockroom_admin_token'); } catch(_) {}
       try { sessionStorage.removeItem('stockroom_admin_secret'); } catch(_) {}
       location.reload();
@@ -372,25 +445,36 @@ async function loadActiveSessions() {
       return;
     }
     list.innerHTML = sessions.map(s => {
-      const youBadge = s.current ? '<span style="background:#4cbb8a;color:#0f1117;padding:1px 7px;border-radius:99px;font-size:10px;font-weight:700;margin-left:6px">YOU</span>' : '';
+      // Server-controlled fields, but escape on principle in case anything leaks through
+      const tokenPrefix = escapeHTML(s.tokenPrefix);
+      const ip          = escapeHTML(s.ip);
+      // userAgent is FULLY user-controlled (the client sets the UA header) — must escape
+      const ua          = escapeHTML(_shortUA(s.userAgent));
+      const age         = escapeHTML(_fmtAge(s.createdAt));
+      const youBadge    = s.current ? '<span style="background:#4cbb8a;color:#0f1117;padding:1px 7px;border-radius:99px;font-size:10px;font-weight:700;margin-left:6px">YOU</span>' : '';
+      const actionCell  = s.current
+        ? '<span style="color:var(--muted);font-size:11px;padding:5px 10px">— this tab —</span>'
+        : `<button class="btn-ghost" style="margin:0;font-size:11px;padding:5px 10px;color:var(--danger)" onclick="revokeOneSession('${encodeURIComponent(s.tokenPrefix)}')">Revoke</button>`;
       return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px">
         <div style="flex:1;min-width:0">
-          <div style="color:var(--text);font-family:monospace">${s.tokenPrefix}…${youBadge}</div>
-          <div style="color:var(--muted);font-size:11px">${s.ip} · ${_shortUA(s.userAgent)} · ${_fmtAge(s.createdAt)}</div>
+          <div style="color:var(--text);font-family:monospace">${tokenPrefix}…${youBadge}</div>
+          <div style="color:var(--muted);font-size:11px">${ip} · ${ua} · ${age}</div>
         </div>
-        ${s.current ? '<span style="color:var(--muted);font-size:11px;padding:5px 10px">— this tab —</span>' : `<button class="btn-ghost" style="margin:0;font-size:11px;padding:5px 10px;color:var(--danger)" onclick="revokeOneSession('${s.tokenPrefix}')">Revoke</button>`}
+        ${actionCell}
       </div>`;
     }).join('');
   } catch(e) {
-    list.innerHTML = `<div style="padding:10px;color:var(--danger);font-size:12px">Error: ${e.message}</div>`;
+    list.innerHTML = `<div style="padding:10px;color:var(--danger);font-size:12px">Error: ${escapeHTML(e.message)}</div>`;
   }
 }
 async function revokeOneSession(prefix) {
-  if (!confirm(`Revoke session ${prefix}…?\n\nThe holder of that session token will be signed out immediately.`)) return;
-  log(`Revoking session ${prefix}…`);
+  // The button passes encodeURIComponent'd prefix — decode for display only
+  const safePrefix = decodeURIComponent(prefix);
+  if (!confirm(`Revoke session ${safePrefix}…?\n\nThe holder of that session token will be signed out immediately.`)) return;
+  log(`Revoking session ${safePrefix}…`);
   try {
-    await adminPost('/admin/revoke-session', { tokenPrefix: prefix });
-    log(`✓ Session ${prefix} revoked`, 'log-ok');
+    await adminPost('/admin/revoke-session', { tokenPrefix: safePrefix });
+    log(`✓ Session ${safePrefix} revoked`, 'log-ok');
     loadActiveSessions();
   } catch(e) { log('Error: ' + e.message, 'log-err'); }
 }
@@ -409,20 +493,26 @@ async function loadAuditLog() {
       return;
     }
     list.innerHTML = entries.map(e => {
-      const colour = e.outcome === 'success' ? 'var(--text)' : e.outcome === 'denied' ? '#e8a838' : 'var(--danger)';
-      const icon   = e.outcome === 'success' ? '✓' : e.outcome === 'denied' ? '⊘' : '✗';
-      const when   = new Date(e.ts).toLocaleString();
+      const colour  = e.outcome === 'success' ? 'var(--text)' : e.outcome === 'denied' ? '#e8a838' : 'var(--danger)';
+      const icon    = e.outcome === 'success' ? '✓' : e.outcome === 'denied' ? '⊘' : '✗';
+      const when    = escapeHTML(new Date(e.ts).toLocaleString());
+      // action is server-controlled (a URL path), but escape on principle.
+      const action  = escapeHTML(e.action || '');
+      const ip      = escapeHTML(e.ip || '');
+      // ua is user-controlled (the request's User-Agent header); MUST escape.
+      const ua      = escapeHTML(_shortUA(e.ua || ''));
+      const details = escapeHTML(e.details || '');
       return `<div style="padding:6px 10px;border-bottom:1px solid var(--border);font-size:12px">
         <div style="display:flex;align-items:center;gap:8px">
           <span style="color:${colour};font-weight:700;width:16px;text-align:center">${icon}</span>
-          <code style="color:var(--text);flex:1;font-family:monospace">${e.action}</code>
+          <code style="color:var(--text);flex:1;font-family:monospace">${action}</code>
           <span style="color:var(--muted);font-size:11px;font-family:monospace">${when}</span>
         </div>
-        <div style="color:var(--muted);font-size:11px;margin-left:24px;font-family:monospace">${e.ip} · ${_shortUA(e.ua)}${e.details ? ' · ' + e.details : ''}</div>
+        <div style="color:var(--muted);font-size:11px;margin-left:24px;font-family:monospace">${ip} · ${ua}${details ? ' · ' + details : ''}</div>
       </div>`;
     }).join('');
   } catch(e) {
-    list.innerHTML = `<div style="padding:10px;color:var(--danger);font-size:12px">Error: ${e.message}</div>`;
+    list.innerHTML = `<div style="padding:10px;color:var(--danger);font-size:12px">Error: ${escapeHTML(e.message)}</div>`;
   }
 }
 
@@ -445,18 +535,19 @@ async function r2Refresh() {
   try {
     const s = await adminPost('/admin/r2/status');
     if (!s.configured) {
-      el.innerHTML = `<span style="color:var(--danger)">⚠ R2 not configured.</span><br>Missing secrets: <code>${(s.missing||[]).join(', ')}</code><br>Set them with <code>flyctl secrets set R2_ACCOUNT_ID=… R2_ACCESS_KEY_ID=… R2_SECRET_ACCESS_KEY=… R2_BUCKET_NAME=… -a stckrm</code>`;
+      const missing = (s.missing || []).map(escapeHTML).join(', ');
+      el.innerHTML = `<span style="color:var(--danger)">⚠ R2 not configured.</span><br>Missing secrets: <code>${missing}</code><br>Set them with <code>flyctl secrets set R2_ACCOUNT_ID=… R2_ACCESS_KEY_ID=… R2_SECRET_ACCESS_KEY=… R2_BUCKET_NAME=… -a stckrm</code>`;
       return;
     }
     const lines = [
-      `<strong style="color:var(--text)">✓ Connected</strong> — bucket <code>${s.bucket}</code>`,
-      `Last auto backup: <strong style="color:var(--text)">${_fmtTime(s.lastAuto?.lastModified)}</strong>` + (s.lastAuto ? ` (${_fmtBytes(s.lastAuto.size)})` : ''),
-      `Snapshots: <strong>${s.totalSnapshots}</strong> total — ${s.autoCount} auto, ${s.manualCount} manual, ${s.preRestoreCount} pre-restore`,
-      `Total storage: <strong>${_fmtBytes(s.totalSizeBytes)}</strong> of 10 GB free tier`,
+      `<strong style="color:var(--text)">✓ Connected</strong> — bucket <code>${escapeHTML(s.bucket)}</code>`,
+      `Last auto backup: <strong style="color:var(--text)">${escapeHTML(_fmtTime(s.lastAuto?.lastModified))}</strong>` + (s.lastAuto ? ` (${escapeHTML(_fmtBytes(s.lastAuto.size))})` : ''),
+      `Snapshots: <strong>${Number(s.totalSnapshots) || 0}</strong> total — ${Number(s.autoCount) || 0} auto, ${Number(s.manualCount) || 0} manual, ${Number(s.preRestoreCount) || 0} pre-restore`,
+      `Total storage: <strong>${escapeHTML(_fmtBytes(s.totalSizeBytes))}</strong> of 10 GB free tier`,
     ];
     el.innerHTML = lines.join('<br>');
   } catch(e) {
-    el.innerHTML = `<span style="color:var(--danger)">Error: ${e.message}</span>`;
+    el.innerHTML = `<span style="color:var(--danger)">Error: ${escapeHTML(e.message)}</span>`;
   }
 }
 async function r2BackupNow() {
@@ -505,20 +596,25 @@ async function r2ListSnapshots() {
       return;
     }
     list.innerHTML = snaps.map(s => {
-      const isPreR = s.key.startsWith('pre-restore/');
+      const isPreR    = s.key.startsWith('pre-restore/');
+      const safeKey   = escapeHTML(s.key);
+      // For inline onclick, encodeURIComponent guarantees no quote-breaking
+      const handlerKey = encodeURIComponent(s.key);
       return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px">
         <div style="flex:1;min-width:0;overflow:hidden">
-          <div style="color:var(--text);font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${s.key}">${isPreR ? '⚠ ' : ''}${s.key}</div>
-          <div style="color:var(--muted);font-size:11px">${_fmtTime(s.lastModified)} · ${_fmtBytes(s.size)}</div>
+          <div style="color:var(--text);font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${safeKey}">${isPreR ? '⚠ ' : ''}${safeKey}</div>
+          <div style="color:var(--muted);font-size:11px">${escapeHTML(_fmtTime(s.lastModified))} · ${escapeHTML(_fmtBytes(s.size))}</div>
         </div>
-        <button class="btn-ghost" style="margin:0;font-size:11px;padding:5px 10px" onclick="r2Restore('${s.key}')">Restore</button>
+        <button class="btn-ghost" style="margin:0;font-size:11px;padding:5px 10px" onclick="r2Restore('${handlerKey}')">Restore</button>
       </div>`;
     }).join('');
   } catch(e) {
-    list.innerHTML = `<div style="padding:10px;color:var(--danger);font-size:12px">Error: ${e.message}</div>`;
+    list.innerHTML = `<div style="padding:10px;color:var(--danger);font-size:12px">Error: ${escapeHTML(e.message)}</div>`;
   }
 }
 async function r2Restore(snapshotKey) {
+  // The button passes encodeURIComponent'd key — decode for use
+  snapshotKey = decodeURIComponent(snapshotKey);
   const ok = confirm(`⚠ RESTORE FROM SNAPSHOT\n\n${snapshotKey}\n\nThis will OVERWRITE all durable data in KV with the contents of this snapshot.\n\nA safety snapshot of the current state will be taken first (saved to pre-restore/) so this can be undone if needed.\n\nContinue?`);
   if (!ok) return;
   const phrase = prompt('Type RESTORE (uppercase) to confirm:');
