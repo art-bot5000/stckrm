@@ -395,10 +395,8 @@ async function loadData() {
   }
   // Hide Amazon banner immediately if previously dismissed (avoid flash)
   if (settings._amazonBannerDismissed) {
-    const desktop = document.getElementById('amazon-banner-desktop');
-    const mobile  = document.getElementById('amazon-banner-mobile');
-    if (desktop) desktop.style.display = 'none';
-    if (mobile)  mobile.style.display  = 'none';
+    const banner = document.getElementById('amazon-banner-mobile');
+    if (banner) banner.style.display = 'none';
   }
 }
 
@@ -3142,17 +3140,13 @@ async function installPWA() {
 // ── Amazon Order History Import banner ───────────────────────────────────────
 function _showAmazonBanners() {
   if (settings._amazonBannerDismissed) return;
-  const desktop = document.getElementById('amazon-banner-desktop');
-  const mobile  = document.getElementById('amazon-banner-mobile');
-  if (desktop) desktop.style.display = 'block';
-  if (mobile)  mobile.style.display  = 'block';
+  const banner = document.getElementById('amazon-banner-mobile');
+  if (banner) banner.style.display = 'block';
 }
 
 function dismissAmazonBanner() {
-  const desktop = document.getElementById('amazon-banner-desktop');
-  const mobile  = document.getElementById('amazon-banner-mobile');
-  if (desktop) desktop.style.display = 'none';
-  if (mobile)  mobile.style.display  = 'none';
+  const banner = document.getElementById('amazon-banner-mobile');
+  if (banner) banner.style.display = 'none';
   settings._amazonBannerDismissed = true;
   _saveSettings().then(() => kvPush().catch(() => {}));
   setTimeout(() => toast('Amazon order import is available anytime in Account & Security → Data'), 400);
@@ -5757,6 +5751,8 @@ function switchToStock() {
     setStockOnlyUI(true);
     updateStockShoppingHeader('stock');
     _currentView = 'stock';
+    // Re-render the recycle bin (hidden when we entered Shopping subtab)
+    try { renderItemsRecycleBin(); } catch(_) {}
   });
   if (_householdEnabled) pushPresence();
 }
@@ -5771,6 +5767,10 @@ function switchToShopping() {
     if (stockTab) stockTab.classList.add('active');
     document.getElementById('items-grid').style.display = 'none';
     document.getElementById('shopping-panel').style.display = '';
+    // Hide the Stockroom recycle bin while in Shopping subtab — it belongs to
+    // the main stock view only, and would otherwise float above the shopping list.
+    const _bin = document.getElementById('items-recycle-bin');
+    if (_bin) _bin.style.display = 'none';
     setStockOnlyUI(false);
     renderShoppingList();
     updateStockShoppingHeader('shopping');

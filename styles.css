@@ -710,8 +710,13 @@
     #view-stock #stock-toolbar-wrap  { flex: 0 0 135px; max-width: 135px; min-width: 0; }
     #view-stock #stock-sort-wrap     { flex: 0 0 135px; max-width: 135px; min-width: 0; }
     #view-report { max-width: 100%; }
-    #view-grocery { max-width: 720px; }
-    #view-reminders { max-width: 720px; }
+    /* Compact-width views (~800px centred) */
+    #view-grocery,
+    #view-reminders,
+    #view-notes,
+    #view-account-security,
+    #view-settings,
+    #view-savings { max-width: 800px; margin-left: auto; margin-right: auto; }
     #wizard .wizard-box { max-width: 540px; }
     .wizard-features { grid-template-columns: 1fr 1fr; gap: 12px; }
     .country-grid { grid-template-columns: 1fr 1fr 1fr; }
@@ -721,7 +726,6 @@
     #stock-shopping-header { margin-bottom: 16px; }
     .form-grid { grid-template-columns: 1fr 1fr; }
     #health-dashboard { gap: 12px; }
-    #view-savings { max-width: 800px; }
     .item-card:hover { transform: translateY(-3px); }
 
     /* ── Sticky tab bar on desktop ── */
@@ -761,6 +765,24 @@
   .grocery-toolbar { display:flex; gap:8px; align-items:center; margin-bottom:14px; flex-wrap:wrap; }
   .grocery-search { flex:1; min-width:160px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:9px 14px; color:var(--text); font-family:var(--sans); font-size:14px; outline:none; }
   .grocery-search:focus { border-color:var(--accent); }
+
+  /* Stockroom toolbar — Search / Filters / Sort all use the same base surface
+     + border so they read as a single related toolbar group. */
+  #stock-search-toolbar #stock-search,
+  #stock-search-toolbar #filter-toggle-btn,
+  #stock-search-toolbar #sort-select {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--muted) !important;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: var(--sans);
+  }
+  #stock-search-toolbar #stock-search { color: var(--text) !important; padding: 8px 12px; }
+  #stock-search-toolbar #stock-search::placeholder { color: var(--muted); }
+  #stock-search-toolbar #stock-search:focus { border-color: var(--accent) !important; }
+  #stock-search-toolbar #filter-toggle-btn:hover,
+  #stock-search-toolbar #sort-select:hover { color: var(--text) !important; }
   .grocery-sort-toggle { display:flex; background:var(--surface2); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
   .grocery-sort-btn { font-family:var(--sans); font-size:12px; font-weight:600; padding:8px 12px; border:none; background:transparent; color:var(--muted); cursor:pointer; transition:all 0.15s; white-space:nowrap; }
   .grocery-sort-btn.active { background:var(--accent); color:#111; }
@@ -869,6 +891,8 @@
 /* ── Desktop stock toolbar: show Add Item + ⚡ buttons ── */
 @media (min-width:900px) {
   .stock-desktop-actions { display:inline-flex !important; }
+  /* Centre the Amazon import banner on desktop, matching the toolbar width */
+  .amazon-banner { max-width: 800px; margin-left: auto !important; margin-right: auto !important; }
   /* Cap inline search width */
   #stock-search-inline { flex:0 1 320px !important; max-width:320px; }
   /* Sort select height matches filter button */
@@ -879,13 +903,8 @@
   /* Notes view on desktop - must clear the 220px sidebar since it is at body level */
   #view-notes { position:fixed; top:0; right:0; bottom:0; left:220px; overflow-y:auto; padding:28px 36px; display:none; background:var(--bg); z-index:10; }
   #view-notes.active { display:block; }
-  /* Constrain notes content to a comfortable reading width to match the rest
-     of the app's centred-column layout (Account & Security uses 720px; Notes
-     gets a touch wider to fit the 3-column grid comfortably). */
-  #view-notes > * { max-width: 1100px; margin-left: auto; margin-right: auto; }
+  /* Width constraints centralised in the desktop @media block above */
   #view-account-security.active { display:block; }
-  /* Account & Security view */
-  #view-account-security { max-width: 720px; }
   /* Settings view — same width as Account & Security */
   #view-settings { max-width: 720px; }
 }
