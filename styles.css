@@ -752,7 +752,6 @@
       z-index: 80;
       background: var(--bg);
       padding-bottom: 4px;
-      padding-top: 8px;
       margin-bottom: 0;
     }
     #view-grocery #grocery-list-body { padding-top: 4px; }
@@ -770,6 +769,17 @@
      spacing below the title so navigating between tabs doesn't shift the page. */
   .view-header { margin: 0 0 16px 0; }
   .view-header h2 { margin: 0; }
+  /* Title icon — explicit size and vertical alignment so the icon sits centred
+     against the title text rather than floating above the cap-height. The
+     -0.18em offset is a font-relative tweak that keeps icons visually on the
+     mid-cap line at any font size. Selector covers both layouts: H2 inside
+     a .view-header wrapper, AND H2 that IS the .view-header. */
+  .view-header h2 .icon-lg,
+  h2.view-header .icon-lg {
+    width: 20px;
+    height: 20px;
+    vertical-align: -0.18em;
+  }
 
   /* Stockroom toolbar — Search / Filters / Sort all use the same base surface
      + border so they read as a single related toolbar group. */

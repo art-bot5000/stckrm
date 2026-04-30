@@ -781,15 +781,8 @@
   <div class="view active" id="view-stock">
 
   <!-- Shared Stockroom / Shopping List header — inside stock view, shown for both stock+shopping -->
-  <div id="stock-shopping-header" class="view-header" style="display:flex;justify-content:space-between;align-items:center;min-height:32px">
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent);flex-shrink:0"><use href="#i-package"></use></svg>
-      <button id="hdr-stock-btn" onclick="switchToStock()"
-        style="font-size:18px;font-weight:700;color:var(--text);background:none;border:none;cursor:pointer;padding:0;font-family:var(--sans)">Your Stockroom</button>
-      <span style="font-size:18px;font-weight:400;color:var(--border);margin:0 8px;pointer-events:none">—</span>
-      <button id="hdr-shopping-btn" onclick="switchToShopping()"
-        style="font-size:18px;font-weight:400;color:var(--muted);background:none;border:none;cursor:pointer;padding:0;font-family:var(--sans)">Shopping List</button>
-    </div>
+  <div id="stock-shopping-header" class="view-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+    <h2 style="font-size:18px;font-weight:700;margin:0;font-family:var(--sans)"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-package"></use></svg> <button id="hdr-stock-btn" onclick="switchToStock()" style="font-size:18px;font-weight:700;color:var(--text);background:none;border:none;cursor:pointer;padding:0;font-family:inherit;vertical-align:baseline">Your Stockroom</button> <span style="font-weight:400;color:var(--border);pointer-events:none">—</span> <button id="hdr-shopping-btn" onclick="switchToShopping()" style="font-size:18px;font-weight:400;color:var(--muted);background:none;border:none;cursor:pointer;padding:0;font-family:inherit;vertical-align:baseline">Shopping List</button></h2>
     <div style="display:flex;align-items:center;gap:10px">
       <div class="days-toggle" id="days-toggle" onclick="toggleShoppingDays()" style="display:none">
         <span id="days-opt-30" class="days-opt active">30</span>
