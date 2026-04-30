@@ -7287,6 +7287,131 @@ function _doExportData(includeSecureNotes = false) {
   document.getElementById('export-reminder-banner')?.remove();
 }
 
+// ═══════════════════════════════════════════════════════════
+//  BACKUP HISTORY — view & download per-user snapshots from R2
+// ═══════════════════════════════════════════════════════════
+// The server snapshots all users' encrypted data every few minutes.
+// This view lets the user see those snapshots and download just their own
+// encrypted blob from any of them. The downloaded file is ciphertext —
+// useless without the user's passphrase. Restoring is currently a manual
+// process via support; this is a personal "time machine" to inspect or
+// archive past states.
+function _bhFmtBytes(n) {
+  if (!n) return '0 B';
+  if (n < 1024) return n + ' B';
+  if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+  return (n/1024/1024).toFixed(2) + ' MB';
+}
+function _bhFmtAge(iso) {
+  if (!iso) return '—';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0)            return 'in the future';
+  if (ms < 60*1000)      return 'just now';
+  if (ms < 60*60*1000)   return Math.floor(ms/60000) + ' min ago';
+  if (ms < 24*60*60*1000) return Math.floor(ms/3600000) + ' hr ago';
+  if (ms < 7*24*60*60*1000) return Math.floor(ms/86400000) + ' day' + (Math.floor(ms/86400000)===1?'':'s') + ' ago';
+  return new Date(iso).toLocaleDateString();
+}
+function _bhSnapshotLabel(key, lastModified) {
+  // Snapshot keys look like "auto/2026-04-29T22-25-00-012Z.json" or "manual/..." or "pre-restore/..."
+  const m = key.match(/^([^\/]+)\//);
+  const tier = m ? m[1] : 'snapshot';
+  const tierLabel = tier === 'auto' ? 'Auto' : tier === 'manual' ? 'Manual' : tier === 'pre-restore' ? 'Pre-restore' : tier;
+  const when = lastModified ? new Date(lastModified).toLocaleString() : '—';
+  return { tierLabel, when };
+}
+
+async function loadBackupHistory() {
+  const container = document.getElementById('backup-history-list');
+  if (!container) return;
+  if (!_kvEmailHash) {
+    toast('Sign in first to view backup history');
+    return;
+  }
+  container.style.display = 'block';
+  container.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:12px">Loading snapshots…</div>';
+
+  try {
+    const authBody = _kvSessionToken && !_kvVerifier
+      ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken }
+      : { emailHash: _kvEmailHash, verifier: _kvVerifier };
+    const res = await fetch(`${WORKER_URL}/user/snapshots/list`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(authBody),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+    if (!data.configured) {
+      container.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:12px">Backup history is not yet enabled on this server.</div>';
+      return;
+    }
+    const snaps = data.snapshots || [];
+    if (!snaps.length) {
+      container.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:12px">No snapshots available yet. Check back in a few minutes.</div>';
+      return;
+    }
+    container.innerHTML = snaps.map(s => {
+      const { tierLabel, when } = _bhSnapshotLabel(s.key, s.lastModified);
+      const age = _bhFmtAge(s.lastModified);
+      return `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px">
+          <div style="flex:1;min-width:0">
+            <div style="color:var(--text);font-weight:600">${tierLabel} snapshot · ${age}</div>
+            <div style="color:var(--muted);font-size:11px;font-family:var(--mono)">${when}</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="downloadMySnapshot('${s.key.replace(/'/g, "\\'")}')">Download</button>
+        </div>`;
+    }).join('');
+  } catch (err) {
+    container.innerHTML = `<div style="padding:14px;color:var(--danger);font-size:12px">Couldn't load snapshots: ${err.message}</div>`;
+  }
+}
+
+async function downloadMySnapshot(snapshotKey) {
+  if (!_kvEmailHash) { toast('Sign in first'); return; }
+  toast('Preparing download…');
+  try {
+    const authBody = _kvSessionToken && !_kvVerifier
+      ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken, snapshotKey }
+      : { emailHash: _kvEmailHash, verifier: _kvVerifier, snapshotKey };
+    const res = await fetch(`${WORKER_URL}/user/snapshots/extract`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(authBody),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (!data.entries || !data.entries.length) {
+      toast('No data found for your account in that snapshot');
+      return;
+    }
+    // Wrap with a friendly preface so the file is self-explanatory if found later
+    const payload = {
+      _readme: 'This is your STOCKROOM backup. The contents are AES-GCM encrypted with your account passphrase. Without the passphrase, this file cannot be read by anyone — including STOCKROOM staff. To restore from this backup, contact support and provide this file.',
+      _format: 'stockroom-user-snapshot-v1',
+      meta:    data.meta,
+      entries: data.entries,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    // Build a sensible filename: stockroom-backup-2026-04-29-22-25.json
+    let fname = 'stockroom-backup';
+    const m = snapshotKey.match(/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2})/);
+    if (m) fname += '-' + m[1].replace('T', '-');
+    else fname += '-' + today();
+    fname += '.json';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fname;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast(`Downloaded ${data.entries.length} encrypted record${data.entries.length===1?'':'s'}`);
+  } catch (err) {
+    toast('Download failed: ' + err.message);
+  }
+}
+
 async function importData(e) {
   if (!isOwner()) { toast('Settings are read-only'); return; }
   const file = e.target.files[0];
@@ -12510,9 +12635,25 @@ async function _saveGroceryListModal(id) {
 
 async function deleteGroceryList(id) {
   if (groceryLists.length <= 1) { toast("Can't delete the last list"); return; }
-  if (!confirm('Delete this list? Items in it will also be deleted.')) return;
-  await Promise.all(groceryItems.filter(i => (i.listId||'default') === id).map(i => addGroceryTombstone(i.id)));
-  groceryItems = groceryItems.filter(i => (i.listId||'default') !== id);
+  const list = groceryLists.find(l => l.id === id);
+  const listName = list?.name || 'this list';
+  const itemCount = groceryItems.filter(i => !i._deletedAt && (i.listId||'default') === id).length;
+  if (!confirm(
+    `Delete "${listName}"?\n\n` +
+    (itemCount
+      ? `${itemCount} item${itemCount===1?'':'s'} will be moved to the recycle bin and can be restored within 30 days.`
+      : `The list is empty.`)
+  )) return;
+  // Soft-delete the items (move them to the recycle bin) rather than hard-delete
+  const stamp = new Date().toISOString();
+  groceryItems.forEach(i => {
+    if ((i.listId||'default') === id && !i._deletedAt) {
+      i._deletedAt = stamp;
+      if (typeof touchField === 'function') {
+        try { touchField(i, '_deletedAt'); } catch(e) {}
+      }
+    }
+  });
   groceryLists = groceryLists.filter(l => l.id !== id);
   if (activeGroceryListId === id) {
     activeGroceryListId = groceryLists[0]?.id || 'default';
@@ -12521,6 +12662,7 @@ async function deleteGroceryList(id) {
   await _saveGroceryLists();
   await saveGrocery();
   renderGrocery();
+  toast(itemCount ? `List deleted, ${itemCount} item${itemCount===1?'':'s'} in recycle bin` : 'List deleted');
 }
 
 // ── Quick List ────────────────────────────────────────────────────────────
@@ -13240,13 +13382,20 @@ function renderGroceryRecycleBin() {
   if (!body) return;
   let bin = document.getElementById('grocery-recycle-bin');
 
-  // Only show items in the recycle bin that belong to the active list, so
-  // the bin doesn't leak across lists. If browsing the multi-list picker
-  // (no active list), hide it entirely.
+  // Show items in the recycle bin that belong to the active list, plus any
+  // "orphan" items whose original list no longer exists (so they can still
+  // be restored after a list is deleted).
   const activeId = activeGroceryListId || '';
+  const validListIds = new Set(groceryLists.map(l => l.id));
+  validListIds.add('default');
   const trashed = activeId
     ? groceryItems
-        .filter(i => i._deletedAt && !_expiredFromBin(i) && (i.listId || 'default') === activeId)
+        .filter(i => {
+          if (!i._deletedAt || _expiredFromBin(i)) return false;
+          const lid = i.listId || 'default';
+          // Belongs to the active list, or is an orphan from a deleted list
+          return lid === activeId || !validListIds.has(lid);
+        })
         .sort((a, b) => new Date(b._deletedAt) - new Date(a._deletedAt))
     : [];
 
@@ -13390,12 +13539,24 @@ async function restoreGroceryItem(id) {
   const item = groceryItems.find(i => i.id === id);
   if (!item) return;
   delete item._deletedAt;
+  // If the item's original list was deleted, move it to the currently active list
+  const validListIds = new Set(groceryLists.map(l => l.id));
+  validListIds.add('default');
+  const lid = item.listId || 'default';
+  let movedToActive = false;
+  if (!validListIds.has(lid)) {
+    item.listId = activeGroceryListId || groceryLists[0]?.id || 'default';
+    movedToActive = true;
+  }
   if (typeof touchField === 'function') {
-    try { touchField(item, '_deletedAt'); } catch(e) {}
+    try {
+      touchField(item, '_deletedAt');
+      if (movedToActive) touchField(item, 'listId');
+    } catch(e) {}
   }
   await saveGrocery();
   renderGrocery();
-  toast('Item restored');
+  toast(movedToActive ? 'Item restored to current list' : 'Item restored');
 }
 
 async function purgeGroceryForever(id) {
@@ -16720,10 +16881,11 @@ async function renderNotes() {
     return;
   }
 
-  // Trash: show "Empty trash" button
-  const trashBar = _notesFilter === 'trash' && visible.length
-    ? `<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="emptyNotesTrash()"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Empty trash</button></div>`
-    : '';
+  // Empty trash pill — show only when viewing Trash and trash is non-empty
+  const emptyChip = document.getElementById('notes-empty-trash-chip');
+  if (emptyChip) {
+    emptyChip.style.display = (_notesFilter === 'trash' && visible.length) ? '' : 'none';
+  }
 
   // Three-tier section headers: Pinned, Secured, Other notes.
   // Headers only show when the 'all' filter is active and at least 2 of the
@@ -16734,7 +16896,7 @@ async function renderNotes() {
   const tiersInUse = (hasPinned ? 1 : 0) + (hasSecured ? 1 : 0) + (hasOther ? 1 : 0);
   const showHeaders = tiersInUse >= 2 && _notesFilter === 'all';
 
-  let html = trashBar;
+  let html = '';
   let lastTier = -1;
 
   function _tierHeader(tier) {

@@ -122,7 +122,7 @@
       <button class="btn-ghost" style="margin:0" onclick="r2SendHeartbeat()">✉️ Send heartbeat email</button>
     </div>
     <div id="r2-snapshot-list" style="display:none;margin-bottom:14px;max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px"></div>
-    <div style="font-size:11px;color:var(--muted);font-style:italic">Auto backup runs every 5 minutes. Snapshots retained: 24h × 5min, 30d × daily, 90d × weekly. Data is AES-GCM encrypted client-side and encrypted at rest by R2.</div>
+    <div style="font-size:11px;color:var(--muted);font-style:italic">Auto backup runs every 5 minutes when data has changed; idle hours are skipped. A forced daily backup at 03:00 UTC ensures retention always has fresh material. Snapshots retained: 24h × 5min, 30d × daily, 90d × weekly. Data is AES-GCM encrypted client-side and encrypted at rest by R2.</div>
   </div>
 </div>
 

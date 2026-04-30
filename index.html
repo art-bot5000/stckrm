@@ -1158,6 +1158,21 @@
       </div>
     </div>
 
+    <!-- ── BACKUP HISTORY ────────────────────────────── -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-clock"></use></svg> Backup History</div>
+      <div class="acc-sec-card">
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Snapshots of your encrypted data</div>
+            <div class="acc-sec-p">Your data is automatically backed up. Tap a snapshot to download your encrypted data from that point in time. The file is useless without your passphrase — even we can't read it. Restoring from a snapshot is currently a manual process; contact support if you need to roll back.</div>
+          </div>
+          <button class="btn btn-ghost acc-sec-btn" onclick="loadBackupHistory()">View history</button>
+        </div>
+        <div id="backup-history-list" style="display:none;margin-top:8px;max-height:380px;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
+      </div>
+    </div>
+
     <!-- ── DANGER ZONE ────────────────────────────────── -->
     <div class="acc-sec-section" style="margin-bottom:20px">
       <div class="acc-sec-section-title" style="color:var(--danger)"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> Danger Zone</div>
