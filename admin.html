@@ -96,7 +96,19 @@
     </div>
     <button class="btn-ghost" onclick="loadCryptoStatus()">📊 Crypto status</button>
     <button class="btn-ghost" onclick="refreshAccounts()">🔄 Refresh</button>
+    <button class="btn-ghost" style="color:var(--danger)" onclick="revokeAllSessions()">🔒 Revoke all sessions</button>
     <div id="log"></div>
+  </div>
+
+  <div class="card">
+    <h2>🔑 Sessions & Audit</h2>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">
+      <button class="btn-ghost" style="margin:0" onclick="loadActiveSessions()">👁 Active sessions</button>
+      <button class="btn-ghost" style="margin:0" onclick="loadAuditLog()">📜 Audit log</button>
+    </div>
+    <div id="sessions-list" style="display:none;margin-bottom:14px;max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px"></div>
+    <div id="audit-list"    style="display:none;margin-bottom:14px;max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px"></div>
+    <div style="font-size:11px;color:var(--muted);font-style:italic">Sessions expire after 15 minutes. Each session is bound to the IP it was created from. Audit log retains 90 days of admin actions.</div>
   </div>
 
   <div class="card">
@@ -230,7 +242,18 @@ async function adminPost(path, extra={}) {
     body: JSON.stringify({ adminSecret, adminToken, ...extra }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    // If the session was rejected (expired or IP changed), kick back to sign-in
+    if (res.status === 401 && data.error && /sign in|Session IP/i.test(data.error)) {
+      log('Session ended: ' + data.error + ' — please sign in again', 'log-err');
+      setTimeout(() => {
+        adminToken  = '';
+        adminSecret = '';
+        location.reload();
+      }, 2000);
+    }
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
   return data;
 }
 
@@ -286,6 +309,121 @@ async function loadCryptoStatus() {
     const d = await adminPost('/admin/crypto-status');
     log(`Crypto — v1: ${d.v1}  v2: ${d.v2}  total: ${d.total}  switchover: ${d.switchoverDate}`, 'log-ok');
   } catch(e) { log('Error: ' + e.message, 'log-err'); }
+}
+
+async function revokeAllSessions() {
+  if (!confirm(
+    'Revoke ALL admin sessions?\n\n' +
+    'This signs out every active admin tab including this one. ' +
+    'You will need to sign in again with the admin secret + email OTP.\n\n' +
+    'Use this if you suspect a session token was leaked, or simply want to force re-auth.'
+  )) return;
+  log('Revoking all sessions…');
+  try {
+    const r = await adminPost('/admin/revoke-all-sessions');
+    log(`✓ ${r.revoked} session(s) revoked. Signing out…`, 'log-ok');
+    // Clear the tokens from this tab and bounce back to sign-in screen
+    setTimeout(() => {
+      adminToken  = '';
+      adminSecret = '';
+      try { sessionStorage.removeItem('stockroom_admin_token'); } catch(_) {}
+      try { sessionStorage.removeItem('stockroom_admin_secret'); } catch(_) {}
+      location.reload();
+    }, 1500);
+  } catch(e) { log('Error: ' + e.message, 'log-err'); }
+}
+
+// ── Active sessions panel ─────────────────────────────
+function _fmtAge(ms) {
+  if (!ms) return '—';
+  const sec = Math.floor((Date.now() - ms) / 1000);
+  if (sec < 60) return sec + 's ago';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return min + 'm ago';
+  const hr = Math.floor(min / 60);
+  return hr + 'h ' + (min % 60) + 'm ago';
+}
+function _shortUA(ua) {
+  if (!ua) return 'unknown';
+  // Pull out a friendly browser/OS sketch — best-effort, not exhaustive
+  let browser = 'Browser';
+  if (/Edg\//.test(ua)) browser = 'Edge';
+  else if (/Chrome\//.test(ua)) browser = 'Chrome';
+  else if (/Firefox\//.test(ua)) browser = 'Firefox';
+  else if (/Safari\//.test(ua) && !/Chrome/.test(ua)) browser = 'Safari';
+  let os = '';
+  if (/Windows/.test(ua)) os = 'Windows';
+  else if (/Mac OS/.test(ua)) os = 'macOS';
+  else if (/Android/.test(ua)) os = 'Android';
+  else if (/iPhone|iPad|iOS/.test(ua)) os = 'iOS';
+  else if (/Linux/.test(ua)) os = 'Linux';
+  return os ? `${browser} on ${os}` : browser;
+}
+async function loadActiveSessions() {
+  const list = document.getElementById('sessions-list');
+  if (!list) return;
+  list.style.display = 'block';
+  list.innerHTML = '<div style="padding:10px;color:var(--muted);font-size:12px">Loading…</div>';
+  try {
+    const r = await adminPost('/admin/sessions');
+    const sessions = r.sessions || [];
+    if (!sessions.length) {
+      list.innerHTML = '<div style="padding:10px;color:var(--muted);font-size:12px">No active sessions.</div>';
+      return;
+    }
+    list.innerHTML = sessions.map(s => {
+      const youBadge = s.current ? '<span style="background:#4cbb8a;color:#0f1117;padding:1px 7px;border-radius:99px;font-size:10px;font-weight:700;margin-left:6px">YOU</span>' : '';
+      return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px">
+        <div style="flex:1;min-width:0">
+          <div style="color:var(--text);font-family:monospace">${s.tokenPrefix}…${youBadge}</div>
+          <div style="color:var(--muted);font-size:11px">${s.ip} · ${_shortUA(s.userAgent)} · ${_fmtAge(s.createdAt)}</div>
+        </div>
+        ${s.current ? '<span style="color:var(--muted);font-size:11px;padding:5px 10px">— this tab —</span>' : `<button class="btn-ghost" style="margin:0;font-size:11px;padding:5px 10px;color:var(--danger)" onclick="revokeOneSession('${s.tokenPrefix}')">Revoke</button>`}
+      </div>`;
+    }).join('');
+  } catch(e) {
+    list.innerHTML = `<div style="padding:10px;color:var(--danger);font-size:12px">Error: ${e.message}</div>`;
+  }
+}
+async function revokeOneSession(prefix) {
+  if (!confirm(`Revoke session ${prefix}…?\n\nThe holder of that session token will be signed out immediately.`)) return;
+  log(`Revoking session ${prefix}…`);
+  try {
+    await adminPost('/admin/revoke-session', { tokenPrefix: prefix });
+    log(`✓ Session ${prefix} revoked`, 'log-ok');
+    loadActiveSessions();
+  } catch(e) { log('Error: ' + e.message, 'log-err'); }
+}
+
+// ── Audit log viewer ──────────────────────────────────
+async function loadAuditLog() {
+  const list = document.getElementById('audit-list');
+  if (!list) return;
+  list.style.display = 'block';
+  list.innerHTML = '<div style="padding:10px;color:var(--muted);font-size:12px">Loading…</div>';
+  try {
+    const r = await adminPost('/admin/audit-log', { limit: 100 });
+    const entries = r.entries || [];
+    if (!entries.length) {
+      list.innerHTML = '<div style="padding:10px;color:var(--muted);font-size:12px">No audit entries yet.</div>';
+      return;
+    }
+    list.innerHTML = entries.map(e => {
+      const colour = e.outcome === 'success' ? 'var(--text)' : e.outcome === 'denied' ? '#e8a838' : 'var(--danger)';
+      const icon   = e.outcome === 'success' ? '✓' : e.outcome === 'denied' ? '⊘' : '✗';
+      const when   = new Date(e.ts).toLocaleString();
+      return `<div style="padding:6px 10px;border-bottom:1px solid var(--border);font-size:12px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="color:${colour};font-weight:700;width:16px;text-align:center">${icon}</span>
+          <code style="color:var(--text);flex:1;font-family:monospace">${e.action}</code>
+          <span style="color:var(--muted);font-size:11px;font-family:monospace">${when}</span>
+        </div>
+        <div style="color:var(--muted);font-size:11px;margin-left:24px;font-family:monospace">${e.ip} · ${_shortUA(e.ua)}${e.details ? ' · ' + e.details : ''}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    list.innerHTML = `<div style="padding:10px;color:var(--danger);font-size:12px">Error: ${e.message}</div>`;
+  }
 }
 
 // ── R2 Backup admin ────────────────────────────────────
