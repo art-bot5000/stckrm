@@ -710,13 +710,13 @@
     #view-stock #stock-toolbar-wrap  { flex: 0 0 135px; max-width: 135px; min-width: 0; }
     #view-stock #stock-sort-wrap     { flex: 0 0 135px; max-width: 135px; min-width: 0; }
     #view-report { max-width: 100%; }
-    /* Compact-width views (~800px centred) */
+    /* Compact-width views (~800px, left-aligned to match Stockroom and Report) */
     #view-grocery,
     #view-reminders,
     #view-notes,
     #view-account-security,
     #view-settings,
-    #view-savings { max-width: 800px; margin-left: auto; margin-right: auto; }
+    #view-savings { max-width: 800px; margin-left: 0; margin-right: 0; }
     #wizard .wizard-box { max-width: 540px; }
     .wizard-features { grid-template-columns: 1fr 1fr; gap: 12px; }
     .country-grid { grid-template-columns: 1fr 1fr 1fr; }
@@ -765,6 +765,11 @@
   .grocery-toolbar { display:flex; gap:8px; align-items:center; margin-bottom:14px; flex-wrap:wrap; }
   .grocery-search { flex:1; min-width:160px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:9px 14px; color:var(--text); font-family:var(--sans); font-size:14px; outline:none; }
   .grocery-search:focus { border-color:var(--accent); }
+
+  /* View header — applied to the title row of every top-level view. Standardises
+     spacing below the title so navigating between tabs doesn't shift the page. */
+  .view-header { margin: 0 0 16px 0; }
+  .view-header h2 { margin: 0; }
 
   /* Stockroom toolbar — Search / Filters / Sort all use the same base surface
      + border so they read as a single related toolbar group. */
@@ -891,8 +896,9 @@
 /* ── Desktop stock toolbar: show Add Item + ⚡ buttons ── */
 @media (min-width:900px) {
   .stock-desktop-actions { display:inline-flex !important; }
-  /* Centre the Amazon import banner on desktop, matching the toolbar width */
-  .amazon-banner { max-width: 800px; margin-left: auto !important; margin-right: auto !important; }
+  /* Amazon import banner sits at top of Stockroom; constrain to 800px to match
+     the toolbar width and align left with the rest of the view. */
+  .amazon-banner { max-width: 800px; }
   /* Cap inline search width */
   #stock-search-inline { flex:0 1 320px !important; max-width:320px; }
   /* Sort select height matches filter button */

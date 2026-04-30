@@ -781,7 +781,7 @@
   <div class="view active" id="view-stock">
 
   <!-- Shared Stockroom / Shopping List header — inside stock view, shown for both stock+shopping -->
-  <div id="stock-shopping-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;min-height:32px">
+  <div id="stock-shopping-header" class="view-header" style="display:flex;justify-content:space-between;align-items:center;min-height:32px">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent);flex-shrink:0"><use href="#i-package"></use></svg>
       <button id="hdr-stock-btn" onclick="switchToStock()"
@@ -927,9 +927,9 @@
 
   <!-- REMINDERS VIEW -->
   <div class="view" id="view-reminders">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:10px">
+    <div class="view-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <div>
-        <h2 style="font-size:18px;font-weight:700"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-bell"></use></svg> Reminders</h2>
+        <h2 style="font-size:18px;font-weight:700;margin:0"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-bell"></use></svg> Reminders</h2>
         <p style="font-size:12px;color:var(--muted);margin-top:3px">Set reminders for Stockroom items or anything else</p>
       </div>
       <button class="btn btn-primary btn-sm" onclick="openAddReminderModal()"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Reminder</button>
@@ -976,9 +976,9 @@
 
   <!-- SAVINGS VIEW -->
   <div class="view" id="view-savings">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:10px">
+    <div class="view-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <div>
-        <h2 style="font-size:18px;font-weight:700"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-piggy-bank"></use></svg> Savings</h2>
+        <h2 style="font-size:18px;font-weight:700;margin:0"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-piggy-bank"></use></svg> Savings</h2>
         <p style="font-size:12px;color:var(--muted);margin-top:3px">Amazon Subscribe &amp; Save opportunities based on your purchase history</p>
       </div>
     </div>
@@ -987,9 +987,9 @@
 
   <!-- REPORT VIEW -->
   <div class="view" id="view-report">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+    <div class="view-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <div>
-        <h2 style="font-size:18px;font-weight:700">Stock Report</h2>
+        <h2 style="font-size:18px;font-weight:700;margin:0"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-clipboard-list"></use></svg> Stock Report</h2>
         <div id="report-date" style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:3px"></div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -1011,7 +1011,7 @@
   <!-- SETTINGS VIEW -->
   <!-- ACCOUNT & SECURITY VIEW (desktop sidebar only) -->
   <div class="view" id="view-account-security">
-    <h2 style="font-size:20px;font-weight:700;margin-bottom:24px"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-shield"></use></svg> Account &amp; Security</h2>
+    <h2 class="view-header" style="font-size:18px;font-weight:700"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-shield"></use></svg> Account &amp; Security</h2>
 
     <!-- ── YOUR DETAILS ───────────────────────────────── -->
     <div class="acc-sec-section" style="margin-bottom:20px">
@@ -1204,7 +1204,7 @@
 
 
   <div class="view" id="view-settings">
-    <h2 style="font-size:20px;font-weight:700;margin-bottom:24px"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-settings"></use></svg> Settings</h2>
+    <h2 class="view-header" style="font-size:18px;font-weight:700"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-settings"></use></svg> Settings</h2>
 
     <!-- ── HOUSEHOLDS ─────────────────────────────────── -->
     <div class="acc-sec-section" style="margin-bottom:20px">
@@ -1470,9 +1470,9 @@
 <!-- ═══ GROCERY VIEW ═══ -->
 <div class="view" id="view-grocery">
   <div id="grocery-sticky-header">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+  <div class="view-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
     <div>
-      <h2 style="font-size:18px;font-weight:700;color:var(--text);font-family:var(--sans)"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-shopping-cart"></use></svg> Groceries</h2>
+      <h2 style="font-size:18px;font-weight:700;color:var(--text);font-family:var(--sans);margin:0"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-shopping-cart"></use></svg> Groceries</h2>
       <div id="grocery-subtitle" style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:3px"></div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -2517,9 +2517,9 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 </button>
 <!-- NOTES VIEW -->
 <div class="view" id="view-notes">
-  <div id="notes-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+  <div id="notes-header" class="view-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
     <div>
-      <h2 style="font-size:18px;font-weight:700"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> Notes</h2>
+      <h2 style="font-size:18px;font-weight:700;margin:0"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-notebook-pen"></use></svg> Notes</h2>
       <p style="font-size:12px;color:var(--muted);margin-top:3px">Personal encrypted notes</p>
     </div>
     <button class="btn btn-primary btn-sm" onclick="openNoteEditor(null)">+ New note</button>
