@@ -1421,12 +1421,128 @@ Deno.serve(async (request) => {
 
   const ADMIN_EMAIL = env.ADMIN_EMAIL;
 
-  async function verifyAdminRequest(body: Record<string,string>): Promise<boolean> {
+  // ── Tier 1 hardening helpers ──────────────────────────
+  function _getClientIp(req: Request): string {
+    // Behind Fly's edge, Fly-Client-IP is the canonical header.
+    // Fall back to common alternatives for local dev.
+    return req.headers.get('Fly-Client-IP')
+        || req.headers.get('CF-Connecting-IP')
+        || req.headers.get('X-Forwarded-For')?.split(',')[0]?.trim()
+        || 'unknown';
+  }
+
+  // 5 verify attempts per IP per minute. Stored as a small counter that
+  // expires after 60s so the limit naturally resets.
+  const ADMIN_VERIFY_RATE_LIMIT = 5;
+  async function _checkVerifyRateLimit(ip: string): Promise<{ ok: boolean; remaining: number; retryAfterSec?: number }> {
+    const key = ['admin_verify_rl', ip];
+    const cur = await kvGet(key);
+    const count = cur.value ? parseInt(String(cur.value), 10) : 0;
+    if (count >= ADMIN_VERIFY_RATE_LIMIT) {
+      return { ok: false, remaining: 0, retryAfterSec: 60 };
+    }
+    await kvSet(key, String(count + 1), { expireIn: 60_000 });
+    return { ok: true, remaining: ADMIN_VERIFY_RATE_LIMIT - (count + 1) };
+  }
+
+  // Per-OTP attempt counter. After 5 wrong tries the OTP itself is purged
+  // so no amount of further attempts can succeed without requesting a new OTP.
+  const ADMIN_OTP_MAX_ATTEMPTS = 5;
+
+  async function _sendAdminAlertEmail(subject: string, html: string): Promise<void> {
+    if (!env.RESEND_API_KEY) return; // silent — alerts are best-effort
+    try {
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: env.FROM_EMAIL, to: [ADMIN_EMAIL], subject, html }),
+      });
+    } catch (e) { console.warn('Admin alert email failed:', (e as Error)?.message); }
+  }
+
+  function _renderAdminAlertEmail(opts: { headerColour: string; title: string; subtitle: string; rows: Array<[string, string]>; footnote?: string }): string {
+    const rowsHTML = opts.rows.map(([k, v]) =>
+      `<tr><td style="color:#7a8097;padding:4px 12px 4px 0;font-size:13px">${k}</td><td style="color:#f0f2f7;font-size:13px">${v}</td></tr>`
+    ).join('');
+    return `
+      <div style="font-family:system-ui,-apple-system,sans-serif;background:#0f1117;color:#f0f2f7;padding:24px;border-radius:8px;max-width:600px">
+        <h2 style="color:${opts.headerColour};margin:0 0 4px;font-size:18px">${opts.title}</h2>
+        <div style="color:#7a8097;font-size:12px;margin-bottom:20px">${opts.subtitle}</div>
+        <table style="border-collapse:collapse;width:100%">${rowsHTML}</table>
+        ${opts.footnote ? `<p style="color:#7a8097;font-size:11px;margin-top:20px;line-height:1.5">${opts.footnote}</p>` : ''}
+      </div>`;
+  }
+
+  // ── Tier 2: audit log ────────────────────────────────
+  // Records every admin action with a timestamp, IP, user-agent, action, and
+  // outcome. Stored under audit_log/<isoTimestamp>-<rand> with 90-day TTL.
+  // Used to investigate suspected compromise after the fact.
+  const AUDIT_LOG_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+  async function _writeAuditLog(opts: {
+    action: string;
+    outcome: 'success' | 'failure' | 'denied';
+    ip: string;
+    userAgent: string;
+    details?: string;
+  }): Promise<void> {
+    try {
+      const ts = new Date().toISOString();
+      const rand = crypto.getRandomValues(new Uint8Array(4))
+        .reduce((s, b) => s + b.toString(16).padStart(2, '0'), '');
+      const key = ['audit_log', `${ts}-${rand}`];
+      await kvSet(key, JSON.stringify({
+        ts,
+        action:    opts.action,
+        outcome:   opts.outcome,
+        ip:        opts.ip,
+        ua:        opts.userAgent.slice(0, 200),
+        details:   (opts.details || '').slice(0, 400),
+      }), { expireIn: AUDIT_LOG_TTL_MS });
+    } catch (e) { console.warn('Audit log write failed:', (e as Error)?.message); }
+  }
+
+  // Returns rich metadata so callers can audit-log with full context.
+  // If the call returns ok=false, the response should be 401 Unauthorised
+  // and the caller should NOT include the reason in the response body
+  // (so an attacker can't distinguish "wrong secret" from "IP mismatch").
+  async function verifyAdminRequest(body: Record<string,string>, req?: Request): Promise<{ ok: boolean; reason?: 'no-secret' | 'bad-secret' | 'no-token' | 'expired-token' | 'ip-mismatch'; sessionMeta?: { ip: string; userAgent: string; createdAt: number } }> {
     const { adminSecret, adminToken } = body;
-    if (!adminSecret || adminSecret !== Deno.env.get('ADMIN_SECRET')) return false;
-    if (!adminToken) return false;
+    if (!adminSecret) return { ok: false, reason: 'no-secret' };
+    if (adminSecret !== Deno.env.get('ADMIN_SECRET')) return { ok: false, reason: 'bad-secret' };
+    if (!adminToken) return { ok: false, reason: 'no-token' };
     const stored = await kvGet(['admin_session', adminToken]);
-    return !!stored.value;
+    if (!stored.value) return { ok: false, reason: 'expired-token' };
+    let meta: { ip: string; userAgent: string; createdAt: number } | null = null;
+    try { meta = JSON.parse(String(stored.value)); } catch (_) { meta = null; }
+    // Strict IP-binding: if a session was created from one IP and is being used
+    // from another, treat the token as compromised. Note that `req` is optional
+    // for backwards compatibility (old call sites that haven't been updated yet
+    // skip the binding check). New code paths must always pass `req`.
+    if (req && meta && typeof meta.ip === 'string') {
+      const callerIp = _getClientIp(req);
+      if (callerIp !== meta.ip && callerIp !== 'unknown' && meta.ip !== 'unknown') {
+        // Alert and revoke this specific token — we don't want to keep a
+        // potentially-compromised session alive.
+        try { await kv.delete(['admin_session', adminToken]); } catch (_) {}
+        _sendAdminAlertEmail(
+          '⚠ STOCKROOM admin: session IP mismatch',
+          _renderAdminAlertEmail({
+            headerColour: '#e8a838',
+            title: '⚠ Admin session blocked — IP mismatch',
+            subtitle: 'A request used a session token from a different IP than it was issued for. The session has been revoked.',
+            rows: [
+              ['When',         new Date().toUTCString()],
+              ['Original IP',  meta.ip],
+              ['Request IP',   callerIp],
+              ['User-Agent',   (req.headers.get('User-Agent') || 'unknown').slice(0, 200)],
+            ],
+            footnote: 'If your IP changed naturally (mobile network, VPN toggle, ISP rotation), just sign in again. If you did not initiate this, your ADMIN_SECRET may be compromised — rotate it immediately.',
+          })
+        ).catch(() => {});
+        return { ok: false, reason: 'ip-mismatch' };
+      }
+    }
+    return { ok: true, sessionMeta: meta || undefined };
   }
 
   if (url.pathname === '/admin/otp/send' && request.method === 'POST') {
@@ -1445,6 +1561,8 @@ Deno.serve(async (request) => {
         .map(b => String(b % 10)).join('');
       await kvSet(['admin_otp'], otp, { expireIn: 10 * 60 * 1000 });
       await kvSet(['admin_otp_sent'], String(Date.now()), { expireIn: 60 * 1000 });
+      // Reset per-OTP attempt counter for the freshly-issued OTP
+      await kvSet(['admin_otp_attempts'], '0', { expireIn: 10 * 60 * 1000 });
       const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:480px;margin:32px auto;color:#333">
         <div style="background:#111;padding:20px 24px;border-radius:12px 12px 0 0;display:flex;align-items:center;gap:10px">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#e8a838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg>
@@ -1462,6 +1580,7 @@ Deno.serve(async (request) => {
         body: JSON.stringify({ from: env.FROM_EMAIL, to: [ADMIN_EMAIL], subject: 'STOCKROOM Admin code', html }),
       });
       if (!r.ok) return json({ error: 'Could not send email' }, corsHeaders, 500);
+      await _writeAuditLog({ action: '/admin/otp/send', outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });
       return json({ ok: true, sentTo: ADMIN_EMAIL }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
@@ -1469,30 +1588,225 @@ Deno.serve(async (request) => {
   if (url.pathname === '/admin/otp/verify' && request.method === 'POST') {
     try {
       const { adminSecret, otp } = await request.json();
+      const ip = _getClientIp(request);
+      const userAgent = request.headers.get('User-Agent') || 'unknown';
+
+      // 1. Per-IP rate limit on verify attempts — closes the brute-force window
+      const rl = await _checkVerifyRateLimit(ip);
+      if (!rl.ok) {
+        await _writeAuditLog({ action: '/admin/otp/verify', outcome: 'denied', ip, userAgent, details: 'rate-limited' });
+        return json({ error: 'Too many attempts — try again in a minute' }, { ...corsHeaders, 'Retry-After': String(rl.retryAfterSec || 60) }, 429);
+      }
+
       if (!adminSecret || adminSecret !== Deno.env.get('ADMIN_SECRET')) {
+        await _writeAuditLog({ action: '/admin/otp/verify', outcome: 'denied', ip, userAgent, details: 'bad-secret' });
         return json({ error: 'Unauthorised' }, corsHeaders, 401);
       }
       if (!otp) return json({ error: 'Missing OTP' }, corsHeaders, 400);
-      const stored = await kvGet(['admin_otp']);
-      if (!stored.value || stored.value !== String(otp).trim()) {
+
+      // 2. Per-OTP attempt counter — invalidate after 5 wrong tries
+      const attemptsRec = await kvGet(['admin_otp_attempts']);
+      const attempts    = attemptsRec.value ? parseInt(String(attemptsRec.value), 10) : 0;
+      const stored      = await kvGet(['admin_otp']);
+
+      if (!stored.value) {
         return json({ error: 'Invalid or expired code' }, corsHeaders, 401);
       }
+
+      if (stored.value !== String(otp).trim()) {
+        const newAttempts = attempts + 1;
+        if (newAttempts >= ADMIN_OTP_MAX_ATTEMPTS) {
+          // Purge the OTP entirely — attacker cannot continue without requesting a new one
+          await kvDel(['admin_otp']);
+          await kvDel(['admin_otp_attempts']);
+          await kvDel(['admin_otp_sent']);
+          // Alert: someone hit the attempt cap
+          _sendAdminAlertEmail(
+            '⚠ STOCKROOM admin: OTP attempt cap hit',
+            _renderAdminAlertEmail({
+              headerColour: '#e8a838',
+              title: '⚠ Possible admin sign-in attack',
+              subtitle: 'The admin OTP was invalidated after too many wrong attempts.',
+              rows: [
+                ['When',       new Date().toUTCString()],
+                ['Source IP',  ip],
+                ['User-Agent', userAgent.slice(0, 200)],
+                ['Attempts',   String(newAttempts)],
+              ],
+              footnote: 'Whoever did this had your ADMIN_SECRET (or guessed it). Rotate it now via flyctl secrets set ADMIN_SECRET=… and review recent activity. The OTP has been invalidated and they would need to request a fresh one to continue.',
+            })
+          ).catch(() => {});
+          return json({ error: 'Too many wrong codes — request a new one' }, corsHeaders, 401);
+        }
+        await kvSet(['admin_otp_attempts'], String(newAttempts), { expireIn: 10 * 60 * 1000 });
+        return json({ error: `Invalid or expired code (${ADMIN_OTP_MAX_ATTEMPTS - newAttempts} attempts left)` }, corsHeaders, 401);
+      }
+
+      // ── Success ──
       await kvDel(['admin_otp']);
       await kvDel(['admin_otp_sent']);
+      await kvDel(['admin_otp_attempts']);
       const token = Array.from(crypto.getRandomValues(new Uint8Array(32)))
         .map(b => b.toString(16).padStart(2,'0')).join('');
-      await kvSet(['admin_session', token], '1', { expireIn: 15 * 60 * 1000 });
+      await kvSet(['admin_session', token], JSON.stringify({ ip, userAgent: userAgent.slice(0, 200), createdAt: Date.now() }), { expireIn: 15 * 60 * 1000 });
+
+      // Sign-in notification email — best-effort, doesn't block the response
+      _sendAdminAlertEmail(
+        '✓ STOCKROOM admin sign-in',
+        _renderAdminAlertEmail({
+          headerColour: '#4cbb8a',
+          title: '✓ Admin sign-in successful',
+          subtitle: 'A new admin session was created.',
+          rows: [
+            ['When',        new Date().toUTCString()],
+            ['Source IP',   ip],
+            ['User-Agent',  userAgent.slice(0, 200)],
+            ['Session TTL', '15 minutes'],
+          ],
+          footnote: 'If this was not you, change ADMIN_SECRET immediately and revoke active sessions in the admin panel.',
+        })
+      ).catch(() => {});
+
+      await _writeAuditLog({ action: '/admin/otp/verify', outcome: 'success', ip, userAgent });
       return json({ ok: true, adminToken: token }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Admin: revoke all active sessions ─────────────────
+  // Wipes every entry under admin_session/* — useful if a session is suspected
+  // compromised or you simply want to force re-auth across all open admin tabs.
+  if (url.pathname === '/admin/revoke-all-sessions' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });
+      let revoked = 0;
+      const iter = kv.list({ prefix: ['admin_session'] });
+      for await (const entry of iter) {
+        try { await kv.delete(entry.key); revoked++; } catch(_) {}
+      }
+      const ip = _getClientIp(request);
+      console.log(`Admin: ${revoked} session(s) revoked from ${ip}`);
+      _sendAdminAlertEmail(
+        '🔒 STOCKROOM admin sessions revoked',
+        _renderAdminAlertEmail({
+          headerColour: '#e8a838',
+          title: '🔒 All admin sessions revoked',
+          subtitle: 'A revoke-all-sessions action was performed.',
+          rows: [
+            ['When',       new Date().toUTCString()],
+            ['Source IP',  ip],
+            ['Sessions revoked', String(revoked)],
+          ],
+        })
+      ).catch(() => {});
+      return json({ ok: true, revoked }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Admin: list active sessions ────────────────────────
+  // Returns metadata for every entry under admin_session/*, sorted newest first.
+  // The token used to make this request is flagged with `current: true`.
+  if (url.pathname === '/admin/sessions' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });
+
+      const sessions: Array<{ tokenPrefix: string; ip: string; userAgent: string; createdAt: number; current: boolean }> = [];
+      const iter = kv.list({ prefix: ['admin_session'] });
+      for await (const entry of iter) {
+        const token = (entry.key as string[])[1];
+        let meta: { ip?: string; userAgent?: string; createdAt?: number } = {};
+        try { meta = JSON.parse(String(entry.value)); } catch (_) { /* legacy '1' value */ }
+        sessions.push({
+          tokenPrefix: token.slice(0, 8),
+          ip:          meta.ip || 'unknown',
+          userAgent:   meta.userAgent || 'unknown',
+          createdAt:   meta.createdAt || 0,
+          current:     token === body.adminToken,
+        });
+      }
+      sessions.sort((a, b) => b.createdAt - a.createdAt);
+      return json({ ok: true, sessions }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Admin: revoke a single session by token prefix ────
+  if (url.pathname === '/admin/revoke-session' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      const { tokenPrefix } = body;
+      if (!tokenPrefix || typeof tokenPrefix !== 'string' || tokenPrefix.length < 6) {
+        return json({ error: 'Invalid tokenPrefix' }, corsHeaders, 400);
+      }
+      // Find matching session and delete it
+      let deleted = false;
+      const iter = kv.list({ prefix: ['admin_session'] });
+      for await (const entry of iter) {
+        const token = (entry.key as string[])[1];
+        if (token.startsWith(tokenPrefix)) {
+          await kv.delete(entry.key);
+          deleted = true;
+          break;
+        }
+      }
+      await _writeAuditLog({ action: url.pathname, outcome: deleted ? 'success' : 'failure', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `prefix=${tokenPrefix} deleted=${deleted}` });
+      return json({ ok: deleted, deleted }, corsHeaders, deleted ? 200 : 404);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Admin: audit log viewer ────────────────────────────
+  // Returns the most recent audit log entries, newest first. Capped at 200.
+  if (url.pathname === '/admin/audit-log' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      // Note: not writing a success audit log here, since reading the log is
+      // a meta-action that would create noise on every refresh. The denied
+      // case is logged so we still see attempts to read the log without auth.
+
+      const limit = Math.min(parseInt(String(body.limit || '100'), 10) || 100, 200);
+      const entries: Array<{ ts: string; action: string; outcome: string; ip: string; ua: string; details?: string }> = [];
+      const iter = kv.list({ prefix: ['audit_log'] }, { reverse: true, limit });
+      for await (const entry of iter) {
+        try {
+          const v = JSON.parse(String(entry.value));
+          entries.push(v);
+        } catch (_) { /* skip malformed entries */ }
+      }
+      return json({ ok: true, entries }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
   // ── Admin: crypto version status ──────────────────────
   // Returns counts of v1/v2 users so we know when migration is complete.
-  // Protected by a simple admin secret in env.
   if (url.pathname === '/admin/crypto-status' && request.method === 'POST') {
     try {
       const body = await request.json();
-      if (!await verifyAdminRequest(body)) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });
       let v1Count = 0, v2Count = 0, unknownCount = 0;
       const iter = kv.list({ prefix: ['user'] });
       const seen = new Set();
@@ -1531,7 +1845,12 @@ Deno.serve(async (request) => {
   if (url.pathname === '/admin/list-accounts' && request.method === 'POST') {
     try {
       const body = await request.json();
-      if (!await verifyAdminRequest(body)) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });
       const accounts: { emailHash: string; email: string | null; created: string | null; cryptoVersion: string; migrated: string | null }[] = [];
       const iter = kv.list({ prefix: ['user'] });
       const seen = new Set<string>();
@@ -1569,7 +1888,12 @@ Deno.serve(async (request) => {
     try {
       const body = await request.json();
       const { emailHash } = body;
-      if (!await verifyAdminRequest(body)) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });
       if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);
       const existing = await kvGet(['user', emailHash, 'verifier']);
       if (!existing.value) return json({ error: 'Account not found' }, corsHeaders, 404);
@@ -1583,7 +1907,12 @@ Deno.serve(async (request) => {
   if (url.pathname === '/admin/r2/status' && request.method === 'POST') {
     try {
       const body = await request.json();
-      if (!await verifyAdminRequest(body)) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });
       if (!r2Configured()) {
         return json({ ok: true, configured: false, missing: [
           R2_CFG.accountId ? null : 'R2_ACCOUNT_ID',
@@ -1616,7 +1945,12 @@ Deno.serve(async (request) => {
   if (url.pathname === '/admin/r2/list' && request.method === 'POST') {
     try {
       const body = await request.json();
-      if (!await verifyAdminRequest(body)) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });
       const prefix = (body.prefix || '').toString();
       const all = await listR2Snapshots(prefix);
       // Most recent first, capped to 200 entries to keep responses small
@@ -1628,7 +1962,12 @@ Deno.serve(async (request) => {
   if (url.pathname === '/admin/r2/backup-now' && request.method === 'POST') {
     try {
       const body = await request.json();
-      if (!await verifyAdminRequest(body)) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });
       const result = await backupKVToR2('manual');
       return json(result, corsHeaders, result.ok ? 200 : 500);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
@@ -1638,7 +1977,12 @@ Deno.serve(async (request) => {
   if (url.pathname === '/admin/r2/prune' && request.method === 'POST') {
     try {
       const body = await request.json();
-      if (!await verifyAdminRequest(body)) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });
       const result = await pruneR2Snapshots();
       return json({ ok: true, ...result }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
@@ -1650,7 +1994,12 @@ Deno.serve(async (request) => {
   if (url.pathname === '/admin/r2/restore' && request.method === 'POST') {
     try {
       const body = await request.json();
-      if (!await verifyAdminRequest(body)) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });
       const { snapshotKey, confirm } = body;
       if (confirm !== 'RESTORE') return json({ error: 'Confirmation phrase missing — body.confirm must equal "RESTORE"' }, corsHeaders, 400);
       if (!snapshotKey || typeof snapshotKey !== 'string') return json({ error: 'Missing snapshotKey' }, corsHeaders, 400);
@@ -1666,7 +2015,12 @@ Deno.serve(async (request) => {
   if (url.pathname === '/admin/r2/send-heartbeat' && request.method === 'POST') {
     try {
       const body = await request.json();
-      if (!await verifyAdminRequest(body)) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });
       const result = await sendBackupHeartbeatEmail();
       return json(result, corsHeaders, result.ok ? 200 : 500);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
