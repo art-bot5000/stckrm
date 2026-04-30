@@ -107,6 +107,7 @@
       <button class="btn-ghost" style="margin:0" onclick="r2BackupNow()">💾 Backup now</button>
       <button class="btn-ghost" style="margin:0" onclick="r2ListSnapshots()">📜 List snapshots</button>
       <button class="btn-ghost" style="margin:0" onclick="r2PruneNow()">🧹 Prune now</button>
+      <button class="btn-ghost" style="margin:0" onclick="r2SendHeartbeat()">✉️ Send heartbeat email</button>
     </div>
     <div id="r2-snapshot-list" style="display:none;margin-bottom:14px;max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px"></div>
     <div style="font-size:11px;color:var(--muted);font-style:italic">Auto backup runs every 5 minutes. Snapshots retained: 24h × 5min, 30d × daily, 90d × weekly. Data is AES-GCM encrypted client-side and encrypted at rest by R2.</div>
@@ -339,6 +340,18 @@ async function r2PruneNow() {
     const r = await adminPost('/admin/r2/prune');
     log(`Prune complete — kept ${r.kept}, pruned ${r.pruned}`, 'log-ok');
     r2Refresh();
+  } catch(e) { log('Error: ' + e.message, 'log-err'); }
+}
+async function r2SendHeartbeat() {
+  if (!confirm(`Send a backup heartbeat email now to the admin address? This is the same email that auto-sends daily at 03:05 UTC.`)) return;
+  log('Sending heartbeat email…');
+  try {
+    const r = await adminPost('/admin/r2/send-heartbeat');
+    if (r.ok) {
+      log(`✓ Heartbeat sent — ${r.total} KV entries, latest snapshot: ${r.latest || 'none'}`, 'log-ok');
+    } else {
+      log('Heartbeat failed: ' + (r.error || 'unknown'), 'log-err');
+    }
   } catch(e) { log('Error: ' + e.message, 'log-err'); }
 }
 async function r2ListSnapshots() {
