@@ -1658,10 +1658,13 @@ Deno.serve(async (request) => {
   // If the call returns ok=false, the response should be 401 Unauthorised
   // and the caller should NOT include the reason in the response body
   // (so an attacker can't distinguish "wrong secret" from "IP mismatch").
-  async function verifyAdminRequest(body: Record<string,string>, req?: Request): Promise<{ ok: boolean; reason?: 'no-secret' | 'bad-secret' | 'no-token' | 'expired-token' | 'ip-mismatch'; sessionMeta?: { ip: string; userAgent: string; createdAt: number } }> {
-    const { adminSecret, adminToken } = body;
-    if (!adminSecret) return { ok: false, reason: 'no-secret' };
-    if (adminSecret !== Deno.env.get('ADMIN_SECRET')) return { ok: false, reason: 'bad-secret' };
+  // Verifies an authenticated admin request. Once a session token has been
+  // issued (via /admin/otp/verify), the token alone is sufficient — we do
+  // NOT re-check the master secret on every request. This minimises how
+  // often the secret travels over the network. The token is a 256-bit
+  // random value, IP-bound, and expires after 15 minutes.
+  async function verifyAdminRequest(body: Record<string,string>, req?: Request): Promise<{ ok: boolean; reason?: 'no-token' | 'expired-token' | 'ip-mismatch'; sessionMeta?: { ip: string; userAgent: string; createdAt: number } }> {
+    const { adminToken } = body;
     if (!adminToken) return { ok: false, reason: 'no-token' };
     const stored = await kvGet(['admin_session', adminToken]);
     if (!stored.value) return { ok: false, reason: 'expired-token' };
