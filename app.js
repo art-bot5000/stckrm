@@ -114,8 +114,8 @@ function getStores(code) { return STORES_BY_COUNTRY[code] || STORES_BY_COUNTRY.O
 // ═══════════════════════════════════════════
 
 const DB_NAME    = 'stockroom';
-const DB_VERSION = 3;
-const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists','reminderDeletedIds','bills','billInstances','budgetSettings'];
+const DB_VERSION = 4;
+const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists','reminderDeletedIds','bills','billInstances','budgetSettings','budgetCategories','transactions','budgetCategoryDeletedIds','budgetTransactionDeletedIds'];
 
 let _db = null;
 
@@ -2587,6 +2587,7 @@ async function loadProfile(key) {
     await loadReminders();
     await loadGrocery();
     await loadBudget();
+    await loadBudgetSpend();
     await saveCurrentProfile();
   }
   // Sweep expired items from the 30-day recycle bin
@@ -11444,6 +11445,9 @@ async function kvPush() {
     shareTargets: _shareTargets,
     notes: notes.map(n => ({ ...n, body: n.locked ? undefined : n.body })),
     bills, billInstances, budgetSettings,
+    budgetCategories, transactions,
+    budgetCategoryDeletedIds:    [...budgetCategoryDeletedIds],
+    budgetTransactionDeletedIds: [...budgetTransactionDeletedIds],
   });
   _keyFingerprint(_kvKey).then(fp => console.log('[key] kvPush: encrypting with key fingerprint:', fp));
   const ciphertext = await kvEncrypt(_kvKey, payload);
@@ -11620,6 +11624,24 @@ async function kvSyncNow(silent = false) {
       }
       if (Array.isArray(remote.bills) || remote.billInstances || remote.budgetSettings) {
         await saveBudgetLocal();
+      }
+      // Budget — discretionary spend (Phase 2)
+      // Tombstones first so merges respect them
+      if (Array.isArray(remote.budgetCategoryDeletedIds)) {
+        budgetCategoryDeletedIds = mergeBudgetTombstoneSet(budgetCategoryDeletedIds, remote.budgetCategoryDeletedIds);
+      }
+      if (Array.isArray(remote.budgetTransactionDeletedIds)) {
+        budgetTransactionDeletedIds = mergeBudgetTombstoneSet(budgetTransactionDeletedIds, remote.budgetTransactionDeletedIds);
+      }
+      if (Array.isArray(remote.budgetCategories)) {
+        budgetCategories = mergeBudgetCategories(budgetCategories, remote.budgetCategories);
+      }
+      if (remote.transactions && typeof remote.transactions === 'object') {
+        transactions = mergeTransactions(transactions, remote.transactions);
+      }
+      if (Array.isArray(remote.budgetCategories) || remote.transactions
+          || Array.isArray(remote.budgetCategoryDeletedIds) || Array.isArray(remote.budgetTransactionDeletedIds)) {
+        await saveBudgetSpendLocal();
       }
       if (remote.reminders && Array.isArray(remote.reminders)) {
         const localREmpty = reminders.length === 0;
@@ -13399,6 +13421,553 @@ async function confirmBudgetPermBackfill() {
 function dismissBudgetPermBackfill() {
   document.getElementById('budget-backfill-banner').style.display = 'none';
   if (typeof window !== 'undefined') window._budgetPermBackfillTargets = [];
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BUDGET — Phase 2a Foundations (discretionary spend)
+//  Insertion point: in app.js, IMMEDIATELY AFTER the Phase 1 BUDGET UI block
+//  (just before the GROCERY LIST section).
+//
+//  Depends on (defined elsewhere): dbGet, dbPut, _syncQueue, _kvEmailHash,
+//  uid, toast, _yyyymm, _yyyymmFromString, _parseYyyymm, _nowIso, _money,
+//  saveBudgetLocal (Phase 1 already defines all of these except dbPut).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── State ──────────────────────────────────────────────────────────────────
+let budgetCategories         = [];          // [{id, name, monthlyBudget, weeklyBudget, budgetCycle, color, archived, createdAt, updatedAt}]
+let transactions             = {};          // {'YYYY-MM': {[txId]: tx}}
+let budgetCategoryDeletedIds = new Set();   // tombstones for category deletions
+let budgetTransactionDeletedIds = new Set(); // tombstones for tx deletions
+let _budgetSetupOffered      = false;       // first-run seed modal — set true after first dismiss/accept
+
+// ── Persistence ────────────────────────────────────────────────────────────
+async function loadBudgetSpend() {
+  const cats     = await dbGet('budgetCategories',         'budgetCategories');
+  const txs      = await dbGet('transactions',             'transactions');
+  const catTomb  = await dbGet('budgetCategoryDeletedIds', 'budgetCategoryDeletedIds');
+  const txTomb   = await dbGet('budgetTransactionDeletedIds', 'budgetTransactionDeletedIds');
+  const setupFlag= await dbGet('budgetSettings',           '_setupOffered');
+
+  if (Array.isArray(cats))        budgetCategories = cats;
+  if (txs && typeof txs === 'object') transactions = txs;
+  if (Array.isArray(catTomb))     budgetCategoryDeletedIds    = new Set(catTomb);
+  if (Array.isArray(txTomb))      budgetTransactionDeletedIds = new Set(txTomb);
+  if (setupFlag === true)         _budgetSetupOffered = true;
+}
+
+async function saveBudgetSpendLocal() {
+  await dbPut('budgetCategories', 'budgetCategories', budgetCategories);
+  await dbPut('transactions',     'transactions',     transactions);
+  await dbPut('budgetCategoryDeletedIds',    'budgetCategoryDeletedIds',    [...budgetCategoryDeletedIds]);
+  await dbPut('budgetTransactionDeletedIds', 'budgetTransactionDeletedIds', [...budgetTransactionDeletedIds]);
+  await dbPut('budgetSettings',   '_setupOffered',    _budgetSetupOffered);
+}
+
+// ── Default seed for the first-run setup modal (data only — UI in turn 2) ──
+const _BUDGET_CATEGORY_SEED = [
+  { name: 'Pete spending',  monthlyBudget: 400, weeklyBudget: null, budgetCycle: 'monthly', color: '#5b8dee' },
+  { name: 'Carla spending', monthlyBudget: 400, weeklyBudget: null, budgetCycle: 'monthly', color: '#e85d8e' },
+  { name: 'Monday nights',  monthlyBudget: 150, weeklyBudget: null, budgetCycle: 'monthly', color: '#e8a838' },
+  { name: 'Shopping',       monthlyBudget: 475, weeklyBudget: 100,  budgetCycle: 'monthly', color: '#4cbb8a' },
+  { name: 'Kids stuff',     monthlyBudget: 100, weeklyBudget: null, budgetCycle: 'monthly', color: '#b35bee' },
+  { name: 'Activities',     monthlyBudget: 250, weeklyBudget: null, budgetCycle: 'monthly', color: '#5bd4e8' },
+];
+
+function getBudgetCategorySeed() {
+  // Returns the seed as templates. UI will let user edit before committing.
+  return _BUDGET_CATEGORY_SEED.map(s => ({ ...s }));
+}
+
+// ── Category CRUD ──────────────────────────────────────────────────────────
+async function createBudgetCategory(input) {
+  const cat = {
+    id:            'cat_' + (typeof uid === 'function' ? uid() : Date.now() + '_' + Math.random().toString(36).slice(2, 7)),
+    name:          (input.name || '').trim() || 'Untitled category',
+    monthlyBudget: input.monthlyBudget != null ? Number(input.monthlyBudget) : null,
+    weeklyBudget:  input.weeklyBudget  != null ? Number(input.weeklyBudget)  : null,
+    budgetCycle:   ['monthly', 'weekly', 'none'].includes(input.budgetCycle) ? input.budgetCycle : 'monthly',
+    color:         input.color || _pickCategoryColor(),
+    archived:      false,
+    createdAt:     _nowIso(),
+    updatedAt:     _nowIso(),
+  };
+  budgetCategories.push(cat);
+  await saveBudgetSpendLocal();
+  _syncQueue?.enqueue();
+  return cat;
+}
+
+async function updateBudgetCategory(id, patch) {
+  const idx = budgetCategories.findIndex(c => c.id === id);
+  if (idx === -1) return null;
+  budgetCategories[idx] = { ...budgetCategories[idx], ...patch, updatedAt: _nowIso() };
+  await saveBudgetSpendLocal();
+  _syncQueue?.enqueue();
+  return budgetCategories[idx];
+}
+
+async function archiveBudgetCategory(id) {
+  return updateBudgetCategory(id, { archived: true });
+}
+
+async function unarchiveBudgetCategory(id) {
+  return updateBudgetCategory(id, { archived: false });
+}
+
+// Hard delete — only used when user is sure (e.g. category has no history)
+// Adds tombstone so sync doesn't resurrect.
+async function deleteBudgetCategoryHard(id) {
+  budgetCategories = budgetCategories.filter(c => c.id !== id);
+  budgetCategoryDeletedIds.add(id);
+  // Optionally orphan any transactions referencing it — by leaving categoryId
+  // pointing at a non-existent category. UI can render these as "Uncategorised".
+  await saveBudgetSpendLocal();
+  _syncQueue?.enqueue();
+}
+
+function getActiveBudgetCategories() {
+  return budgetCategories.filter(c => !c.archived);
+}
+
+function getBudgetCategoryById(id) {
+  return budgetCategories.find(c => c.id === id) || null;
+}
+
+// Cycle through a small palette when colour isn't specified
+const _BUDGET_PALETTE = ['#5b8dee', '#e85d8e', '#e8a838', '#4cbb8a', '#b35bee', '#5bd4e8', '#e85050', '#7880a0'];
+function _pickCategoryColor() {
+  const used = new Set(budgetCategories.map(c => c.color));
+  for (const c of _BUDGET_PALETTE) if (!used.has(c)) return c;
+  return _BUDGET_PALETTE[budgetCategories.length % _BUDGET_PALETTE.length];
+}
+
+// ── Transaction CRUD ───────────────────────────────────────────────────────
+async function createTransaction(input) {
+  const date = input.date || (new Date().toISOString().slice(0, 10));
+  const yyyymm = _yyyymmFromString(date);
+  const tx = {
+    id:         'tx_' + (typeof uid === 'function' ? uid() : Date.now() + '_' + Math.random().toString(36).slice(2, 7)),
+    date,
+    amount:     Number(input.amount) || 0,
+    where:      (input.where || '').trim(),
+    notes:      (input.notes || '').trim(),
+    categoryId: input.categoryId || null,
+    source:     input.source || 'manual',
+    createdAt:  _nowIso(),
+    createdBy:  _kvEmailHash || null,
+    updatedAt:  _nowIso(),
+  };
+  if (!transactions[yyyymm]) transactions[yyyymm] = {};
+  transactions[yyyymm][tx.id] = tx;
+  await saveBudgetSpendLocal();
+  _syncQueue?.enqueue();
+  return tx;
+}
+
+async function updateTransaction(id, patch) {
+  // Tx might have moved months if date changed — find current location first
+  const located = _findTransaction(id);
+  if (!located) return null;
+  const { yyyymm: oldYm, tx: existing } = located;
+  const merged = { ...existing, ...patch, updatedAt: _nowIso() };
+  const newYm = patch.date ? _yyyymmFromString(patch.date) : oldYm;
+
+  if (newYm !== oldYm) {
+    // Move across months
+    delete transactions[oldYm][id];
+    if (Object.keys(transactions[oldYm]).length === 0) delete transactions[oldYm];
+    if (!transactions[newYm]) transactions[newYm] = {};
+    transactions[newYm][id] = merged;
+  } else {
+    transactions[oldYm][id] = merged;
+  }
+  await saveBudgetSpendLocal();
+  _syncQueue?.enqueue();
+  return merged;
+}
+
+async function deleteTransaction(id) {
+  const located = _findTransaction(id);
+  if (!located) return false;
+  delete transactions[located.yyyymm][id];
+  if (Object.keys(transactions[located.yyyymm]).length === 0) {
+    delete transactions[located.yyyymm];
+  }
+  budgetTransactionDeletedIds.add(id);
+  await saveBudgetSpendLocal();
+  _syncQueue?.enqueue();
+  return true;
+}
+
+function _findTransaction(id) {
+  for (const yyyymm of Object.keys(transactions)) {
+    if (transactions[yyyymm][id]) return { yyyymm, tx: transactions[yyyymm][id] };
+  }
+  return null;
+}
+
+function getTransaction(id) {
+  return _findTransaction(id)?.tx || null;
+}
+
+function getTransactionsForMonth(yyyymm) {
+  return Object.values(transactions[yyyymm] || {});
+}
+
+function getTransactionsForRange(startIso, endIso) {
+  // startIso and endIso are 'YYYY-MM-DD' inclusive
+  const out = [];
+  const startMonth = _yyyymmFromString(startIso);
+  const endMonth   = _yyyymmFromString(endIso);
+  for (const yyyymm of Object.keys(transactions)) {
+    if (yyyymm < startMonth || yyyymm > endMonth) continue;
+    for (const tx of Object.values(transactions[yyyymm])) {
+      if (tx.date >= startIso && tx.date <= endIso) out.push(tx);
+    }
+  }
+  return out;
+}
+
+// ── Aggregations ───────────────────────────────────────────────────────────
+function getSpendForCategory(yyyymm, categoryId) {
+  let total = 0;
+  for (const tx of Object.values(transactions[yyyymm] || {})) {
+    if (tx.categoryId === categoryId) total += (tx.amount || 0);
+  }
+  return Math.round(total * 100) / 100;
+}
+
+function getSpendForCategoryInRange(startIso, endIso, categoryId) {
+  let total = 0;
+  for (const tx of getTransactionsForRange(startIso, endIso)) {
+    if (tx.categoryId === categoryId) total += (tx.amount || 0);
+  }
+  return Math.round(total * 100) / 100;
+}
+
+function getTotalSpendForMonth(yyyymm) {
+  let total = 0;
+  for (const tx of Object.values(transactions[yyyymm] || {})) {
+    total += (tx.amount || 0);
+  }
+  return Math.round(total * 100) / 100;
+}
+
+// Returns { spent, budget, pct, status: 'ok'|'warn'|'over' } for a category in a given period.
+// `period` is 'month' or 'week'. For 'week', `referenceDate` and `weekStart` determine the range.
+function getCategoryProgress(categoryId, period, referenceDate = null, weekStart = 'mon') {
+  const cat = getBudgetCategoryById(categoryId);
+  if (!cat) return null;
+
+  let spent, budget;
+  if (period === 'week') {
+    const ref = referenceDate ? new Date(referenceDate + 'T12:00:00') : new Date();
+    const { startIso, endIso } = getWeekRange(ref, weekStart);
+    spent  = getSpendForCategoryInRange(startIso, endIso, categoryId);
+    budget = (cat.budgetCycle === 'weekly') ? cat.weeklyBudget
+           : (cat.monthlyBudget != null ? cat.monthlyBudget / 4.345 : null);
+  } else {
+    const yyyymm = referenceDate ? _yyyymmFromString(referenceDate) : _yyyymm(new Date());
+    spent  = getSpendForCategory(yyyymm, categoryId);
+    budget = (cat.budgetCycle === 'monthly') ? cat.monthlyBudget
+           : (cat.weeklyBudget != null ? cat.weeklyBudget * 4.345 : null);
+  }
+
+  if (budget == null || budget === 0) {
+    return { spent: Math.round(spent * 100) / 100, budget: null, pct: null, status: 'none' };
+  }
+  const pct = spent / budget;
+  let status = 'ok';
+  if      (pct >= 1.0)  status = 'over';
+  else if (pct >= 0.8)  status = 'warn';
+  return {
+    spent:  Math.round(spent * 100) / 100,
+    budget: Math.round(budget * 100) / 100,
+    pct,
+    status,
+  };
+}
+
+// ── Period helpers ─────────────────────────────────────────────────────────
+// Returns the start and end ISO dates of the week containing `date`,
+// where weekStart is 'mon' or 'sun'.
+function getWeekRange(date, weekStart = 'mon') {
+  const d = new Date(date);
+  d.setHours(12, 0, 0, 0);
+  const dow = d.getDay(); // 0=Sun..6=Sat
+  const offsetToStart = (weekStart === 'mon')
+    ? (dow === 0 ? -6 : 1 - dow)   // Mon=1; Sunday wraps to -6
+    : (-dow);                       // Sun=0
+  const start = new Date(d);
+  start.setDate(d.getDate() + offsetToStart);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  const iso = (x) => `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`;
+  return { startIso: iso(start), endIso: iso(end), startDate: start, endDate: end };
+}
+
+// ── Quick-add parser ───────────────────────────────────────────────────────
+// Parses input like:
+//   "tesco 47.50, m&s 12.99 shopping, parking 4 monday-nights"
+// Returns an array of partially-parsed entries:
+//   [{ where, amount, categoryHint, categoryId, raw }, ...]
+// `categoryId` is resolved using merchant memory + alias matching + fallback.
+//
+// Tokenisation rules:
+//   - Comma-separated entries.
+//   - Within an entry, words are separated by whitespace.
+//   - Exactly one word is the amount (a number, optionally with £ or decimals).
+//   - The last non-amount word MAY be a category alias/name. If it matches one,
+//     it's the category hint. Otherwise it's part of the merchant name.
+//   - The remaining words form the merchant ('where').
+//
+// Resolution order for category:
+//   1. Explicit hint matched against alias map → use that category.
+//   2. Merchant memory: look for the most-recent transaction with matching
+//      `where` (case-insensitive) and use its categoryId.
+//   3. Fallback to `defaultCategoryId` (passed by caller).
+//
+// Returns null entries for un-parseable tokens — caller decides what to show.
+function parseQuickAddInput(raw, { defaultCategoryId = null } = {}) {
+  if (!raw || typeof raw !== 'string') return [];
+  const aliasMap = buildBudgetCategoryAliasMap();
+  const merchantMap = buildBudgetMerchantMemory();
+
+  const entries = raw.split(',').map(s => s.trim()).filter(Boolean);
+  const out = [];
+
+  for (const entry of entries) {
+    const parsed = _parseQuickAddOne(entry, aliasMap, merchantMap, defaultCategoryId);
+    out.push(parsed);
+  }
+  return out;
+}
+
+function _parseQuickAddOne(entry, aliasMap, merchantMap, defaultCategoryId) {
+  const tokens = entry.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) {
+    return { ok: false, raw: entry, error: 'empty' };
+  }
+
+  // Find the amount: first token that looks numeric (with optional £ prefix)
+  let amount = null;
+  let amountIdx = -1;
+  for (let i = 0; i < tokens.length; i++) {
+    const cleaned = tokens[i].replace(/^£/, '');
+    if (/^-?\d+(\.\d+)?$/.test(cleaned)) {
+      amount = parseFloat(cleaned);
+      amountIdx = i;
+      break;
+    }
+  }
+  if (amount == null) {
+    return { ok: false, raw: entry, error: 'no_amount' };
+  }
+
+  // Remaining tokens (excluding amount) — split into "before" and "after"
+  const before = tokens.slice(0, amountIdx);
+  const after  = tokens.slice(amountIdx + 1);
+
+  // Try to resolve category from EITHER the last word of `after`,
+  // OR (if `after` is empty) the last word of `before`.
+  let categoryHint = null;
+  let categoryId   = null;
+  let where        = '';
+
+  if (after.length > 0) {
+    // "merchant 47.50 hint" — last word of after is the hint candidate
+    const candidate = after.join(' ').toLowerCase();
+    if (aliasMap[candidate]) {
+      categoryHint = candidate;
+      categoryId   = aliasMap[candidate];
+      where = before.join(' ');
+    } else {
+      // No category match — treat all words as merchant
+      where = (before.join(' ') + ' ' + after.join(' ')).trim();
+    }
+  } else if (before.length > 1) {
+    // "merchant words 47.50" — try the last word as hint
+    const lastWord = before[before.length - 1].toLowerCase();
+    if (aliasMap[lastWord]) {
+      categoryHint = lastWord;
+      categoryId   = aliasMap[lastWord];
+      where = before.slice(0, -1).join(' ');
+    } else {
+      where = before.join(' ');
+    }
+  } else {
+    where = before.join(' ');
+  }
+
+  // Merchant memory fallback if no category was hinted
+  if (!categoryId && where) {
+    const memoryHit = merchantMap[where.toLowerCase()];
+    if (memoryHit) categoryId = memoryHit;
+  }
+  if (!categoryId) categoryId = defaultCategoryId;
+
+  return {
+    ok:           true,
+    raw:          entry,
+    where:        where.trim(),
+    amount,
+    categoryHint,
+    categoryId,
+    fromMemory:   !categoryHint && !!merchantMap[where.toLowerCase()],
+    fromDefault:  !categoryHint && !merchantMap[where.toLowerCase()] && categoryId === defaultCategoryId,
+  };
+}
+
+// Build a map of `alias → categoryId` from active categories.
+// Aliases include the full lowercase name, hyphen-replaced name, first word,
+// and a 3-4 char prefix.
+function buildBudgetCategoryAliasMap() {
+  const map = {};
+  for (const cat of getActiveBudgetCategories()) {
+    const aliases = generateAliasesForCategory(cat.name);
+    for (const alias of aliases) {
+      // First wins — earlier categories take precedence on collision.
+      if (!(alias in map)) map[alias] = cat.id;
+    }
+  }
+  return map;
+}
+
+function generateAliasesForCategory(name) {
+  const lower    = name.toLowerCase().trim();
+  const hyphen   = lower.replace(/\s+/g, '-');
+  const stripped = lower.replace(/\s+/g, '');
+  const first    = lower.split(/\s+/)[0];
+  // We DELIBERATELY do not generate 3- or 4-char prefixes — they collide too
+  // often with words that appear in merchant names ("shop" matches "Shopping"
+  // but also appears in "mystery shop"). Users wanting a short alias should
+  // pick a category name whose first word is short.
+  return [...new Set([lower, hyphen, stripped, first].filter(s => s.length >= 2))];
+}
+
+// Build a map of `merchant (lowercase) → most-recent categoryId` from history.
+// Walks all transactions, taking the newest for each unique `where`.
+function buildBudgetMerchantMemory() {
+  const map = {};
+  const ts  = {}; // tracks timestamp for "most recent"
+  for (const yyyymm of Object.keys(transactions)) {
+    for (const tx of Object.values(transactions[yyyymm])) {
+      if (!tx.where || !tx.categoryId) continue;
+      const key = tx.where.toLowerCase().trim();
+      const t   = new Date(tx.createdAt || tx.updatedAt || 0).getTime();
+      if (!(key in ts) || t > ts[key]) {
+        map[key] = tx.categoryId;
+        ts[key]  = t;
+      }
+    }
+  }
+  return map;
+}
+
+// Returns merchants alphabetically — used for autocomplete.
+function getMerchantSuggestions() {
+  const set = new Set();
+  for (const yyyymm of Object.keys(transactions)) {
+    for (const tx of Object.values(transactions[yyyymm])) {
+      if (tx.where) set.add(tx.where.trim());
+    }
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+// Apply a parsed quick-add result to the database. Returns array of created tx.
+async function commitQuickAdd(parsed, { date = null } = {}) {
+  const created = [];
+  const useDate = date || (new Date().toISOString().slice(0, 10));
+  for (const p of parsed) {
+    if (!p.ok) continue;
+    const tx = await createTransaction({
+      date:       useDate,
+      where:      p.where,
+      amount:     p.amount,
+      categoryId: p.categoryId,
+      source:     'manual',
+    });
+    created.push(tx);
+  }
+  return created;
+}
+
+// ── Sync merge ─────────────────────────────────────────────────────────────
+// Categories: per-object LWW with tombstone respect
+function mergeBudgetCategories(local, remote) {
+  const map = new Map();
+  for (const c of (local || []))  if (!budgetCategoryDeletedIds.has(c.id)) map.set(c.id, c);
+  for (const c of (remote || [])) {
+    if (budgetCategoryDeletedIds.has(c.id)) continue;
+    const existing = map.get(c.id);
+    if (!existing) {
+      map.set(c.id, c);
+    } else {
+      const lt = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+      const rt = c.updatedAt        ? new Date(c.updatedAt).getTime()        : 0;
+      if (rt > lt) map.set(c.id, c);
+    }
+  }
+  return Array.from(map.values());
+}
+
+// Transactions: nested {yyyymm: {txId: tx}} — per-tx LWW with tombstone respect
+function mergeTransactions(local, remote) {
+  const out = JSON.parse(JSON.stringify(local || {})); // deep copy
+  // Strip any local entries that match a remote tombstone we just learned about
+  // (handled by caller updating the tombstone set first)
+  // Apply remote entries
+  if (!remote) return out;
+  for (const yyyymm of Object.keys(remote)) {
+    if (!out[yyyymm]) out[yyyymm] = {};
+    for (const txId of Object.keys(remote[yyyymm])) {
+      if (budgetTransactionDeletedIds.has(txId)) continue;
+      const ri = remote[yyyymm][txId];
+      const li = out[yyyymm][txId];
+      if (!li) {
+        out[yyyymm][txId] = ri;
+      } else {
+        const lt = li.updatedAt ? new Date(li.updatedAt).getTime() : 0;
+        const rt = ri.updatedAt ? new Date(ri.updatedAt).getTime() : 0;
+        if (rt > lt) out[yyyymm][txId] = ri;
+      }
+    }
+  }
+  // Strip locally-tombstoned entries from output (in case they were re-added by remote)
+  for (const yyyymm of Object.keys(out)) {
+    for (const txId of Object.keys(out[yyyymm])) {
+      if (budgetTransactionDeletedIds.has(txId)) delete out[yyyymm][txId];
+    }
+    if (Object.keys(out[yyyymm]).length === 0) delete out[yyyymm];
+  }
+  return out;
+}
+
+// Tombstone sets: union merge
+function mergeBudgetTombstoneSet(local, remote) {
+  const out = new Set(local instanceof Set ? local : (Array.isArray(local) ? local : []));
+  for (const id of (Array.isArray(remote) ? remote : [])) out.add(id);
+  return out;
+}
+
+// ── Diagnostics ────────────────────────────────────────────────────────────
+if (typeof window !== 'undefined') {
+  window.budgetSpendDiag = function () {
+    const yyyymm = _yyyymm(new Date());
+    return {
+      categories:        budgetCategories.length,
+      activeCategories:  getActiveBudgetCategories().length,
+      currentMonth:      yyyymm,
+      currentMonthTxs:   Object.keys(transactions[yyyymm] || {}).length,
+      totalMonths:       Object.keys(transactions).length,
+      totalSpendThisMo:  getTotalSpendForMonth(yyyymm),
+      categoryTombstones:    budgetCategoryDeletedIds.size,
+      transactionTombstones: budgetTransactionDeletedIds.size,
+      setupOffered:      _budgetSetupOffered,
+    };
+  };
 }
 
 
@@ -17071,6 +17640,7 @@ async function init() {
   await loadNotes();
   await loadGrocery();
   await loadBudget();
+  await loadBudgetSpend();
   // Sweep any expired items from the 30-day recycle bin (no-op if loadProfile already did it)
   await purgeExpiredFromBins();
   await checkGroceryRecurring();
