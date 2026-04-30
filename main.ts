@@ -1662,6 +1662,16 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
+  // ── Admin: send heartbeat email now (test the daily 03:05 cron) ─
+  if (url.pathname === '/admin/r2/send-heartbeat' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      if (!await verifyAdminRequest(body)) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const result = await sendBackupHeartbeatEmail();
+      return json(result, corsHeaders, result.ok ? 200 : 500);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
   // Client sends recovery code hash to identify slot,
   // gets back the encrypted DATA KEY for that slot.
   // On success: slot is invalidated, user must set new passphrase.
@@ -2964,58 +2974,121 @@ Deno.cron('stockroom-deactivation-check', '0 10 * * *', async () => {
   }
 });
 
-// ── Daily database backup cron (runs at 03:00 UTC) ──────────
-// Reads the raw sqlite db file from the volume, base64-encodes it,
-// and emails it to the admin address via Resend. Data is already
-// AES-GCM encrypted at rest so it is safe to store externally.
-Deno.cron('stockroom-daily-backup', '0 3 * * *', async () => {
-  if (!env.RESEND_API_KEY) { console.log('Backup: no Resend key, skipping'); return; }
-
-  const dbPath = Deno.env.get('DENO_KV_PATH');
-  if (!dbPath) { console.log('Backup: no DENO_KV_PATH, skipping (not on Fly)'); return; }
-
+// ── Daily backup heartbeat email (runs at 03:05 UTC) ────────
+// Sends a daily confirmation email summarising the latest R2 snapshot.
+// No attachment — keeps the email tiny and avoids Resend's 40 MB cap.
+// Runs at :05 (not :00) so it picks up a snapshot that was just written
+// by the 5-min auto-backup cron at 03:00.
+async function sendBackupHeartbeatEmail(): Promise<{ ok: boolean; error?: string; total?: number; latest?: string | null }> {
+  if (!env.RESEND_API_KEY) {
+    console.log('Heartbeat: no Resend key, skipping');
+    return { ok: false, error: 'RESEND_API_KEY not set' };
+  }
   try {
-    console.log('Backup: starting daily db backup');
+    console.log('Heartbeat: building daily backup summary');
 
-    // Read the db file and WAL (write-ahead log) — WAL contains recent uncommitted writes
-    const dbBytes  = await Deno.readFile(dbPath).catch(() => null);
-    const walBytes = await Deno.readFile(dbPath + '-wal').catch(() => null);
+    const now     = new Date();
+    const dateStr = now.toISOString().slice(0, 10);
 
-    if (!dbBytes) { console.error('Backup: db file not found at', dbPath); return; }
-
-    // Base64-encode for email attachment
-    const dbB64  = btoa(String.fromCharCode(...dbBytes));
-    const walB64 = walBytes ? btoa(String.fromCharCode(...walBytes)) : null;
-
-    const now      = new Date();
-    const dateStr  = now.toISOString().slice(0, 10);
-    const sizeKB   = Math.round(dbBytes.length / 1024);
-    const walKB    = walBytes ? Math.round(walBytes.length / 1024) : 0;
-
-    // Count KV entries as a basic integrity check
-    let entryCount = 0;
+    // Count KV entries grouped by top-level prefix — quick integrity overview
+    const counts: Record<string, number> = {};
+    let total = 0;
     const iter = kv.list({ prefix: [] });
-    for await (const _ of iter) entryCount++;
-
-    const attachments: { filename: string; content: string }[] = [
-      { filename: `stockroom_${dateStr}.db`,     content: dbB64 },
-    ];
-    if (walB64) {
-      attachments.push({ filename: `stockroom_${dateStr}.db-wal`, content: walB64 });
+    for await (const entry of iter) {
+      total++;
+      const k = entry.key as unknown[];
+      const top = String(k[0] ?? '_unknown');
+      counts[top] = (counts[top] || 0) + 1;
     }
 
+    // Most recent auto snapshot from R2
+    let latestSnap: { key: string; size: number; lastModified: string } | null = null;
+    let r2Status = 'not configured';
+    if (r2Configured()) {
+      try {
+        const all = await listR2Snapshots('auto/');
+        latestSnap = all.at(-1) || null;
+        r2Status = latestSnap ? 'ok' : 'configured but no snapshots found';
+      } catch (e) {
+        r2Status = `error: ${(e as Error)?.message || e}`;
+      }
+    }
+
+    // Total R2 storage used (rough — listing only auto/ above)
+    let totalSnapshots = 0;
+    let totalBytes = 0;
+    if (r2Configured() && r2Status === 'ok') {
+      try {
+        const everything = await listR2Snapshots('');
+        totalSnapshots = everything.length;
+        totalBytes = everything.reduce((s, x) => s + x.size, 0);
+      } catch (_) { /* non-fatal */ }
+    }
+
+    const fmtBytes = (n: number) => {
+      if (!n) return '0 B';
+      if (n < 1024) return n + ' B';
+      if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+      if (n < 1024*1024*1024) return (n/1024/1024).toFixed(2) + ' MB';
+      return (n/1024/1024/1024).toFixed(2) + ' GB';
+    };
+    const fmtTime = (iso: string) => {
+      if (!iso) return '—';
+      try { return new Date(iso).toUTCString(); } catch { return iso; }
+    };
+
+    const isHealthy = r2Status === 'ok' && latestSnap && (now.getTime() - new Date(latestSnap.lastModified).getTime()) < 30 * 60 * 1000;
+    const headerColour = isHealthy ? '#4cbb8a' : '#e8a838';
+    const headerLabel  = isHealthy ? '✓ Backup healthy' : '⚠ Backup needs attention';
+    const subjectTag   = isHealthy ? 'OK' : 'CHECK';
+
+    const topPrefixes = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6);
+
+    const adminUrl = `${env.APP_URL.replace(/\/$/, '')}/admin.html`;
+
+    const r2Lines = latestSnap
+      ? `
+        <tr><td style="color:#7a8097;padding:4px 12px 4px 0">Latest snapshot</td><td style="color:#f0f2f7"><code style="background:#1a1d28;padding:2px 6px;border-radius:4px">${latestSnap.key}</code></td></tr>
+        <tr><td style="color:#7a8097;padding:4px 12px 4px 0">Snapshot taken</td><td style="color:#f0f2f7">${fmtTime(latestSnap.lastModified)}</td></tr>
+        <tr><td style="color:#7a8097;padding:4px 12px 4px 0">Snapshot size</td><td style="color:#f0f2f7">${fmtBytes(latestSnap.size)}</td></tr>`
+      : `
+        <tr><td colspan="2" style="color:#e8a838;padding:8px 0">⚠ No recent R2 snapshot found — check the auto-backup cron is running and admin secrets are set.</td></tr>`;
+
+    const r2TotalsLines = totalSnapshots
+      ? `<tr><td style="color:#7a8097;padding:4px 12px 4px 0">R2 total</td><td style="color:#f0f2f7">${totalSnapshots} snapshots, ${fmtBytes(totalBytes)} of 10 GB free tier</td></tr>`
+      : '';
+
+    const prefixRows = topPrefixes.map(([p, c]) =>
+      `<tr><td style="color:#7a8097;padding:3px 12px 3px 0;font-size:12px"><code>${p}</code></td><td style="color:#f0f2f7;font-size:12px">${c}</td></tr>`
+    ).join('');
+
     const html = `
-      <div style="font-family:monospace;background:#0f1117;color:#f0f2f7;padding:24px;border-radius:8px">
-        <h2 style="color:#e8a838;margin-bottom:16px">STOCKROOM — Daily Backup</h2>
-        <table style="border-collapse:collapse;width:100%">
-          <tr><td style="color:#7a8097;padding:4px 12px 4px 0">Date</td><td style="color:#f0f2f7">${dateStr}</td></tr>
-          <tr><td style="color:#7a8097;padding:4px 12px 4px 0">DB size</td><td style="color:#f0f2f7">${sizeKB} KB</td></tr>
-          <tr><td style="color:#7a8097;padding:4px 12px 4px 0">WAL size</td><td style="color:#f0f2f7">${walKB} KB</td></tr>
-          <tr><td style="color:#7a8097;padding:4px 12px 4px 0">KV entries</td><td style="color:#4cbb8a">${entryCount}</td></tr>
+      <div style="font-family:system-ui,-apple-system,sans-serif;background:#0f1117;color:#f0f2f7;padding:24px;border-radius:8px;max-width:600px">
+        <h2 style="color:${headerColour};margin:0 0 4px;font-size:18px">${headerLabel}</h2>
+        <div style="color:#7a8097;font-size:12px;margin-bottom:20px">STOCKROOM daily backup summary — ${dateStr}</div>
+
+        <h3 style="color:#e8a838;font-size:13px;margin:20px 0 8px;text-transform:uppercase;letter-spacing:0.5px">Snapshot</h3>
+        <table style="border-collapse:collapse;width:100%;font-size:13px">
+          ${r2Lines}
+          ${r2TotalsLines}
         </table>
-        <p style="color:#7a8097;font-size:12px;margin-top:16px">
-          Data is AES-GCM encrypted — this backup is safe but only useful alongside user passphrases.<br>
-          To restore: <code>fly volume snapshot restore</code> or replace /data/stockroom.db on the volume.
+
+        <h3 style="color:#e8a838;font-size:13px;margin:24px 0 8px;text-transform:uppercase;letter-spacing:0.5px">KV integrity</h3>
+        <table style="border-collapse:collapse;width:100%;font-size:13px">
+          <tr><td style="color:#7a8097;padding:4px 12px 4px 0">Total entries</td><td style="color:#4cbb8a">${total}</td></tr>
+          ${prefixRows}
+        </table>
+
+        <div style="margin-top:24px;padding:14px 16px;background:#1a1d28;border-radius:6px;border:1px solid #2a2e3d">
+          <div style="font-size:12px;color:#7a8097;margin-bottom:6px">To browse, download, or restore from snapshots:</div>
+          <a href="${adminUrl}" style="color:#e8a838;font-weight:600;text-decoration:none;font-size:14px">→ Open admin panel</a>
+        </div>
+
+        <p style="color:#5a607a;font-size:11px;margin-top:24px;line-height:1.6">
+          Data is AES-GCM encrypted client-side; snapshots stored in Cloudflare R2 are useless without the user passphrase.
+          Auto backup runs every 5 minutes. Snapshot retention: 24h × 5min, 30d × daily, 90d × weekly.
         </p>
       </div>`;
 
@@ -3023,23 +3096,30 @@ Deno.cron('stockroom-daily-backup', '0 3 * * *', async () => {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        from:        env.FROM_EMAIL,
-        to:          [env.ADMIN_EMAIL],
-        subject:     `STOCKROOM backup ${dateStr} — ${entryCount} entries, ${sizeKB}KB`,
+        from:    env.FROM_EMAIL,
+        to:      [env.ADMIN_EMAIL],
+        subject: `STOCKROOM backup ${dateStr} — ${subjectTag} — ${total} entries`,
         html,
-        attachments,
       }),
     });
 
     if (res.ok) {
-      console.log(`Backup: sent successfully — ${entryCount} entries, ${sizeKB}KB db, ${walKB}KB wal`);
+      console.log(`Heartbeat: sent — total ${total} entries, R2 ${r2Status}, latest ${latestSnap?.key || 'none'}`);
+      return { ok: true, total, latest: latestSnap?.key || null };
     } else {
       const err = await res.text();
-      console.error('Backup: Resend error', res.status, err);
+      console.error('Heartbeat: Resend error', res.status, err);
+      return { ok: false, error: `Resend ${res.status}: ${err.slice(0, 200)}` };
     }
-  } catch(e) {
-    console.error('Backup: unexpected error', e);
+  } catch (e) {
+    const msg = (e as Error)?.message || String(e);
+    console.error('Heartbeat: unexpected error', msg);
+    return { ok: false, error: msg };
   }
+}
+
+Deno.cron('stockroom-daily-backup-heartbeat', '5 3 * * *', async () => {
+  await sendBackupHeartbeatEmail();
 });
 
 // ── Cron ──────────────────────────────────────────────────
