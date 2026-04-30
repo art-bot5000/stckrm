@@ -303,6 +303,48 @@ async function getR2Snapshot(key: string): Promise<{ ok: boolean; data?: any; er
   }
 }
 
+// ── Extract just one user's encrypted blobs from a snapshot ──
+// Returns the entries in the snapshot that belong to the given emailHash.
+// Includes the user's main data blob, household-shared data blobs, and
+// encrypted note bodies. Does NOT include passkeys, sessions, or shares
+// (those are auth artefacts, not user data).
+//
+// The data is already encrypted with the user's key — the server can't
+// read it. The user is the only one who can decrypt their own backup.
+async function extractUserDataFromSnapshot(snapshotKey: string, emailHash: string): Promise<{
+  ok: boolean;
+  entries?: Array<{ key: any; value: any }>;
+  meta?: { snapshotKey: string; snapshotTakenAt: string; entriesIncluded: number };
+  error?: string;
+}> {
+  if (!emailHash || typeof emailHash !== 'string' || emailHash.length < 8) {
+    return { ok: false, error: 'Invalid emailHash' };
+  }
+  const snap = await getR2Snapshot(snapshotKey);
+  if (!snap.ok || !snap.data) return { ok: false, error: snap.error || 'Failed to fetch snapshot' };
+  const allEntries = snap.data.entries as Array<{ key: any; value: any }>;
+  if (!Array.isArray(allEntries)) return { ok: false, error: 'Invalid snapshot format' };
+
+  // Filter to entries that belong to this user. The KV key is an array; we
+  // match on the second element (which is emailHash for user/* and note_body/*).
+  const mine = allEntries.filter(e => {
+    if (!Array.isArray(e.key) || e.key.length < 2) return false;
+    const top = e.key[0];
+    const hash = e.key[1];
+    if (hash !== emailHash) return false;
+    return top === 'user' || top === 'note_body';
+  });
+  return {
+    ok: true,
+    entries: mine,
+    meta: {
+      snapshotKey,
+      snapshotTakenAt: snap.data.meta?.createdAt || '',
+      entriesIncluded: mine.length,
+    },
+  };
+}
+
 // ── Delete a snapshot ─────────────────────────────────────
 async function deleteR2Snapshot(key: string): Promise<boolean> {
   if (!r2Configured()) return false;
@@ -402,14 +444,55 @@ async function restoreFromR2Snapshot(key: string): Promise<{ ok: boolean; restor
   return { ok: true, restored, preRestoreKey: pre.key };
 }
 
-// ── Crons: backup every 5 min, prune daily at 03:00 UTC ───
+// ── Dirty-flag pattern: only back up when data has actually changed ──
+// Idle hours skip backups; an active editing session gets fine-grained
+// 5-minute snapshots. A separate daily-at-03:00 cron forces a backup
+// regardless so retention pruning always has something to keep.
+async function markKVDirty(): Promise<void> {
+  // Best-effort — failure to mark dirty just means the next 5-min cron
+  // might miss this change, but the forced daily backup will still capture it.
+  try {
+    await kv.set(['_kv_dirty'], '1');
+  } catch (e) {
+    console.warn('markKVDirty failed:', (e as Error)?.message);
+  }
+}
+
+async function _isKVDirty(): Promise<boolean> {
+  try {
+    const r = await kv.get(['_kv_dirty']);
+    return !!r.value;
+  } catch (_) { return true; /* err on the side of backing up */ }
+}
+
+async function _clearKVDirty(): Promise<void> {
+  try { await kv.delete(['_kv_dirty']); } catch (_) {}
+}
+
+// ── Crons: backup every 5 min IF dirty; force daily; prune daily ──
 Deno.cron('stockroom-r2-backup', '*/5 * * * *', async () => {
   if (!r2Configured()) return; // silent no-op until R2 secrets are set
+  if (!await _isKVDirty()) return; // nothing changed since last backup, skip
   const result = await backupKVToR2('auto');
   if (!result.ok) {
     console.error('R2 backup failed:', result.error);
+    // Leave the dirty flag set so next tick will retry
   } else {
+    await _clearKVDirty();
     console.log(`R2 backup OK: ${result.key} (${result.entries} entries, ${(result.size!/1024).toFixed(1)} KB)`);
+  }
+});
+
+// Forced daily backup at 03:00 UTC — guarantees retention always has fresh
+// material to keep, even if no user activity has occurred for days.
+Deno.cron('stockroom-r2-backup-forced', '0 3 * * *', async () => {
+  if (!r2Configured()) return;
+  const result = await backupKVToR2('auto');
+  if (!result.ok) {
+    console.error('R2 forced daily backup failed:', result.error);
+  } else {
+    await _clearKVDirty();
+    console.log(`R2 forced daily backup OK: ${result.key} (${result.entries} entries, ${(result.size!/1024).toFixed(1)} KB)`);
   }
 });
 
@@ -515,6 +598,10 @@ async function _deleteAllUserData(kv: Deno.Kv, emailHash: string): Promise<void>
       } catch(e) {}
     }
   }
+
+  // Account deletion is a significant state change — mark dirty so it
+  // gets captured in the next backup window
+  await markKVDirty();
 }
 
 // ── Request handler ───────────────────────────────────────
@@ -548,6 +635,72 @@ Deno.serve(async (request) => {
       await _deleteAllUserData(kv, emailHash);
       console.log(`User self-deleted account: ${emailHash}`);
       return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Helper: verify a user request with passphrase verifier OR passkey session token ──
+  async function _verifyUserRequest(emailHash: string, verifier?: string, sessionToken?: string): Promise<boolean> {
+    if (!emailHash) return false;
+    if (sessionToken) {
+      const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+      return !!session.value;
+    }
+    if (verifier) {
+      const stored = await kvGet(['user', emailHash, 'verifier']);
+      return !!stored.value && stored.value === verifier;
+    }
+    return false;
+  }
+
+  // ── User: list snapshots that contain my data ─────────────
+  // Returns metadata only — no encrypted data here. The user can then call
+  // /user/snapshot/extract with a specific snapshotKey to download their own
+  // encrypted blob from that snapshot.
+  if (url.pathname === '/user/snapshots/list' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (!await _verifyUserRequest(emailHash, verifier, sessionToken)) {
+        return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      if (!r2Configured()) {
+        return json({ ok: true, configured: false, snapshots: [] }, corsHeaders);
+      }
+      // Just list everything; the snapshots include all users' data, but the
+      // user can only download their own portion via the extract endpoint.
+      const all = await listR2Snapshots('');
+      // Most recent first, capped to a reasonable number of entries
+      const snapshots = all.slice(-200).reverse().map(s => ({
+        key:          s.key,
+        size:         s.size,
+        lastModified: s.lastModified,
+        // Approximate "yours" size — we don't actually know without fetching.
+        // Frontend will display total snapshot size and explain it's an upper bound.
+      }));
+      return json({ ok: true, configured: true, snapshots }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── User: extract just my encrypted data from a snapshot ──
+  // Returns the user's encrypted blobs from the named snapshot. The data
+  // is already AES-GCM encrypted with the user's key; the server can't read it.
+  if (url.pathname === '/user/snapshots/extract' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, snapshotKey } = await request.json();
+      if (!emailHash || !snapshotKey) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (!await _verifyUserRequest(emailHash, verifier, sessionToken)) {
+        return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      if (typeof snapshotKey !== 'string' || snapshotKey.length > 200) {
+        return json({ error: 'Invalid snapshotKey' }, corsHeaders, 400);
+      }
+      const result = await extractUserDataFromSnapshot(snapshotKey, emailHash);
+      if (!result.ok) return json({ error: result.error }, corsHeaders, 500);
+      return json({
+        ok:      true,
+        meta:    result.meta,
+        entries: result.entries,
+      }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
@@ -2210,6 +2363,7 @@ Deno.serve(async (request) => {
       const hKey = household && household !== 'default' ? household : 'default';
       await kvSet(['user', emailHash, 'data', hKey], ciphertext);
       await kvSet(['user', emailHash, 'modified', hKey], new Date().toISOString());
+      await markKVDirty();
       return json({ ok: true }, corsHeaders);
     } catch(err) {
       return json({ error: err.message }, corsHeaders, 500);
@@ -2421,6 +2575,7 @@ Deno.serve(async (request) => {
       const hKey = household && household !== 'default' ? household : 'default';
       await kvSet(['share_data', code.toUpperCase(), hKey], ciphertext);
       await kvSet(['share_data', code.toUpperCase(), `${hKey}_modified`], new Date().toISOString());
+      await markKVDirty();
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
@@ -2959,6 +3114,7 @@ Deno.serve(async (request) => {
       } else {
         await kvDel(['note_body', emailHash, noteId]);
       }
+      await markKVDirty();
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
@@ -2998,6 +3154,7 @@ Deno.serve(async (request) => {
         return json({ error: 'Missing credentials' }, corsHeaders, 400);
       }
       await kvDel(['note_body', emailHash, noteId]);
+      await markKVDirty();
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
@@ -3368,6 +3525,9 @@ async function sendBackupHeartbeatEmail(): Promise<{ ok: boolean; error?: string
       }
     }
 
+    // Pending changes? If dirty, the next 5-min cron will pick them up.
+    const pendingChanges = await _isKVDirty();
+
     // Total R2 storage used (rough — listing only auto/ above)
     let totalSnapshots = 0;
     let totalBytes = 0;
@@ -3414,6 +3574,8 @@ async function sendBackupHeartbeatEmail(): Promise<{ ok: boolean; error?: string
       ? `<tr><td style="color:#7a8097;padding:4px 12px 4px 0">R2 total</td><td style="color:#f0f2f7">${totalSnapshots} snapshots, ${fmtBytes(totalBytes)} of 10 GB free tier</td></tr>`
       : '';
 
+    const pendingLine = `<tr><td style="color:#7a8097;padding:4px 12px 4px 0">Pending changes</td><td style="color:${pendingChanges ? '#e8a838' : '#4cbb8a'}">${pendingChanges ? 'yes — will be captured at next 5-min tick' : 'none — KV is clean'}</td></tr>`;
+
     const prefixRows = topPrefixes.map(([p, c]) =>
       `<tr><td style="color:#7a8097;padding:3px 12px 3px 0;font-size:12px"><code>${p}</code></td><td style="color:#f0f2f7;font-size:12px">${c}</td></tr>`
     ).join('');
@@ -3427,6 +3589,7 @@ async function sendBackupHeartbeatEmail(): Promise<{ ok: boolean; error?: string
         <table style="border-collapse:collapse;width:100%;font-size:13px">
           ${r2Lines}
           ${r2TotalsLines}
+          ${pendingLine}
         </table>
 
         <h3 style="color:#e8a838;font-size:13px;margin:24px 0 8px;text-transform:uppercase;letter-spacing:0.5px">KV integrity</h3>
@@ -3442,7 +3605,7 @@ async function sendBackupHeartbeatEmail(): Promise<{ ok: boolean; error?: string
 
         <p style="color:#5a607a;font-size:11px;margin-top:24px;line-height:1.6">
           Data is AES-GCM encrypted client-side; snapshots stored in Cloudflare R2 are useless without the user passphrase.
-          Auto backup runs every 5 minutes. Snapshot retention: 24h × 5min, 30d × daily, 90d × weekly.
+          Auto backup runs every 5 minutes when data has changed; idle hours are skipped. A daily forced backup at 03:00 UTC ensures retention always has fresh material. Snapshot retention: 24h × 5min, 30d × daily, 90d × weekly.
         </p>
       </div>`;
 
