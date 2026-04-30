@@ -8226,11 +8226,70 @@ async function buildRecoveryEnvelopesV2(codes, dataKey, emailHash) {
   return envelopes;
 }
 
+// ─── Compression helpers ────────────────────────────────────────────────
+// New writes are gzip-compressed before encryption to stay under the 64KiB
+// Deno KV value limit. A 1-byte version marker (0x01) before the gzipped
+// payload tells decrypt to decompress. Legacy data has no marker — first
+// byte is `{` (0x7B from JSON), so the marker is unambiguous.
+const _KV_BLOB_MARKER_GZIP = 0x01;
+
+async function _kvCompressGzip(plaintextStr) {
+  const encoded = new TextEncoder().encode(plaintextStr);
+  const cs = new CompressionStream('gzip');
+  const writer = cs.writable.getWriter();
+  writer.write(encoded);
+  writer.close();
+  const chunks = [];
+  const reader = cs.readable.getReader();
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  // Concatenate Uint8Array chunks
+  let total = 0;
+  for (const c of chunks) total += c.byteLength;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) { out.set(c, offset); offset += c.byteLength; }
+  return out;
+}
+
+async function _kvDecompressGzip(bytes) {
+  const ds = new DecompressionStream('gzip');
+  const writer = ds.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const chunks = [];
+  const reader = ds.readable.getReader();
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  let total = 0;
+  for (const c of chunks) total += c.byteLength;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) { out.set(c, offset); offset += c.byteLength; }
+  return new TextDecoder().decode(out);
+}
+
 async function kvEncrypt(key, plaintext) {
-  const iv         = crypto.getRandomValues(new Uint8Array(12));
-  const encoded    = new TextEncoder().encode(plaintext);
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded);
-  const combined   = new Uint8Array(iv.length + ciphertext.byteLength);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  // New writes always compress. Build payload: [marker][gzipped]
+  let payload;
+  if (typeof CompressionStream !== 'undefined') {
+    const compressed = await _kvCompressGzip(plaintext);
+    payload = new Uint8Array(1 + compressed.byteLength);
+    payload[0] = _KV_BLOB_MARKER_GZIP;
+    payload.set(compressed, 1);
+  } else {
+    // Very old browser fallback — store uncompressed (legacy format, no marker)
+    payload = new TextEncoder().encode(plaintext);
+  }
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, payload);
+  const combined = new Uint8Array(iv.length + ciphertext.byteLength);
   combined.set(iv, 0);
   combined.set(new Uint8Array(ciphertext), iv.length);
   return btoa(String.fromCharCode(...combined));
@@ -8241,7 +8300,13 @@ async function kvDecrypt(key, ciphertext) {
   const iv       = combined.slice(0, 12);
   const data     = combined.slice(12);
   const plain    = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
-  return new TextDecoder().decode(plain);
+  const bytes    = new Uint8Array(plain);
+  // Check version marker. Legacy data is raw UTF-8 starting with `{` (0x7B);
+  // compressed data starts with the marker byte 0x01.
+  if (bytes.length > 0 && bytes[0] === _KV_BLOB_MARKER_GZIP) {
+    return await _kvDecompressGzip(bytes.slice(1));
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 async function kvHashEmail(email) {
