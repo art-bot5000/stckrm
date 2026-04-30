@@ -1596,3 +1596,127 @@ body.note-open { overflow: hidden; touch-action: none; }
 .recycle-bin-delete {
   color: var(--danger) !important;
 }
+/* ═══════════════════════════════════════════════════════════════════════
+   BUDGET — Phase 1 styles
+   Append to the END of styles.css (after the existing media-query blocks).
+   These rules are scoped to .bill-row / #budget-* / .budget-* so they
+   don't affect anything outside the Budget view.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Sub-nav buttons */
+.budget-subnav-btn { transition: background 0.15s, color 0.15s; }
+.budget-subnav-btn.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset;
+}
+
+/* Bill row — used in dashboard upcoming, due/paid/skipped/archived lists */
+.bill-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.bill-row:last-child { border-bottom: none; }
+.bill-row:hover { background: rgba(255,255,255,0.025); }
+
+.bill-row .bill-day {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 12px; font-weight: 600;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.bill-row.is-due .bill-day      { color: var(--warn);   border-color: rgba(232,168,56,0.4); }
+.bill-row.is-overdue .bill-day  { color: var(--danger); border-color: rgba(232,80,80,0.4);  background: rgba(232,80,80,0.08); }
+.bill-row.is-paid .bill-day     { color: var(--ok);     border-color: rgba(76,187,138,0.4); background: rgba(76,187,138,0.08); }
+.bill-row.is-skipped .bill-day  { opacity: 0.5; }
+
+.bill-row .bill-info {
+  flex: 1; min-width: 0;
+}
+.bill-row .bill-name {
+  font-size: 14px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.bill-row.is-paid .bill-name    { color: var(--muted); text-decoration: line-through; text-decoration-color: rgba(76,187,138,0.4); }
+.bill-row.is-skipped .bill-name { color: var(--muted); text-decoration: line-through; text-decoration-color: rgba(120,128,160,0.4); }
+
+.bill-row .bill-meta {
+  font-size: 11px; color: var(--muted); margin-top: 2px;
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+}
+
+.bill-row .bill-amount {
+  font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--text);
+  flex-shrink: 0;
+}
+.bill-row.is-paid .bill-amount    { color: var(--ok); }
+.bill-row.is-overdue .bill-amount { color: var(--danger); }
+.bill-row.is-skipped .bill-amount { color: var(--muted); text-decoration: line-through; }
+.bill-row .bill-amount.is-variable { color: var(--muted); }
+
+/* Inline action buttons appearing on bill row hover/tap */
+.bill-row .bill-actions {
+  display: flex; gap: 4px; flex-shrink: 0;
+}
+.bill-row .bill-action-btn {
+  width: 30px; height: 30px; border-radius: 6px;
+  background: transparent; border: 1px solid transparent;
+  color: var(--muted); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.12s;
+}
+.bill-row .bill-action-btn:hover {
+  background: rgba(255,255,255,0.06);
+  border-color: var(--border);
+  color: var(--text);
+}
+.bill-row .bill-action-btn.bill-action-paid:hover { color: var(--ok); }
+.bill-row .bill-action-btn.bill-action-skip:hover { color: var(--warn); }
+.bill-row .bill-action-btn.bill-action-edit:hover { color: var(--accent); }
+
+.bill-row .bill-action-btn svg { width: 16px; height: 16px; }
+
+/* Variable-amount tag */
+.bill-tag {
+  font-size: 9px; font-family: var(--mono); font-weight: 700;
+  letter-spacing: 0.5px; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 4px;
+  background: rgba(91,141,238,0.12);
+  color: var(--accent2);
+  border: 1px solid rgba(91,141,238,0.25);
+}
+
+/* List wrapper used in section bodies */
+.bill-list {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* Disclosure triangle for <details> sections */
+#view-budget details summary svg { transition: transform 0.15s; }
+#view-budget details[open] > summary > svg { transform: rotate(90deg); }
+
+/* Mobile tweaks */
+@media (max-width: 700px) {
+  /* Hide desktop "Add Bill" button on mobile (FAB takes over) */
+  #budget-add-bill-desktop { display: none !important; }
+  /* Stack action row */
+  #view-budget #budget-bills-summary { width: 100%; }
+  /* Smaller hero number on narrow screens */
+  #budget-hero-amount { font-size: 28px; }
+  /* Tighter bill rows */
+  .bill-row { padding: 10px 12px; gap: 10px; }
+  .bill-row .bill-action-btn { width: 34px; height: 34px; } /* bigger tap target */
+  /* Hide low-value action buttons on mobile — long-press / tap opens editor instead */
+  .bill-row .bill-action-btn.bill-action-edit { display: none; }
+}

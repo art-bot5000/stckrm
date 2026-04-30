@@ -114,8 +114,8 @@ function getStores(code) { return STORES_BY_COUNTRY[code] || STORES_BY_COUNTRY.O
 // ═══════════════════════════════════════════
 
 const DB_NAME    = 'stockroom';
-const DB_VERSION = 2;
-const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists','reminderDeletedIds'];
+const DB_VERSION = 3;
+const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists','reminderDeletedIds','bills','billInstances','budgetSettings'];
 
 let _db = null;
 
@@ -2586,6 +2586,7 @@ async function loadProfile(key) {
     await loadData();
     await loadReminders();
     await loadGrocery();
+    await loadBudget();
     await saveCurrentProfile();
   }
   // Sweep expired items from the 30-day recycle bin
@@ -5813,7 +5814,7 @@ function toggleShoppingTick(id, labelEl) {
 
 function showView(name, btn) {
   _currentViewName = name;
-  const sectionMap = { grocery:'groceries', reminders:'reminders', savings:'savings', report:'report', stock:'stockroom', shopping:'stockroom' };
+  const sectionMap = { grocery:'groceries', reminders:'reminders', savings:'savings', report:'report', stock:'stockroom', shopping:'stockroom', budget:'budget' };
   const section    = sectionMap[name];
   if (section && !canView(section)) { showLockBanner(section); return; }
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -5830,6 +5831,7 @@ function showView(name, btn) {
   if (name === 'shopping')  renderShoppingList();
   if (name === 'savings')   renderSavingsView();
   if (name === 'grocery')   renderGrocery();
+  if (name === 'budget')    renderBudget();
   if (name === 'notes')     { renderNotes(); setTimeout(_maybeShowMfaPrompt, 600); }
   if (name === 'account-security') renderAccountSecurity();
   if (name === 'stock') {
@@ -11441,6 +11443,7 @@ async function kvPush() {
     householdDir, activeProfile,
     shareTargets: _shareTargets,
     notes: notes.map(n => ({ ...n, body: n.locked ? undefined : n.body })),
+    bills, billInstances, budgetSettings,
   });
   _keyFingerprint(_kvKey).then(fp => console.log('[key] kvPush: encrypting with key fingerprint:', fp));
   const ciphertext = await kvEncrypt(_kvKey, payload);
@@ -11604,6 +11607,19 @@ async function kvSyncNow(silent = false) {
             await _saveGroceryLists();
           }
         }
+      }
+      // Budget — bills, instances, settings (Phase 1)
+      if (Array.isArray(remote.bills)) {
+        bills = mergeBills(bills, remote.bills);
+      }
+      if (remote.billInstances && typeof remote.billInstances === 'object') {
+        billInstances = mergeBillInstances(billInstances, remote.billInstances);
+      }
+      if (remote.budgetSettings && typeof remote.budgetSettings === 'object') {
+        budgetSettings = mergeBudgetSettings(budgetSettings, remote.budgetSettings);
+      }
+      if (Array.isArray(remote.bills) || remote.billInstances || remote.budgetSettings) {
+        await saveBudgetLocal();
       }
       if (remote.reminders && Array.isArray(remote.reminders)) {
         const localREmpty = reminders.length === 0;
@@ -12130,6 +12146,9 @@ const FAB_ACTIONS = {
   notes: [
     { icon: '<svg class="icon" aria-hidden="true"><use href="#i-notebook-pen"></use></svg>', label: 'New Note', action: () => { closeFab(); openNoteEditor(null); } },
   ],
+  budget: [
+    { icon: '<svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>', label: 'Add Bill', action: () => { closeFab(); openBillEditor(); } },
+  ],
 };
 
 // Grocery FAB: primary action slides left, secondaries stack above
@@ -12390,6 +12409,997 @@ document.addEventListener('pointerdown', (e) => {
   btn.appendChild(ripple);
   setTimeout(() => ripple.remove(), 500);
 }, {passive:true});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BUDGET — Phase 1 Foundations
+//  Insertion point: just before the grocery section starts in app.js
+//  (around line 12410, before `let groceryItems = [];`)
+//
+//  This block is self-contained — it doesn't reference any function/variable
+//  defined later in the file. It does call: dbGet, dbPut, _syncQueue,
+//  _kvEmailHash, _shareState, activeProfile, toast, scheduleRender,
+//  getSectionPerm — all defined earlier or globally available.
+//
+//  After pasting, also apply the 6 surgical edits in INTEGRATION-EDITS.md.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── State ──────────────────────────────────────────────────────────────────
+let bills          = [];          // bill templates (recurring)
+let billInstances  = {};          // { 'YYYY-MM': { [billId]: instance } }
+let budgetSettings = {
+  weekStart: 'mon',                // 'mon' | 'sun' — Phase 2+ consumer
+  materialisedMonths: [],          // months we've generated instances for (union-merged)
+};
+
+// ── Persistence ────────────────────────────────────────────────────────────
+async function loadBudget() {
+  const storedBills    = await dbGet('bills',          'bills');
+  const storedInstances = await dbGet('billInstances', 'billInstances');
+  const storedSettings = await dbGet('budgetSettings', 'budgetSettings');
+
+  if (Array.isArray(storedBills)) bills = storedBills;
+  if (storedInstances && typeof storedInstances === 'object') billInstances = storedInstances;
+  if (storedSettings && typeof storedSettings === 'object') {
+    budgetSettings = { ...budgetSettings, ...storedSettings };
+    if (!Array.isArray(budgetSettings.materialisedMonths)) budgetSettings.materialisedMonths = [];
+  }
+}
+
+async function saveBudgetLocal() {
+  await dbPut('bills',          'bills',          bills);
+  await dbPut('billInstances',  'billInstances',  billInstances);
+  await dbPut('budgetSettings', 'budgetSettings', budgetSettings);
+}
+
+// ── Date helpers ───────────────────────────────────────────────────────────
+function _yyyymm(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
+}
+
+function _yyyymmFromString(s) {
+  // Accept '2026-04' or '2026-04-15' etc.
+  return s.slice(0, 7);
+}
+
+function _parseYyyymm(yyyymm) {
+  const [y, m] = yyyymm.split('-').map(Number);
+  return { year: y, month: m - 1 }; // month 0-indexed, JS-style
+}
+
+function _daysInMonth(year, monthZeroIdx) {
+  return new Date(year, monthZeroIdx + 1, 0).getDate();
+}
+
+function _clampDayOfMonth(day, year, monthZeroIdx) {
+  return Math.min(day, _daysInMonth(year, monthZeroIdx));
+}
+
+function _isoDate(year, monthZeroIdx, day) {
+  const m = String(monthZeroIdx + 1).padStart(2, '0');
+  const d = String(day).padStart(2, '0');
+  return `${year}-${m}-${d}`;
+}
+
+function _nowIso() { return new Date().toISOString(); }
+
+// ── Frequency engine ───────────────────────────────────────────────────────
+// Returns true if a bill template should produce an instance in the given month.
+function shouldBeDueInMonth(template, year, monthZeroIdx) {
+  const f = template.frequency || { unit: 'month', interval: 1 };
+  if (f.unit === 'year') {
+    const anchor = f.anchorMonth ?? 0;
+    return monthZeroIdx === anchor;
+  }
+  // 'month' unit
+  const interval = Math.max(1, f.interval || 1);
+  const anchor   = f.anchorMonth ?? 0;
+  // months since epoch (Jan 2000 = 0)
+  const monthsSinceEpoch = (year - 2000) * 12 + monthZeroIdx;
+  const offsetFromAnchor = monthsSinceEpoch - anchor;
+  return offsetFromAnchor >= 0 && offsetFromAnchor % interval === 0;
+}
+
+// ── Materialisation ────────────────────────────────────────────────────────
+// Generate instances for a month from current active templates.
+// Idempotent: returns early if already materialised, unless `force` is true
+// (force is used by "Regenerate this month" in the bills list).
+async function materialiseMonth(yyyymm, { force = false, persist = true } = {}) {
+  const already = budgetSettings.materialisedMonths.includes(yyyymm);
+  if (already && !force) return billInstances[yyyymm] || {};
+
+  const { year, month } = _parseYyyymm(yyyymm);
+  const monthInstances  = (force ? {} : (billInstances[yyyymm] || {}));
+
+  for (const tpl of bills) {
+    if (tpl.archived) continue;
+    if (!shouldBeDueInMonth(tpl, year, month)) continue;
+    // Don't overwrite an existing instance unless forcing
+    if (!force && monthInstances[tpl.id]) continue;
+    const dom    = _clampDayOfMonth(tpl.dayOfMonth || 1, year, month);
+    monthInstances[tpl.id] = {
+      billId:         tpl.id,
+      dueDate:        _isoDate(year, month, dom),
+      expectedAmount: tpl.amount,
+      actualAmount:   null,
+      paidAt:         null,
+      paidBy:         null,
+      skipped:        false,
+      source:         'manual',
+      updatedAt:      _nowIso(),
+    };
+  }
+
+  billInstances[yyyymm] = monthInstances;
+  if (!already) budgetSettings.materialisedMonths.push(yyyymm);
+
+  if (persist) {
+    await saveBudgetLocal();
+    _syncQueue?.enqueue('Generating bills…');
+  }
+  return monthInstances;
+}
+
+// ── Bill template CRUD ─────────────────────────────────────────────────────
+async function createBill(input) {
+  const tpl = {
+    id:             'bill_' + (typeof uid === 'function' ? uid() : Date.now() + '_' + Math.random().toString(36).slice(2, 7)),
+    name:           (input.name || '').trim() || 'Untitled bill',
+    amount:         Number(input.amount) || 0,
+    variableAmount: !!input.variableAmount,
+    frequency:      input.frequency || { unit: 'month', interval: 1, anchorMonth: null },
+    dayOfMonth:     Math.max(1, Math.min(31, Number(input.dayOfMonth) || 1)),
+    categoryId:     input.categoryId || null,
+    notes:          input.notes || '',
+    archived:       false,
+    createdAt:      _nowIso(),
+    updatedAt:      _nowIso(),
+  };
+  bills.push(tpl);
+  await saveBudgetLocal();
+  _syncQueue?.enqueue();
+  return tpl;
+}
+
+async function updateBill(id, patch) {
+  const idx = bills.findIndex(b => b.id === id);
+  if (idx === -1) return null;
+  bills[idx] = { ...bills[idx], ...patch, updatedAt: _nowIso() };
+  await saveBudgetLocal();
+  _syncQueue?.enqueue();
+  return bills[idx];
+}
+
+async function archiveBill(id) {
+  return updateBill(id, { archived: true });
+}
+
+// Hard delete only used in admin-style flows; archive is the user-facing action.
+async function deleteBillHard(id) {
+  bills = bills.filter(b => b.id !== id);
+  // Also strip from all materialised months
+  for (const yyyymm of Object.keys(billInstances)) {
+    if (billInstances[yyyymm][id]) {
+      delete billInstances[yyyymm][id];
+    }
+  }
+  await saveBudgetLocal();
+  _syncQueue?.enqueue();
+}
+
+// ── Instance ops ───────────────────────────────────────────────────────────
+function _getInstance(yyyymm, billId) {
+  return billInstances[yyyymm]?.[billId] || null;
+}
+
+async function _setInstance(yyyymm, billId, patch) {
+  if (!billInstances[yyyymm]) billInstances[yyyymm] = {};
+  const existing = billInstances[yyyymm][billId] || {};
+  billInstances[yyyymm][billId] = {
+    ...existing,
+    ...patch,
+    billId,
+    updatedAt: _nowIso(),
+  };
+  await saveBudgetLocal();
+  _syncQueue?.enqueue();
+  return billInstances[yyyymm][billId];
+}
+
+async function markBillPaid(yyyymm, billId, { actualAmount = null } = {}) {
+  const patch = {
+    paidAt:  _nowIso(),
+    paidBy:  _kvEmailHash || null,
+    skipped: false,
+  };
+  if (actualAmount !== null && actualAmount !== undefined) patch.actualAmount = Number(actualAmount);
+  return _setInstance(yyyymm, billId, patch);
+}
+
+async function markBillUnpaid(yyyymm, billId) {
+  return _setInstance(yyyymm, billId, { paidAt: null, paidBy: null });
+}
+
+async function skipBillInstance(yyyymm, billId) {
+  return _setInstance(yyyymm, billId, { skipped: true, paidAt: null });
+}
+
+async function unskipBillInstance(yyyymm, billId) {
+  return _setInstance(yyyymm, billId, { skipped: false });
+}
+
+async function setInstanceActualAmount(yyyymm, billId, amount) {
+  return _setInstance(yyyymm, billId, { actualAmount: Number(amount) });
+}
+
+// Regenerate a month from current templates (preserves paidAt for instances that still match)
+async function regenerateMonth(yyyymm) {
+  const { year, month } = _parseYyyymm(yyyymm);
+  const old = billInstances[yyyymm] || {};
+  const fresh = {};
+
+  for (const tpl of bills) {
+    if (tpl.archived) continue;
+    if (!shouldBeDueInMonth(tpl, year, month)) continue;
+    const dom = _clampDayOfMonth(tpl.dayOfMonth || 1, year, month);
+    const existing = old[tpl.id];
+    fresh[tpl.id] = {
+      billId:         tpl.id,
+      dueDate:        _isoDate(year, month, dom),
+      expectedAmount: tpl.amount,
+      actualAmount:   existing?.actualAmount ?? null,
+      paidAt:         existing?.paidAt ?? null,
+      paidBy:         existing?.paidBy ?? null,
+      skipped:        existing?.skipped ?? false,
+      source:         existing?.source ?? 'manual',
+      updatedAt:      _nowIso(),
+    };
+  }
+
+  billInstances[yyyymm] = fresh;
+  if (!budgetSettings.materialisedMonths.includes(yyyymm)) {
+    budgetSettings.materialisedMonths.push(yyyymm);
+  }
+  await saveBudgetLocal();
+  _syncQueue?.enqueue();
+  return fresh;
+}
+
+// ── Aggregations (for the dashboard hero card) ─────────────────────────────
+function getMonthInstances(yyyymm) {
+  return billInstances[yyyymm] || {};
+}
+
+function getLeftToPay(yyyymm) {
+  const instances = getMonthInstances(yyyymm);
+  let total = 0;
+  for (const inst of Object.values(instances)) {
+    if (inst.skipped) continue;
+    if (inst.paidAt)   continue;
+    total += (inst.actualAmount ?? inst.expectedAmount) || 0;
+  }
+  return Math.round(total * 100) / 100;
+}
+
+function getPaidSoFar(yyyymm) {
+  const instances = getMonthInstances(yyyymm);
+  let total = 0;
+  for (const inst of Object.values(instances)) {
+    if (inst.skipped) continue;
+    if (!inst.paidAt) continue;
+    total += (inst.actualAmount ?? inst.expectedAmount) || 0;
+  }
+  return Math.round(total * 100) / 100;
+}
+
+function getNextDueBill(yyyymm, fromIsoDate = null) {
+  const instances = getMonthInstances(yyyymm);
+  const cutoff    = fromIsoDate || (new Date().toISOString().slice(0, 10));
+  let next = null;
+  for (const inst of Object.values(instances)) {
+    if (inst.skipped || inst.paidAt) continue;
+    if (inst.dueDate < cutoff) continue;
+    if (!next || inst.dueDate < next.dueDate) next = inst;
+  }
+  return next; // instance, or null
+}
+
+function getUpcomingBills(fromIsoDate = null, withinDays = 14) {
+  // Pulls from current month and next month if within the window
+  const today = new Date(fromIsoDate || new Date().toISOString().slice(0, 10) + 'T12:00:00');
+  const end   = new Date(today.getTime() + withinDays * 86400000);
+  const months = new Set([_yyyymm(today), _yyyymm(end)]);
+  const out = [];
+  for (const yyyymm of months) {
+    const instances = getMonthInstances(yyyymm);
+    for (const inst of Object.values(instances)) {
+      if (inst.skipped || inst.paidAt) continue;
+      const due = new Date(inst.dueDate + 'T12:00:00');
+      if (due >= today && due <= end) {
+        out.push({ ...inst, _yyyymm: yyyymm });
+      }
+    }
+  }
+  out.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  return out;
+}
+
+// ── Sync merge ─────────────────────────────────────────────────────────────
+// Whole-object LWW for templates (matches active mergeItems behaviour)
+function mergeBills(local, remote) {
+  const map = new Map();
+  for (const tpl of (local || []))  map.set(tpl.id, tpl);
+  for (const tpl of (remote || [])) {
+    const existing = map.get(tpl.id);
+    if (!existing) {
+      map.set(tpl.id, tpl);
+    } else {
+      const lt = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+      const rt = tpl.updatedAt      ? new Date(tpl.updatedAt).getTime()      : 0;
+      if (rt > lt) map.set(tpl.id, tpl);
+    }
+  }
+  return Array.from(map.values());
+}
+
+// Whole-instance LWW. Instances are nested: {yyyymm: {billId: instance}}
+function mergeBillInstances(local, remote) {
+  const out = { ...(local || {}) };
+  if (!remote) return out;
+  for (const yyyymm of Object.keys(remote)) {
+    if (!out[yyyymm]) out[yyyymm] = {};
+    for (const billId of Object.keys(remote[yyyymm])) {
+      const ri = remote[yyyymm][billId];
+      const li = out[yyyymm][billId];
+      if (!li) {
+        out[yyyymm][billId] = ri;
+      } else {
+        const lt = li.updatedAt ? new Date(li.updatedAt).getTime() : 0;
+        const rt = ri.updatedAt ? new Date(ri.updatedAt).getTime() : 0;
+        if (rt > lt) out[yyyymm][billId] = ri;
+      }
+    }
+  }
+  return out;
+}
+
+function mergeBudgetSettings(local, remote) {
+  // weekStart: local wins (it's a per-device preference)
+  // materialisedMonths: union
+  const merged = { ...(local || {}) };
+  if (remote) {
+    const localMonths  = new Set(local?.materialisedMonths || []);
+    const remoteMonths = new Set(remote.materialisedMonths || []);
+    merged.materialisedMonths = Array.from(new Set([...localMonths, ...remoteMonths]));
+  }
+  return merged;
+}
+
+// ── Share permission backfill (one-shot) ───────────────────────────────────
+// Owner-side helper: existing share targets may not have a `budget` perm because
+// they were created before this feature existed. Detects and offers to backfill.
+function shareTargetsMissingBudgetPerm() {
+  if (typeof _shareTargets === 'undefined' || !Array.isArray(_shareTargets)) return [];
+  return _shareTargets.filter(t => {
+    if (!t.households) return false;
+    return Object.values(t.households).some(perms => perms && !('budget' in perms));
+  });
+}
+
+// Offer once per session — UI in turn 2 wires this to a banner.
+let _budgetPermBackfillOffered = false;
+async function maybeOfferBudgetPermBackfill() {
+  if (_budgetPermBackfillOffered) return;
+  if (typeof _shareState !== 'undefined' && _shareState) return; // guests don't see this
+  const missing = shareTargetsMissingBudgetPerm();
+  if (!missing.length) return;
+  _budgetPermBackfillOffered = true;
+  // UI wiring deferred to turn 2 — for now expose on window for diagnostics
+  if (typeof window !== 'undefined') {
+    window._budgetPermBackfillTargets = missing;
+  }
+}
+
+// Apply the backfill once user confirms (called from UI in turn 2).
+// Defaults each missing household to 'rw' (matches family preset for budget).
+async function applyBudgetPermBackfill() {
+  if (typeof _shareTargets === 'undefined' || !Array.isArray(_shareTargets)) return;
+  let touched = 0;
+  for (const target of _shareTargets) {
+    if (!target.households) continue;
+    for (const hKey of Object.keys(target.households)) {
+      const perms = target.households[hKey];
+      if (perms && !('budget' in perms)) {
+        perms.budget = 'rw';
+        touched++;
+      }
+    }
+  }
+  if (touched && typeof saveData === 'function') {
+    await saveData();
+    if (typeof pushAllSharedData === 'function') {
+      try { await pushAllSharedData(); } catch (e) { /* non-fatal */ }
+    }
+    _syncQueue?.enqueue('Updating share permissions…');
+  }
+  return touched;
+}
+
+// ── Settings setter ────────────────────────────────────────────────────────
+async function setBudgetWeekStart(value) {
+  if (value !== 'mon' && value !== 'sun') return;
+  budgetSettings.weekStart = value;
+  await saveBudgetLocal();
+  _syncQueue?.enqueue();
+}
+
+// ── Diagnostics ────────────────────────────────────────────────────────────
+if (typeof window !== 'undefined') {
+  window.budgetDiag = function () {
+    const yyyymm = _yyyymm(new Date());
+    return {
+      bills: bills.length,
+      activeBills: bills.filter(b => !b.archived).length,
+      currentMonth: yyyymm,
+      currentMonthInstances: Object.keys(billInstances[yyyymm] || {}).length,
+      materialisedMonths: budgetSettings.materialisedMonths.slice(),
+      weekStart: budgetSettings.weekStart,
+      leftToPay: getLeftToPay(yyyymm),
+      paidSoFar: getPaidSoFar(yyyymm),
+      nextDue: getNextDueBill(yyyymm),
+    };
+  };
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BUDGET UI — Phase 1
+//  Insertion point: in app.js, IMMEDIATELY AFTER the budget-foundations.js
+//  block (so this module can call createBill, materialiseMonth, etc.).
+//  Around line 12410 if you pasted foundations there.
+//
+//  Depends on (defined elsewhere): openModal, closeModal, toast,
+//  scheduleRender (or render*), _kvEmailHash, _shareState, applyTabPermissions,
+//  uid, ic (optional), saveData (for share-perm backfill).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Module state (UI-only — not persisted) ─────────────────────────────────
+let _budgetViewMonth = null;     // 'YYYY-MM' currently displayed; null = today's month
+let _budgetActivePanel = 'dashboard'; // 'dashboard' | 'bills'
+let _budgetEditingBillId = null; // when bill editor is in edit mode, this is the bill id
+let _budgetMarkPaidContext = null; // { yyyymm, billId, expected } during mark-paid modal
+
+// ── View entry point — called by showView('budget', ...) ───────────────────
+async function renderBudget() {
+  // Default month = today's month
+  if (!_budgetViewMonth) _budgetViewMonth = _yyyymm(new Date());
+  // Materialise on first view of any month (idempotent)
+  await materialiseMonth(_budgetViewMonth, { persist: true });
+
+  _updateBudgetMonthLabel();
+  _refreshBudgetEmptyState();
+  _maybeShowBudgetBackfillBanner();
+
+  if (_budgetActivePanel === 'dashboard') renderBudgetDashboard();
+  else                                     renderBudgetBills();
+}
+
+// ── Header — month label + chevrons ────────────────────────────────────────
+function _updateBudgetMonthLabel() {
+  const el = document.getElementById('budget-month-label');
+  if (!el) return;
+  const { year, month } = _parseYyyymm(_budgetViewMonth);
+  const monthName = new Date(year, month, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  el.textContent = monthName;
+
+  // "Today" button visible only when not on current month
+  const todayMonth = _yyyymm(new Date());
+  const todayBtn = document.getElementById('budget-today-btn');
+  if (todayBtn) todayBtn.style.opacity = (_budgetViewMonth === todayMonth) ? '0.4' : '1';
+}
+
+async function budgetPrevMonth() {
+  const { year, month } = _parseYyyymm(_budgetViewMonth);
+  const d = new Date(year, month - 1, 1);
+  _budgetViewMonth = _yyyymm(d);
+  await renderBudget();
+}
+async function budgetNextMonth() {
+  const { year, month } = _parseYyyymm(_budgetViewMonth);
+  const d = new Date(year, month + 1, 1);
+  _budgetViewMonth = _yyyymm(d);
+  await renderBudget();
+}
+async function budgetGoToday() {
+  _budgetViewMonth = _yyyymm(new Date());
+  await renderBudget();
+}
+
+// ── Empty state ────────────────────────────────────────────────────────────
+function _refreshBudgetEmptyState() {
+  // Note: we intentionally read the `bills` global directly. The DOM elements
+  // below are stored in differently-named locals to avoid shadowing it.
+  const isEmpty = !bills.some(b => !b.archived);
+
+  const emptyEl  = document.getElementById('budget-empty');
+  const dashEl   = document.getElementById('budget-panel-dashboard');
+  const billsEl  = document.getElementById('budget-panel-bills');
+  const subnavEl = document.getElementById('budget-subnav');
+
+  if (emptyEl)  emptyEl.style.display  = isEmpty ? 'block' : 'none';
+  if (dashEl)   dashEl.style.display   = isEmpty ? 'none' : (_budgetActivePanel === 'dashboard' ? 'block' : 'none');
+  if (billsEl)  billsEl.style.display  = isEmpty ? 'none' : (_budgetActivePanel === 'bills' ? 'block' : 'none');
+  if (subnavEl) subnavEl.style.display = isEmpty ? 'none' : 'flex';
+}
+
+// ── Sub-nav switch ─────────────────────────────────────────────────────────
+function budgetSwitchPanel(name) {
+  _budgetActivePanel = name;
+  document.querySelectorAll('.budget-subnav-btn').forEach(btn => {
+    const active = btn.dataset.panel === name;
+    btn.classList.toggle('active', active);
+    btn.style.background = active ? 'var(--surface)' : 'transparent';
+    btn.style.color      = active ? 'var(--text)'    : 'var(--muted)';
+  });
+  document.getElementById('budget-panel-dashboard').style.display = (name === 'dashboard') ? 'block' : 'none';
+  document.getElementById('budget-panel-bills').style.display     = (name === 'bills')     ? 'block' : 'none';
+  if (name === 'dashboard') renderBudgetDashboard();
+  else                       renderBudgetBills();
+}
+
+// ── Currency formatting ────────────────────────────────────────────────────
+function _money(n) {
+  if (n == null || isNaN(n)) return '£0.00';
+  const sign = n < 0 ? '-' : '';
+  const abs = Math.abs(n);
+  return sign + '£' + abs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function _shortDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T12:00:00');
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+function _daysFromToday(iso) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const d = new Date(iso + 'T12:00:00'); d.setHours(0, 0, 0, 0);
+  return Math.round((d.getTime() - today.getTime()) / 86400000);
+}
+
+function _relativeDay(iso) {
+  const n = _daysFromToday(iso);
+  if (n === 0)  return 'Today';
+  if (n === 1)  return 'Tomorrow';
+  if (n === -1) return 'Yesterday';
+  if (n > 0)    return `In ${n} days`;
+  return `${Math.abs(n)} days ago`;
+}
+
+// ── Dashboard render ───────────────────────────────────────────────────────
+function renderBudgetDashboard() {
+  const yyyymm = _budgetViewMonth;
+  const left   = getLeftToPay(yyyymm);
+  const paid   = getPaidSoFar(yyyymm);
+  const next   = getNextDueBill(yyyymm);
+
+  const heroAmount = document.getElementById('budget-hero-amount');
+  const heroPaid   = document.getElementById('budget-hero-paid');
+  const heroNext   = document.getElementById('budget-hero-next');
+  if (heroAmount) heroAmount.textContent = _money(left);
+  if (heroPaid)   heroPaid.textContent   = _money(paid);
+  if (heroNext) {
+    if (next) {
+      const tpl = bills.find(b => b.id === next.billId);
+      heroNext.textContent = `${tpl?.name || 'Bill'} · ${_shortDate(next.dueDate)}`;
+    } else {
+      heroNext.textContent = 'All paid';
+    }
+  }
+
+  // Upcoming bills list (next 14 days, current view month or anchor today if viewing past/future month)
+  const upcomingHost = document.getElementById('budget-upcoming-list');
+  if (upcomingHost) {
+    const todayMonth = _yyyymm(new Date());
+    const fromIso = (yyyymm === todayMonth) ? null : `${yyyymm}-01`;
+    const items = getUpcomingBills(fromIso, 14);
+    if (items.length === 0) {
+      upcomingHost.innerHTML = '<div style="padding:24px 16px;text-align:center;color:var(--muted);font-size:13px">No bills due in the next 14 days</div>';
+    } else {
+      upcomingHost.innerHTML = items.map(inst => _renderBillRow(inst, { showRelative: true })).join('');
+    }
+  }
+}
+
+// ── Bills panel render ─────────────────────────────────────────────────────
+function renderBudgetBills() {
+  const yyyymm    = _budgetViewMonth;
+  const instances = getMonthInstances(yyyymm);
+  const all       = Object.values(instances);
+  const due       = all.filter(i => !i.skipped && !i.paidAt);
+  const paid      = all.filter(i => !i.skipped &&  i.paidAt);
+  const skipped   = all.filter(i =>  i.skipped);
+
+  // Sort: due by dueDate asc, paid by paidAt desc, skipped by dueDate asc
+  due.sort((a, b)     => a.dueDate.localeCompare(b.dueDate));
+  paid.sort((a, b)    => (b.paidAt || '').localeCompare(a.paidAt || ''));
+  skipped.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+
+  // Templates not active in this month + not archived
+  const { year, month } = _parseYyyymm(yyyymm);
+  const inactiveTemplates = bills.filter(b => !b.archived && !shouldBeDueInMonth(b, year, month));
+  const archivedTemplates = bills.filter(b => b.archived);
+
+  // Populate sections
+  _renderBillSection('budget-bills-due',     due.map(i => _renderBillRow(i)),     due.length);
+  _renderBillSection('budget-bills-paid',    paid.map(i => _renderBillRow(i)),    paid.length);
+  _renderBillSection('budget-bills-skipped', skipped.map(i => _renderBillRow(i)), skipped.length);
+
+  // "Other bills" — templates inactive this month
+  const otherSection = document.getElementById('budget-bills-other-section');
+  const otherList    = document.getElementById('budget-bills-other-list');
+  const otherCount   = document.getElementById('budget-bills-other-count');
+  if (otherSection && otherList && otherCount) {
+    if (inactiveTemplates.length) {
+      otherSection.style.display = '';
+      otherCount.textContent     = inactiveTemplates.length;
+      otherList.innerHTML        = `<div class="bill-list">${inactiveTemplates.map(_renderBillTemplateRow).join('')}</div>`;
+    } else {
+      otherSection.style.display = 'none';
+    }
+  }
+
+  // Archived
+  const archSection = document.getElementById('budget-bills-archived-section');
+  const archList    = document.getElementById('budget-bills-archived-list');
+  const archCount   = document.getElementById('budget-bills-archived-count');
+  if (archSection && archList && archCount) {
+    if (archivedTemplates.length) {
+      archSection.style.display = '';
+      archCount.textContent     = archivedTemplates.length;
+      archList.innerHTML        = `<div class="bill-list">${archivedTemplates.map(_renderBillTemplateRow).join('')}</div>`;
+    } else {
+      archSection.style.display = 'none';
+    }
+  }
+
+  // Summary
+  const summary = document.getElementById('budget-bills-summary');
+  if (summary) {
+    const expectedTotal = all.filter(i => !i.skipped).reduce((s, i) => s + ((i.actualAmount ?? i.expectedAmount) || 0), 0);
+    summary.innerHTML = `${all.length} bill${all.length !== 1 ? 's' : ''} this month · expected total <strong style="color:var(--text)">${_money(expectedTotal)}</strong>`;
+  }
+}
+
+function _renderBillSection(idPrefix, rowsHtml, count) {
+  const section = document.getElementById(`${idPrefix}-section`);
+  const list    = document.getElementById(`${idPrefix}-list`);
+  const counter = document.getElementById(`${idPrefix}-count`);
+  if (!section || !list) return;
+  if (count === 0) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  if (counter) counter.textContent = count;
+  list.innerHTML = `<div class="bill-list">${rowsHtml.join('')}</div>`;
+}
+
+// ── Bill instance row (for due/paid/skipped/upcoming) ──────────────────────
+function _renderBillRow(inst, opts = {}) {
+  const tpl = bills.find(b => b.id === inst.billId);
+  const name = tpl?.name || 'Unknown bill';
+  const variableTag = tpl?.variableAmount ? '<span class="bill-tag">~</span>' : '';
+  const amount = inst.actualAmount ?? inst.expectedAmount;
+  const isPaid    = !!inst.paidAt;
+  const isSkipped = !!inst.skipped;
+  const today     = new Date().toISOString().slice(0, 10);
+  const isOverdue = !isPaid && !isSkipped && inst.dueDate < today;
+
+  let stateClass = '';
+  if (isPaid)         stateClass = 'is-paid';
+  else if (isSkipped) stateClass = 'is-skipped';
+  else if (isOverdue) stateClass = 'is-overdue';
+  else                stateClass = 'is-due';
+
+  const day = inst.dueDate.slice(8, 10).replace(/^0/, '');
+  const yyyymm = inst._yyyymm || _yyyymmFromString(inst.dueDate);
+
+  let metaText = '';
+  if (opts.showRelative) {
+    metaText = _relativeDay(inst.dueDate);
+  } else if (isPaid) {
+    const paidWhen = new Date(inst.paidAt);
+    metaText = `Paid ${paidWhen.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
+  } else if (isSkipped) {
+    metaText = 'Skipped';
+  } else if (isOverdue) {
+    metaText = `${Math.abs(_daysFromToday(inst.dueDate))} days overdue`;
+  } else {
+    metaText = _relativeDay(inst.dueDate);
+  }
+
+  // Action buttons depend on state
+  let actions = '';
+  if (isPaid) {
+    actions = `<button class="bill-action-btn" onclick="event.stopPropagation();handleBillUnpay('${yyyymm}','${inst.billId}')" title="Unmark paid"><svg aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>`;
+  } else if (isSkipped) {
+    actions = `<button class="bill-action-btn" onclick="event.stopPropagation();handleBillUnskip('${yyyymm}','${inst.billId}')" title="Unskip"><svg aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>`;
+  } else {
+    actions =
+      `<button class="bill-action-btn bill-action-paid" onclick="event.stopPropagation();handleBillPay('${yyyymm}','${inst.billId}')" title="Mark paid"><svg aria-hidden="true"><use href="#i-check"></use></svg></button>` +
+      `<button class="bill-action-btn bill-action-skip" onclick="event.stopPropagation();handleBillSkip('${yyyymm}','${inst.billId}')" title="Skip this month"><svg aria-hidden="true"><use href="#i-x"></use></svg></button>` +
+      `<button class="bill-action-btn bill-action-edit" onclick="event.stopPropagation();openBillEditor('${inst.billId}')" title="Edit bill"><svg aria-hidden="true"><use href="#i-pencil"></use></svg></button>`;
+  }
+
+  return `
+    <div class="bill-row ${stateClass}" onclick="openBillEditor('${inst.billId}')">
+      <div class="bill-day">${day}</div>
+      <div class="bill-info">
+        <div class="bill-name">${_escapeHtml(name)} ${variableTag}</div>
+        <div class="bill-meta">${metaText}</div>
+      </div>
+      <div class="bill-amount ${tpl?.variableAmount && !isPaid ? 'is-variable' : ''}">${_money(amount)}</div>
+      <div class="bill-actions">${actions}</div>
+    </div>`;
+}
+
+// ── Bill template row (for "Other bills" + "Archived" sections) ────────────
+function _renderBillTemplateRow(tpl) {
+  const freq = _frequencyLabel(tpl);
+  return `
+    <div class="bill-row ${tpl.archived ? 'is-skipped' : ''}" onclick="openBillEditor('${tpl.id}')">
+      <div class="bill-day">${tpl.dayOfMonth}</div>
+      <div class="bill-info">
+        <div class="bill-name">${_escapeHtml(tpl.name)}</div>
+        <div class="bill-meta">${freq}${tpl.archived ? ' · archived' : ''}</div>
+      </div>
+      <div class="bill-amount">${_money(tpl.amount)}</div>
+      <div class="bill-actions">
+        <button class="bill-action-btn bill-action-edit" onclick="event.stopPropagation();openBillEditor('${tpl.id}')" title="Edit"><svg aria-hidden="true"><use href="#i-pencil"></use></svg></button>
+      </div>
+    </div>`;
+}
+
+function _frequencyLabel(tpl) {
+  const f = tpl.frequency || { unit: 'month', interval: 1 };
+  if (f.unit === 'year') return 'Annual';
+  const interval = f.interval || 1;
+  if (interval === 1)  return 'Monthly';
+  if (interval === 3)  return 'Every 3 months';
+  if (interval === 6)  return 'Every 6 months';
+  if (interval === 12) return 'Annual';
+  return `Every ${interval} months`;
+}
+
+function _escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ── Mark paid / unpaid / skip / unskip handlers ────────────────────────────
+async function handleBillPay(yyyymm, billId) {
+  const tpl = bills.find(b => b.id === billId);
+  const inst = _getInstance(yyyymm, billId);
+  if (!tpl || !inst) return;
+  // For variable bills, prompt for actual amount
+  if (tpl.variableAmount) {
+    _budgetMarkPaidContext = { yyyymm, billId, expected: inst.expectedAmount };
+    document.getElementById('bmp-subtitle').textContent = `${tpl.name} — due ${_shortDate(inst.dueDate)}`;
+    const amtIn = document.getElementById('bmp-amount');
+    amtIn.value = inst.actualAmount != null ? inst.actualAmount : inst.expectedAmount;
+    document.getElementById('bmp-expected-hint').textContent = `Estimated: ${_money(inst.expectedAmount)}`;
+    openModal('bill-mark-paid-modal');
+    setTimeout(() => amtIn.select(), 50);
+    return;
+  }
+  // Fixed-amount bill — mark paid directly
+  await markBillPaid(yyyymm, billId);
+  await renderBudget();
+  toast(`Marked ${tpl.name} paid`);
+}
+
+async function confirmMarkBillPaid() {
+  const ctx = _budgetMarkPaidContext;
+  if (!ctx) return;
+  const amt = parseFloat(document.getElementById('bmp-amount').value);
+  if (isNaN(amt) || amt < 0) { toast('Enter a valid amount'); return; }
+  await markBillPaid(ctx.yyyymm, ctx.billId, { actualAmount: amt });
+  closeModal('bill-mark-paid-modal');
+  _budgetMarkPaidContext = null;
+  await renderBudget();
+  toast('Bill marked paid');
+}
+
+async function handleBillUnpay(yyyymm, billId) {
+  await markBillUnpaid(yyyymm, billId);
+  await renderBudget();
+}
+
+async function handleBillSkip(yyyymm, billId) {
+  await skipBillInstance(yyyymm, billId);
+  await renderBudget();
+}
+
+async function handleBillUnskip(yyyymm, billId) {
+  await unskipBillInstance(yyyymm, billId);
+  await renderBudget();
+}
+
+// ── Bill editor modal — open / save / archive ──────────────────────────────
+function openBillEditor(billId = null) {
+  _budgetEditingBillId = billId;
+  const tpl = billId ? bills.find(b => b.id === billId) : null;
+  document.getElementById('bill-editor-mode-label').textContent = tpl ? 'Edit Bill' : 'Add Bill';
+  document.getElementById('bill-save-label').textContent        = tpl ? 'Save Changes' : 'Save Bill';
+  document.getElementById('bill-archive-btn').style.display     = tpl ? 'inline-flex' : 'none';
+
+  document.getElementById('bill-name').value          = tpl?.name      || '';
+  document.getElementById('bill-amount').value        = tpl?.amount    ?? '';
+  document.getElementById('bill-variable').checked    = !!tpl?.variableAmount;
+  document.getElementById('bill-day-of-month').value  = tpl?.dayOfMonth ?? 1;
+  document.getElementById('bill-notes').value         = tpl?.notes     || '';
+
+  // Frequency presets
+  const freq = tpl?.frequency || { unit: 'month', interval: 1, anchorMonth: null };
+  let preset = 'monthly';
+  if (freq.unit === 'year') preset = 'annual';
+  else if (freq.interval === 3)  preset = 'quarterly';
+  else if (freq.interval === 6)  preset = 'six_monthly';
+  else if (freq.interval === 1)  preset = 'monthly';
+  else                           preset = 'custom';
+  document.getElementById('bill-frequency-preset').value  = preset;
+  document.getElementById('bill-anchor-month').value      = String(freq.anchorMonth ?? 0);
+  document.getElementById('bill-custom-interval').value   = (preset === 'custom' ? freq.interval : 2);
+
+  billOnFreqPresetChange();
+  _refreshBillVariableHint();
+  openModal('bill-editor-modal');
+  setTimeout(() => document.getElementById('bill-name').focus(), 50);
+}
+
+function billOnFreqPresetChange() {
+  const preset = document.getElementById('bill-frequency-preset').value;
+  const anchorRow = document.getElementById('bill-anchor-row');
+  const customRow = document.getElementById('bill-custom-interval-row');
+  const anchorLabel = document.getElementById('bill-anchor-label');
+  const anchorHint  = document.getElementById('bill-anchor-hint');
+
+  const showAnchor = preset !== 'monthly';
+  anchorRow.style.display = showAnchor ? 'block' : 'none';
+  customRow.style.display = preset === 'custom' ? 'block' : 'none';
+
+  if (showAnchor) {
+    if (preset === 'annual') {
+      anchorLabel.textContent = 'Month it pays';
+      anchorHint.textContent  = '';
+    } else {
+      anchorLabel.textContent = 'First payment month';
+      const intervalText = preset === 'quarterly'   ? 'every 3 months'
+                        : preset === 'six_monthly'  ? 'every 6 months'
+                        : 'every N months';
+      anchorHint.textContent  = `Repeats ${intervalText} from this anchor.`;
+    }
+  }
+}
+
+function _refreshBillVariableHint() {
+  const checked = document.getElementById('bill-variable').checked;
+  document.getElementById('bill-amount-hint').style.display = checked ? 'block' : 'none';
+}
+document.addEventListener('change', e => {
+  if (e.target?.id === 'bill-variable') _refreshBillVariableHint();
+});
+
+async function saveBillFromEditor() {
+  const name = (document.getElementById('bill-name').value || '').trim();
+  if (!name) { toast('Bill needs a name'); return; }
+  const amount = parseFloat(document.getElementById('bill-amount').value);
+  if (isNaN(amount) || amount < 0) { toast('Enter a valid amount'); return; }
+  const dayOfMonth = parseInt(document.getElementById('bill-day-of-month').value, 10);
+  if (isNaN(dayOfMonth) || dayOfMonth < 1 || dayOfMonth > 31) { toast('Day must be 1-31'); return; }
+  const variableAmount = document.getElementById('bill-variable').checked;
+  const notes = (document.getElementById('bill-notes').value || '').trim();
+
+  const preset       = document.getElementById('bill-frequency-preset').value;
+  const anchorMonth  = parseInt(document.getElementById('bill-anchor-month').value, 10);
+  const customInt    = parseInt(document.getElementById('bill-custom-interval').value, 10);
+  let frequency;
+  if (preset === 'monthly')           frequency = { unit: 'month', interval: 1, anchorMonth: null };
+  else if (preset === 'quarterly')    frequency = { unit: 'month', interval: 3, anchorMonth };
+  else if (preset === 'six_monthly')  frequency = { unit: 'month', interval: 6, anchorMonth };
+  else if (preset === 'annual')       frequency = { unit: 'year',  interval: 1, anchorMonth };
+  else                                frequency = { unit: 'month', interval: Math.max(1, customInt || 2), anchorMonth };
+
+  const patch = { name, amount, variableAmount, dayOfMonth, notes, frequency };
+
+  if (_budgetEditingBillId) {
+    await updateBill(_budgetEditingBillId, patch);
+    toast('Bill updated');
+  } else {
+    await createBill(patch);
+    toast('Bill added');
+  }
+
+  // Re-materialise current month so changes show up. This pulls in any new bills,
+  // but does not overwrite already-paid instances since materialiseMonth respects existing data.
+  await materialiseMonth(_budgetViewMonth, { persist: true });
+
+  closeModal('bill-editor-modal');
+  _budgetEditingBillId = null;
+  await renderBudget();
+}
+
+async function confirmArchiveBill() {
+  if (!_budgetEditingBillId) return;
+  const tpl = bills.find(b => b.id === _budgetEditingBillId);
+  if (!tpl) return;
+  if (!confirm(`Archive "${tpl.name}"? Past instances stay; no new ones will be generated.`)) return;
+  await archiveBill(_budgetEditingBillId);
+  closeModal('bill-editor-modal');
+  _budgetEditingBillId = null;
+  toast('Bill archived');
+  await renderBudget();
+}
+
+// ── Mark all past-due monthly bills as paid (the 1st-of-month sweep) ───────
+async function budgetMarkAllStandingPaid() {
+  const yyyymm = _budgetViewMonth;
+  const today  = new Date().toISOString().slice(0, 10);
+  const instances = getMonthInstances(yyyymm);
+  const candidates = Object.values(instances).filter(i => !i.paidAt && !i.skipped && i.dueDate <= today);
+  if (!candidates.length) { toast('Nothing past-due to mark'); return; }
+  // Skip variable bills — they need the prompt
+  const fixed = candidates.filter(i => {
+    const tpl = bills.find(b => b.id === i.billId);
+    return tpl && !tpl.variableAmount;
+  });
+  if (!fixed.length) { toast('Only variable bills past-due — mark each one individually'); return; }
+  if (!confirm(`Mark ${fixed.length} past-due fixed bill${fixed.length > 1 ? 's' : ''} as paid?`)) return;
+  for (const inst of fixed) {
+    await markBillPaid(yyyymm, inst.billId);
+  }
+  await renderBudget();
+  toast(`Marked ${fixed.length} bill${fixed.length > 1 ? 's' : ''} paid`);
+}
+
+// ── Regenerate this month from current templates ───────────────────────────
+async function budgetRegenerateMonth() {
+  const yyyymm = _budgetViewMonth;
+  const instances = getMonthInstances(yyyymm);
+  const paidCount = Object.values(instances).filter(i => i.paidAt).length;
+  let warning = `Regenerate ${yyyymm} from current bill templates?`;
+  if (paidCount > 0) {
+    warning += `\n\n${paidCount} paid bill${paidCount > 1 ? 's' : ''} will keep their paid status if they still match a template.`;
+  }
+  if (!confirm(warning)) return;
+  await regenerateMonth(yyyymm);
+  await renderBudget();
+  toast('Month regenerated');
+}
+
+// ── Share permission backfill banner ───────────────────────────────────────
+function _maybeShowBudgetBackfillBanner() {
+  const banner = document.getElementById('budget-backfill-banner');
+  if (!banner) return;
+  // Guests don't see this — only the share owner can grant perms
+  if (typeof _shareState !== 'undefined' && _shareState) { banner.style.display = 'none'; return; }
+  // Run the offer detector — populates window._budgetPermBackfillTargets the first time
+  maybeOfferBudgetPermBackfill();
+  const targets = (typeof window !== 'undefined' ? window._budgetPermBackfillTargets : null) || [];
+  banner.style.display = targets.length ? 'block' : 'none';
+}
+
+async function confirmBudgetPermBackfill() {
+  const n = await applyBudgetPermBackfill();
+  document.getElementById('budget-backfill-banner').style.display = 'none';
+  if (typeof window !== 'undefined') window._budgetPermBackfillTargets = [];
+  if (n) toast(`Granted Budget access to ${n} share${n > 1 ? 's' : ''}`);
+  else   toast('No shares to update');
+}
+
+function dismissBudgetPermBackfill() {
+  document.getElementById('budget-backfill-banner').style.display = 'none';
+  if (typeof window !== 'undefined') window._budgetPermBackfillTargets = [];
+}
 
 
 // ═══════════════════════════════════════════════════════════
@@ -14625,19 +15635,20 @@ let _inviteCode    = null;
 // Default permission sets per user type
 const SHARE_TYPE_DEFAULTS = {
   family: {
-    stockroom: 'rw', groceries: 'rw', reminders: 'rw', savings: 'rw', report: 'r'
+    stockroom: 'rw', groceries: 'rw', reminders: 'rw', savings: 'rw', report: 'r', budget: 'rw'
   },
   cleaner: {
-    stockroom: 'r', groceries: 'rw', reminders: 'none', savings: 'none', report: 'none'
+    stockroom: 'r', groceries: 'rw', reminders: 'none', savings: 'none', report: 'none', budget: 'none'
   },
   guest: {
-    stockroom: 'r', groceries: 'r', reminders: 'none', savings: 'none', report: 'r'
+    stockroom: 'r', groceries: 'r', reminders: 'none', savings: 'none', report: 'r', budget: 'none'
   },
 };
 
 const SECTION_LABELS = {
   stockroom: '📦 Stockroom', groceries: '🛒 Groceries',
   reminders: '🔔 Reminders', savings: '💰 Savings', report: '📋 Report',
+  budget:    '💷 Budget',
 };
 
 // Get permission for a section in the current household
@@ -14659,7 +15670,7 @@ function applyTabPermissions() {
   if (!_shareState) return; // owner sees everything
   const sectionToTab = {
     stockroom: 'stock', groceries: 'grocery', reminders: 'reminders',
-    savings: 'savings', report: 'report',
+    savings: 'savings', report: 'report', budget: 'budget',
   };
   document.querySelectorAll('.tab').forEach(tab => {
     const text = tab.textContent.trim().toLowerCase();
@@ -14668,6 +15679,7 @@ function applyTabPermissions() {
     else if (text.includes('groceries') || text.includes('grocery')) section = 'groceries';
     else if (text.includes('reminders')) section = 'reminders';
     else if (text.includes('savings')) section = 'savings';
+    else if (text.includes('budget')) section = 'budget';
     else if (text.includes('report')) section = 'report';
     if (!section) return;
     if (canView(section)) {
@@ -16058,6 +17070,7 @@ async function init() {
   await loadReminders();
   await loadNotes();
   await loadGrocery();
+  await loadBudget();
   // Sweep any expired items from the 30-day recycle bin (no-op if loadProfile already did it)
   await purgeExpiredFromBins();
   await checkGroceryRecurring();
