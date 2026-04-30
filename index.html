@@ -1167,7 +1167,10 @@
             <div class="acc-sec-h">Snapshots of your encrypted data</div>
             <div class="acc-sec-p">Your data is automatically backed up. Tap a snapshot to download your encrypted data from that point in time. The file is useless without your passphrase — even we can't read it. Restoring from a snapshot is currently a manual process; contact support if you need to roll back.</div>
           </div>
-          <button class="btn btn-ghost acc-sec-btn" onclick="loadBackupHistory()">View history</button>
+          <div style="display:flex;gap:8px;flex-shrink:0">
+            <button id="backup-history-refresh-btn" class="btn btn-ghost acc-sec-btn" style="display:none" onclick="loadBackupHistory()" title="Reload list">↻ Refresh</button>
+            <button id="backup-history-toggle-btn" class="btn btn-ghost acc-sec-btn" onclick="toggleBackupHistory()">View history</button>
+          </div>
         </div>
         <div id="backup-history-list" style="display:none;margin-top:8px;max-height:380px;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
       </div>

@@ -7321,8 +7321,25 @@ function _bhSnapshotLabel(key, lastModified) {
   return { tierLabel, when };
 }
 
+function toggleBackupHistory() {
+  const container  = document.getElementById('backup-history-list');
+  const toggleBtn  = document.getElementById('backup-history-toggle-btn');
+  const refreshBtn = document.getElementById('backup-history-refresh-btn');
+  if (!container) return;
+  // If currently shown, hide it. Otherwise load fresh.
+  if (container.style.display !== 'none') {
+    container.style.display = 'none';
+    if (toggleBtn)  toggleBtn.textContent  = 'View history';
+    if (refreshBtn) refreshBtn.style.display = 'none';
+    return;
+  }
+  loadBackupHistory();
+}
+
 async function loadBackupHistory() {
-  const container = document.getElementById('backup-history-list');
+  const container   = document.getElementById('backup-history-list');
+  const toggleBtn   = document.getElementById('backup-history-toggle-btn');
+  const refreshBtn  = document.getElementById('backup-history-refresh-btn');
   if (!container) return;
   if (!_kvEmailHash) {
     toast('Sign in first to view backup history');
@@ -7330,6 +7347,8 @@ async function loadBackupHistory() {
   }
   container.style.display = 'block';
   container.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:12px">Loading snapshots…</div>';
+  if (toggleBtn)  toggleBtn.textContent  = 'Hide history';
+  if (refreshBtn) refreshBtn.style.display = '';
 
   try {
     const authBody = _kvSessionToken && !_kvVerifier
