@@ -1720,3 +1720,238 @@ body.note-open { overflow: hidden; touch-action: none; }
   /* Hide low-value action buttons on mobile — long-press / tap opens editor instead */
   .bill-row .bill-action-btn.bill-action-edit { display: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   BUDGET — Phase 2 styles (discretionary spend)
+   Append to the END of styles.css (after the Phase 1 Budget styles).
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Category tile row — horizontally scrolling on mobile */
+.budget-tile-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  padding-bottom: 4px;
+  /* Hide horizontal scrollbar on Firefox */
+  scrollbar-width: thin;
+}
+.budget-tile-row::-webkit-scrollbar {
+  height: 6px;
+}
+.budget-tile-row::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+/* Individual category tile */
+.budget-cat-tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  min-width: 160px;
+  flex-shrink: 0;
+  scroll-snap-align: start;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.budget-cat-tile:hover { background: rgba(255,255,255,0.02); }
+.budget-cat-tile.is-filtered {
+  border-color: var(--accent);
+  background: rgba(232,168,56,0.06);
+}
+.budget-cat-tile-name {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.budget-cat-tile-amt {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.budget-cat-tile-bar {
+  height: 4px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.budget-cat-tile-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+.budget-cat-tile-bar-fill.is-warn { opacity: 0.85; }
+.budget-cat-tile-bar-fill.is-over { background: var(--danger) !important; }
+
+/* Category dot — used in tiles, transaction rows, manage modal */
+.budget-cat-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+/* Period toggle pills */
+.budget-period-btn { transition: background 0.15s, color 0.15s; }
+.budget-period-btn.active {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+}
+
+/* Transaction list — day groupings */
+.spend-day-group { /* container; styling on children */ }
+.spend-day-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 14px;
+  background: rgba(255,255,255,0.015);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.spend-tx-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.spend-tx-row:last-child { border-bottom: none; }
+.spend-tx-row:hover { background: rgba(255,255,255,0.025); }
+.spend-tx-info {
+  flex: 1;
+  min-width: 0;
+}
+.spend-tx-where {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.spend-tx-cat {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.spend-tx-amount {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+/* Quick-add chips */
+.quick-add-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.quick-add-chip.is-warn {
+  border-color: rgba(232,168,56,0.35);
+  background: rgba(232,168,56,0.04);
+}
+.quick-add-chip.is-error {
+  border-color: rgba(232,80,80,0.35);
+  background: rgba(232,80,80,0.05);
+  color: var(--muted);
+  font-style: italic;
+}
+.quick-add-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--danger);
+}
+.quick-add-chip-amt {
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--text);
+  min-width: 60px;
+}
+.quick-add-chip-where {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.quick-add-chip-cat {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--accent);
+}
+.quick-add-chip-cat-name {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.quick-add-chip-text {
+  flex: 1;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* First-run setup modal: row layout */
+.budget-setup-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.budget-setup-row input[type="checkbox"] {
+  flex-shrink: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Mobile tweaks */
+@media (max-width: 700px) {
+  /* Tiles: smaller min-width to fit ~2 per screen */
+  .budget-cat-tile { min-width: 145px; padding: 10px 12px; }
+  .budget-cat-tile-name { font-size: 11px; }
+  .budget-cat-tile-amt { font-size: 13px; }
+  /* Transaction rows: tighter padding, larger touch target on action */
+  .spend-tx-row { padding: 10px 12px; gap: 10px; }
+  /* Quick-add chips: stack on small screens */
+  .quick-add-chip { padding: 7px 10px; font-size: 12px; }
+  .quick-add-chip-amt { min-width: 56px; }
+  /* Setup modal rows: stack name and amount */
+  .budget-setup-row { flex-wrap: wrap; gap: 6px; }
+}

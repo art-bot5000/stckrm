@@ -5846,6 +5846,7 @@ function showView(name, btn) {
     buildSettingsCountrySelect();
     if (kvConnected) { loadTrustedDevices(); loadPasskeys(); }
     initSettingsCollapsibles();
+    _refreshBudgetWeekStartRadio();
   }
   _currentView = name;
   if (_householdEnabled) pushPresence();
@@ -12234,9 +12235,26 @@ const FAB_ACTIONS = {
     { icon: '<svg class="icon" aria-hidden="true"><use href="#i-notebook-pen"></use></svg>', label: 'New Note', action: () => { closeFab(); openNoteEditor(null); } },
   ],
   budget: [
-    { icon: '<svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>', label: 'Add Bill', action: () => { closeFab(); openBillEditor(); } },
+    { icon: '<svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>', label: 'Add Bill',   action: () => { closeFab(); openBillEditor(); } },
+    { icon: '<svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg>',  label: 'Quick Add',  action: () => { closeFab(); openQuickAddSpend(); } },
   ],
 };
+
+// Budget FAB ordering depends on which sub-panel is active. On the Spend panel,
+// Quick Add takes precedence. On Dashboard/Bills, Add Bill comes first. This
+// is computed on FAB open so it stays in sync with the user's current context.
+function _getFabActionsForView(viewName) {
+  const base = FAB_ACTIONS[viewName] || [];
+  if (viewName === 'budget' && typeof _budgetActivePanel !== 'undefined' && _budgetActivePanel === 'spend') {
+    // Move Quick Add (label) to the front
+    return [...base].sort((a, b) => {
+      if (a.label === 'Quick Add') return -1;
+      if (b.label === 'Quick Add') return  1;
+      return 0;
+    });
+  }
+  return base;
+}
 
 // Grocery FAB: primary action slides left, secondaries stack above
 function getGroceryFabActions() {
@@ -12314,7 +12332,7 @@ function openFab() {
     container.appendChild(slide);
 
   } else {
-    const actions = FAB_ACTIONS[_currentView] || [];
+    const actions = _getFabActionsForView(_currentView);
     menu.innerHTML = actions.map((a, i) => `
       <div style="display:flex;align-items:center;gap:10px;animation:fabItemIn 0.18s ease ${i*0.05}s both">
         <span onclick="(${a.action.toString()})()" style="font-size:17px;font-weight:600;color:var(--text);background:var(--surface);padding:7px 14px;border-radius:8px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3);border:1px solid var(--border);cursor:pointer">${a.label}</span>
@@ -12968,9 +12986,22 @@ async function renderBudget() {
   _updateBudgetMonthLabel();
   _refreshBudgetEmptyState();
   _maybeShowBudgetBackfillBanner();
+  // Make sure the header action button is correct for the active panel
+  // (handles the case where renderBudget is called without panel switching)
+  const addBtn = document.getElementById('budget-add-bill-desktop');
+  if (addBtn) {
+    if (_budgetActivePanel === 'spend') {
+      addBtn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg> Quick Add';
+      addBtn.setAttribute('onclick', 'openQuickAddSpend()');
+    } else {
+      addBtn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Bill';
+      addBtn.setAttribute('onclick', 'openBillEditor()');
+    }
+  }
 
-  if (_budgetActivePanel === 'dashboard') renderBudgetDashboard();
-  else                                     renderBudgetBills();
+  if (_budgetActivePanel === 'dashboard')   renderBudgetDashboard();
+  else if (_budgetActivePanel === 'bills')  renderBudgetBills();
+  else if (_budgetActivePanel === 'spend')  renderBudgetSpend();
 }
 
 // ── Header — month label + chevrons ────────────────────────────────────────
@@ -13006,18 +13037,23 @@ async function budgetGoToday() {
 
 // ── Empty state ────────────────────────────────────────────────────────────
 function _refreshBudgetEmptyState() {
-  // Note: we intentionally read the `bills` global directly. The DOM elements
-  // below are stored in differently-named locals to avoid shadowing it.
-  const isEmpty = !bills.some(b => !b.archived);
+  // Empty only if NEITHER bills NOR spend categories exist. Once user has any
+  // budget data, the empty state goes away even if their current panel is empty.
+  // (Each panel manages its own per-panel empty messages.)
+  const noBills = !bills.some(b => !b.archived);
+  const noCats  = !budgetCategories.some(c => !c.archived);
+  const isEmpty = noBills && noCats;
 
   const emptyEl  = document.getElementById('budget-empty');
   const dashEl   = document.getElementById('budget-panel-dashboard');
   const billsEl  = document.getElementById('budget-panel-bills');
+  const spendEl  = document.getElementById('budget-panel-spend');
   const subnavEl = document.getElementById('budget-subnav');
 
   if (emptyEl)  emptyEl.style.display  = isEmpty ? 'block' : 'none';
   if (dashEl)   dashEl.style.display   = isEmpty ? 'none' : (_budgetActivePanel === 'dashboard' ? 'block' : 'none');
-  if (billsEl)  billsEl.style.display  = isEmpty ? 'none' : (_budgetActivePanel === 'bills' ? 'block' : 'none');
+  if (billsEl)  billsEl.style.display  = isEmpty ? 'none' : (_budgetActivePanel === 'bills'     ? 'block' : 'none');
+  if (spendEl)  spendEl.style.display  = isEmpty ? 'none' : (_budgetActivePanel === 'spend'     ? 'block' : 'none');
   if (subnavEl) subnavEl.style.display = isEmpty ? 'none' : 'flex';
 }
 
@@ -13032,8 +13068,24 @@ function budgetSwitchPanel(name) {
   });
   document.getElementById('budget-panel-dashboard').style.display = (name === 'dashboard') ? 'block' : 'none';
   document.getElementById('budget-panel-bills').style.display     = (name === 'bills')     ? 'block' : 'none';
-  if (name === 'dashboard') renderBudgetDashboard();
-  else                       renderBudgetBills();
+  const spendPanel = document.getElementById('budget-panel-spend');
+  if (spendPanel) spendPanel.style.display = (name === 'spend') ? 'block' : 'none';
+  // Header action button: "Add Bill" on Bills/Dashboard, "Quick Add" on Spend
+  const addBtn = document.getElementById('budget-add-bill-desktop');
+  if (addBtn) {
+    if (name === 'spend') {
+      addBtn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg> Quick Add';
+      addBtn.setAttribute('onclick', 'openQuickAddSpend()');
+    } else {
+      addBtn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Bill';
+      addBtn.setAttribute('onclick', 'openBillEditor()');
+    }
+  }
+  // Update FAB so mobile users get the panel-specific action
+  if (typeof updateFab === 'function' && _currentView === 'budget') updateFab('budget');
+  if (name === 'dashboard')   renderBudgetDashboard();
+  else if (name === 'bills')  renderBudgetBills();
+  else if (name === 'spend')  renderBudgetSpend();
 }
 
 // ── Currency formatting ────────────────────────────────────────────────────
@@ -13096,6 +13148,26 @@ function renderBudgetDashboard() {
       upcomingHost.innerHTML = '<div style="padding:24px 16px;text-align:center;color:var(--muted);font-size:13px">No bills due in the next 14 days</div>';
     } else {
       upcomingHost.innerHTML = items.map(inst => _renderBillRow(inst, { showRelative: true })).join('');
+    }
+  }
+
+  // Category tiles (Phase 2) — replace the placeholder cards
+  const tilesHost = document.getElementById('budget-dashboard-tiles');
+  const tilesEmpty = document.getElementById('budget-dashboard-tiles-empty');
+  if (tilesHost && tilesEmpty) {
+    const cats = getActiveBudgetCategories();
+    if (cats.length === 0) {
+      tilesHost.style.display = 'none';
+      tilesEmpty.style.display = 'block';
+    } else {
+      tilesEmpty.style.display = 'none';
+      tilesHost.style.display = 'flex';
+      // Dashboard tiles use the bill view's month, not the spend ref date
+      const { year, month } = _parseYyyymm(yyyymm);
+      const startIso = `${yyyymm}-01`;
+      const endDate  = new Date(year, month + 1, 0);
+      const endIso   = `${yyyymm}-${String(endDate.getDate()).padStart(2, '0')}`;
+      tilesHost.innerHTML = cats.map(cat => _renderCategoryTile(cat, startIso, endIso, 'month', false)).join('');
     }
   }
 }
@@ -14033,6 +14105,604 @@ if (typeof window !== 'undefined') {
       setupOffered:      _budgetSetupOffered,
     };
   };
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BUDGET SPEND UI — Phase 2b
+//  Insertion point: in app.js, IMMEDIATELY AFTER the Phase 2a foundations
+//  block (just before the GROCERY LIST section).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Spend panel state ──────────────────────────────────────────────────────
+let _spendPeriod          = 'week';     // 'week' | 'month'
+let _spendReferenceDate   = null;       // ISO date for the week we're viewing; null = today
+let _spendCategoryFilter  = null;       // categoryId filter, null = show all
+let _spendEditingTxId     = null;
+let _spendEditingCatId    = null;
+let _quickAddDateOverride = null;       // ISO date if user picks a non-today date
+let _quickAddDebounceTimer= null;
+
+// ── Render entry — called by renderBudget when panel === 'spend' ───────────
+function renderBudgetSpend() {
+  const cats = getActiveBudgetCategories();
+  const empty = document.getElementById('budget-spend-empty');
+  const content = document.getElementById('budget-spend-content');
+
+  if (cats.length === 0) {
+    if (empty)   empty.style.display   = 'block';
+    if (content) content.style.display = 'none';
+    return;
+  }
+  if (empty)   empty.style.display   = 'none';
+  if (content) content.style.display = 'block';
+
+  _renderSpendHeader();
+  _renderSpendCategoryTiles();
+  _renderSpendTransactionList();
+}
+
+function _spendCurrentRange() {
+  const today = new Date();
+  if (_spendPeriod === 'month') {
+    const ref = _spendReferenceDate ? new Date(_spendReferenceDate + 'T12:00:00') : today;
+    const y = ref.getFullYear(), m = ref.getMonth();
+    const startIso = `${y}-${String(m+1).padStart(2,'0')}-01`;
+    const endDate  = new Date(y, m + 1, 0);
+    const endIso   = `${y}-${String(m+1).padStart(2,'0')}-${String(endDate.getDate()).padStart(2,'0')}`;
+    return { startIso, endIso, label: ref.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) };
+  }
+  // week
+  const ref = _spendReferenceDate ? new Date(_spendReferenceDate + 'T12:00:00') : today;
+  const wk  = getWeekRange(ref, budgetSettings.weekStart || 'mon');
+  const fmt = (d) => d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  return { startIso: wk.startIso, endIso: wk.endIso, label: `${fmt(wk.startDate)} – ${fmt(wk.endDate)}` };
+}
+
+function _renderSpendHeader() {
+  const { startIso, endIso, label } = _spendCurrentRange();
+  const labelEl = document.getElementById('budget-spend-period-label');
+  const totalEl = document.getElementById('budget-spend-total');
+  if (labelEl) labelEl.textContent = label;
+
+  // Total = sum of transactions in current range
+  const txs = getTransactionsForRange(startIso, endIso);
+  const total = txs.reduce((s, t) => s + (t.amount || 0), 0);
+  if (totalEl) totalEl.textContent = _money(total);
+
+  // Period toggle visual
+  document.querySelectorAll('.budget-period-btn').forEach(btn => {
+    const active = btn.dataset.period === _spendPeriod;
+    btn.classList.toggle('active', active);
+    btn.style.background = active ? 'var(--surface)' : 'transparent';
+    btn.style.color      = active ? 'var(--text)'    : 'var(--muted)';
+  });
+
+  // "Today" button visibility
+  const todayBtn = document.getElementById('budget-spend-today');
+  if (todayBtn) {
+    const today = new Date().toISOString().slice(0, 10);
+    const onToday = (today >= startIso && today <= endIso);
+    todayBtn.style.opacity = onToday ? '0.4' : '1';
+  }
+}
+
+function _renderSpendCategoryTiles() {
+  const host = document.getElementById('budget-spend-tiles');
+  if (!host) return;
+  const { startIso, endIso } = _spendCurrentRange();
+
+  const cats = getActiveBudgetCategories();
+  if (!cats.length) { host.innerHTML = ''; return; }
+
+  host.innerHTML = cats.map(cat => _renderCategoryTile(cat, startIso, endIso, _spendPeriod, true)).join('');
+}
+
+function _renderCategoryTile(cat, startIso, endIso, period, clickable) {
+  const spent = getSpendForCategoryInRange(startIso, endIso, cat.id);
+  let budget = null;
+  if (period === 'week') {
+    budget = (cat.budgetCycle === 'weekly') ? cat.weeklyBudget
+           : (cat.monthlyBudget != null ? cat.monthlyBudget / 4.345 : null);
+  } else {
+    budget = (cat.budgetCycle === 'monthly') ? cat.monthlyBudget
+           : (cat.weeklyBudget != null ? cat.weeklyBudget * 4.345 : null);
+  }
+  const pct = (budget && budget > 0) ? Math.min(spent / budget, 1.5) : 0;
+  let barClass = 'is-ok';
+  if (budget && spent / budget >= 1)    barClass = 'is-over';
+  else if (budget && spent / budget >= 0.8) barClass = 'is-warn';
+  const isFiltered = (_spendCategoryFilter === cat.id);
+
+  const budgetText = (budget != null && budget > 0)
+    ? `<span style="color:var(--muted);font-weight:400">/ ${_money(budget)}</span>`
+    : '';
+  const barWidth = budget ? Math.min(pct * 100, 100) : 0;
+
+  return `
+    <div class="budget-cat-tile ${isFiltered ? 'is-filtered' : ''}"
+         ${clickable ? `onclick="toggleSpendCategoryFilter('${cat.id}')"` : ''}>
+      <div class="budget-cat-tile-name" style="color:${cat.color || 'var(--text)'}">
+        <span class="budget-cat-dot" style="background:${cat.color || 'var(--accent)'}"></span>
+        ${_escapeHtml(cat.name)}
+      </div>
+      <div class="budget-cat-tile-amt">${_money(spent)} ${budgetText}</div>
+      <div class="budget-cat-tile-bar"><div class="budget-cat-tile-bar-fill ${barClass}" style="width:${barWidth}%;background:${cat.color || 'var(--accent)'}"></div></div>
+    </div>`;
+}
+
+function toggleSpendCategoryFilter(catId) {
+  _spendCategoryFilter = (_spendCategoryFilter === catId) ? null : catId;
+  _renderSpendCategoryTiles();
+  _renderSpendTransactionList();
+}
+
+function _renderSpendTransactionList() {
+  const host = document.getElementById('budget-spend-tx-list');
+  if (!host) return;
+
+  const { startIso, endIso } = _spendCurrentRange();
+  let txs = getTransactionsForRange(startIso, endIso);
+  if (_spendCategoryFilter) {
+    txs = txs.filter(t => t.categoryId === _spendCategoryFilter);
+  }
+
+  if (txs.length === 0) {
+    const filterMsg = _spendCategoryFilter
+      ? 'No transactions for this category in this period'
+      : 'No transactions in this period';
+    host.innerHTML = `<div style="padding:30px 16px;text-align:center;color:var(--muted);font-size:13px">${filterMsg}</div>`;
+    return;
+  }
+
+  // Group by date
+  txs.sort((a, b) => {
+    const c = b.date.localeCompare(a.date);
+    if (c !== 0) return c;
+    return (b.createdAt || '').localeCompare(a.createdAt || '');
+  });
+
+  const groups = {};
+  for (const tx of txs) {
+    if (!groups[tx.date]) groups[tx.date] = [];
+    groups[tx.date].push(tx);
+  }
+
+  const dateKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+  host.innerHTML = dateKeys.map(date => {
+    const dayLabel = _spendDayHeading(date);
+    const dayTotal = groups[date].reduce((s, t) => s + (t.amount || 0), 0);
+    return `
+      <div class="spend-day-group">
+        <div class="spend-day-heading">
+          <span>${dayLabel}</span>
+          <span style="color:var(--muted);font-family:var(--mono);font-size:11px">${_money(dayTotal)}</span>
+        </div>
+        ${groups[date].map(_renderTransactionRow).join('')}
+      </div>`;
+  }).join('');
+}
+
+function _spendDayHeading(iso) {
+  const d = new Date(iso + 'T12:00:00');
+  const today = new Date(); today.setHours(0,0,0,0);
+  const dDate = new Date(iso + 'T00:00:00');
+  const days = Math.round((today - dDate) / 86400000);
+  if (days === 0)  return 'Today, ' + d.toLocaleDateString(undefined, { day:'numeric', month:'short' });
+  if (days === 1)  return 'Yesterday, ' + d.toLocaleDateString(undefined, { day:'numeric', month:'short' });
+  return d.toLocaleDateString(undefined, { weekday:'short', day:'numeric', month:'short' });
+}
+
+function _renderTransactionRow(tx) {
+  const cat  = getBudgetCategoryById(tx.categoryId);
+  const catName = cat ? cat.name : 'Uncategorised';
+  const catColor = cat ? cat.color : 'var(--muted)';
+  const where = tx.where || '(no merchant)';
+  return `
+    <div class="spend-tx-row" onclick="openSpendTxEditor('${tx.id}')">
+      <div class="spend-tx-info">
+        <div class="spend-tx-where">${_escapeHtml(where)}</div>
+        <div class="spend-tx-cat"><span class="budget-cat-dot" style="background:${catColor}"></span>${_escapeHtml(catName)}</div>
+      </div>
+      <div class="spend-tx-amount">${_money(tx.amount)}</div>
+    </div>`;
+}
+
+// ── Period navigation ──────────────────────────────────────────────────────
+function spendSwitchPeriod(period) {
+  if (period !== 'week' && period !== 'month') return;
+  _spendPeriod = period;
+  renderBudgetSpend();
+}
+
+function spendPrevPeriod() {
+  const ref = _spendReferenceDate ? new Date(_spendReferenceDate + 'T12:00:00') : new Date();
+  if (_spendPeriod === 'week') {
+    ref.setDate(ref.getDate() - 7);
+  } else {
+    ref.setMonth(ref.getMonth() - 1);
+  }
+  _spendReferenceDate = ref.toISOString().slice(0, 10);
+  renderBudgetSpend();
+}
+
+function spendNextPeriod() {
+  const ref = _spendReferenceDate ? new Date(_spendReferenceDate + 'T12:00:00') : new Date();
+  if (_spendPeriod === 'week') {
+    ref.setDate(ref.getDate() + 7);
+  } else {
+    ref.setMonth(ref.getMonth() + 1);
+  }
+  _spendReferenceDate = ref.toISOString().slice(0, 10);
+  renderBudgetSpend();
+}
+
+function spendGoToday() {
+  _spendReferenceDate = null;
+  renderBudgetSpend();
+}
+
+// ── Quick Add modal ────────────────────────────────────────────────────────
+function openQuickAddSpend() {
+  if (getActiveBudgetCategories().length === 0) {
+    openBudgetSetupModal();
+    return;
+  }
+  _quickAddDateOverride = null;
+  document.getElementById('spend-quick-add-input').value = '';
+  document.getElementById('spend-quick-add-date').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('spend-quick-add-preview').innerHTML = '';
+  document.getElementById('spend-quick-add-preview-empty').style.display = 'block';
+  _refreshQuickAddCount(0);
+  openModal('spend-quick-add-modal');
+  setTimeout(() => document.getElementById('spend-quick-add-input').focus(), 50);
+}
+
+function _refreshQuickAddCount(n) {
+  const btn = document.getElementById('spend-quick-add-confirm');
+  if (!btn) return;
+  if (n === 0) {
+    btn.disabled = true;
+    btn.style.opacity = '0.5';
+    btn.style.cursor = 'not-allowed';
+    btn.querySelector('span').textContent = 'Add';
+  } else {
+    btn.disabled = false;
+    btn.style.opacity = '1';
+    btn.style.cursor = 'pointer';
+    btn.querySelector('span').textContent = `Add ${n} ${n === 1 ? 'transaction' : 'transactions'}`;
+  }
+}
+
+function quickAddInputChanged() {
+  if (_quickAddDebounceTimer) clearTimeout(_quickAddDebounceTimer);
+  _quickAddDebounceTimer = setTimeout(_renderQuickAddPreview, 80);
+}
+
+function _renderQuickAddPreview() {
+  const raw = document.getElementById('spend-quick-add-input').value;
+  const previewHost = document.getElementById('spend-quick-add-preview');
+  const emptyHint   = document.getElementById('spend-quick-add-preview-empty');
+
+  if (!raw.trim()) {
+    previewHost.innerHTML = '';
+    emptyHint.style.display = 'block';
+    _refreshQuickAddCount(0);
+    return;
+  }
+  emptyHint.style.display = 'none';
+
+  // Newlines also separate entries — convert to commas for the parser
+  const normalised = raw.replace(/\n/g, ',');
+  const parsed = parseQuickAddInput(normalised);
+
+  const validCount = parsed.filter(p => p.ok && p.amount > 0).length;
+  _refreshQuickAddCount(validCount);
+
+  previewHost.innerHTML = parsed.map(_renderQuickAddChip).join('');
+}
+
+function _renderQuickAddChip(p) {
+  if (!p.ok) {
+    const reason = p.error === 'no_amount' ? 'no amount' : 'unparseable';
+    return `<div class="quick-add-chip is-error" title="${_escapeHtml(p.raw)}">
+      <span class="quick-add-chip-icon"><svg aria-hidden="true" style="width:12px;height:12px"><use href="#i-x"></use></svg></span>
+      <span class="quick-add-chip-text">${_escapeHtml(p.raw)} <em style="color:var(--danger);font-style:normal">(${reason})</em></span>
+    </div>`;
+  }
+  const cat = p.categoryId ? getBudgetCategoryById(p.categoryId) : null;
+  const catName  = cat ? cat.name : 'No category';
+  const catColor = cat ? cat.color : 'var(--muted)';
+  const where = p.where || '(no merchant)';
+  let sourceTag = '';
+  if (p.categoryHint)        sourceTag = '<em style="color:var(--accent2);font-style:normal;margin-left:6px;font-size:10px">explicit</em>';
+  else if (p.fromMemory)     sourceTag = '<em style="color:var(--ok);font-style:normal;margin-left:6px;font-size:10px">remembered</em>';
+  else if (cat)              sourceTag = '';
+  else                       sourceTag = '<em style="color:var(--warn);font-style:normal;margin-left:6px;font-size:10px">no category</em>';
+
+  return `<div class="quick-add-chip ${cat ? '' : 'is-warn'}">
+    <span class="quick-add-chip-amt">${_money(p.amount)}</span>
+    <span class="quick-add-chip-where">${_escapeHtml(where)}</span>
+    <span class="quick-add-chip-cat" style="background:${catColor}"></span>
+    <span class="quick-add-chip-cat-name">${_escapeHtml(catName)}</span>
+    ${sourceTag}
+  </div>`;
+}
+
+async function confirmQuickAdd() {
+  const raw = document.getElementById('spend-quick-add-input').value;
+  const date = document.getElementById('spend-quick-add-date').value || (new Date().toISOString().slice(0, 10));
+  const normalised = raw.replace(/\n/g, ',');
+  const parsed = parseQuickAddInput(normalised).filter(p => p.ok && p.amount > 0);
+  if (parsed.length === 0) { toast('Nothing to add'); return; }
+
+  const created = await commitQuickAdd(parsed, { date });
+  closeModal('spend-quick-add-modal');
+  toast(`Added ${created.length} transaction${created.length === 1 ? '' : 's'}`);
+
+  // Re-render whatever's visible
+  if (_currentView === 'budget') {
+    if (_budgetActivePanel === 'spend') renderBudgetSpend();
+    else if (_budgetActivePanel === 'dashboard') renderBudgetDashboard();
+  }
+}
+
+// ── Transaction edit modal ─────────────────────────────────────────────────
+function openSpendTxEditor(txId) {
+  const tx = getTransaction(txId);
+  if (!tx) return;
+  _spendEditingTxId = txId;
+  document.getElementById('spend-tx-where').value  = tx.where  || '';
+  document.getElementById('spend-tx-amount').value = tx.amount ?? '';
+  document.getElementById('spend-tx-date').value   = tx.date   || '';
+  document.getElementById('spend-tx-notes').value  = tx.notes  || '';
+
+  // Populate categories
+  const sel = document.getElementById('spend-tx-category');
+  sel.innerHTML = '<option value="">— Uncategorised —</option>' +
+    getActiveBudgetCategories().map(c =>
+      `<option value="${c.id}" ${c.id === tx.categoryId ? 'selected' : ''}>${_escapeHtml(c.name)}</option>`
+    ).join('');
+
+  openModal('spend-tx-modal');
+  setTimeout(() => document.getElementById('spend-tx-where').focus(), 50);
+}
+
+async function saveSpendTxFromEditor() {
+  if (!_spendEditingTxId) return;
+  const where  = (document.getElementById('spend-tx-where').value || '').trim();
+  const amount = parseFloat(document.getElementById('spend-tx-amount').value);
+  if (isNaN(amount) || amount <= 0) { toast('Enter a valid amount'); return; }
+  const date = document.getElementById('spend-tx-date').value;
+  if (!date)   { toast('Pick a date'); return; }
+  const notes = (document.getElementById('spend-tx-notes').value || '').trim();
+  const categoryId = document.getElementById('spend-tx-category').value || null;
+
+  await updateTransaction(_spendEditingTxId, { where, amount, date, notes, categoryId });
+  closeModal('spend-tx-modal');
+  _spendEditingTxId = null;
+  toast('Transaction updated');
+  if (_currentView === 'budget') {
+    if (_budgetActivePanel === 'spend') renderBudgetSpend();
+    else if (_budgetActivePanel === 'dashboard') renderBudgetDashboard();
+  }
+}
+
+async function confirmDeleteSpendTx() {
+  if (!_spendEditingTxId) return;
+  if (!confirm('Delete this transaction? This cannot be undone.')) return;
+  await deleteTransaction(_spendEditingTxId);
+  closeModal('spend-tx-modal');
+  _spendEditingTxId = null;
+  toast('Transaction deleted');
+  if (_currentView === 'budget') {
+    if (_budgetActivePanel === 'spend') renderBudgetSpend();
+    else if (_budgetActivePanel === 'dashboard') renderBudgetDashboard();
+  }
+}
+
+// ── Category management modal ──────────────────────────────────────────────
+function openManageBudgetCategories() {
+  _renderBudgetCategoryList();
+  openModal('budget-cat-modal');
+}
+
+function _renderBudgetCategoryList() {
+  const activeHost   = document.getElementById('budget-cat-active-list');
+  const archivedHost = document.getElementById('budget-cat-archived-list');
+  const archivedSection = document.getElementById('budget-cat-archived-section');
+
+  const active   = budgetCategories.filter(c => !c.archived);
+  const archived = budgetCategories.filter(c =>  c.archived);
+
+  if (active.length === 0) {
+    activeHost.innerHTML = '<div style="padding:14px;text-align:center;color:var(--muted);font-size:12px">No categories yet</div>';
+  } else {
+    activeHost.innerHTML = active.map(_renderBudgetCategoryRow).join('');
+  }
+
+  if (archived.length === 0) {
+    archivedSection.style.display = 'none';
+  } else {
+    archivedSection.style.display = '';
+    archivedHost.innerHTML = archived.map(_renderBudgetCategoryRow).join('');
+  }
+}
+
+function _renderBudgetCategoryRow(cat) {
+  const cycleLabel = cat.budgetCycle === 'weekly'  ? 'weekly'
+                   : cat.budgetCycle === 'monthly' ? 'monthly'
+                   : 'no budget';
+  const budgetText = (cat.budgetCycle === 'weekly' && cat.weeklyBudget != null)  ? `${_money(cat.weeklyBudget)} / wk`
+                   : (cat.budgetCycle === 'monthly' && cat.monthlyBudget != null) ? `${_money(cat.monthlyBudget)} / mo`
+                   : 'no budget';
+  const archivedActions = `
+    <button class="bill-action-btn" onclick="event.stopPropagation();handleUnarchiveBudgetCategory('${cat.id}')" title="Unarchive">
+      <svg aria-hidden="true"><use href="#i-refresh-cw"></use></svg>
+    </button>`;
+  const activeActions = `
+    <button class="bill-action-btn" onclick="event.stopPropagation();openBudgetCategoryEditor('${cat.id}')" title="Edit">
+      <svg aria-hidden="true"><use href="#i-pencil"></use></svg>
+    </button>`;
+  return `
+    <div class="bill-row ${cat.archived ? 'is-skipped' : ''}" onclick="openBudgetCategoryEditor('${cat.id}')" style="cursor:pointer">
+      <div class="bill-day" style="background:${cat.color || 'var(--surface)'};color:#000;border-color:${cat.color || 'var(--border)'}">●</div>
+      <div class="bill-info">
+        <div class="bill-name">${_escapeHtml(cat.name)}</div>
+        <div class="bill-meta">${budgetText}</div>
+      </div>
+      <div class="bill-actions">
+        ${cat.archived ? archivedActions : activeActions}
+      </div>
+    </div>`;
+}
+
+async function handleUnarchiveBudgetCategory(id) {
+  await unarchiveBudgetCategory(id);
+  _renderBudgetCategoryList();
+  if (_currentView === 'budget') renderBudget();
+}
+
+function openBudgetCategoryEditor(catId = null) {
+  _spendEditingCatId = catId;
+  const cat = catId ? getBudgetCategoryById(catId) : null;
+  document.getElementById('budget-cat-editor-mode-label').textContent = cat ? 'Edit Category' : 'Add Category';
+  document.getElementById('budget-cat-editor-save-label').textContent = cat ? 'Save' : 'Create';
+  document.getElementById('budget-cat-archive-btn').style.display = cat && !cat.archived ? 'inline-flex' : 'none';
+  document.getElementById('budget-cat-delete-btn').style.display  = cat &&  cat.archived ? 'inline-flex' : 'none';
+
+  document.getElementById('budget-cat-name').value         = cat?.name           || '';
+  document.getElementById('budget-cat-cycle').value        = cat?.budgetCycle    || 'monthly';
+  document.getElementById('budget-cat-monthly').value      = cat?.monthlyBudget  ?? '';
+  document.getElementById('budget-cat-weekly').value       = cat?.weeklyBudget   ?? '';
+  document.getElementById('budget-cat-color').value        = cat?.color          || '#5b8dee';
+
+  budgetCatCycleChanged();
+  openModal('budget-cat-editor-modal');
+  setTimeout(() => document.getElementById('budget-cat-name').focus(), 50);
+}
+
+function budgetCatCycleChanged() {
+  const cycle = document.getElementById('budget-cat-cycle').value;
+  document.getElementById('budget-cat-monthly-row').style.display = (cycle === 'monthly') ? 'block' : 'none';
+  document.getElementById('budget-cat-weekly-row').style.display  = (cycle === 'weekly')  ? 'block' : 'none';
+}
+
+async function saveBudgetCategoryFromEditor() {
+  const name = (document.getElementById('budget-cat-name').value || '').trim();
+  if (!name) { toast('Category needs a name'); return; }
+  const cycle = document.getElementById('budget-cat-cycle').value;
+  const monthlyVal = document.getElementById('budget-cat-monthly').value;
+  const weeklyVal  = document.getElementById('budget-cat-weekly').value;
+  const monthlyBudget = (cycle === 'monthly' && monthlyVal !== '') ? Number(monthlyVal) : null;
+  const weeklyBudget  = (cycle === 'weekly'  && weeklyVal  !== '') ? Number(weeklyVal)  : null;
+  const color = document.getElementById('budget-cat-color').value || '#5b8dee';
+
+  const patch = { name, budgetCycle: cycle, monthlyBudget, weeklyBudget, color };
+
+  if (_spendEditingCatId) {
+    await updateBudgetCategory(_spendEditingCatId, patch);
+    toast('Category updated');
+  } else {
+    await createBudgetCategory(patch);
+    toast('Category added');
+  }
+
+  closeModal('budget-cat-editor-modal');
+  _spendEditingCatId = null;
+  _renderBudgetCategoryList();
+  if (_currentView === 'budget') renderBudget();
+}
+
+async function confirmArchiveBudgetCategory() {
+  if (!_spendEditingCatId) return;
+  const cat = getBudgetCategoryById(_spendEditingCatId);
+  if (!cat) return;
+  if (!confirm(`Archive "${cat.name}"? Past transactions stay; the category won't appear in tiles or quick-add.`)) return;
+  await archiveBudgetCategory(_spendEditingCatId);
+  closeModal('budget-cat-editor-modal');
+  _spendEditingCatId = null;
+  toast('Category archived');
+  _renderBudgetCategoryList();
+  if (_currentView === 'budget') renderBudget();
+}
+
+async function confirmDeleteBudgetCategory() {
+  if (!_spendEditingCatId) return;
+  const cat = getBudgetCategoryById(_spendEditingCatId);
+  if (!cat) return;
+  if (!confirm(`Permanently delete "${cat.name}"? Past transactions remain but become uncategorised. This can't be undone.`)) return;
+  await deleteBudgetCategoryHard(_spendEditingCatId);
+  closeModal('budget-cat-editor-modal');
+  _spendEditingCatId = null;
+  toast('Category deleted');
+  _renderBudgetCategoryList();
+  if (_currentView === 'budget') renderBudget();
+}
+
+// ── First-run setup modal ──────────────────────────────────────────────────
+function openBudgetSetupModal() {
+  const seed = getBudgetCategorySeed();
+  const list = document.getElementById('budget-setup-list');
+  list.innerHTML = seed.map((s, i) => `
+    <div class="budget-setup-row">
+      <input type="checkbox" id="setup-row-${i}-on" checked>
+      <input type="text" id="setup-row-${i}-name" value="${_escapeHtml(s.name)}" maxlength="40"
+        style="flex:2;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-family:var(--sans);font-size:13px">
+      <span style="color:var(--muted);font-size:12px">£</span>
+      <input type="number" id="setup-row-${i}-amount" value="${s.monthlyBudget}" min="0" step="1"
+        style="width:80px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:13px">
+      <span style="color:var(--muted);font-size:11px">/ mo</span>
+    </div>`).join('');
+  openModal('budget-setup-modal');
+}
+
+async function confirmBudgetSetup() {
+  const seed = getBudgetCategorySeed();
+  let created = 0;
+  for (let i = 0; i < seed.length; i++) {
+    const enabled = document.getElementById(`setup-row-${i}-on`).checked;
+    if (!enabled) continue;
+    const name = (document.getElementById(`setup-row-${i}-name`).value || '').trim();
+    if (!name) continue;
+    const amount = parseFloat(document.getElementById(`setup-row-${i}-amount`).value);
+    await createBudgetCategory({
+      name,
+      monthlyBudget: isNaN(amount) ? null : amount,
+      weeklyBudget:  null,
+      budgetCycle:   'monthly',
+      color:         seed[i].color,
+    });
+    created++;
+  }
+  _budgetSetupOffered = true;
+  await saveBudgetSpendLocal();
+  closeModal('budget-setup-modal');
+  if (created) toast(`Added ${created} categor${created === 1 ? 'y' : 'ies'}`);
+  if (_currentView === 'budget') renderBudget();
+}
+
+async function dismissBudgetSetup() {
+  _budgetSetupOffered = true;
+  await saveBudgetSpendLocal();
+  closeModal('budget-setup-modal');
+}
+
+// ── Settings: week-start radio handler ─────────────────────────────────────
+async function setBudgetWeekStartFromSettings(value) {
+  await setBudgetWeekStart(value);
+  // If the spend panel is open, re-render so week boundaries shift
+  if (_currentView === 'budget' && _budgetActivePanel === 'spend') {
+    renderBudgetSpend();
+  }
+}
+
+function _refreshBudgetWeekStartRadio() {
+  const wkStart = budgetSettings.weekStart || 'mon';
+  const monRadio = document.getElementById('setting-budget-weekstart-mon');
+  const sunRadio = document.getElementById('setting-budget-weekstart-sun');
+  if (monRadio) monRadio.checked = (wkStart === 'mon');
+  if (sunRadio) sunRadio.checked = (wkStart === 'sun');
 }
 
 

@@ -334,6 +334,182 @@
   </div>
 </div>
 
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     QUICK ADD MODAL — Phase 2 (discretionary spend)
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="spend-quick-add-modal" style="z-index:300">
+  <div class="modal" style="max-width:520px">
+    <h2><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-zap"></use></svg> Quick Add</h2>
+    <p class="subtitle">One per line, or comma-separated. <strong>Format:</strong> <code style="font-family:var(--mono);background:var(--surface2);padding:2px 6px;border-radius:4px">where amount [category]</code></p>
+
+    <div class="form-grid">
+      <div class="field form-full">
+        <textarea id="spend-quick-add-input" rows="4" placeholder="tesco 47.50 shopping&#10;m&amp;s 12.99 shopping&#10;parking 4 monday&#10;vinted 18 carla"
+          oninput="quickAddInputChanged()"
+          style="width:100%;min-height:96px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:13px;line-height:1.5;resize:vertical"></textarea>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Category is optional — if you've used the merchant before, it'll be remembered.</div>
+      </div>
+
+      <div class="field form-full">
+        <label>Date</label>
+        <input type="date" id="spend-quick-add-date"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+      </div>
+
+      <div class="field form-full">
+        <label style="font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px">Preview</label>
+        <div id="spend-quick-add-preview-empty" style="font-size:12px;color:var(--muted);padding:14px 0;text-align:center;font-style:italic">Type above to see parsed entries</div>
+        <div id="spend-quick-add-preview" style="display:flex;flex-direction:column;gap:6px;margin-top:6px"></div>
+      </div>
+    </div>
+
+    <div class="modal-footer" style="margin-top:18px">
+      <button class="btn btn-ghost" onclick="closeModal('spend-quick-add-modal')">Cancel</button>
+      <button class="btn btn-primary" id="spend-quick-add-confirm" onclick="confirmQuickAdd()" disabled style="opacity:0.5;cursor:not-allowed">
+        <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> <span>Add</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     TRANSACTION EDIT MODAL — Phase 2
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="spend-tx-modal" style="z-index:300">
+  <div class="modal" style="max-width:440px">
+    <h2><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-receipt-text"></use></svg> Edit Transaction</h2>
+
+    <div class="form-grid">
+      <div class="field form-full">
+        <label>Where</label>
+        <input type="text" id="spend-tx-where" maxlength="60" placeholder="e.g. Tesco">
+      </div>
+      <div class="field form-full">
+        <label>Amount (£)</label>
+        <input type="number" id="spend-tx-amount" step="0.01" min="0"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
+      </div>
+      <div class="field form-full">
+        <label>Date</label>
+        <input type="date" id="spend-tx-date"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+      </div>
+      <div class="field form-full">
+        <label>Category</label>
+        <select id="spend-tx-category"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+          <option value="">— Uncategorised —</option>
+        </select>
+      </div>
+      <div class="field form-full">
+        <label>Notes <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+        <input type="text" id="spend-tx-notes" maxlength="120">
+      </div>
+    </div>
+
+    <div class="modal-footer" style="margin-top:18px;display:flex;align-items:center;gap:10px">
+      <button class="btn btn-ghost btn-sm" onclick="confirmDeleteSpendTx()" style="color:var(--danger);margin-right:auto"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
+      <button class="btn btn-ghost" onclick="closeModal('spend-tx-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSpendTxFromEditor()"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> Save</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     CATEGORY MANAGEMENT MODAL — Phase 2
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="budget-cat-modal" style="z-index:300">
+  <div class="modal" style="max-width:480px">
+    <h2><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-tag"></use></svg> Manage Categories</h2>
+    <p class="subtitle">Categories group your spending. Archive ones you no longer use.</p>
+
+    <div style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;margin:8px 0">Active</div>
+    <div id="budget-cat-active-list" class="bill-list" style="margin-bottom:14px"></div>
+
+    <div id="budget-cat-archived-section" style="display:none;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;margin:8px 0">Archived</div>
+      <div id="budget-cat-archived-list" class="bill-list"></div>
+    </div>
+
+    <div style="display:flex;justify-content:space-between;gap:10px;margin-top:6px">
+      <button class="btn btn-ghost btn-sm" onclick="openBudgetCategoryEditor()"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Category</button>
+      <button class="btn btn-ghost" onclick="closeModal('budget-cat-modal')">Done</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     CATEGORY EDITOR MODAL — Phase 2
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="budget-cat-editor-modal" style="z-index:310">
+  <div class="modal" style="max-width:420px">
+    <h2><svg class="icon icon-lg" aria-hidden="true"><use href="#i-tag"></use></svg> <span id="budget-cat-editor-mode-label">Add Category</span></h2>
+
+    <div class="form-grid">
+      <div class="field form-full">
+        <label>Name *</label>
+        <input type="text" id="budget-cat-name" maxlength="40" placeholder="e.g. Pete spending">
+      </div>
+      <div class="field form-full">
+        <label>Budget cycle</label>
+        <select id="budget-cat-cycle" onchange="budgetCatCycleChanged()"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+          <option value="monthly">Monthly</option>
+          <option value="weekly">Weekly</option>
+          <option value="none">No budget (track only)</option>
+        </select>
+      </div>
+      <div class="field form-full" id="budget-cat-monthly-row">
+        <label>Monthly budget (£)</label>
+        <input type="number" id="budget-cat-monthly" step="1" min="0" placeholder="0"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
+      </div>
+      <div class="field form-full" id="budget-cat-weekly-row" style="display:none">
+        <label>Weekly budget (£)</label>
+        <input type="number" id="budget-cat-weekly" step="1" min="0" placeholder="0"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
+      </div>
+      <div class="field form-full">
+        <label>Colour</label>
+        <input type="color" id="budget-cat-color" value="#5b8dee"
+          style="width:80px;height:36px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:2px;cursor:pointer">
+      </div>
+    </div>
+
+    <div class="modal-footer" style="margin-top:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" id="budget-cat-archive-btn" onclick="confirmArchiveBudgetCategory()" style="display:none;color:var(--danger);margin-right:auto"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg> Archive</button>
+      <button class="btn btn-ghost btn-sm" id="budget-cat-delete-btn" onclick="confirmDeleteBudgetCategory()" style="display:none;color:var(--danger);margin-right:auto"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete forever</button>
+      <button class="btn btn-ghost" onclick="closeModal('budget-cat-editor-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveBudgetCategoryFromEditor()"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> <span id="budget-cat-editor-save-label">Save</span></button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     FIRST-RUN SETUP MODAL — Phase 2
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="budget-setup-modal" style="z-index:300">
+  <div class="modal" style="max-width:560px">
+    <h2><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-zap"></use></svg> Set up spending categories</h2>
+    <p class="subtitle">Suggested categories with monthly budgets. Untick any you don't want, or edit the names and amounts to suit.</p>
+
+    <div id="budget-setup-list" style="display:flex;flex-direction:column;gap:8px;margin:14px 0"></div>
+
+    <p style="font-size:11px;color:var(--muted);margin-top:8px;text-align:center">You can add, edit, or archive categories any time.</p>
+
+    <div class="modal-footer" style="margin-top:18px">
+      <button class="btn btn-ghost" onclick="dismissBudgetSetup()">Skip</button>
+      <button class="btn btn-primary" onclick="confirmBudgetSetup()"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> Create categories</button>
+    </div>
+  </div>
+</div>
+
+
 <!-- ═══ COOKIE CONSENT BANNER (fixed overlay — kept for non-wizard contexts) ═══ -->
 <div id="cookie-consent-banner" style="display:none"></div>
 
@@ -1107,6 +1283,7 @@
   <div id="budget-subnav" style="display:flex;gap:6px;background:rgba(26,29,39,0.7);border:1px solid var(--glass-border);border-radius:10px;padding:4px;margin-bottom:20px;width:fit-content">
     <button class="budget-subnav-btn active" data-panel="dashboard" onclick="budgetSwitchPanel('dashboard')" style="padding:7px 14px;border-radius:7px;border:none;background:transparent;color:var(--text);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer">Dashboard</button>
     <button class="budget-subnav-btn"        data-panel="bills"     onclick="budgetSwitchPanel('bills')"     style="padding:7px 14px;border-radius:7px;border:none;background:transparent;color:var(--muted);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer">Bills</button>
+    <button class="budget-subnav-btn"        data-panel="spend"     onclick="budgetSwitchPanel('spend')"     style="padding:7px 14px;border-radius:7px;border:none;background:transparent;color:var(--muted);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer">Spend</button>
   </div>
 
   <!-- Backfill banner — shown when existing shares lack budget perms -->
@@ -1151,21 +1328,20 @@
       </div>
     </div>
 
-    <!-- Phase 2/3 placeholder cards -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
-      <div style="background:var(--surface);border:1px dashed var(--border);border-radius:10px;padding:14px;opacity:0.55">
-        <div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Pete spending</div>
-        <div style="font-size:13px;color:var(--muted)">Phase 2 →</div>
-      </div>
-      <div style="background:var(--surface);border:1px dashed var(--border);border-radius:10px;padding:14px;opacity:0.55">
-        <div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Carla spending</div>
-        <div style="font-size:13px;color:var(--muted)">Phase 2 →</div>
-      </div>
+    <!-- Phase 2: Live category tiles -->
+    <div id="budget-dashboard-tiles-empty" style="display:none;background:var(--surface);border:1px dashed var(--border);border-radius:10px;padding:14px;margin-bottom:14px;opacity:0.7;text-align:center">
+      <div style="font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Spending categories</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:8px">No categories yet</div>
+      <button class="btn btn-ghost btn-sm" onclick="openBudgetSetupModal()" style="font-size:12px">Set up categories</button>
+    </div>
+    <div id="budget-dashboard-tiles" class="budget-tile-row" style="display:none;margin-bottom:14px">
+      <!-- populated by renderBudgetDashboard() -->
     </div>
 
+    <!-- Phase 3 placeholder -->
     <div style="background:var(--surface);border:1px dashed var(--border);border-radius:10px;padding:14px;margin-bottom:14px;opacity:0.55">
       <div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Cash flow · 30 days</div>
-      <div style="font-size:13px;color:var(--muted)">Phase 3 — accounts & projection</div>
+      <div style="font-size:13px;color:var(--muted)">Phase 3 — accounts &amp; projection</div>
     </div>
 
     <!-- Upcoming bills -->
@@ -1240,6 +1416,58 @@
     </details>
 
   </div><!-- /panel-bills -->
+
+  <!-- ─── SPEND PANEL ─── -->
+  <div id="budget-panel-spend" class="budget-panel" style="display:none">
+
+    <!-- Empty state — no categories yet -->
+    <div id="budget-spend-empty" style="display:none;text-align:center;padding:50px 20px;color:var(--muted)">
+      <div style="margin-bottom:10px;color:var(--accent)"><svg aria-hidden="true" style="width:42px;height:42px"><use href="#i-banknote"></use></svg></div>
+      <div style="font-size:15px;font-weight:600;margin-bottom:6px;color:var(--text)">No categories yet</div>
+      <p style="font-size:13px;line-height:1.6;margin-bottom:16px;max-width:340px;margin-left:auto;margin-right:auto">Set up the categories you spend in (Pete spending, groceries, kids, etc.) and start logging transactions.</p>
+      <button class="btn btn-primary" onclick="openBudgetSetupModal()"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg> Set up categories</button>
+    </div>
+
+    <!-- Active content -->
+    <div id="budget-spend-content" style="display:none">
+
+      <!-- Period selector + total -->
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <div style="display:flex;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:3px">
+            <button class="budget-period-btn active" data-period="week"  onclick="spendSwitchPeriod('week')"  style="padding:5px 11px;border-radius:6px;border:none;background:var(--surface);color:var(--text);font-family:var(--sans);font-size:12px;font-weight:600;cursor:pointer">Week</button>
+            <button class="budget-period-btn"        data-period="month" onclick="spendSwitchPeriod('month')" style="padding:5px 11px;border-radius:6px;border:none;background:transparent;color:var(--muted);font-family:var(--sans);font-size:12px;font-weight:600;cursor:pointer">Month</button>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="spendPrevPeriod()" aria-label="Previous period" style="padding:6px 9px"><svg class="icon" aria-hidden="true" style="transform:rotate(180deg)"><use href="#i-chevron-right"></use></svg></button>
+          <button class="btn btn-ghost btn-sm" onclick="spendGoToday()" id="budget-spend-today" style="padding:6px 9px;font-size:11px">Today</button>
+          <button class="btn btn-ghost btn-sm" onclick="spendNextPeriod()" aria-label="Next period" style="padding:6px 9px"><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"></use></svg></button>
+          <span id="budget-spend-period-label" style="font-size:12px;color:var(--muted);margin-left:6px">—</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px">Total</span>
+          <span id="budget-spend-total" style="font-size:18px;font-weight:700;font-family:var(--sans);color:var(--text)">£0.00</span>
+        </div>
+      </div>
+
+      <!-- Tile row -->
+      <div id="budget-spend-tiles" class="budget-tile-row" style="margin-bottom:18px">
+        <!-- populated -->
+      </div>
+
+      <!-- Transactions, grouped by day -->
+      <div id="budget-spend-tx-list" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px">
+        <!-- populated -->
+      </div>
+
+      <!-- Manage categories link -->
+      <div style="text-align:center;margin-top:12px">
+        <button class="btn btn-ghost btn-sm" onclick="openManageBudgetCategories()" style="font-size:12px;color:var(--muted)"><svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg> Manage categories</button>
+      </div>
+
+    </div><!-- /spend-content -->
+
+  </div><!-- /panel-spend -->
+
 </div><!-- /view-budget -->
 
   <!-- REPORT VIEW -->
@@ -1694,6 +1922,22 @@
           <select id="setting-threshold" onchange="saveSettings()" style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
             <option value="10">10%</option><option value="15">15%</option><option value="20" selected>20%</option><option value="25">25%</option><option value="33">33%</option>
           </select>
+        </div>
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Budget week starts on</div>
+            <div class="acc-sec-p">Affects how the Spend panel groups your weekly transactions.</div>
+          </div>
+          <div style="display:flex;gap:14px;align-items:center">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+              <input type="radio" name="budget-weekstart" id="setting-budget-weekstart-mon" value="mon" onchange="setBudgetWeekStartFromSettings('mon')" checked style="margin:0;cursor:pointer">
+              <span>Monday</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+              <input type="radio" name="budget-weekstart" id="setting-budget-weekstart-sun" value="sun" onchange="setBudgetWeekStartFromSettings('sun')" style="margin:0;cursor:pointer">
+              <span>Sunday</span>
+            </label>
+          </div>
         </div>
       </div>
       <!-- Hidden inputs kept for JS compat — real inputs live in Account & Security -->
