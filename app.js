@@ -309,6 +309,33 @@ function timeAgo(dateStr) {
   return `${Math.floor(days/365)}y ago`;
 }
 
+// ── Stock model: daysPerUnit ─────────────────────────────────
+// `daysPerUnit` is the canonical per-unit lifetime (e.g. one can of Pepsi
+// lasts ~1.3 days). Total supply for N units in stock is daysPerUnit × N.
+//
+// Legacy items only had `months` (intended as "lifetime of one purchase")
+// and `qty` (units in that purchase). The old formula multiplied them,
+// producing bad numbers for multi-unit packs (24 cans × "1 month" = 24 months).
+// The new model derives daysPerUnit from those legacy fields by treating
+// `months` as the lifetime of the whole purchase, then dividing by qty —
+// which preserves the user's original intent.
+function getDaysPerUnit(item) {
+  if (item && typeof item.daysPerUnit === 'number' && item.daysPerUnit > 0) {
+    return item.daysPerUnit;
+  }
+  // Legacy migration: months was intended as "purchase supply",
+  // so per-unit lifetime = months × 30.5 / qty.
+  const months = (item && typeof item.months === 'number') ? item.months : 1;
+  const qty    = (item && typeof item.qty    === 'number' && item.qty > 0) ? item.qty : 1;
+  const dpu    = (months * 30.5) / qty;
+  return dpu > 0 ? dpu : 30.5;
+}
+
+// Convenience: total supply (in days) for a freshly-stocked purchase of N units.
+function getTotalDaysForUnits(item, units) {
+  return getDaysPerUnit(item) * Math.max(0.0001, units || 1);
+}
+
 function calcStock(item) {
   if (!item.logs || !item.logs.length) return null;
   // Only count delivered (non-pending) logs for stock calculation
@@ -316,20 +343,23 @@ function calcStock(item) {
   if (!deliveredLogs.length) return null;
   const last = deliveredLogs[deliveredLogs.length - 1];
 
+  const dpu = getDaysPerUnit(item);
+
   // If a manual stock count has been recorded, project from that count
   if (item.stockCount != null && item.stockCountDate) {
     const daysSinceCount  = (Date.now() - new Date(item.stockCountDate+'T12:00:00')) / 86400000;
     const unitsRemaining  = item.stockCount;
-    const daysPerUnit     = (item.months || 1) * 30.5;
-    const totalDays       = daysPerUnit * Math.max(1, unitsRemaining);
+    const totalDays       = dpu * Math.max(1, unitsRemaining);
     let daysLeft;
     const daysSincePurchase = (Date.now() - new Date(last.date+'T12:00:00')) / 86400000;
     const used = (last.qty || 1) - unitsRemaining;
     if (used > 0 && daysSincePurchase > 1) {
+      // Learned rate: use actual measured consumption since purchase
       const ratePerDay = used / daysSincePurchase;
       daysLeft = Math.round(Math.max(0, unitsRemaining / ratePerDay));
     } else {
-      daysLeft = Math.round(Math.max(0, daysPerUnit * unitsRemaining - daysSinceCount));
+      // Configured rate: use daysPerUnit, decrement by time since count
+      daysLeft = Math.round(Math.max(0, dpu * unitsRemaining - daysSinceCount));
     }
     const pct = Math.round(Math.max(0, Math.min(100, (daysLeft / Math.max(1, totalDays)) * 100)));
     return { pct, daysLeft, referenceDate: item.stockCountDate, fromStockCount: true };
@@ -338,10 +368,23 @@ function calcStock(item) {
   // Default: time-based from purchase / startedUsing date
   const referenceDate = item.startedUsing || last.date;
   const daysSince  = (Date.now() - new Date(referenceDate+'T12:00:00')) / 86400000;
-  const totalDays  = (item.months||1) * 30.5 * (last.qty||1);
+  const totalDays  = dpu * (last.qty || 1);
   const daysLeft   = Math.round(Math.max(0, totalDays - daysSince));
-  const pct        = Math.round(Math.max(0, Math.min(100, (daysLeft / totalDays) * 100)));
+  const pct        = totalDays > 0
+    ? Math.round(Math.max(0, Math.min(100, (daysLeft / totalDays) * 100)))
+    : null;
   return { pct, daysLeft, referenceDate };
+}
+
+// Format days-left for display with sanity caps to prevent absurd numbers
+// like "5829 days left" appearing on cards.
+function formatDaysLeft(daysLeft) {
+  if (daysLeft == null || isNaN(daysLeft)) return { num: '?', unit: 'days left', suspect: false };
+  if (daysLeft >= 1095) return { num: '3+', unit: 'years left', suspect: true };  // 3+ years suggests model misconfig
+  if (daysLeft >= 730)  return { num: '2+', unit: 'years left', suspect: true };
+  if (daysLeft >= 365)  return { num: Math.round(daysLeft / 30.5), unit: 'months left', suspect: false };
+  if (daysLeft >= 60)   return { num: Math.round(daysLeft / 7), unit: 'weeks left', suspect: false };
+  return { num: daysLeft, unit: daysLeft === 1 ? 'day left' : 'days left', suspect: false };
 }
 
 function getStatus(pct, threshold) {
@@ -534,7 +577,7 @@ function mergeItemFields(local, remote) {
 
   // Fields we track individually — everything except id, updatedAt, _fieldTs, logs
   const SCALAR_FIELDS = [
-    'name','category','cadence','qty','months','url','store','notes',
+    'name','category','cadence','qty','months','daysPerUnit','url','store','notes',
     'startedUsing','rating','imageUrl','storePrices','expiry',
     'thresholdOverride','replacementInterval','replacementUnit',
     'lastReplaced','ordered','orderedAt','quickAdded','tags',
@@ -2824,11 +2867,11 @@ function getReorderSuggestion(item) {
 
   const avgGapDays = gaps.reduce((a,b) => a+b, 0) / gaps.length;
   const avgQty     = sorted.reduce((a,b) => a + (b.qty || 1), 0) / sorted.length;
-  const totalDays  = (item.months || 1) * 30.5 * (item.qty || 1);
+  const totalDays  = getTotalDaysForUnits(item, item.qty || 1);
 
   // How many units to cover until next shop window?
   const shopWindowDays = Math.min(avgGapDays, 30);
-  const suggestedQty   = Math.ceil((shopWindowDays / totalDays) * (item.qty || 1));
+  const suggestedQty   = Math.ceil((shopWindowDays / Math.max(1, totalDays)) * (item.qty || 1));
 
   return {
     qty: Math.max(1, suggestedQty),
@@ -4030,12 +4073,17 @@ function cardHTML(item, threshold) {
         <div class="card-status" style="background:${color}22;color:${color}">${STATUS_LABEL[status]}</div>
       </div>
       <div class="card-name">${esc(item.name)}</div>
-      ${daysLeft !== null
-        ? `<div class="card-hero">
-             <span class="card-days-num" style="color:${color}">${daysLeft}</span>
-             <span class="card-days-unit">days left</span>
-           </div>`
-        : `<div class="card-nodata">No stock data yet</div>`}
+      ${(() => {
+        if (daysLeft === null) return `<div class="card-nodata">No stock data yet</div>`;
+        const f = formatDaysLeft(daysLeft);
+        const suspectFlag = f.suspect
+          ? ` <span title="Estimate looks unusually long — tap to recount stock" style="font-size:14px;cursor:help;color:var(--warn);vertical-align:middle" onclick="event.stopPropagation();openStockCountModal('${item.id}')">⚠</span>`
+          : '';
+        return `<div class="card-hero">
+             <span class="card-days-num" style="color:${color}">${f.num}</span>
+             <span class="card-days-unit">${f.unit}${suspectFlag}</span>
+           </div>`;
+      })()}
       ${pct !== null
         ? `<div class="card-bar"><div class="card-bar-fill" style="width:${pct}%;background:${fillColor}"></div></div>`
         : ''}
@@ -4752,6 +4800,8 @@ async function applyFrequencySuggestion(id, avgMonths) {
   if (!item) return;
   const rounded = Math.max(0.5, Math.round(avgMonths * 2) / 2); // round to nearest 0.5
   item.months = rounded;
+  // Keep daysPerUnit in sync with the new months value
+  item.daysPerUnit = (rounded * 30.5) / Math.max(0.0001, item.qty || 1);
   await saveData();
   scheduleRender('grid');
   toast(`Updated to ${rounded} month${rounded !== 1 ? 's' : ''} per purchase ✓`);
@@ -5359,7 +5409,11 @@ function openStockCountModal(id) {
     `Enter how many you have now — the app will calculate your actual consumption rate and project when you'll run out.`;
   document.getElementById('sc-remaining').value = item.stockCount != null ? item.stockCount : '';
   document.getElementById('sc-date').value = today();
-  document.getElementById('sc-months').value = item.months || 1;
+  // The "How long does 1 unit last?" field is per-unit lifetime in months.
+  // Derive from the canonical daysPerUnit accessor.
+  const dpu = getDaysPerUnit(item);
+  const perUnitMonths = Math.max(0.25, Math.round((dpu / 30.5) * 4) / 4); // round to 0.25
+  document.getElementById('sc-months').value = perUnitMonths;
   document.getElementById('sc-preview').style.display = 'none';
 
   const remaining = document.getElementById('sc-remaining');
@@ -5377,7 +5431,11 @@ function openStockCountModal(id) {
 function updateStockCountPreview(item) {
   const remaining = parseFloat(document.getElementById('sc-remaining').value);
   const countDate = document.getElementById('sc-date').value;
-  const monthsVal = parseFloat(document.getElementById('sc-months').value) || item.months || 1;
+  // The field is per-unit lifetime in months → days-per-unit = months × 30.5
+  const perUnitMonths = parseFloat(document.getElementById('sc-months').value);
+  const dpu = (!isNaN(perUnitMonths) && perUnitMonths > 0)
+    ? perUnitMonths * 30.5
+    : getDaysPerUnit(item);
   const preview = document.getElementById('sc-preview');
   const previewText = document.getElementById('sc-preview-text');
 
@@ -5390,8 +5448,8 @@ function updateStockCountPreview(item) {
 
   let daysLeft;
   if (used <= 0 || daysSincePurchase <= 0) {
-    const totalDays = monthsVal * 30.5 * totalPurchased;
-    daysLeft = Math.round(Math.max(0, totalDays - daysSincePurchase));
+    // Configured rate: per-unit-days × units remaining
+    daysLeft = Math.round(Math.max(0, dpu * remaining));
   } else {
     const ratePerDay = used / daysSincePurchase;
     daysLeft = ratePerDay > 0 ? Math.round(remaining / ratePerDay) : null;
@@ -5409,7 +5467,10 @@ function updateStockCountPreview(item) {
           `(${ratePerDay.toFixed(2)}/day). ` +
           `${remaining} left → runs out ~${runOutDate} (${daysLeft ?? '?'} days, ${pct}% remaining).`;
   } else {
-    msg = `${remaining} of ${totalPurchased} units remaining (${pct}%) → estimated ${daysLeft ?? '?'} days left (${monthsVal} month${monthsVal!==1?'s':''}/unit).`;
+    const lifetimeLabel = perUnitMonths >= 1
+      ? `${perUnitMonths} month${perUnitMonths !== 1 ? 's' : ''}/unit`
+      : `${Math.round(dpu)} days/unit`;
+    msg = `${remaining} of ${totalPurchased} units remaining (${pct}%) → estimated ${daysLeft ?? '?'} days left (${lifetimeLabel}).`;
   }
 
   previewText.textContent = msg;
@@ -5425,9 +5486,14 @@ async function saveStockCount() {
   const countDate = document.getElementById('sc-date').value;
   const monthsVal = parseFloat(document.getElementById('sc-months').value);
 
-  // Save months-per-unit if changed
-  if (!isNaN(monthsVal) && monthsVal > 0 && monthsVal !== item.months) {
-    item.months = monthsVal;
+  // The stock-count modal asks "How long does 1 unit last?" (months) — that
+  // is per-unit lifetime, so update daysPerUnit directly and re-derive
+  // `months` for back-compat with anywhere still reading the old field.
+  if (!isNaN(monthsVal) && monthsVal > 0) {
+    item.daysPerUnit = monthsVal * 30.5;
+    // Keep `months` consistent — it now represents whole-purchase lifetime
+    // (= per-unit-lifetime × pack-qty).
+    item.months = monthsVal * (item.qty || 1);
   }
 
   if (val === '') {
@@ -6150,12 +6216,35 @@ function openAddModal() {
   Object.entries(reset).forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.value = v; });
   const storeEl = document.getElementById('wiz-store');
   if (storeEl) { storeEl.dataset.manual = ''; storeEl.dataset.autoFilled = ''; }
+  // Reset awaiting-delivery checkbox + ensure started-using row visible
+  const awaitingCb = document.getElementById('wiz-awaiting-delivery');
+  if (awaitingCb) awaitingCb.checked = false;
+  const susField = document.getElementById('wiz-started-using-field');
+  const susHint  = document.getElementById('wiz-started-using-hint');
+  if (susField) susField.style.display = '';
+  if (susHint)  susHint.style.display  = '';
   wizSetRating(0);
   wizClearImage();
   document.getElementById('wiz-price-links').innerHTML = '';
   document.getElementById('wiz-reminders-list').innerHTML = '';
   _wizGotoStep(1);
   openModal('add-item-wizard-modal');
+}
+
+// Toggle the "Started using" row based on awaiting-delivery checkbox.
+// When awaiting delivery, we don't ask for a started-using date — the item
+// hasn't arrived yet, so it's added to pending deliveries instead.
+function wizToggleAwaitingDelivery() {
+  const checked  = document.getElementById('wiz-awaiting-delivery').checked;
+  const susField = document.getElementById('wiz-started-using-field');
+  const susHint  = document.getElementById('wiz-started-using-hint');
+  if (susField) susField.style.display = checked ? 'none' : '';
+  if (susHint)  susHint.style.display  = checked ? 'none' : '';
+  // Clear started-using value when ticking, so it can't sneak through to save
+  if (checked) {
+    const su = document.getElementById('wiz-started-using');
+    if (su) su.value = '';
+  }
 }
 
 function _wizGotoStep(n) {
@@ -6278,11 +6367,17 @@ function _wizRenderTimeline() {
   if (!content) return;
   const name    = document.getElementById('wiz-name').value.trim() || 'This item';
   const months  = parseFloat(document.getElementById('wiz-months').value) || 1;
-  const qty     = parseFloat(document.getElementById('wiz-last-qty').value) || 1;
+  const wizQty  = parseFloat(document.getElementById('wiz-qty').value) || 1;
+  const lastQty = parseFloat(document.getElementById('wiz-last-qty').value) || 1;
+  const awaitingDelivery = !!document.getElementById('wiz-awaiting-delivery')?.checked;
   const refDate = document.getElementById('wiz-started-using').value
                || document.getElementById('wiz-last-date').value
                || today();
-  const totalDays = Math.round(months * 30.5 * qty);
+  // New model: months = lifetime of a full pack (wiz-qty units),
+  // so days-per-unit = months × 30.5 / wiz-qty, and total days for the most-
+  // recent purchase = days-per-unit × lastQty.
+  const dpu        = (months * 30.5) / Math.max(0.0001, wizQty);
+  const totalDays  = Math.round(dpu * lastQty);
   const ref     = new Date(refDate + 'T12:00:00');
   const runOut  = new Date(ref.getTime() + totalDays * 86400000);
   const threshold = settings.threshold || 20;
@@ -6292,20 +6387,47 @@ function _wizRenderTimeline() {
   const daysDiff = d => Math.round((d - Date.now()) / 86400000);
   const relLabel = d => { const diff = daysDiff(d); return diff < 0 ? `${Math.abs(diff)}d ago` : diff === 0 ? 'today' : `in ${diff}d`; };
 
-  const events = [
-    { label: 'Started using', date: ref, color: '#5b8dee', icon: 'i-play' },
-    { label: `${threshold}% warning threshold (order reminder)`, date: warnDate, color: 'var(--warn)', icon: 'i-bell' },
-    { label: 'Estimated run-out', date: runOut, color: 'var(--danger)', icon: 'i-alert-triangle' },
-  ];
+  const events = awaitingDelivery
+    ? [
+        // No "started using" yet — show the order date as the anchor
+        { label: 'Ordered (awaiting delivery)', date: ref, color: 'var(--accent)', icon: 'i-truck' },
+      ]
+    : [
+        { label: 'Started using', date: ref, color: '#5b8dee', icon: 'i-play' },
+        { label: `${threshold}% warning threshold (order reminder)`, date: warnDate, color: 'var(--warn)', icon: 'i-bell' },
+        { label: 'Estimated run-out', date: runOut, color: 'var(--danger)', icon: 'i-alert-triangle' },
+      ];
 
-  // Add replacement reminders to timeline
-  _wizReminders.forEach(r => {
-    const days = r.unit==='days' ? r.interval : r.unit==='weeks' ? r.interval*7 : r.interval*30.5;
-    const replDate = new Date(ref.getTime() + Math.round(days)*86400000);
-    events.push({ label: `Replace${r.name ? ` (${r.name})` : ''}`, date: replDate, color:'var(--ok)', icon:'i-repeat' });
-  });
+  // Add replacement reminders to timeline (only meaningful once delivered/started)
+  if (!awaitingDelivery) {
+    _wizReminders.forEach(r => {
+      const days = r.unit==='days' ? r.interval : r.unit==='weeks' ? r.interval*7 : r.interval*30.5;
+      const replDate = new Date(ref.getTime() + Math.round(days)*86400000);
+      events.push({ label: `Replace${r.name ? ` (${r.name})` : ''}`, date: replDate, color:'var(--ok)', icon:'i-repeat' });
+    });
+  }
 
   events.sort((a,b) => a.date - b.date);
+
+  const statsRow = awaitingDelivery
+    ? `<div style="background:rgba(232,168,56,0.1);border:1px solid rgba(232,168,56,0.25);border-radius:10px;padding:12px 14px;font-size:13px;color:var(--text);line-height:1.5">
+         <strong>Will be added to Pending Deliveries.</strong><br>
+         <span style="color:var(--muted);font-size:12px">When it arrives, tap <em>Delivered</em> on the card to add it to stock and set when you start using it.</span>
+       </div>`
+    : `<div style="display:flex;gap:16px;flex-wrap:wrap">
+        <div style="flex:1;min-width:100px;background:var(--surface2);border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:24px;font-weight:800;color:var(--text)">${totalDays}d</div>
+          <div style="font-size:11px;color:var(--muted)">Total supply</div>
+        </div>
+        <div style="flex:1;min-width:100px;background:var(--surface2);border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:24px;font-weight:800;color:var(--warn)">${warnDays}d</div>
+          <div style="font-size:11px;color:var(--muted)">Warning at</div>
+        </div>
+        <div style="flex:1;min-width:100px;background:var(--surface2);border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:24px;font-weight:800;color:var(--accent)">${Math.max(0,daysDiff(runOut))}d</div>
+          <div style="font-size:11px;color:var(--muted)">Days left</div>
+        </div>
+      </div>`;
 
   content.innerHTML = `
     <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px">
@@ -6323,20 +6445,7 @@ function _wizRenderTimeline() {
           </div>`).join('')}
       </div>
     </div>
-    <div style="display:flex;gap:16px;flex-wrap:wrap">
-      <div style="flex:1;min-width:100px;background:var(--surface2);border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:24px;font-weight:800;color:var(--text)">${totalDays}d</div>
-        <div style="font-size:11px;color:var(--muted)">Total supply</div>
-      </div>
-      <div style="flex:1;min-width:100px;background:var(--surface2);border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:24px;font-weight:800;color:var(--warn)">${warnDays}d</div>
-        <div style="font-size:11px;color:var(--muted)">Warning at</div>
-      </div>
-      <div style="flex:1;min-width:100px;background:var(--surface2);border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:24px;font-weight:800;color:var(--accent)">${Math.max(0,daysDiff(runOut))}d</div>
-        <div style="font-size:11px;color:var(--muted)">Days left</div>
-      </div>
-    </div>`;
+    ${statsRow}`;
 }
 
 async function wizSave() {
@@ -6348,15 +6457,35 @@ async function wizSave() {
   const lastDate  = document.getElementById('wiz-last-date').value;
   const lastQty   = parseFloat(document.getElementById('wiz-last-qty').value) || 1;
   const lastPrice = document.getElementById('wiz-last-price').value.trim();
-  const startedUsing = document.getElementById('wiz-started-using').value || null;
+  const awaitingDelivery = !!document.getElementById('wiz-awaiting-delivery')?.checked;
+  // When awaiting delivery, never set startedUsing — item hasn't arrived yet
+  const startedUsing = awaitingDelivery
+    ? null
+    : (document.getElementById('wiz-started-using').value || null);
+
+  // Build the log entry. If awaiting delivery, mark it pending so it shows
+  // up in the Pending Deliveries section and the multifunction button starts
+  // at "Delivered". Otherwise, log as a normal already-delivered purchase.
+  const logEntry = lastDate
+    ? (awaitingDelivery
+        ? { id: uid(), date: lastDate, qty: lastQty, price: lastPrice, store: storeVal, pendingDelivery: true }
+        : { id: uid(), date: lastDate, qty: lastQty, price: lastPrice, store: storeVal, pendingDelivery: false, deliveredDate: lastDate })
+    : null;
+
+  const wizQty    = parseFloat(document.getElementById('wiz-qty').value) || 1;
+  const wizMonths = parseFloat(document.getElementById('wiz-months').value) || 1;
+  // Compute canonical per-unit lifetime: months entered = whole-purchase supply,
+  // so per-unit lifetime = months × 30.5 / qty. (e.g. 24 cans, 1 month → 1.27 d/can)
+  const daysPerUnit = (wizMonths * 30.5) / Math.max(0.0001, wizQty);
 
   const newItem = {
     id:                   uid(),
     name,
     category:             document.getElementById('wiz-category').value,
     cadence:              document.getElementById('wiz-cadence').value,
-    qty:                  parseFloat(document.getElementById('wiz-qty').value) || 1,
-    months:               parseFloat(document.getElementById('wiz-months').value) || 1,
+    qty:                  wizQty,
+    months:               wizMonths,
+    daysPerUnit,
     url:                  document.getElementById('wiz-url').value.trim(),
     store:                storeVal,
     notes:                document.getElementById('wiz-notes').value.trim(),
@@ -6364,10 +6493,16 @@ async function wizSave() {
     rating:               _wizRating || null,
     imageUrl:             _wizImageUrl || null,
     storePrices:          [],
-    replacementReminders: _wizReminders.filter(r => r.interval > 0).map(r => ({ ...r, lastReplaced: startedUsing || lastDate || null })),
-    logs:                 lastDate ? [{ id: uid(), date: lastDate, qty: lastQty, price: lastPrice, store: storeVal, pendingDelivery: false, deliveredDate: lastDate }] : [],
+    replacementReminders: _wizReminders.filter(r => r.interval > 0).map(r => ({ ...r, lastReplaced: startedUsing || (awaitingDelivery ? null : lastDate) || null })),
+    logs:                 logEntry ? [logEntry] : [],
     updatedAt:            new Date().toISOString(),
   };
+  // If awaiting delivery, mark item as ordered so it appears in pending
+  // deliveries and the order button reflects the correct stage.
+  if (awaitingDelivery && logEntry) {
+    newItem.ordered   = true;
+    newItem.orderedAt = new Date().toISOString();
+  }
   // Backwards compat: copy first reminder to replacementInterval/Unit
   if (newItem.replacementReminders?.length) {
     newItem.replacementInterval = newItem.replacementReminders[0].interval;
@@ -6377,7 +6512,9 @@ async function wizSave() {
   await saveData();
   closeModal('add-item-wizard-modal');
   scheduleRender('grid', 'dashboard', 'filters', 'shopping', 'sns');
-  toast(`"${name}" added ✓`);
+  toast(awaitingDelivery
+    ? `"${name}" added — awaiting delivery ✓`
+    : `"${name}" added ✓`);
   _syncQueue.enqueue('Saving item…');
 }
 
@@ -6406,6 +6543,9 @@ function openEditModal(id) {
 
   // ── Order history ──
   _renderEditOrderHistory(item);
+
+  // ── Stock summary ──
+  _renderEditStockSummary(item);
 
   // ── Replacement reminders ──
   _renderEditReminders(item);
@@ -6489,6 +6629,43 @@ function _renderEditOrderHistory(item) {
     btn.onclick = () => { closeModal('item-modal'); openOrderFlow(item.id, 'purchase'); };
     btn.style.background = ''; btn.style.color = ''; btn.style.borderColor = '';
   }
+}
+
+function _renderEditStockSummary(item) {
+  const container = document.getElementById('ro-stock-summary');
+  if (!container) return;
+  const s = calcStock(item);
+  const dpu = getDaysPerUnit(item);
+  const lastLog = (item.logs || []).filter(l => !l.pendingDelivery).at(-1);
+
+  // Per-unit lifetime in human form
+  let perUnitLabel;
+  if (dpu < 7)        perUnitLabel = `~${dpu.toFixed(1)} days/unit`;
+  else if (dpu < 60)  perUnitLabel = `~${Math.round(dpu)} days/unit`;
+  else if (dpu < 365) perUnitLabel = `~${(dpu / 30.5).toFixed(1)} months/unit`;
+  else                perUnitLabel = `~${(dpu / 365).toFixed(1)} years/unit`;
+
+  let lines = [];
+  if (item.stockCount != null && item.stockCountDate) {
+    lines.push(`<strong style="color:var(--text)">${item.stockCount} unit${item.stockCount !== 1 ? 's' : ''} left</strong> (counted ${timeAgo(item.stockCountDate)})`);
+    if (s) {
+      const f = formatDaysLeft(s.daysLeft);
+      lines.push(`Projected: ${f.num} ${f.unit}${f.suspect ? ' — looks unusually long, recount?' : ''}`);
+    }
+    lines.push(perUnitLabel);
+  } else if (lastLog) {
+    lines.push(`Time-based estimate from last purchase (${timeAgo(lastLog.date)})`);
+    if (s) {
+      const f = formatDaysLeft(s.daysLeft);
+      lines.push(`<strong style="color:var(--text)">${f.num} ${f.unit}</strong>${f.suspect ? ' <span style="color:var(--warn)">⚠ unusually long — recount?</span>' : ''}`);
+    }
+    lines.push(perUnitLabel);
+    lines.push(`<em style="color:var(--muted)">Tap "Count Stock" mid-pack to switch to learned-rate projections.</em>`);
+  } else {
+    lines.push(`<em>No purchases logged yet.</em>`);
+    lines.push(perUnitLabel);
+  }
+  container.innerHTML = lines.join('<br>');
 }
 
 function _renderEditReminders(item) {
@@ -6884,8 +7061,14 @@ async function saveItem() {
       item.name         = name;
       item.category     = document.getElementById('f-category').value;
       item.cadence      = document.getElementById('f-cadence').value;
-      item.qty          = parseFloat(document.getElementById('f-qty').value)||1;
-      item.months       = parseFloat(document.getElementById('f-months').value)||1;
+      const newQty      = parseFloat(document.getElementById('f-qty').value)||1;
+      const newMonths   = parseFloat(document.getElementById('f-months').value)||1;
+      // Recompute daysPerUnit if months or qty changed (or if missing)
+      if (newQty !== item.qty || newMonths !== item.months || typeof item.daysPerUnit !== 'number') {
+        item.daysPerUnit = (newMonths * 30.5) / Math.max(0.0001, newQty);
+      }
+      item.qty          = newQty;
+      item.months       = newMonths;
       item.url          = document.getElementById('f-url').value.trim();
       item.store        = storeVal;
       // Propagate new store name to all log entries so filter bar stays clean
@@ -6919,7 +7102,7 @@ async function saveItem() {
         }
       }
       touchField(item,
-        'name','category','cadence','qty','months','url','store',
+        'name','category','cadence','qty','months','daysPerUnit','url','store',
         'notes','startedUsing','rating','imageUrl','storePrices',
         'expiry','thresholdOverride','replacementInterval','replacementUnit'
       );
@@ -6928,13 +7111,16 @@ async function saveItem() {
     const lastDate  = document.getElementById('f-last-date').value;
     const lastQty   = parseFloat(document.getElementById('f-last-qty').value)||1;
     const lastPrice = document.getElementById('f-last-price').value.trim();
+    const newQty    = parseFloat(document.getElementById('f-qty').value)||1;
+    const newMonths = parseFloat(document.getElementById('f-months').value)||1;
     items.push({
       id:                uid(),
       name,
       category:          document.getElementById('f-category').value,
       cadence:           document.getElementById('f-cadence').value,
-      qty:               parseFloat(document.getElementById('f-qty').value)||1,
-      months:            parseFloat(document.getElementById('f-months').value)||1,
+      qty:               newQty,
+      months:            newMonths,
+      daysPerUnit:       (newMonths * 30.5) / Math.max(0.0001, newQty),
       url:               document.getElementById('f-url').value.trim(),
       store:             storeVal,
       notes:             document.getElementById('f-notes').value.trim(),

@@ -2741,6 +2741,13 @@
         <button class="btn btn-ghost btn-sm" id="ro-order-btn" onclick="" style="width:100%"></button>
       </div>
 
+      <!-- Stock count section -->
+      <div style="margin-bottom:14px">
+        <p style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px"><svg class="icon" aria-hidden="true"><use href="#i-hash"></use></svg> Stock</p>
+        <div id="ro-stock-summary" style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:10px"></div>
+        <button class="btn btn-ghost btn-sm" onclick="openStockCountModal(editingId)" style="width:100%"><svg class="icon" aria-hidden="true"><use href="#i-hash"></use></svg> Count Stock</button>
+      </div>
+
       <!-- Replacement Reminders section -->
       <div style="margin-bottom:14px">
         <p style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px"><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Replacement Reminders</p>
@@ -2890,6 +2897,12 @@
         </div>
         <div class="field"><label>Units per purchase</label><input type="number" id="wiz-qty" min="0.1" step="0.1" value="1"></div>
         <div class="field"><label>Months supply / purchase</label><input type="number" id="wiz-months" min="0.5" step="0.5" value="1"></div>
+        <div class="field form-full" style="margin-top:-8px">
+          <p style="font-size:11px;color:var(--muted);line-height:1.5;margin:0">
+            <svg class="icon" aria-hidden="true" style="vertical-align:-2px;width:12px;height:12px"><use href="#i-info"></use></svg>
+            <strong>How it works:</strong> "Units" is the pack size (e.g. 24 cans). "Months supply" is how long the whole pack lasts you (e.g. 1 month for the case of Pepsi). The app will work out the per-unit lifetime from these two.
+          </p>
+        </div>
         <div class="field form-full">
           <label>Product URL <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
           <div style="display:flex;gap:8px;align-items:center">
@@ -2938,9 +2951,17 @@
       <div class="form-grid">
         <div class="field"><label>Date purchased</label><input type="date" id="wiz-last-date"></div>
         <div class="field"><label>Quantity</label><input type="number" id="wiz-last-qty" min="0.1" step="0.1" value="1"></div>
+        <div class="field form-full" id="wiz-awaiting-delivery-row" style="margin-top:-4px">
+          <label style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;cursor:pointer;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 14px">
+            <input type="checkbox" id="wiz-awaiting-delivery" onchange="wizToggleAwaitingDelivery()" style="width:16px;height:16px">
+            <svg class="icon" aria-hidden="true" style="color:var(--accent)"><use href="#i-truck"></use></svg>
+            Awaiting delivery
+            <span style="font-weight:400;color:var(--muted);font-size:12px;margin-left:auto">Ordered but not arrived yet</span>
+          </label>
+        </div>
         <div class="field"><label>Price paid <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="wiz-last-price" placeholder="e.g. £12.99"></div>
-        <div class="field"><label>Started using <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="date" id="wiz-started-using"></div>
-        <div class="field form-full">
+        <div class="field" id="wiz-started-using-field"><label>Started using <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="date" id="wiz-started-using"></div>
+        <div class="field form-full" id="wiz-started-using-hint">
           <p style="font-size:12px;color:var(--muted);line-height:1.5;margin:0">If you bought it before opening it, set the date you actually started using it — this keeps the stock estimate accurate.</p>
         </div>
       </div>
