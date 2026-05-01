@@ -17352,7 +17352,7 @@ async function renderShareHouseholdPerms() {
   const container = document.getElementById('share-household-perms');
   if (!container) return;
   const profiles  = await getProfiles();
-  const sections  = ['stockroom','groceries','reminders','savings','report'];
+  const sections  = ['stockroom','groceries','reminders','savings','report','budget'];
   const defaults  = SHARE_TYPE_DEFAULTS[_shareTargetType] || SHARE_TYPE_DEFAULTS.guest;
 
   container.innerHTML = Object.entries(profiles).map(([key, p]) => {
@@ -17725,6 +17725,7 @@ async function pushSharedData(code, shareKey) {
       const canSeeStockroom  = perms.stockroom  && perms.stockroom  !== 'none';
       const canSeeGroceries  = perms.groceries  && perms.groceries  !== 'none';
       const canSeeReminders  = perms.reminders  && perms.reminders  !== 'none';
+      const canSeeBudget     = perms.budget     && perms.budget     !== 'none';
 
       const payload = JSON.stringify({
         items:       canSeeStockroom ? hItems     : [],
@@ -17732,6 +17733,15 @@ async function pushSharedData(code, shareKey) {
         groceries:   canSeeGroceries ? hGroceries : [],
         reminders:   canSeeReminders ? hReminders : [],
         departments: canSeeGroceries ? hDepts     : [],
+        // Budget — Phase 1 (bills) + Phase 2 (categories, transactions).
+        // Lives at user-level (not per-household), so the same data goes to every share with budget perm.
+        bills:                       canSeeBudget ? bills           : [],
+        billInstances:               canSeeBudget ? billInstances   : {},
+        budgetSettings:              canSeeBudget ? budgetSettings  : {},
+        budgetCategories:            canSeeBudget ? budgetCategories: [],
+        transactions:                canSeeBudget ? transactions    : {},
+        budgetCategoryDeletedIds:    canSeeBudget ? [...budgetCategoryDeletedIds]    : [],
+        budgetTransactionDeletedIds: canSeeBudget ? [...budgetTransactionDeletedIds] : [],
         lastSynced:  new Date().toISOString(),
       });
       const ciphertext  = await encryptWithShareKey(sk, payload);
