@@ -1326,6 +1326,18 @@ body.note-open { overflow: hidden; touch-action: none; }
 }
 .card-plus-btn-start:hover { background: rgba(91,141,238,0.22); }
 
+.card-plus-btn-decrement {
+  border-color: rgba(120,128,160,0.4);
+  background: rgba(120,128,160,0.10);
+  color: var(--muted);
+  font-weight: 700;
+}
+.card-plus-btn-decrement:hover {
+  background: rgba(232,80,80,0.15);
+  border-color: rgba(232,80,80,0.4);
+  color: #e85050;
+}
+
 /* Mobile mobile-first: hide desktop-only meta row, keep card vertical */
 @media (max-width: 899px) {
   .card-meta-desktop { display: none; }

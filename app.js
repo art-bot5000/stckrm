@@ -387,6 +387,43 @@ function formatDaysLeft(daysLeft) {
   return { num: daysLeft, unit: daysLeft === 1 ? 'day left' : 'days left', suspect: false };
 }
 
+// Project how many units are *currently* left, given a stockCount snapshot
+// and the elapsed time since that snapshot. Returns null if no count exists.
+// Uses learned rate if available (stockCount is below last purchase qty and
+// enough time has passed), otherwise falls back to configured daysPerUnit.
+function getProjectedUnitsLeft(item) {
+  if (!item || item.stockCount == null || !item.stockCountDate) return null;
+  const dpu = getDaysPerUnit(item);
+  if (dpu <= 0) return item.stockCount;
+  const daysSinceCount = (Date.now() - new Date(item.stockCountDate + 'T12:00:00')) / 86400000;
+  if (daysSinceCount <= 0) return item.stockCount;
+
+  // Try to compute a learned rate from the last delivered purchase
+  const deliveredLogs = (item.logs || []).filter(l => !l.pendingDelivery);
+  const last = deliveredLogs[deliveredLogs.length - 1];
+  let ratePerDay = 1 / dpu; // default: configured rate (units consumed per day)
+  if (last && last.qty != null) {
+    const daysSincePurchase = (Date.now() - new Date(last.date + 'T12:00:00')) / 86400000;
+    const used = (last.qty || 1) - item.stockCount;
+    if (used > 0 && daysSincePurchase > 1) {
+      const learned = used / daysSincePurchase;
+      if (learned > 0) ratePerDay = learned;
+    }
+  }
+  const projected = item.stockCount - (ratePerDay * daysSinceCount);
+  return Math.max(0, projected);
+}
+
+// Format projected unit count for compact card display.
+// Examples: 17.3 → "~17", 0.4 → "<1", 0 → "0"
+function formatProjectedUnits(projected) {
+  if (projected == null || isNaN(projected)) return null;
+  if (projected <= 0)    return '0';
+  if (projected < 1)     return '<1';
+  if (projected < 10)    return `~${projected.toFixed(1).replace(/\.0$/, '')}`;
+  return `~${Math.round(projected)}`;
+}
+
 function getStatus(pct, threshold) {
   if (pct === null || pct === undefined) return 'nodata';
   if (pct <= threshold/2) return 'critical';
@@ -4057,9 +4094,22 @@ function cardHTML(item, threshold) {
   const expiry = getExpiryStatus(item);
   const stars = [1,2,3,4,5].map(n => `<span class="card-star${(item.rating||0)>=n?' on':''}" onclick="event.stopPropagation();rateItem('${item.id}',${n})" data-id="${item.id}" data-val="${n}" onmouseover="previewCardStars('${item.id}',${n})" onmouseout="resetCardStars('${item.id}')">★</span>`).join('');
   const orderBtn = _cardOrderButton(item);
-  const qtyText = item.stockCount != null
-    ? `<strong>${item.stockCount}</strong> left`
-    : (daysLeft !== null ? `<strong>${item.months||1}mo</strong> per purchase` : '');
+  // Compact stock indicator — projected unit count if we've got a stock count,
+  // else fall back to the per-purchase descriptor.
+  const projectedUnits = getProjectedUnitsLeft(item);
+  let qtyText;
+  if (projectedUnits != null) {
+    const projStr = formatProjectedUnits(projectedUnits);
+    qtyText = `<strong>${projStr}</strong> left`;
+  } else if (daysLeft !== null) {
+    qtyText = `<strong>${item.months || 1}mo</strong> per purchase`;
+  } else {
+    qtyText = '';
+  }
+  // Quick "−1" button shown only when we have a meaningful count to decrement
+  const decrementBtn = (projectedUnits != null && projectedUnits >= 1)
+    ? `<button class="card-plus-btn card-plus-btn-decrement" onclick="event.stopPropagation();quickAdjustStock('${item.id}',-1)" title="Used one — decrement count">−1</button>`
+    : '';
 
   return `
   <div class="item-card" style="border-left:3px solid ${color}" data-id="${item.id}"
@@ -4102,6 +4152,7 @@ function cardHTML(item, threshold) {
         ${expiry ? `<div class="card-expiry" style="color:${expiry.color};border-color:${expiry.color}55" title="${fmtDate(item.expiry)}">⏰ ${expiry.label}</div>` : ''}
         <div class="card-action-btns" onclick="event.stopPropagation()">
           <button class="card-tag-btn" onclick="event.stopPropagation();openCardTagPicker('${item.id}')" title="Add tag"><svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg> Tag</button>
+          ${decrementBtn}
           ${orderBtn}
         </div>
       </div>
@@ -5512,6 +5563,35 @@ async function saveStockCount() {
   _syncQueue.enqueue();
 }
 
+// Quick "−1" / "+1" adjustment from the card. Decrements/increments the
+// projected count and persists, but DOES NOT reset stockCountDate — that
+// preserves the cumulative-consumption rate signal in calcStock (used =
+// last.qty − stockCount over the full elapsed time since purchase).
+async function quickAdjustStock(id, delta) {
+  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+
+  // Start from current projected count (or fall back to last purchase qty)
+  const projected = getProjectedUnitsLeft(item);
+  const lastDelivered = (item.logs || []).filter(l => !l.pendingDelivery).at(-1);
+  const baseline = projected != null ? projected : (lastDelivered?.qty || 1);
+  const newCount = Math.max(0, Math.round((baseline + delta) * 100) / 100);
+
+  // If there was no prior count, anchor the date now; otherwise keep the
+  // original count date so the learned rate stays accurate.
+  if (item.stockCount == null || !item.stockCountDate) {
+    item.stockCountDate = today();
+  }
+  item.stockCount = newCount;
+  touchItem(item);
+  await saveData();
+  scheduleRender('grid', 'dashboard');
+  setTimeout(syncAll, 400);
+  // Quick visual confirmation; no toast for routine −1 to avoid noise
+  if (delta < 0 && newCount === 0) toast(`${item.name} — out of stock`);
+}
+
 // ═══════════════════════════════════════════
 //  SUBSCRIBE & SAVE
 // ═══════════════════════════════════════════
@@ -6636,6 +6716,7 @@ function _renderEditStockSummary(item) {
   if (!container) return;
   const s = calcStock(item);
   const dpu = getDaysPerUnit(item);
+  const projected = getProjectedUnitsLeft(item);
   const lastLog = (item.logs || []).filter(l => !l.pendingDelivery).at(-1);
 
   // Per-unit lifetime in human form
@@ -6647,10 +6728,18 @@ function _renderEditStockSummary(item) {
 
   let lines = [];
   if (item.stockCount != null && item.stockCountDate) {
-    lines.push(`<strong style="color:var(--text)">${item.stockCount} unit${item.stockCount !== 1 ? 's' : ''} left</strong> (counted ${timeAgo(item.stockCountDate)})`);
+    const projStr = formatProjectedUnits(projected);
+    const exact   = item.stockCount % 1 === 0 ? item.stockCount : item.stockCount.toFixed(1);
+    // Show projected count prominently; mention the underlying count + when
+    const sameAsCount = projected != null && Math.abs(projected - item.stockCount) < 0.05;
+    if (sameAsCount) {
+      lines.push(`<strong style="color:var(--text)">${exact} unit${item.stockCount !== 1 ? 's' : ''} in stock</strong> (counted ${timeAgo(item.stockCountDate)})`);
+    } else {
+      lines.push(`<strong style="color:var(--text)">${projStr} units left</strong> <span style="color:var(--muted)">(projected — was ${exact} ${timeAgo(item.stockCountDate)})</span>`);
+    }
     if (s) {
       const f = formatDaysLeft(s.daysLeft);
-      lines.push(`Projected: ${f.num} ${f.unit}${f.suspect ? ' — looks unusually long, recount?' : ''}`);
+      lines.push(`Runs out: ${f.num} ${f.unit}${f.suspect ? ' — looks unusually long, recount?' : ''}`);
     }
     lines.push(perUnitLabel);
   } else if (lastLog) {
@@ -6876,6 +6965,13 @@ async function ofSave() {
     }
     item.ordered = false; item.orderedAt = null;
     if (startedDate) item.startedUsing = startedDate;
+    // Auto-update stock count: add delivered qty to existing projected count
+    // (or use delivered qty as the new count if there wasn't one).
+    const existing = getProjectedUnitsLeft(item);
+    item.stockCount = (existing != null && existing > 0)
+      ? Math.round((existing + qty) * 100) / 100
+      : qty;
+    item.stockCountDate = deliveryDate;
     touchItem(item);
     await saveData();
     closeModal('order-flow-modal');
@@ -7246,6 +7342,15 @@ async function saveDelivered() {
 
   // Set startedUsing if user said they're starting now
   if (startedDate) item.startedUsing = startedDate;
+
+  // Auto-update stock count: add delivered qty to existing projected count
+  // (or use delivered qty as the new count if there wasn't one). This is
+  // what powers "~17 cans left" projections going forward.
+  const existing = getProjectedUnitsLeft(item);
+  item.stockCount = (existing != null && existing > 0)
+    ? Math.round((existing + qty) * 100) / 100  // keep up to 2 decimal places
+    : qty;
+  item.stockCountDate = deliveryDate;
 
   touchItem(item);
   await saveData();
