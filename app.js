@@ -12725,10 +12725,13 @@ async function archiveBill(id) {
 // Hard delete only used in admin-style flows; archive is the user-facing action.
 async function deleteBillHard(id) {
   bills = bills.filter(b => b.id !== id);
-  // Also strip from all materialised months
+  // Also strip from all materialised months — handle both old (billId) and
+  // new (`${billId}__${dueDate}`) key formats
   for (const yyyymm of Object.keys(billInstances)) {
-    if (billInstances[yyyymm][id]) {
-      delete billInstances[yyyymm][id];
+    for (const key of Object.keys(billInstances[yyyymm])) {
+      if (key === id || key.startsWith(`${id}__`)) {
+        delete billInstances[yyyymm][key];
+      }
     }
   }
   await saveBudgetLocal();
@@ -12736,14 +12739,46 @@ async function deleteBillHard(id) {
 }
 
 // ── Instance ops ───────────────────────────────────────────────────────────
-function _getInstance(yyyymm, billId) {
-  return billInstances[yyyymm]?.[billId] || null;
+// Phase 4: instances are keyed by `${billId}__${dueDate}` to support templates
+// that produce multiple instances per month (weekly, 4-weekly). The (yyyymm,
+// billId) signature is preserved for backwards compatibility — when there's
+// exactly one instance per bill per month (the common case), no caller change
+// is needed. When there's ambiguity, callers should pass dueDate explicitly.
+function _getInstance(yyyymm, billId, dueDate = null) {
+  const month = billInstances[yyyymm];
+  if (!month) return null;
+  if (dueDate) {
+    return month[`${billId}__${dueDate}`] || null;
+  }
+  // Backwards compat: try old-style first, then look for any keyed-by-date match
+  if (month[billId]) return month[billId];
+  // Find first instance matching billId in the new keyed format
+  for (const key of Object.keys(month)) {
+    if (key.startsWith(`${billId}__`)) return month[key];
+  }
+  return null;
 }
 
-async function _setInstance(yyyymm, billId, patch) {
+async function _setInstance(yyyymm, billId, patch, dueDate = null) {
   if (!billInstances[yyyymm]) billInstances[yyyymm] = {};
-  const existing = billInstances[yyyymm][billId] || {};
-  billInstances[yyyymm][billId] = {
+  // Resolve the actual key. Prefer dueDate if provided.
+  let key;
+  if (dueDate) {
+    key = `${billId}__${dueDate}`;
+  } else if (billInstances[yyyymm][billId]) {
+    // Old-format key still around (pre-migration write) — keep using it
+    key = billId;
+  } else {
+    // New format — find by billId prefix
+    key = Object.keys(billInstances[yyyymm]).find(k => k.startsWith(`${billId}__`));
+    if (!key) {
+      // No instance found — caller probably wants to create one but we don't
+      // know the dueDate; bail with the legacy key
+      key = billId;
+    }
+  }
+  const existing = billInstances[yyyymm][key] || {};
+  billInstances[yyyymm][key] = {
     ...existing,
     ...patch,
     billId,
@@ -12751,33 +12786,33 @@ async function _setInstance(yyyymm, billId, patch) {
   };
   await saveBudgetLocal();
   _syncQueue?.enqueue();
-  return billInstances[yyyymm][billId];
+  return billInstances[yyyymm][key];
 }
 
-async function markBillPaid(yyyymm, billId, { actualAmount = null } = {}) {
+async function markBillPaid(yyyymm, billId, { actualAmount = null, dueDate = null } = {}) {
   const patch = {
     paidAt:  _nowIso(),
     paidBy:  _kvEmailHash || null,
     skipped: false,
   };
   if (actualAmount !== null && actualAmount !== undefined) patch.actualAmount = Number(actualAmount);
-  return _setInstance(yyyymm, billId, patch);
+  return _setInstance(yyyymm, billId, patch, dueDate);
 }
 
-async function markBillUnpaid(yyyymm, billId) {
-  return _setInstance(yyyymm, billId, { paidAt: null, paidBy: null });
+async function markBillUnpaid(yyyymm, billId, dueDate = null) {
+  return _setInstance(yyyymm, billId, { paidAt: null, paidBy: null }, dueDate);
 }
 
-async function skipBillInstance(yyyymm, billId) {
-  return _setInstance(yyyymm, billId, { skipped: true, paidAt: null });
+async function skipBillInstance(yyyymm, billId, dueDate = null) {
+  return _setInstance(yyyymm, billId, { skipped: true, paidAt: null }, dueDate);
 }
 
-async function unskipBillInstance(yyyymm, billId) {
-  return _setInstance(yyyymm, billId, { skipped: false });
+async function unskipBillInstance(yyyymm, billId, dueDate = null) {
+  return _setInstance(yyyymm, billId, { skipped: false }, dueDate);
 }
 
-async function setInstanceActualAmount(yyyymm, billId, amount) {
-  return _setInstance(yyyymm, billId, { actualAmount: Number(amount) });
+async function setInstanceActualAmount(yyyymm, billId, amount, dueDate = null) {
+  return _setInstance(yyyymm, billId, { actualAmount: Number(amount) }, dueDate);
 }
 
 // Regenerate a month from current templates (preserves paidAt for instances that still match)
@@ -13338,13 +13373,13 @@ function _renderBillRow(inst, opts = {}) {
   // Action buttons depend on state
   let actions = '';
   if (isPaid) {
-    actions = `<button class="bill-action-btn" onclick="event.stopPropagation();handleBillUnpay('${yyyymm}','${inst.billId}')" title="Unmark paid"><svg aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>`;
+    actions = `<button class="bill-action-btn" onclick="event.stopPropagation();handleBillUnpay('${yyyymm}','${inst.billId}','${inst.dueDate}')" title="Unmark paid"><svg aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>`;
   } else if (isSkipped) {
-    actions = `<button class="bill-action-btn" onclick="event.stopPropagation();handleBillUnskip('${yyyymm}','${inst.billId}')" title="Unskip"><svg aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>`;
+    actions = `<button class="bill-action-btn" onclick="event.stopPropagation();handleBillUnskip('${yyyymm}','${inst.billId}','${inst.dueDate}')" title="Unskip"><svg aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>`;
   } else {
     actions =
-      `<button class="bill-action-btn bill-action-paid" onclick="event.stopPropagation();handleBillPay('${yyyymm}','${inst.billId}')" title="Mark paid"><svg aria-hidden="true"><use href="#i-check"></use></svg></button>` +
-      `<button class="bill-action-btn bill-action-skip" onclick="event.stopPropagation();handleBillSkip('${yyyymm}','${inst.billId}')" title="Skip this month"><svg aria-hidden="true"><use href="#i-x"></use></svg></button>` +
+      `<button class="bill-action-btn bill-action-paid" onclick="event.stopPropagation();handleBillPay('${yyyymm}','${inst.billId}','${inst.dueDate}')" title="Mark paid"><svg aria-hidden="true"><use href="#i-check"></use></svg></button>` +
+      `<button class="bill-action-btn bill-action-skip" onclick="event.stopPropagation();handleBillSkip('${yyyymm}','${inst.billId}','${inst.dueDate}')" title="Skip this month"><svg aria-hidden="true"><use href="#i-x"></use></svg></button>` +
       `<button class="bill-action-btn bill-action-edit" onclick="event.stopPropagation();openBillEditor('${inst.billId}')" title="Edit bill"><svg aria-hidden="true"><use href="#i-pencil"></use></svg></button>`;
   }
 
@@ -13393,13 +13428,13 @@ function _escapeHtml(s) {
 }
 
 // ── Mark paid / unpaid / skip / unskip handlers ────────────────────────────
-async function handleBillPay(yyyymm, billId) {
+async function handleBillPay(yyyymm, billId, dueDate = null) {
   const tpl = bills.find(b => b.id === billId);
-  const inst = _getInstance(yyyymm, billId);
+  const inst = _getInstance(yyyymm, billId, dueDate);
   if (!tpl || !inst) return;
   // For variable bills, prompt for actual amount
   if (tpl.variableAmount) {
-    _budgetMarkPaidContext = { yyyymm, billId, expected: inst.expectedAmount };
+    _budgetMarkPaidContext = { yyyymm, billId, dueDate: inst.dueDate, expected: inst.expectedAmount };
     document.getElementById('bmp-subtitle').textContent = `${tpl.name} — due ${_shortDate(inst.dueDate)}`;
     const amtIn = document.getElementById('bmp-amount');
     amtIn.value = inst.actualAmount != null ? inst.actualAmount : inst.expectedAmount;
@@ -13409,7 +13444,7 @@ async function handleBillPay(yyyymm, billId) {
     return;
   }
   // Fixed-amount bill — mark paid directly
-  await markBillPaid(yyyymm, billId);
+  await markBillPaid(yyyymm, billId, { dueDate: inst.dueDate });
   await renderBudget();
   toast(`Marked ${tpl.name} paid`);
 }
@@ -13419,25 +13454,25 @@ async function confirmMarkBillPaid() {
   if (!ctx) return;
   const amt = parseFloat(document.getElementById('bmp-amount').value);
   if (isNaN(amt) || amt < 0) { toast('Enter a valid amount'); return; }
-  await markBillPaid(ctx.yyyymm, ctx.billId, { actualAmount: amt });
+  await markBillPaid(ctx.yyyymm, ctx.billId, { actualAmount: amt, dueDate: ctx.dueDate });
   closeModal('bill-mark-paid-modal');
   _budgetMarkPaidContext = null;
   await renderBudget();
   toast('Bill marked paid');
 }
 
-async function handleBillUnpay(yyyymm, billId) {
-  await markBillUnpaid(yyyymm, billId);
+async function handleBillUnpay(yyyymm, billId, dueDate = null) {
+  await markBillUnpaid(yyyymm, billId, dueDate);
   await renderBudget();
 }
 
-async function handleBillSkip(yyyymm, billId) {
-  await skipBillInstance(yyyymm, billId);
+async function handleBillSkip(yyyymm, billId, dueDate = null) {
+  await skipBillInstance(yyyymm, billId, dueDate);
   await renderBudget();
 }
 
-async function handleBillUnskip(yyyymm, billId) {
-  await unskipBillInstance(yyyymm, billId);
+async function handleBillUnskip(yyyymm, billId, dueDate = null) {
+  await unskipBillInstance(yyyymm, billId, dueDate);
   await renderBudget();
 }
 
@@ -16137,6 +16172,992 @@ function _augmentHeroWithProjection() {
       ${lowDate ? `<div style="font-size:10px;color:var(--muted);font-family:var(--mono)">${lowDate}</div>` : ''}
     </div>`;
 }
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BUDGET — Phase 4a Foundations
+//  - Generalised frequency engine (day/week/month/year)
+//  - Variable income (actual amounts, last-3 averaging)
+//  - Income materialisation parallel to bill instances
+//
+//  Insertion point: in app.js, IMMEDIATELY AFTER the Phase 3b BUDGET ACCOUNTS
+//  UI block (just before the GROCERY LIST section).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Generalised frequency engine ───────────────────────────────────────────
+//
+// Frequency shape (extended in Phase 4):
+//   { unit: 'day' | 'week' | 'month' | 'year', interval: N, anchorDate?: 'YYYY-MM-DD', anchorMonth?: 0..11 }
+//
+// - Monthly templates use anchorMonth (0=Jan) AND dayOfMonth on the template.
+//   E.g. { unit: 'month', interval: 1 } + dayOfMonth=5 → 5th of every month.
+//   E.g. { unit: 'month', interval: 3, anchorMonth: 2 } + dayOfMonth=10 → 10 March, 10 June, 10 Sep, 10 Dec.
+//
+// - Weekly/daily templates use anchorDate (the first occurrence's exact date).
+//   The dayOfMonth field is ignored. interval is in weeks (or days).
+//   E.g. { unit: 'week', interval: 4, anchorDate: '2026-05-05' } → every 4 weeks from 5 May.
+//
+// - Yearly templates use anchorMonth + dayOfMonth.
+//
+// Returns the list of dates (YYYY-MM-DD) where the template lands within the
+// given month. May be 0, 1, or many entries (a 4-weekly template can produce
+// 1 or 2 dates per calendar month).
+
+function getInstanceDatesInMonth(template, year, monthZeroIdx) {
+  const f = template.frequency || { unit: 'month', interval: 1 };
+  const monthStart = new Date(year, monthZeroIdx, 1, 12, 0, 0); // noon to match cursor
+  const monthEnd   = new Date(year, monthZeroIdx + 1, 0, 23, 59, 59); // end of last day
+  const monthEndDate = monthEnd.getDate();
+
+  if (f.unit === 'day' || f.unit === 'week') {
+    // Walk forward from the anchor date in interval steps (in days)
+    if (!f.anchorDate) return [];
+    const stepDays = (f.unit === 'week' ? 7 : 1) * Math.max(1, f.interval || 1);
+    const anchor = new Date(f.anchorDate + 'T12:00:00');
+    if (isNaN(anchor.getTime())) return [];
+    // If anchor is later than the month-end, no instances yet
+    if (anchor > monthEnd) return [];
+    // Find the first occurrence on or after monthStart by jumping in stepDays
+    const oneDay = 86400000;
+    const daysFromAnchorToMonthStart = Math.floor((monthStart.getTime() - anchor.getTime()) / oneDay);
+    let stepsToMonthStart = Math.max(0, Math.ceil(daysFromAnchorToMonthStart / stepDays));
+    let cursor = new Date(anchor.getTime() + stepsToMonthStart * stepDays * oneDay);
+    // Edge: if cursor is before monthStart (anchor is itself within or before the month),
+    // bump forward until we're inside or past
+    while (cursor < monthStart) {
+      cursor = new Date(cursor.getTime() + stepDays * oneDay);
+    }
+    const out = [];
+    while (cursor <= monthEnd) {
+      out.push(_dateToIso(cursor));
+      cursor = new Date(cursor.getTime() + stepDays * oneDay);
+    }
+    return out;
+  }
+
+  // 'year' unit
+  if (f.unit === 'year') {
+    const anchorMonth = f.anchorMonth ?? 0;
+    if (monthZeroIdx !== anchorMonth) return [];
+    const dom = _clampDayOfMonth(template.dayOfMonth || 1, year, monthZeroIdx);
+    return [_isoDate(year, monthZeroIdx, dom)];
+  }
+
+  // 'month' unit (and default)
+  const interval = Math.max(1, f.interval || 1);
+  const anchor   = f.anchorMonth ?? 0;
+  const monthsSinceEpoch = (year - 2000) * 12 + monthZeroIdx;
+  const offsetFromAnchor = monthsSinceEpoch - anchor;
+  if (offsetFromAnchor < 0 || offsetFromAnchor % interval !== 0) return [];
+  const dom = _clampDayOfMonth(template.dayOfMonth || 1, year, monthZeroIdx);
+  return [_isoDate(year, monthZeroIdx, dom)];
+}
+
+// Backwards-compat shim — Phase 1/2/3 callers ask "is this template due in this
+// month at all?" The generalised engine answers via getInstanceDatesInMonth.
+// We override the existing function.
+shouldBeDueInMonth = function(template, year, monthZeroIdx) {
+  return getInstanceDatesInMonth(template, year, monthZeroIdx).length > 0;
+};
+
+// Helper: format a Date object as YYYY-MM-DD
+function _dateToIso(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// ── Frequency label (extended for week/day units) ──────────────────────────
+// Override the Phase 1 label function to handle the new units.
+_frequencyLabel = function(tpl) {
+  const f = tpl.frequency || { unit: 'month', interval: 1 };
+  const interval = Math.max(1, f.interval || 1);
+  if (f.unit === 'day') {
+    if (interval === 1) return 'Daily';
+    if (interval === 7) return 'Weekly';
+    if (interval === 14) return 'Fortnightly';
+    return `Every ${interval} days`;
+  }
+  if (f.unit === 'week') {
+    if (interval === 1) return 'Weekly';
+    if (interval === 2) return 'Fortnightly';
+    if (interval === 4) return 'Every 4 weeks';
+    return `Every ${interval} weeks`;
+  }
+  if (f.unit === 'year') return 'Annual';
+  // 'month'
+  if (interval === 1)  return 'Monthly';
+  if (interval === 3)  return 'Every 3 months';
+  if (interval === 6)  return 'Every 6 months';
+  if (interval === 12) return 'Annual';
+  return `Every ${interval} months`;
+};
+
+// ── Bill instance migration ────────────────────────────────────────────────
+// Phase 1-3 stored bill instances keyed by `billId` (one per month per bill).
+// Weekly/4-weekly templates can produce multiple instances per month, so we
+// migrate to keys of form `${billId}__${dueDate}`. Old keys are detected by
+// the absence of "__" and rewritten on first read.
+function _migrateBillInstancesIfNeeded(yyyymm) {
+  const month = billInstances[yyyymm];
+  if (!month) return false;
+  let migrated = false;
+  for (const key of Object.keys(month)) {
+    if (key.includes('__')) continue; // already new format
+    const inst = month[key];
+    if (!inst || !inst.billId || !inst.dueDate) continue;
+    const newKey = `${inst.billId}__${inst.dueDate}`;
+    if (newKey === key) continue;
+    if (month[newKey]) {
+      // collision — keep the more-recently-updated one
+      const existing = month[newKey];
+      const eUpd = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+      const iUpd = inst.updatedAt     ? new Date(inst.updatedAt).getTime()     : 0;
+      if (iUpd > eUpd) month[newKey] = inst;
+    } else {
+      month[newKey] = inst;
+    }
+    delete month[key];
+    migrated = true;
+  }
+  return migrated;
+}
+
+// ── Updated materialiseMonth for Phase 4 frequency model ───────────────────
+// Override Phase 1's materialiseMonth to handle multiple instances per template
+// per month (weekly/4-weekly bills).
+materialiseMonth = async function(yyyymm, { force = false, persist = true } = {}) {
+  // Migrate any old-format instances first (idempotent)
+  const migrated = _migrateBillInstancesIfNeeded(yyyymm);
+
+  const already = budgetSettings.materialisedMonths.includes(yyyymm);
+  if (already && !force && !migrated) return billInstances[yyyymm] || {};
+
+  const { year, month } = _parseYyyymm(yyyymm);
+  const monthInstances  = (force ? {} : (billInstances[yyyymm] || {}));
+
+  for (const tpl of bills) {
+    if (tpl.archived) continue;
+    const dates = getInstanceDatesInMonth(tpl, year, month);
+    for (const dueDate of dates) {
+      const key = `${tpl.id}__${dueDate}`;
+      if (!force && monthInstances[key]) continue;
+      monthInstances[key] = {
+        billId:         tpl.id,
+        dueDate,
+        expectedAmount: tpl.amount,
+        actualAmount:   null,
+        paidAt:         null,
+        paidBy:         null,
+        skipped:        false,
+        source:         'manual',
+        updatedAt:      _nowIso(),
+      };
+    }
+  }
+
+  // Phase 4: materialise income too — same idempotent pattern
+  if (!incomeEntries[yyyymm]) incomeEntries[yyyymm] = {};
+  const monthIncomeEntries = incomeEntries[yyyymm];
+  for (const tpl of (incomeTemplates || [])) {
+    if (tpl.archived) continue;
+    const dates = getInstanceDatesInMonth(tpl, year, month);
+    for (const dueDate of dates) {
+      // Use a deterministic id so re-materialisation doesn't duplicate
+      const id = `incTpl_${tpl.id}__${dueDate}`;
+      if (!force && monthIncomeEntries[id]) continue;
+      monthIncomeEntries[id] = {
+        id,
+        date:          dueDate,
+        amount:        tpl.amount,            // expected amount
+        actualAmount:  null,                   // null until user confirms
+        source:        'template_instance',
+        templateId:    tpl.id,
+        accountId:     tpl.accountId || null,
+        notes:         '',
+        paidAt:        null,
+        createdAt:     _nowIso(),
+        createdBy:     _kvEmailHash || null,
+        updatedAt:     _nowIso(),
+      };
+    }
+  }
+
+  billInstances[yyyymm] = monthInstances;
+  incomeEntries[yyyymm] = monthIncomeEntries;
+  // If we materialised income but the month is now empty, clean up
+  if (Object.keys(monthIncomeEntries).length === 0) delete incomeEntries[yyyymm];
+
+  if (!already) budgetSettings.materialisedMonths.push(yyyymm);
+
+  if (persist) {
+    await saveBudgetLocal();
+    if (typeof saveBudgetAccountsAndIncomeLocal === 'function') {
+      await saveBudgetAccountsAndIncomeLocal();
+    }
+    _syncQueue?.enqueue('Generating bills…');
+  }
+  return monthInstances;
+};
+
+// ── Variable income: averaging from past actuals ───────────────────────────
+//
+// Returns the projected amount for an income template. If the template is
+// variable, averages the last N actual amounts received (paidAt set, actualAmount
+// non-null). Falls back to the template's expected amount if no actuals exist.
+
+const _INCOME_AVERAGE_WINDOW = 3;
+
+function getProjectedIncomeAmount(template) {
+  if (!template) return 0;
+  if (!template.variableAmount) return template.amount || 0;
+
+  // Walk all months in incomeEntries, collect actuals from this template,
+  // sorted by date descending, take the most recent N
+  const actuals = [];
+  for (const yyyymm of Object.keys(incomeEntries || {})) {
+    for (const entry of Object.values(incomeEntries[yyyymm])) {
+      if (entry.templateId !== template.id) continue;
+      if (entry.actualAmount == null) continue;
+      if (!entry.paidAt) continue; // not yet confirmed received
+      actuals.push({ date: entry.date, amount: entry.actualAmount });
+    }
+  }
+  if (actuals.length === 0) return template.amount || 0;
+  actuals.sort((a, b) => b.date.localeCompare(a.date));
+  const window = actuals.slice(0, _INCOME_AVERAGE_WINDOW);
+  const sum = window.reduce((s, a) => s + a.amount, 0);
+  return Math.round((sum / window.length) * 100) / 100;
+}
+
+// Mark an income entry as received with a specific actual amount.
+// Updates Phase 3's markIncomeEntryReceived behaviour.
+markIncomeEntryReceived = async function(id, actualAmount = null) {
+  const located = _findIncomeEntry(id);
+  if (!located) return null;
+  const expected = located.entry.amount;
+  const actual = actualAmount != null ? Number(actualAmount) : expected;
+  return updateIncomeEntry(id, {
+    paidAt:       _nowIso(),
+    actualAmount: actual,
+  });
+};
+
+// Convenience: get the "best estimate" amount for an income entry, accounting
+// for whether the user has confirmed actual receipt or not.
+function getEffectiveIncomeAmount(entry) {
+  if (entry.actualAmount != null) return entry.actualAmount;
+  return entry.amount || 0;
+}
+
+// ── Projection updates: variable income, multi-instance handling ───────────
+//
+// Override Phase 3a's _eventsOnDay to use getProjectedIncomeAmount and
+// the keyed-by-date instance format.
+
+_eventsOnDay = function(account, dayIso) {
+  const events = [];
+  const yyyymm = _yyyymmFromString(dayIso);
+  const { year, month } = _parseYyyymm(yyyymm);
+
+  // 1. Bill instances already materialised for this day (new keyed-by-date format)
+  const bi = billInstances?.[yyyymm] || {};
+  const materialisedBillKeysOnDay = new Set(); // tracks billId+dueDate combos
+  for (const key of Object.keys(bi)) {
+    const inst = bi[key];
+    if (inst.dueDate !== dayIso) continue;
+    materialisedBillKeysOnDay.add(`${inst.billId}__${inst.dueDate}`);
+    if (inst.skipped || inst.paidAt) continue;
+    const tpl = bills.find(b => b.id === inst.billId);
+    if (!tpl) continue;
+    const effectiveAccountId = tpl.accountId || getPrimaryAccount()?.id;
+    if (effectiveAccountId !== account.id) continue;
+    events.push({
+      type:     'bill',
+      amount:   -((inst.actualAmount ?? inst.expectedAmount) || 0),
+      label:    tpl.name,
+      sourceId: inst.billId,
+    });
+  }
+
+  // 2. Bill templates that should land on this day but haven't been materialised
+  for (const tpl of (bills || [])) {
+    if (tpl.archived) continue;
+    const dates = getInstanceDatesInMonth(tpl, year, month);
+    if (!dates.includes(dayIso)) continue;
+    const key = `${tpl.id}__${dayIso}`;
+    if (materialisedBillKeysOnDay.has(key)) continue;
+    const effectiveAccountId = tpl.accountId || getPrimaryAccount()?.id;
+    if (effectiveAccountId !== account.id) continue;
+    events.push({
+      type:     'bill',
+      amount:   -(tpl.amount || 0),
+      label:    tpl.name,
+      sourceId: tpl.id,
+    });
+  }
+
+  // 3. Income entries (incl. materialised template instances) on this day
+  const ie = incomeEntries?.[yyyymm] || {};
+  const materialisedIncomeKeysOnDay = new Set();
+  for (const id of Object.keys(ie)) {
+    const entry = ie[id];
+    if (entry.date !== dayIso) continue;
+    if (entry.templateId) {
+      materialisedIncomeKeysOnDay.add(`${entry.templateId}__${entry.date}`);
+    }
+    if (entry.accountId !== account.id) continue;
+    // For variable income with no actual yet, fall back to the projected (averaged) amount
+    let amt = entry.actualAmount;
+    if (amt == null) {
+      // If this is a template instance, use averaged projection; else expected
+      if (entry.templateId) {
+        const tpl = getIncomeTemplateById(entry.templateId);
+        amt = tpl ? getProjectedIncomeAmount(tpl) : entry.amount;
+      } else {
+        amt = entry.amount;
+      }
+    }
+    events.push({
+      type:     'income',
+      amount:   (amt || 0),
+      label:    entry.notes || (entry.templateId ? getIncomeTemplateById(entry.templateId)?.name : null) || 'Income',
+      sourceId: entry.id,
+    });
+  }
+
+  // 4. Income templates that should land on this day but haven't been materialised
+  for (const tpl of (incomeTemplates || [])) {
+    if (tpl.archived) continue;
+    const dates = getInstanceDatesInMonth(tpl, year, month);
+    if (!dates.includes(dayIso)) continue;
+    const key = `${tpl.id}__${dayIso}`;
+    if (materialisedIncomeKeysOnDay.has(key)) continue;
+    if (tpl.accountId && tpl.accountId !== account.id) continue;
+    if (!tpl.accountId && !account.isPrimary) continue;
+    events.push({
+      type:     'income',
+      amount:   getProjectedIncomeAmount(tpl),
+      label:    tpl.name,
+      sourceId: tpl.id,
+    });
+  }
+
+  return events;
+};
+
+// ── _applyHistoricalEvents update ──────────────────────────────────────────
+// Override Phase 3a's _applyHistoricalEvents to use the new keyed-by-date
+// bill instance format and effective income amounts.
+
+_applyHistoricalEvents = function(startBalance, account, fromIso, toIso) {
+  let bal = startBalance;
+  const months = _enumerateMonths(fromIso, toIso);
+
+  for (const yyyymm of months) {
+    // Bill instances paid in this period
+    const bi = billInstances?.[yyyymm] || {};
+    for (const inst of Object.values(bi)) {
+      if (inst.skipped) continue;
+      const tplAccountId = bills.find(b => b.id === inst.billId)?.accountId || getPrimaryAccount()?.id;
+      if (tplAccountId !== account.id) continue;
+      const eventDate = (inst.paidAt ? inst.paidAt.slice(0, 10) : inst.dueDate);
+      if (eventDate <= fromIso || eventDate > toIso) continue;
+      bal -= (inst.actualAmount ?? inst.expectedAmount) || 0;
+    }
+
+    // Income entries (incl. template instances) received in this period
+    const ie = incomeEntries?.[yyyymm] || {};
+    for (const entry of Object.values(ie)) {
+      if (entry.accountId !== account.id) continue;
+      const eventDate = entry.paidAt ? entry.paidAt.slice(0, 10) : entry.date;
+      if (eventDate <= fromIso || eventDate > toIso) continue;
+      // If actualAmount is set, use it. Otherwise: for past-due unconfirmed entries,
+      // we use the EXPECTED amount (assume it landed). For future, we use projection
+      // (but those won't be in the catch-up window anyway).
+      bal += getEffectiveIncomeAmount(entry);
+    }
+
+    // Discretionary transactions (only affect primary)
+    if (account.isPrimary) {
+      const txs = transactions?.[yyyymm] || {};
+      for (const tx of Object.values(txs)) {
+        if (tx.date <= fromIso || tx.date > toIso) continue;
+        bal -= (tx.amount || 0);
+      }
+    }
+  }
+
+  return bal;
+};
+
+// ── Diagnostics ────────────────────────────────────────────────────────────
+if (typeof window !== 'undefined') {
+  window.budgetPhase4Diag = function () {
+    return {
+      billsByFrequency: bills.reduce((acc, b) => {
+        const f = b.frequency || {};
+        const key = `${f.unit || 'month'}:${f.interval || 1}`;
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {}),
+      incomeTemplatesByFrequency: incomeTemplates.reduce((acc, t) => {
+        const f = t.frequency || {};
+        const key = `${f.unit || 'month'}:${f.interval || 1}`;
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {}),
+      variableIncomeTemplates: incomeTemplates.filter(t => t.variableAmount).length,
+      incomeEntriesWithActuals: Object.values(incomeEntries).reduce(
+        (acc, m) => acc + Object.values(m).filter(e => e.actualAmount != null).length, 0
+      ),
+    };
+  };
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BUDGET — Phase 4b UI
+//  - Bill editor: expanded frequency presets (daily/weekly/4-weekly)
+//  - Income template editor: same plus variableAmount toggle
+//  - Mark income received modal (mirrors mark-bill-paid for variable income)
+//  - Dashboard tile period toggle + bug fix
+//
+//  Insertion point: in app.js, IMMEDIATELY AFTER the Phase 4a foundations
+//  block (just before the GROCERY LIST section).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Dashboard tile period state ────────────────────────────────────────────
+let _dashboardTilePeriod = 'month';   // 'week' | 'month' — default month per design
+let _markIncomeContext   = null;       // { entryId, expected }
+
+// ── Override openBillEditor to populate the Phase 4 frequency presets ──────
+const _phase3OpenBillEditor = openBillEditor;
+openBillEditor = function(billId = null) {
+  // Call the Phase 3 wrap (which itself wraps Phase 1's original)
+  _phase3OpenBillEditor.call(this, billId);
+  // Now patch the frequency dropdown for Phase 4 unit support
+  setTimeout(() => {
+    const tpl = billId ? bills.find(b => b.id === billId) : null;
+    const sel = document.getElementById('bill-frequency-preset');
+    if (!sel) return;
+    // Only rebuild the options once (idempotent)
+    if (!sel.dataset.phase4) {
+      sel.innerHTML = `
+        <option value="daily">Daily</option>
+        <option value="weekly">Weekly</option>
+        <option value="fortnightly">Fortnightly</option>
+        <option value="four_weekly">Every 4 weeks</option>
+        <option value="monthly">Monthly</option>
+        <option value="quarterly">Every 3 months</option>
+        <option value="six_monthly">Every 6 months</option>
+        <option value="annual">Annually</option>
+        <option value="custom">Custom interval…</option>
+      `;
+      sel.dataset.phase4 = '1';
+    }
+    // Decide which preset matches the existing template
+    const freq = tpl?.frequency || { unit: 'month', interval: 1, anchorMonth: null };
+    let preset;
+    if      (freq.unit === 'day' && freq.interval === 1)       preset = 'daily';
+    else if (freq.unit === 'week' && freq.interval === 1)      preset = 'weekly';
+    else if (freq.unit === 'week' && freq.interval === 2)      preset = 'fortnightly';
+    else if (freq.unit === 'week' && freq.interval === 4)      preset = 'four_weekly';
+    else if (freq.unit === 'month' && freq.interval === 1)     preset = 'monthly';
+    else if (freq.unit === 'month' && freq.interval === 3)     preset = 'quarterly';
+    else if (freq.unit === 'month' && freq.interval === 6)     preset = 'six_monthly';
+    else if (freq.unit === 'year' && freq.interval === 1)      preset = 'annual';
+    else                                                        preset = 'custom';
+    sel.value = preset;
+    // Populate custom unit/interval inputs (in case user picks Custom)
+    const customIntInput = document.getElementById('bill-custom-interval');
+    const customUnitSel  = document.getElementById('bill-custom-unit');
+    if (customIntInput) customIntInput.value = preset === 'custom' ? freq.interval : 2;
+    if (customUnitSel)  customUnitSel.value  = preset === 'custom' ? freq.unit     : 'month';
+    // Anchor date for weekly/daily templates
+    const anchorDateInput = document.getElementById('bill-anchor-date');
+    if (anchorDateInput) {
+      anchorDateInput.value = freq.anchorDate || (new Date().toISOString().slice(0, 10));
+    }
+    billOnFreqPresetChange();
+  }, 0);
+};
+
+// Override billOnFreqPresetChange to handle daily/weekly cases
+billOnFreqPresetChange = function() {
+  const preset      = document.getElementById('bill-frequency-preset').value;
+  const anchorRow   = document.getElementById('bill-anchor-row');
+  const anchorDateRow = document.getElementById('bill-anchor-date-row');
+  const customRow   = document.getElementById('bill-custom-interval-row');
+  const dayOfMonthRow = document.getElementById('bill-day-of-month-row');
+  const anchorLabel = document.getElementById('bill-anchor-label');
+  const anchorHint  = document.getElementById('bill-anchor-hint');
+
+  // What gets shown for each preset:
+  //   daily/weekly/fortnightly/four_weekly  → anchor date, no day-of-month, no anchor month
+  //   monthly                                → no anchor month, day-of-month
+  //   quarterly/six_monthly                  → anchor month, day-of-month
+  //   annual                                 → anchor month, day-of-month
+  //   custom                                 → custom unit/interval, plus context-appropriate anchor
+
+  const isWeeklyish = ['daily','weekly','fortnightly','four_weekly'].includes(preset);
+  const isCustom    = preset === 'custom';
+  const customUnit  = isCustom ? (document.getElementById('bill-custom-unit')?.value || 'month') : null;
+  const customIsWeeklyish = isCustom && (customUnit === 'day' || customUnit === 'week');
+
+  // Show anchor-date row for weekly-ish frequencies
+  if (anchorDateRow) {
+    anchorDateRow.style.display = (isWeeklyish || customIsWeeklyish) ? 'block' : 'none';
+  }
+  // Show day-of-month input for monthly-ish (everything except weekly-ish)
+  if (dayOfMonthRow) {
+    dayOfMonthRow.style.display = (isWeeklyish || customIsWeeklyish) ? 'none' : 'block';
+  }
+  // Anchor month: only shown for non-monthly month-based presets and custom-month
+  const showAnchorMonth = ['quarterly','six_monthly','annual'].includes(preset) || (isCustom && customUnit === 'month');
+  anchorRow.style.display = showAnchorMonth ? 'block' : 'none';
+  customRow.style.display = isCustom ? 'block' : 'none';
+
+  if (showAnchorMonth) {
+    if (preset === 'annual' || (isCustom && customUnit === 'year')) {
+      anchorLabel.textContent = 'Month it pays';
+      anchorHint.textContent  = '';
+    } else {
+      anchorLabel.textContent = 'First payment month';
+      const intervalText = preset === 'quarterly'   ? 'every 3 months'
+                        : preset === 'six_monthly'  ? 'every 6 months'
+                        : 'every N months';
+      anchorHint.textContent  = `Repeats ${intervalText} from this anchor.`;
+    }
+  }
+};
+
+// Override saveBillFromEditor to translate the new presets into frequency objects
+const _phase3SaveBillFromEditor = saveBillFromEditor;
+saveBillFromEditor = async function() {
+  const name = (document.getElementById('bill-name').value || '').trim();
+  if (!name) { toast('Bill needs a name'); return; }
+  const amount = parseFloat(document.getElementById('bill-amount').value);
+  if (isNaN(amount) || amount < 0) { toast('Enter a valid amount'); return; }
+  const variableAmount = document.getElementById('bill-variable').checked;
+  const notes = (document.getElementById('bill-notes').value || '').trim();
+  const preset = document.getElementById('bill-frequency-preset').value;
+
+  // Build the frequency object based on preset
+  let frequency;
+  let dayOfMonth = parseInt(document.getElementById('bill-day-of-month').value, 10);
+  if (isNaN(dayOfMonth)) dayOfMonth = 1;
+  const anchorMonth = parseInt(document.getElementById('bill-anchor-month').value, 10);
+  const anchorDate  = document.getElementById('bill-anchor-date')?.value;
+  const customUnit  = document.getElementById('bill-custom-unit')?.value || 'month';
+  const customInt   = parseInt(document.getElementById('bill-custom-interval').value, 10);
+
+  if (preset === 'daily')           frequency = { unit: 'day',   interval: 1, anchorDate };
+  else if (preset === 'weekly')     frequency = { unit: 'week',  interval: 1, anchorDate };
+  else if (preset === 'fortnightly') frequency = { unit: 'week', interval: 2, anchorDate };
+  else if (preset === 'four_weekly') frequency = { unit: 'week', interval: 4, anchorDate };
+  else if (preset === 'monthly')    frequency = { unit: 'month', interval: 1, anchorMonth: null };
+  else if (preset === 'quarterly')  frequency = { unit: 'month', interval: 3, anchorMonth };
+  else if (preset === 'six_monthly') frequency = { unit: 'month', interval: 6, anchorMonth };
+  else if (preset === 'annual')     frequency = { unit: 'year',  interval: 1, anchorMonth };
+  else { // custom
+    const interval = Math.max(1, customInt || 2);
+    if (customUnit === 'day' || customUnit === 'week') {
+      frequency = { unit: customUnit, interval, anchorDate };
+    } else if (customUnit === 'year') {
+      frequency = { unit: 'year', interval, anchorMonth };
+    } else {
+      frequency = { unit: 'month', interval, anchorMonth };
+    }
+  }
+
+  // Validate anchor date for weekly/daily templates
+  if ((frequency.unit === 'day' || frequency.unit === 'week') && !frequency.anchorDate) {
+    toast('Pick an anchor date (the first occurrence)');
+    return;
+  }
+
+  // For weekly/daily templates dayOfMonth is irrelevant; for others, validate
+  if (frequency.unit === 'month' || frequency.unit === 'year') {
+    if (dayOfMonth < 1 || dayOfMonth > 31) { toast('Day must be 1-31'); return; }
+  }
+
+  const patch = { name, amount, variableAmount, dayOfMonth, notes, frequency };
+
+  if (_budgetEditingBillId) {
+    await updateBill(_budgetEditingBillId, patch);
+    toast('Bill updated');
+  } else {
+    await createBill(patch);
+    toast('Bill added');
+  }
+
+  await materialiseMonth(_budgetViewMonth, { persist: true });
+  closeModal('bill-editor-modal');
+  _budgetEditingBillId = null;
+  await renderBudget();
+};
+
+// The Phase 3 saveBillFromEditor wrap added accountId handling. Phase 4 replaces
+// the whole saveBillFromEditor, so we need to also handle accountId here.
+// Snapshot the original for clarity, then re-implement with accountId.
+const _phase4SaveBillFromEditorBase = saveBillFromEditor;
+saveBillFromEditor = async function() {
+  // Read accountId BEFORE the save (which closes the modal & resets state)
+  const accSel = document.getElementById('bill-account');
+  const accountId = accSel ? (accSel.value || null) : null;
+  const editingId = _budgetEditingBillId;
+  const billCountBefore = bills.length;
+  await _phase4SaveBillFromEditorBase.call(this);
+  if (!accountId) return;
+  if (editingId) {
+    await updateBill(editingId, { accountId });
+  } else if (bills.length > billCountBefore) {
+    const last = bills[bills.length - 1];
+    if (last) await updateBill(last.id, { accountId });
+  }
+};
+
+// ── Income template editor — extended for Phase 4 ──────────────────────────
+const _phase3OpenIncomeTemplateEditor = openIncomeTemplateEditor;
+openIncomeTemplateEditor = function(id = null) {
+  _phase3OpenIncomeTemplateEditor.call(this, id);
+  // Patch the frequency dropdown
+  setTimeout(() => {
+    const tpl = id ? getIncomeTemplateById(id) : null;
+    const sel = document.getElementById('income-tpl-frequency');
+    if (!sel) return;
+    if (!sel.dataset.phase4) {
+      sel.innerHTML = `
+        <option value="weekly">Weekly</option>
+        <option value="fortnightly">Fortnightly</option>
+        <option value="four_weekly">Every 4 weeks</option>
+        <option value="monthly">Monthly</option>
+        <option value="quarterly">Every 3 months</option>
+        <option value="six_monthly">Every 6 months</option>
+        <option value="annual">Annually</option>
+        <option value="custom">Custom interval…</option>
+      `;
+      sel.dataset.phase4 = '1';
+    }
+    const freq = tpl?.frequency || { unit: 'month', interval: 1, anchorMonth: null };
+    let preset;
+    if      (freq.unit === 'week'  && freq.interval === 1) preset = 'weekly';
+    else if (freq.unit === 'week'  && freq.interval === 2) preset = 'fortnightly';
+    else if (freq.unit === 'week'  && freq.interval === 4) preset = 'four_weekly';
+    else if (freq.unit === 'month' && freq.interval === 1) preset = 'monthly';
+    else if (freq.unit === 'month' && freq.interval === 3) preset = 'quarterly';
+    else if (freq.unit === 'month' && freq.interval === 6) preset = 'six_monthly';
+    else if (freq.unit === 'year'  && freq.interval === 1) preset = 'annual';
+    else                                                    preset = 'custom';
+    sel.value = preset;
+    const customIntInput = document.getElementById('income-tpl-custom-interval');
+    const customUnitSel  = document.getElementById('income-tpl-custom-unit');
+    if (customIntInput) customIntInput.value = preset === 'custom' ? freq.interval : 2;
+    if (customUnitSel)  customUnitSel.value  = preset === 'custom' ? freq.unit     : 'month';
+    const anchorDateInput = document.getElementById('income-tpl-anchor-date');
+    if (anchorDateInput) {
+      anchorDateInput.value = freq.anchorDate || (new Date().toISOString().slice(0, 10));
+    }
+    // Variable amount checkbox
+    const variableCheck = document.getElementById('income-tpl-variable');
+    if (variableCheck) variableCheck.checked = !!tpl?.variableAmount;
+    incomeTplFreqChanged();
+  }, 0);
+};
+
+incomeTplFreqChanged = function() {
+  const preset      = document.getElementById('income-tpl-frequency').value;
+  const anchorRow   = document.getElementById('income-tpl-anchor-row');
+  const anchorDateRow = document.getElementById('income-tpl-anchor-date-row');
+  const customRow   = document.getElementById('income-tpl-custom-row');
+  const dayRow      = document.getElementById('income-tpl-day-row');
+
+  const isWeeklyish = ['weekly','fortnightly','four_weekly'].includes(preset);
+  const isCustom    = preset === 'custom';
+  const customUnit  = isCustom ? (document.getElementById('income-tpl-custom-unit')?.value || 'month') : null;
+  const customIsWeeklyish = isCustom && (customUnit === 'day' || customUnit === 'week');
+
+  if (anchorDateRow) anchorDateRow.style.display = (isWeeklyish || customIsWeeklyish) ? 'block' : 'none';
+  if (dayRow)        dayRow.style.display        = (isWeeklyish || customIsWeeklyish) ? 'none'  : 'block';
+  const showAnchorMonth = ['quarterly','six_monthly','annual'].includes(preset) || (isCustom && customUnit === 'month');
+  if (anchorRow) anchorRow.style.display = showAnchorMonth ? 'block' : 'none';
+  if (customRow) customRow.style.display = isCustom ? 'block' : 'none';
+};
+
+const _phase3SaveIncomeTemplateFromEditor = saveIncomeTemplateFromEditor;
+saveIncomeTemplateFromEditor = async function() {
+  const name = (document.getElementById('income-tpl-name').value || '').trim();
+  if (!name) { toast('Income needs a name'); return; }
+  const amount = parseFloat(document.getElementById('income-tpl-amount').value);
+  if (isNaN(amount) || amount <= 0) { toast('Enter a valid amount'); return; }
+  const notes = (document.getElementById('income-tpl-notes').value || '').trim();
+  const accountId = document.getElementById('income-tpl-account').value || null;
+  const variableAmount = document.getElementById('income-tpl-variable')?.checked || false;
+
+  const preset      = document.getElementById('income-tpl-frequency').value;
+  const anchorMonth = parseInt(document.getElementById('income-tpl-anchor-month').value, 10);
+  const anchorDate  = document.getElementById('income-tpl-anchor-date')?.value;
+  const customUnit  = document.getElementById('income-tpl-custom-unit')?.value || 'month';
+  const customInt   = parseInt(document.getElementById('income-tpl-custom-interval').value, 10);
+  let dayOfMonth    = parseInt(document.getElementById('income-tpl-day').value, 10);
+  if (isNaN(dayOfMonth)) dayOfMonth = 25;
+
+  let frequency;
+  if (preset === 'weekly')      frequency = { unit: 'week',  interval: 1, anchorDate };
+  else if (preset === 'fortnightly') frequency = { unit: 'week', interval: 2, anchorDate };
+  else if (preset === 'four_weekly') frequency = { unit: 'week', interval: 4, anchorDate };
+  else if (preset === 'monthly') frequency = { unit: 'month', interval: 1, anchorMonth: null };
+  else if (preset === 'quarterly') frequency = { unit: 'month', interval: 3, anchorMonth };
+  else if (preset === 'six_monthly') frequency = { unit: 'month', interval: 6, anchorMonth };
+  else if (preset === 'annual')  frequency = { unit: 'year', interval: 1, anchorMonth };
+  else { // custom
+    const interval = Math.max(1, customInt || 2);
+    if (customUnit === 'day' || customUnit === 'week') {
+      frequency = { unit: customUnit, interval, anchorDate };
+    } else if (customUnit === 'year') {
+      frequency = { unit: 'year', interval, anchorMonth };
+    } else {
+      frequency = { unit: 'month', interval, anchorMonth };
+    }
+  }
+
+  if ((frequency.unit === 'day' || frequency.unit === 'week') && !frequency.anchorDate) {
+    toast('Pick an anchor date (the first occurrence)');
+    return;
+  }
+  if (frequency.unit === 'month' || frequency.unit === 'year') {
+    if (dayOfMonth < 1 || dayOfMonth > 31) { toast('Day must be 1-31'); return; }
+  }
+
+  const patch = { name, amount, variableAmount, dayOfMonth, notes, accountId, frequency };
+
+  if (_incomeTplEditingId) {
+    await updateIncomeTemplate(_incomeTplEditingId, patch);
+    toast('Income updated');
+  } else {
+    await createIncomeTemplate(patch);
+    toast('Income added');
+  }
+  // Re-materialise to pick up new instances
+  await materialiseMonth(_budgetViewMonth, { persist: true });
+  closeModal('income-tpl-modal');
+  _incomeTplEditingId = null;
+  renderBudgetAccounts();
+  if (_currentView === 'budget') renderBudget();
+};
+
+// ── Mark income received modal ─────────────────────────────────────────────
+//
+// Replaces the simpler markIncomeEntryReceived call with a modal that prompts
+// for the actual amount when the entry's template is variable.
+function handleMarkIncomeReceived(entryId) {
+  const located = _findIncomeEntry(entryId);
+  if (!located) return;
+  const entry = located.entry;
+  const tpl   = entry.templateId ? getIncomeTemplateById(entry.templateId) : null;
+  // For variable income, prompt for actual amount
+  if (tpl && tpl.variableAmount) {
+    _markIncomeContext = { entryId, expected: entry.amount };
+    document.getElementById('mki-subtitle').textContent = `${tpl.name} — expected ${_shortDate(entry.date)}`;
+    const amtIn = document.getElementById('mki-amount');
+    amtIn.value = entry.actualAmount != null ? entry.actualAmount : entry.amount;
+    document.getElementById('mki-expected-hint').textContent = `Estimated: ${_money(entry.amount)}`;
+    openModal('mark-income-modal');
+    setTimeout(() => amtIn.select(), 50);
+    return;
+  }
+  // Fixed amount — confirm with one tap
+  _confirmMarkIncomeFixed(entryId, entry.amount);
+}
+
+async function _confirmMarkIncomeFixed(entryId, expected) {
+  await markIncomeEntryReceived(entryId, expected);
+  toast('Income confirmed');
+  if (_currentView === 'budget') {
+    if (_budgetActivePanel === 'accounts')   renderBudgetAccounts();
+    else if (_budgetActivePanel === 'dashboard') renderBudgetDashboard();
+  }
+}
+
+async function confirmMarkIncomeReceived() {
+  const ctx = _markIncomeContext;
+  if (!ctx) return;
+  const amt = parseFloat(document.getElementById('mki-amount').value);
+  if (isNaN(amt) || amt < 0) { toast('Enter a valid amount'); return; }
+  await markIncomeEntryReceived(ctx.entryId, amt);
+  closeModal('mark-income-modal');
+  _markIncomeContext = null;
+  toast('Income confirmed');
+  if (_currentView === 'budget') {
+    if (_budgetActivePanel === 'accounts')   renderBudgetAccounts();
+    else if (_budgetActivePanel === 'dashboard') renderBudgetDashboard();
+  }
+}
+
+// Override Phase 3's _renderIncomeEntriesList & _renderIncomeTemplatesList
+// to surface Mark Received when the entry is upcoming/unconfirmed.
+// Also include materialised template instances (not just one-off entries).
+const _phase3RenderIncomeEntriesList = _renderIncomeEntriesList;
+_renderIncomeEntriesList = function() {
+  const section = document.getElementById('budget-income-entries-section');
+  const host    = document.getElementById('budget-income-entries-list');
+  if (!section || !host) return;
+
+  // Show last 60 days of all income entries (one-off + materialised template instances)
+  const today = new Date();
+  const past  = new Date(today.getTime() - 60 * 86400000);
+  const future = new Date(today.getTime() + 14 * 86400000); // include next 2 weeks
+  const startIso = past.toISOString().slice(0, 10);
+  const endIso   = future.toISOString().slice(0, 10);
+  const todayIso = today.toISOString().slice(0, 10);
+
+  const entries = getIncomeEntriesForRange(startIso, endIso)
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  if (entries.length === 0) {
+    host.innerHTML = `
+      <div style="padding:14px;text-align:center;color:var(--muted);font-size:12px">
+        No income entries in this period.
+        <button class="btn btn-ghost btn-sm" onclick="openIncomeEntryEditor()" style="margin-top:8px;font-size:11px"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add bonus / refund / gift</button>
+      </div>`;
+    return;
+  }
+  host.innerHTML = `<div class="bill-list">${entries.map(e => _renderIncomeEntryRowPhase4(e, todayIso)).join('')}</div>`;
+};
+
+function _renderIncomeEntryRowPhase4(entry, todayIso) {
+  const acc = getAccountById(entry.accountId);
+  const accLabel = acc ? acc.name : '(no account)';
+  const dayLabel = (() => {
+    const d = new Date(entry.date + 'T12:00:00');
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  })();
+  const isFuture     = entry.date > todayIso;
+  const isReceived   = !!entry.paidAt;
+  const isOverdue    = !isReceived && !isFuture && entry.date < todayIso;
+  const isFromTemplate = !!entry.templateId;
+
+  // Determine amount to display: actual if confirmed, expected (or projected) otherwise
+  let displayAmount = entry.actualAmount != null ? entry.actualAmount : entry.amount;
+  if (!isReceived && entry.templateId) {
+    const tpl = getIncomeTemplateById(entry.templateId);
+    if (tpl && tpl.variableAmount) {
+      displayAmount = getProjectedIncomeAmount(tpl);
+    }
+  }
+
+  const stateClass = isReceived ? 'is-paid' : (isOverdue ? 'is-overdue' : '');
+  let stateLabel = '';
+  if (isReceived)      stateLabel = `<span style="color:var(--ok);font-size:10px">RECEIVED</span>`;
+  else if (isOverdue)  stateLabel = `<span style="color:var(--danger);font-size:10px">OVERDUE</span>`;
+  else if (isFuture)   stateLabel = `<span style="color:var(--muted);font-size:10px">UPCOMING</span>`;
+
+  // Variable income tag if applicable
+  const tpl = entry.templateId ? getIncomeTemplateById(entry.templateId) : null;
+  const variableTag = (tpl && tpl.variableAmount && !isReceived)
+    ? `<span class="bill-tag" style="background:rgba(91,141,238,0.12);color:var(--accent2);border-color:rgba(91,141,238,0.3);font-size:9px">est.</span>`
+    : '';
+
+  // Action buttons
+  let actions = '';
+  if (!isReceived) {
+    actions += `<button class="bill-action-btn bill-action-paid" onclick="event.stopPropagation();handleMarkIncomeReceived('${entry.id}')" title="Mark received"><svg aria-hidden="true"><use href="#i-check"></use></svg></button>`;
+  } else {
+    actions += `<button class="bill-action-btn" onclick="event.stopPropagation();handleUnmarkIncomeReceived('${entry.id}')" title="Unmark received"><svg aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>`;
+  }
+  actions += `<button class="bill-action-btn bill-action-edit" onclick="event.stopPropagation();openIncomeEntryEditor('${entry.id}')" title="Edit"><svg aria-hidden="true"><use href="#i-pencil"></use></svg></button>`;
+
+  const name = entry.notes || (tpl ? tpl.name : 'Income');
+  return `
+    <div class="bill-row ${stateClass}" onclick="openIncomeEntryEditor('${entry.id}')" style="cursor:pointer">
+      <div class="bill-day" style="background:rgba(76,187,138,0.15);color:var(--ok);border-color:rgba(76,187,138,0.4);font-size:10px">${entry.date.slice(8, 10)}</div>
+      <div class="bill-info">
+        <div class="bill-name">${_escapeHtml(name)} ${variableTag}</div>
+        <div class="bill-meta">${dayLabel} · ${_escapeHtml(accLabel)} · ${stateLabel}</div>
+      </div>
+      <div class="bill-amount" style="color:${isReceived ? 'var(--ok)' : 'var(--text)'}">+${_money(displayAmount)}</div>
+      <div class="bill-actions">${actions}</div>
+    </div>`;
+}
+
+async function handleUnmarkIncomeReceived(entryId) {
+  await updateIncomeEntry(entryId, { paidAt: null, actualAmount: null });
+  toast('Income unmarked');
+  if (_currentView === 'budget') {
+    if (_budgetActivePanel === 'accounts')   renderBudgetAccounts();
+    else if (_budgetActivePanel === 'dashboard') renderBudgetDashboard();
+  }
+}
+
+// ── Dashboard tile period toggle + bug fix ─────────────────────────────────
+//
+// Phase 1's renderBudgetDashboard used `_budgetViewMonth` for tile aggregation
+// (= the month controlled by the bill chevrons). That's wrong for spend tiles
+// since the user expects "current period" regardless of which bills they're
+// browsing. Phase 4b anchors tiles to today, with a Week/Month toggle.
+
+function setDashboardTilePeriod(period) {
+  if (period !== 'week' && period !== 'month') return;
+  _dashboardTilePeriod = period;
+  // Update toggle visual
+  document.querySelectorAll('.dashboard-tile-period-btn').forEach(btn => {
+    const active = btn.dataset.period === period;
+    btn.classList.toggle('active', active);
+    btn.style.background = active ? 'var(--surface)' : 'transparent';
+    btn.style.color      = active ? 'var(--text)'    : 'var(--muted)';
+  });
+  // Re-render tiles only
+  if (_currentView === 'budget' && _budgetActivePanel === 'dashboard') {
+    _renderDashboardTiles();
+  }
+}
+
+function _renderDashboardTiles() {
+  const tilesHost  = document.getElementById('budget-dashboard-tiles');
+  const tilesEmpty = document.getElementById('budget-dashboard-tiles-empty');
+  const tilesWrap  = document.getElementById('budget-dashboard-tiles-wrap');
+  if (!tilesHost || !tilesEmpty) return;
+
+  const cats = getActiveBudgetCategories();
+  if (cats.length === 0) {
+    if (tilesWrap)  tilesWrap.style.display = 'none';
+    tilesHost.style.display = 'none';
+    tilesEmpty.style.display = 'block';
+    return;
+  }
+  if (tilesWrap)  tilesWrap.style.display = 'block';
+  tilesEmpty.style.display = 'none';
+  tilesHost.style.display = 'flex';
+
+  // Anchor to TODAY's period — not the bill view's month. This is the bug fix:
+  // dashboard tiles should always reflect "what have I spent recently" rather
+  // than tracking the bill chevrons.
+  const today = new Date();
+  let startIso, endIso;
+  if (_dashboardTilePeriod === 'week') {
+    const wk = getWeekRange(today, budgetSettings.weekStart || 'mon');
+    startIso = wk.startIso;
+    endIso   = wk.endIso;
+  } else {
+    const y = today.getFullYear(), m = today.getMonth();
+    startIso = `${y}-${String(m+1).padStart(2,'0')}-01`;
+    const lastDay = new Date(y, m + 1, 0).getDate();
+    endIso   = `${y}-${String(m+1).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+  }
+  tilesHost.innerHTML = cats.map(cat =>
+    _renderCategoryTile(cat, startIso, endIso, _dashboardTilePeriod, false)
+  ).join('');
+}
+
+// Override the existing renderBudgetDashboard so it uses the new tile logic.
+const _phase3RenderBudgetDashboard = renderBudgetDashboard;
+renderBudgetDashboard = function() {
+  // Run the original (which renders hero, upcoming bills, original tile call).
+  // The original uses _budgetViewMonth for tiles — we'll re-render them after
+  // with the corrected anchor.
+  _phase3RenderBudgetDashboard.call(this);
+  // Now overwrite the tiles with the today-anchored version
+  _renderDashboardTiles();
+};
 
 
 // ═══════════════════════════════════════════════════════════

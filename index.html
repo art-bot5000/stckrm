@@ -267,6 +267,14 @@
         </select>
       </div>
 
+      <!-- Anchor date — shown for daily/weekly/4-weekly templates -->
+      <div class="field form-full" id="bill-anchor-date-row" style="display:none">
+        <label>Anchor date</label>
+        <input type="date" id="bill-anchor-date"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">The first occurrence. All subsequent dates roll forward from here.</div>
+      </div>
+
       <!-- Anchor month picker — shown for non-monthly frequencies -->
       <div class="field form-full" id="bill-anchor-row" style="display:none">
         <label id="bill-anchor-label">First payment month</label>
@@ -285,11 +293,18 @@
         <div style="display:flex;gap:8px;align-items:center">
           <input type="number" id="bill-custom-interval" min="1" max="36" value="2"
             style="width:80px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
-          <span style="color:var(--muted);font-size:13px">months</span>
+          <select id="bill-custom-unit" onchange="billOnFreqPresetChange()"
+            style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+            <option value="day">days</option>
+            <option value="week">weeks</option>
+            <option value="month" selected>months</option>
+            <option value="year">years</option>
+          </select>
         </div>
       </div>
 
-      <div class="field form-full">
+      <!-- Day of month — shown for monthly/yearly templates -->
+      <div class="field form-full" id="bill-day-of-month-row">
         <label>Day of month *</label>
         <div style="display:flex;gap:8px;align-items:center">
           <input type="number" id="bill-day-of-month" min="1" max="31" value="1"
@@ -338,6 +353,27 @@
     <div class="modal-footer" style="margin-top:16px">
       <button class="btn btn-ghost" onclick="closeModal('bill-mark-paid-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="confirmMarkBillPaid()"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> Confirm</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     MARK INCOME RECEIVED MODAL — Phase 4b
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="mark-income-modal" style="z-index:310">
+  <div class="modal" style="max-width:380px">
+    <h2 style="font-size:18px;margin-bottom:6px"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--ok)"><use href="#i-check-circle-2"></use></svg> Mark as received</h2>
+    <p class="subtitle" id="mki-subtitle">—</p>
+    <div class="field" style="text-align:left;margin-bottom:8px">
+      <label>Actual amount received (£)</label>
+      <input type="number" id="mki-amount" step="0.01" min="0" placeholder="0.00"
+        style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
+      <div id="mki-expected-hint" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
+    </div>
+    <div class="modal-footer" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeModal('mark-income-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmMarkIncomeReceived()"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> Confirm</button>
     </div>
   </div>
 </div>
@@ -629,6 +665,13 @@
           <option value="custom">Every N months…</option>
         </select>
       </div>
+      <!-- Anchor date — shown for weekly/4-weekly templates -->
+      <div class="field form-full" id="income-tpl-anchor-date-row" style="display:none">
+        <label>Anchor date</label>
+        <input type="date" id="income-tpl-anchor-date"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">The first occurrence. All subsequent dates roll forward from here.</div>
+      </div>
       <div class="field form-full" id="income-tpl-anchor-row" style="display:none">
         <label>First payment month</label>
         <select id="income-tpl-anchor-month"
@@ -644,13 +687,26 @@
         <div style="display:flex;gap:8px;align-items:center">
           <input type="number" id="income-tpl-custom-interval" min="1" max="36" value="2"
             style="width:80px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
-          <span style="color:var(--muted);font-size:13px">months</span>
+          <select id="income-tpl-custom-unit" onchange="incomeTplFreqChanged()"
+            style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+            <option value="day">days</option>
+            <option value="week">weeks</option>
+            <option value="month" selected>months</option>
+            <option value="year">years</option>
+          </select>
         </div>
       </div>
-      <div class="field form-full">
+      <div class="field form-full" id="income-tpl-day-row">
         <label>Day of month *</label>
         <input type="number" id="income-tpl-day" min="1" max="31" value="25"
           style="width:80px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
+      </div>
+      <div class="field form-full">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:500">
+          <input type="checkbox" id="income-tpl-variable" style="margin:0;cursor:pointer">
+          <span>Amount varies</span>
+        </label>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Tick if this income changes each time. The projection averages your last 3 confirmed receipts.</div>
       </div>
       <div class="field form-full">
         <label>Account *</label>
@@ -1563,14 +1619,25 @@
       </div>
     </div>
 
-    <!-- Phase 2: Live category tiles -->
+    <!-- Phase 2: Live category tiles, with Phase 4 Week/Month toggle -->
     <div id="budget-dashboard-tiles-empty" style="display:none;background:var(--surface);border:1px dashed var(--border);border-radius:10px;padding:14px;margin-bottom:14px;opacity:0.7;text-align:center">
       <div style="font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Spending categories</div>
       <div style="font-size:13px;color:var(--muted);margin-bottom:8px">No categories yet</div>
       <button class="btn btn-ghost btn-sm" onclick="openBudgetSetupModal()" style="font-size:12px">Set up categories</button>
     </div>
-    <div id="budget-dashboard-tiles" class="budget-tile-row" style="display:none;margin-bottom:14px">
-      <!-- populated by renderBudgetDashboard() -->
+    <div id="budget-dashboard-tiles-wrap" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px">Spending</div>
+        <div style="display:flex;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:3px">
+          <button class="dashboard-tile-period-btn" data-period="week" onclick="setDashboardTilePeriod('week')"
+            style="padding:4px 10px;border-radius:6px;border:none;background:transparent;color:var(--muted);font-family:var(--sans);font-size:11px;font-weight:600;cursor:pointer">Week</button>
+          <button class="dashboard-tile-period-btn active" data-period="month" onclick="setDashboardTilePeriod('month')"
+            style="padding:4px 10px;border-radius:6px;border:none;background:var(--surface);color:var(--text);font-family:var(--sans);font-size:11px;font-weight:600;cursor:pointer">Month</button>
+        </div>
+      </div>
+      <div id="budget-dashboard-tiles" class="budget-tile-row" style="display:none">
+        <!-- populated by _renderDashboardTiles() -->
+      </div>
     </div>
 
     <!-- Phase 3: Cash flow chart — populated by renderCashFlowChart() -->
