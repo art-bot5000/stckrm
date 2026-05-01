@@ -479,9 +479,34 @@
     /* ── MAIN LAYOUT ── */
     #main { padding: 16px 12px; }
 
-    /* ── TABS: two-row wrap on mobile ── */
-    #tabs { width: 100%; flex-wrap: wrap; gap: 4px; padding: 4px; }
-    .tab { flex: 1 1 auto; padding: 10px 10px; font-size: 13px; white-space: nowrap; text-align: center; justify-content: center; }
+    /* ── TABS: 4×2 stacked grid on mobile (icon above label) ── */
+    #tabs {
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      flex-wrap: initial;
+      gap: 4px;
+      padding: 4px;
+    }
+    .tab {
+      flex: initial;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 8px 4px;
+      font-size: 11px;
+      white-space: nowrap;
+      text-align: center;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .tab .icon-tab { width: 18px; height: 18px; }
+    .tab span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
 
     /* ── CARDS: single column, slightly more padding ── */
     #items-grid { grid-template-columns: 1fr; gap: 12px; }
