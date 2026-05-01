@@ -4244,6 +4244,108 @@ function _showCardActions(id) {
   card.classList.add('actions-open');
 }
 
+// ── Item actions modal (mobile long-press) ────────────────────
+// On touch devices the in-card hover overlay isn't ergonomic — buttons
+// are too small. We pop a proper modal instead with full-size touch
+// targets, summary stats, and a clean iOS-style secondary action list.
+function openItemActionsModal(id) {
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+
+  // Header
+  document.getElementById('ia-category').textContent = item.category || 'Other';
+  document.getElementById('ia-name').textContent     = item.name || '(unnamed)';
+
+  // Status pill — uses the same status mapping as the card
+  const status = (typeof getStatus === 'function') ? getStatus(item) : 'good';
+  const statusEl = document.getElementById('ia-status');
+  const statusColor = (STATUS_COLOR && STATUS_COLOR[status]) || 'var(--ok)';
+  const statusWord  = ({ critical:'Critical', warn:'Low', ok:'Good', nodata:'No data' })[status] || 'OK';
+  statusEl.textContent = statusWord;
+  statusEl.style.background = `color-mix(in srgb, ${statusColor} 13%, transparent)`;
+  statusEl.style.color      = statusColor;
+
+  // Stat strip — three concise numbers
+  const s = calcStock(item);
+  const projected = (typeof getProjectedUnitsLeft === 'function') ? getProjectedUnitsLeft(item) : null;
+  const deliveredLogs = (item.logs || []).filter(l => !l.pendingDelivery);
+  const lastLog = deliveredLogs[deliveredLogs.length - 1];
+
+  // Stat 1: days/weeks/months left
+  const stat1Num = document.getElementById('ia-stat-1-num');
+  const stat1Lab = document.getElementById('ia-stat-1-label');
+  if (s && s.daysLeft != null) {
+    const f = formatDaysLeft(s.daysLeft);
+    stat1Num.textContent = f.num;
+    stat1Lab.textContent = f.unit;
+    stat1Num.style.color = statusColor;
+  } else {
+    stat1Num.textContent = '—';
+    stat1Lab.textContent = 'no data';
+    stat1Num.style.color = 'var(--muted)';
+  }
+
+  // Stat 2: units in stock (projected if we have a count, else last purchase qty)
+  const stat2Num = document.getElementById('ia-stat-2-num');
+  const stat2Lab = document.getElementById('ia-stat-2-label');
+  if (projected != null) {
+    const projStr = (typeof formatProjectedUnits === 'function') ? formatProjectedUnits(projected) : String(projected);
+    stat2Num.textContent = projStr;
+    stat2Lab.textContent = 'in stock';
+  } else if (lastLog) {
+    stat2Num.textContent = lastLog.qty || 1;
+    stat2Lab.textContent = 'last bought';
+  } else {
+    stat2Num.textContent = '—';
+    stat2Lab.textContent = 'in stock';
+  }
+  stat2Num.style.color = '';
+
+  // Stat 3: time since last order (or "ordered" badge if pending)
+  const stat3Num = document.getElementById('ia-stat-3-num');
+  const stat3Lab = document.getElementById('ia-stat-3-label');
+  const hasPending = (item.logs || []).some(l => l.pendingDelivery);
+  if (hasPending) {
+    stat3Num.textContent = '⏳';
+    stat3Lab.textContent = 'pending';
+  } else if (lastLog) {
+    const days = Math.max(0, Math.round((Date.now() - new Date(lastLog.date+'T12:00:00')) / 86400000));
+    if (days === 0)        { stat3Num.textContent = 'today'; stat3Lab.textContent = 'last order'; }
+    else if (days < 14)    { stat3Num.textContent = `${days}d`; stat3Lab.textContent = 'since order'; }
+    else if (days < 60)    { stat3Num.textContent = `${Math.round(days/7)}w`; stat3Lab.textContent = 'since order'; }
+    else                   { stat3Num.textContent = `${Math.round(days/30.5)}mo`; stat3Lab.textContent = 'since order'; }
+  } else {
+    stat3Num.textContent = '—';
+    stat3Lab.textContent = 'no orders';
+  }
+  stat3Num.style.color = '';
+
+  // Wire button click handlers (replace each round to avoid stacking listeners)
+  const wire = (btnId, handler) => {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      closeModal('item-actions-modal');
+      // Small delay so the modal close animation runs before the next opens
+      setTimeout(handler, 60);
+    };
+  };
+  wire('ia-q-order',    () => openOrderFlow(id, 'purchase'));
+  wire('ia-q-count',    () => openStockCountModal(id));
+  wire('ia-q-edit',     () => openEditModal(id));
+  wire('ia-l-timeline', () => openAnalyticsModal(id));
+  wire('ia-l-price',    () => openPriceHistoryModal(id));
+
+  // Archive vs Restore — toggle label
+  const archived = !!item._archived;
+  const archLabel = document.getElementById('ia-l-archive-label');
+  if (archLabel) archLabel.textContent = archived ? 'Restore' : 'Archive';
+  wire('ia-l-archive', () => archived ? restoreItem(id) : archiveItem(id));
+
+  openModal('item-actions-modal');
+}
+
 function _dismissCardActions(id) {
   if (id) {
     const card = _getCardEl(id);
@@ -4302,7 +4404,9 @@ function onCardTouchStart(event, id) {
   st.longPressTimer = setTimeout(() => {
     st.longPressFired = true;
     st.suppressClick = true;
-    _showCardActions(id);
+    // Touch path: open the proper modal with bigger tap targets, rather
+    // than the cramped in-card overlay (which is the desktop hover affordance).
+    openItemActionsModal(id);
     if (navigator.vibrate) navigator.vibrate(20);
   }, CARD_LONG_PRESS_MS);
 }

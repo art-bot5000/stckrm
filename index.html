@@ -2661,6 +2661,65 @@
   </div>
 </div>
 
+<!-- ═══ ITEM ACTIONS MODAL (long-press on mobile) ═══ -->
+<div class="modal-backdrop" id="item-actions-modal">
+  <div class="modal item-actions-modal-inner" style="max-width:440px;padding:0;overflow:hidden">
+    <div class="ia-header">
+      <div class="ia-header-left">
+        <div class="ia-cat" id="ia-category">Category</div>
+        <div class="ia-name" id="ia-name">Item name</div>
+      </div>
+      <div class="ia-status" id="ia-status">GOOD</div>
+      <button class="ia-close" onclick="closeModal('item-actions-modal')" aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
+    </div>
+
+    <div class="ia-stat-strip" id="ia-stat-strip">
+      <div class="ia-stat"><div class="ia-stat-num" id="ia-stat-1-num">—</div><div class="ia-stat-label" id="ia-stat-1-label">left</div></div>
+      <div class="ia-stat"><div class="ia-stat-num" id="ia-stat-2-num">—</div><div class="ia-stat-label" id="ia-stat-2-label">in stock</div></div>
+      <div class="ia-stat"><div class="ia-stat-num" id="ia-stat-3-num">—</div><div class="ia-stat-label" id="ia-stat-3-label">since order</div></div>
+    </div>
+
+    <div class="ia-section">
+      <div class="ia-section-label">Quick</div>
+      <div class="ia-quick-actions" id="ia-quick-actions">
+        <button type="button" class="ia-quick-btn ia-quick-primary" id="ia-q-order">
+          <svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg>
+          <span>Log Order</span>
+        </button>
+        <button type="button" class="ia-quick-btn" id="ia-q-count">
+          <svg class="icon" aria-hidden="true"><use href="#i-hash"></use></svg>
+          <span>Count Stock</span>
+        </button>
+        <button type="button" class="ia-quick-btn" id="ia-q-edit">
+          <svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg>
+          <span>Edit</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="ia-section ia-section-tight">
+      <div class="ia-section-label">More</div>
+      <div class="ia-action-list">
+        <button type="button" class="ia-list-item" id="ia-l-timeline">
+          <svg class="icon" aria-hidden="true"><use href="#i-bar-chart-2"></use></svg>
+          <span class="ia-list-label">Order Timeline</span>
+          <svg class="icon ia-chev" aria-hidden="true"><use href="#i-chevron-right"></use></svg>
+        </button>
+        <button type="button" class="ia-list-item" id="ia-l-price">
+          <svg class="icon" aria-hidden="true"><use href="#i-banknote"></use></svg>
+          <span class="ia-list-label">Price History</span>
+          <svg class="icon ia-chev" aria-hidden="true"><use href="#i-chevron-right"></use></svg>
+        </button>
+        <button type="button" class="ia-list-item" id="ia-l-archive">
+          <svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg>
+          <span class="ia-list-label" id="ia-l-archive-label">Archive</span>
+          <svg class="icon ia-chev" aria-hidden="true"><use href="#i-chevron-right"></use></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ═══ STOCK COUNT MODAL ═══ -->
 <div class="modal-backdrop" id="stock-count-modal">
   <div class="modal" style="max-width:440px">

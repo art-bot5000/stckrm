@@ -1443,6 +1443,170 @@ body.note-open { overflow: hidden; touch-action: none; }
 .compact-view .card-action-tile { font-size: 10px; padding: 5px 6px; gap: 5px; }
 .compact-view .card-action-tile .icon { width: 12px; height: 12px; }
 
+/* ── Item actions modal (mobile long-press) ── */
+.item-actions-modal-inner { padding: 0; overflow: hidden; }
+.ia-header {
+  padding: 16px 16px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.ia-header-left { flex: 1; min-width: 0; }
+.ia-cat {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.ia-name {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+}
+.ia-status {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 4px 10px;
+  border-radius: 99px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.ia-status::before { content:''; width:6px; height:6px; border-radius:50%; background: currentColor; }
+.ia-close {
+  flex-shrink: 0;
+  width: 32px; height: 32px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+}
+.ia-close:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+.ia-close .icon { width: 16px; height: 16px; }
+
+.ia-stat-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.ia-stat {
+  background: var(--surface);
+  padding: 14px 8px;
+  text-align: center;
+  min-width: 0;
+}
+.ia-stat-num {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ia-stat-label {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 4px;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.ia-section { padding: 14px 14px 16px; }
+.ia-section-tight { padding-top: 0; }
+.ia-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 2px 4px 10px;
+}
+
+.ia-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.ia-quick-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+  padding: 16px 8px;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  min-height: 76px;
+}
+.ia-quick-btn:hover  { background: rgba(232,168,56,0.10); border-color: rgba(232,168,56,0.30); }
+.ia-quick-btn:active { transform: scale(0.97); }
+.ia-quick-btn .icon { width: 22px; height: 22px; color: var(--accent); }
+.ia-quick-primary {
+  background: rgba(232,168,56,0.12);
+  border-color: rgba(232,168,56,0.4);
+}
+.ia-quick-primary .icon { color: var(--accent); }
+
+.ia-action-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.ia-list-item {
+  background: var(--surface2);
+  border: 0;
+  width: 100%;
+  padding: 14px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.ia-list-item:hover  { background: rgba(255,255,255,0.05); }
+.ia-list-item:active { background: rgba(255,255,255,0.08); }
+.ia-list-item .icon { width: 18px; height: 18px; color: var(--accent); flex-shrink: 0; }
+.ia-list-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ia-chev { width: 14px; height: 14px; color: var(--muted); flex-shrink: 0; }
+
 /* Mobile mobile-first: hide desktop-only meta row, keep card vertical */
 @media (max-width: 899px) {
   .card-meta-desktop { display: none; }
