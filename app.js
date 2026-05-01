@@ -114,8 +114,8 @@ function getStores(code) { return STORES_BY_COUNTRY[code] || STORES_BY_COUNTRY.O
 // ═══════════════════════════════════════════
 
 const DB_NAME    = 'stockroom';
-const DB_VERSION = 4;
-const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists','reminderDeletedIds','bills','billInstances','budgetSettings','budgetCategories','transactions','budgetCategoryDeletedIds','budgetTransactionDeletedIds'];
+const DB_VERSION = 5;
+const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists','reminderDeletedIds','bills','billInstances','budgetSettings','budgetCategories','transactions','budgetCategoryDeletedIds','budgetTransactionDeletedIds','budgetAccounts','incomeTemplates','incomeEntries','budgetAccountDeletedIds','incomeTemplateDeletedIds','incomeEntryDeletedIds'];
 
 let _db = null;
 
@@ -2588,6 +2588,7 @@ async function loadProfile(key) {
     await loadGrocery();
     await loadBudget();
     await loadBudgetSpend();
+    await loadBudgetAccountsAndIncome();
     await saveCurrentProfile();
   }
   // Sweep expired items from the 30-day recycle bin
@@ -11514,6 +11515,11 @@ async function kvPush() {
     budgetCategories, transactions,
     budgetCategoryDeletedIds:    [...budgetCategoryDeletedIds],
     budgetTransactionDeletedIds: [...budgetTransactionDeletedIds],
+    // Phase 3: accounts, income, projections (state only — projections recomputed on demand)
+    budgetAccounts, incomeTemplates, incomeEntries,
+    budgetAccountDeletedIds:   [...budgetAccountDeletedIds],
+    incomeTemplateDeletedIds:  [...incomeTemplateDeletedIds],
+    incomeEntryDeletedIds:     [...incomeEntryDeletedIds],
   });
   _keyFingerprint(_kvKey).then(fp => console.log('[key] kvPush: encrypting with key fingerprint:', fp));
   const ciphertext = await kvEncrypt(_kvKey, payload);
@@ -11708,6 +11714,31 @@ async function kvSyncNow(silent = false) {
       if (Array.isArray(remote.budgetCategories) || remote.transactions
           || Array.isArray(remote.budgetCategoryDeletedIds) || Array.isArray(remote.budgetTransactionDeletedIds)) {
         await saveBudgetSpendLocal();
+      }
+      // Budget — accounts, income, cash flow (Phase 3)
+      // Tombstones first
+      if (Array.isArray(remote.budgetAccountDeletedIds)) {
+        budgetAccountDeletedIds   = mergeBudgetTombstoneSet(budgetAccountDeletedIds,   remote.budgetAccountDeletedIds);
+      }
+      if (Array.isArray(remote.incomeTemplateDeletedIds)) {
+        incomeTemplateDeletedIds  = mergeBudgetTombstoneSet(incomeTemplateDeletedIds,  remote.incomeTemplateDeletedIds);
+      }
+      if (Array.isArray(remote.incomeEntryDeletedIds)) {
+        incomeEntryDeletedIds     = mergeBudgetTombstoneSet(incomeEntryDeletedIds,     remote.incomeEntryDeletedIds);
+      }
+      if (Array.isArray(remote.budgetAccounts)) {
+        budgetAccounts = mergeBudgetAccounts(budgetAccounts, remote.budgetAccounts);
+      }
+      if (Array.isArray(remote.incomeTemplates)) {
+        incomeTemplates = mergeIncomeTemplates(incomeTemplates, remote.incomeTemplates);
+      }
+      if (remote.incomeEntries && typeof remote.incomeEntries === 'object') {
+        incomeEntries = mergeIncomeEntries(incomeEntries, remote.incomeEntries);
+      }
+      if (Array.isArray(remote.budgetAccounts) || Array.isArray(remote.incomeTemplates) || remote.incomeEntries
+          || Array.isArray(remote.budgetAccountDeletedIds) || Array.isArray(remote.incomeTemplateDeletedIds)
+          || Array.isArray(remote.incomeEntryDeletedIds)) {
+        await saveBudgetAccountsAndIncomeLocal();
       }
       if (remote.reminders && Array.isArray(remote.reminders)) {
         const localREmpty = reminders.length === 0;
@@ -12235,23 +12266,33 @@ const FAB_ACTIONS = {
     { icon: '<svg class="icon" aria-hidden="true"><use href="#i-notebook-pen"></use></svg>', label: 'New Note', action: () => { closeFab(); openNoteEditor(null); } },
   ],
   budget: [
-    { icon: '<svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>', label: 'Add Bill',   action: () => { closeFab(); openBillEditor(); } },
-    { icon: '<svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg>',  label: 'Quick Add',  action: () => { closeFab(); openQuickAddSpend(); } },
+    { icon: '<svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>', label: 'Add Bill',     action: () => { closeFab(); openBillEditor(); } },
+    { icon: '<svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg>',  label: 'Quick Add',    action: () => { closeFab(); openQuickAddSpend(); } },
+    { icon: '<svg class="icon" aria-hidden="true"><use href="#i-banknote"></use></svg>', label: 'Add Account', action: () => { closeFab(); openAccountEditor(); } },
   ],
 };
 
 // Budget FAB ordering depends on which sub-panel is active. On the Spend panel,
-// Quick Add takes precedence. On Dashboard/Bills, Add Bill comes first. This
-// is computed on FAB open so it stays in sync with the user's current context.
+// Quick Add takes precedence. On Accounts, Add Account does. On Dashboard/Bills,
+// Add Bill comes first. This is computed on FAB open so it stays in sync with
+// the user's current context.
 function _getFabActionsForView(viewName) {
   const base = FAB_ACTIONS[viewName] || [];
-  if (viewName === 'budget' && typeof _budgetActivePanel !== 'undefined' && _budgetActivePanel === 'spend') {
-    // Move Quick Add (label) to the front
-    return [...base].sort((a, b) => {
-      if (a.label === 'Quick Add') return -1;
-      if (b.label === 'Quick Add') return  1;
-      return 0;
-    });
+  if (viewName === 'budget' && typeof _budgetActivePanel !== 'undefined') {
+    if (_budgetActivePanel === 'spend') {
+      return [...base].sort((a, b) => {
+        if (a.label === 'Quick Add') return -1;
+        if (b.label === 'Quick Add') return  1;
+        return 0;
+      });
+    }
+    if (_budgetActivePanel === 'accounts') {
+      return [...base].sort((a, b) => {
+        if (a.label === 'Add Account') return -1;
+        if (b.label === 'Add Account') return  1;
+        return 0;
+      });
+    }
   }
   return base;
 }
@@ -12993,15 +13034,19 @@ async function renderBudget() {
     if (_budgetActivePanel === 'spend') {
       addBtn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg> Quick Add';
       addBtn.setAttribute('onclick', 'openQuickAddSpend()');
+    } else if (_budgetActivePanel === 'accounts') {
+      addBtn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Account';
+      addBtn.setAttribute('onclick', 'openAccountEditor()');
     } else {
       addBtn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Bill';
       addBtn.setAttribute('onclick', 'openBillEditor()');
     }
   }
 
-  if (_budgetActivePanel === 'dashboard')   renderBudgetDashboard();
-  else if (_budgetActivePanel === 'bills')  renderBudgetBills();
-  else if (_budgetActivePanel === 'spend')  renderBudgetSpend();
+  if (_budgetActivePanel === 'dashboard')      renderBudgetDashboard();
+  else if (_budgetActivePanel === 'bills')     renderBudgetBills();
+  else if (_budgetActivePanel === 'spend')     renderBudgetSpend();
+  else if (_budgetActivePanel === 'accounts')  renderBudgetAccounts();
 }
 
 // ── Header — month label + chevrons ────────────────────────────────────────
@@ -13037,24 +13082,26 @@ async function budgetGoToday() {
 
 // ── Empty state ────────────────────────────────────────────────────────────
 function _refreshBudgetEmptyState() {
-  // Empty only if NEITHER bills NOR spend categories exist. Once user has any
-  // budget data, the empty state goes away even if their current panel is empty.
-  // (Each panel manages its own per-panel empty messages.)
-  const noBills = !bills.some(b => !b.archived);
-  const noCats  = !budgetCategories.some(c => !c.archived);
-  const isEmpty = noBills && noCats;
+  // Empty only if NEITHER bills NOR spend categories NOR accounts exist.
+  // Each panel manages its own per-panel empty state separately.
+  const noBills    = !bills.some(b => !b.archived);
+  const noCats     = !budgetCategories.some(c => !c.archived);
+  const noAccounts = !budgetAccounts.some(a => !a.archived);
+  const isEmpty = noBills && noCats && noAccounts;
 
-  const emptyEl  = document.getElementById('budget-empty');
-  const dashEl   = document.getElementById('budget-panel-dashboard');
-  const billsEl  = document.getElementById('budget-panel-bills');
-  const spendEl  = document.getElementById('budget-panel-spend');
-  const subnavEl = document.getElementById('budget-subnav');
+  const emptyEl    = document.getElementById('budget-empty');
+  const dashEl     = document.getElementById('budget-panel-dashboard');
+  const billsEl    = document.getElementById('budget-panel-bills');
+  const spendEl    = document.getElementById('budget-panel-spend');
+  const accountsEl = document.getElementById('budget-panel-accounts');
+  const subnavEl   = document.getElementById('budget-subnav');
 
-  if (emptyEl)  emptyEl.style.display  = isEmpty ? 'block' : 'none';
-  if (dashEl)   dashEl.style.display   = isEmpty ? 'none' : (_budgetActivePanel === 'dashboard' ? 'block' : 'none');
-  if (billsEl)  billsEl.style.display  = isEmpty ? 'none' : (_budgetActivePanel === 'bills'     ? 'block' : 'none');
-  if (spendEl)  spendEl.style.display  = isEmpty ? 'none' : (_budgetActivePanel === 'spend'     ? 'block' : 'none');
-  if (subnavEl) subnavEl.style.display = isEmpty ? 'none' : 'flex';
+  if (emptyEl)    emptyEl.style.display    = isEmpty ? 'block' : 'none';
+  if (dashEl)     dashEl.style.display     = isEmpty ? 'none' : (_budgetActivePanel === 'dashboard' ? 'block' : 'none');
+  if (billsEl)    billsEl.style.display    = isEmpty ? 'none' : (_budgetActivePanel === 'bills'     ? 'block' : 'none');
+  if (spendEl)    spendEl.style.display    = isEmpty ? 'none' : (_budgetActivePanel === 'spend'     ? 'block' : 'none');
+  if (accountsEl) accountsEl.style.display = isEmpty ? 'none' : (_budgetActivePanel === 'accounts'  ? 'block' : 'none');
+  if (subnavEl)   subnavEl.style.display   = isEmpty ? 'none' : 'flex';
 }
 
 // ── Sub-nav switch ─────────────────────────────────────────────────────────
@@ -13070,12 +13117,17 @@ function budgetSwitchPanel(name) {
   document.getElementById('budget-panel-bills').style.display     = (name === 'bills')     ? 'block' : 'none';
   const spendPanel = document.getElementById('budget-panel-spend');
   if (spendPanel) spendPanel.style.display = (name === 'spend') ? 'block' : 'none';
-  // Header action button: "Add Bill" on Bills/Dashboard, "Quick Add" on Spend
+  const accountsPanel = document.getElementById('budget-panel-accounts');
+  if (accountsPanel) accountsPanel.style.display = (name === 'accounts') ? 'block' : 'none';
+  // Header action button — context-sensitive per panel
   const addBtn = document.getElementById('budget-add-bill-desktop');
   if (addBtn) {
     if (name === 'spend') {
       addBtn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg> Quick Add';
       addBtn.setAttribute('onclick', 'openQuickAddSpend()');
+    } else if (name === 'accounts') {
+      addBtn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Account';
+      addBtn.setAttribute('onclick', 'openAccountEditor()');
     } else {
       addBtn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Bill';
       addBtn.setAttribute('onclick', 'openBillEditor()');
@@ -13083,9 +13135,10 @@ function budgetSwitchPanel(name) {
   }
   // Update FAB so mobile users get the panel-specific action
   if (typeof updateFab === 'function' && _currentView === 'budget') updateFab('budget');
-  if (name === 'dashboard')   renderBudgetDashboard();
-  else if (name === 'bills')  renderBudgetBills();
-  else if (name === 'spend')  renderBudgetSpend();
+  if (name === 'dashboard')      renderBudgetDashboard();
+  else if (name === 'bills')     renderBudgetBills();
+  else if (name === 'spend')     renderBudgetSpend();
+  else if (name === 'accounts')  renderBudgetAccounts();
 }
 
 // ── Currency formatting ────────────────────────────────────────────────────
@@ -13170,6 +13223,11 @@ function renderBudgetDashboard() {
       tilesHost.innerHTML = cats.map(cat => _renderCategoryTile(cat, startIso, endIso, 'month', false)).join('');
     }
   }
+
+  // Cash flow chart (Phase 3) — replaces the Phase 3 placeholder
+  if (typeof renderCashFlowChart === 'function') renderCashFlowChart();
+  // Augment the hero card with projected balance + low-point
+  if (typeof _augmentHeroWithProjection === 'function') _augmentHeroWithProjection();
 }
 
 // ── Bills panel render ─────────────────────────────────────────────────────
@@ -14703,6 +14761,1381 @@ function _refreshBudgetWeekStartRadio() {
   const sunRadio = document.getElementById('setting-budget-weekstart-sun');
   if (monRadio) monRadio.checked = (wkStart === 'mon');
   if (sunRadio) sunRadio.checked = (wkStart === 'sun');
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BUDGET — Phase 3a Foundations (accounts, income, cash flow projection)
+//  Insertion point: in app.js, IMMEDIATELY AFTER the Phase 2b BUDGET SPEND UI
+//  block (just before the GROCERY LIST section).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── State ──────────────────────────────────────────────────────────────────
+let budgetAccounts                    = [];        // [{id, name, type, isPrimary, balance, balanceAsOf, ...}]
+let incomeTemplates                   = [];        // [{id, name, amount, frequency, dayOfMonth, accountId, ...}]
+let incomeEntries                     = {};        // {'YYYY-MM': {[id]: entry}}
+let budgetAccountDeletedIds           = new Set(); // tombstones
+let incomeTemplateDeletedIds          = new Set();
+let incomeEntryDeletedIds             = new Set();
+
+// ── Persistence ────────────────────────────────────────────────────────────
+async function loadBudgetAccountsAndIncome() {
+  const accs       = await dbGet('budgetAccounts',          'budgetAccounts');
+  const incTpl     = await dbGet('incomeTemplates',         'incomeTemplates');
+  const incEnt     = await dbGet('incomeEntries',           'incomeEntries');
+  const accTomb    = await dbGet('budgetAccountDeletedIds', 'budgetAccountDeletedIds');
+  const incTplTomb = await dbGet('incomeTemplateDeletedIds','incomeTemplateDeletedIds');
+  const incEntTomb = await dbGet('incomeEntryDeletedIds',   'incomeEntryDeletedIds');
+
+  if (Array.isArray(accs))    budgetAccounts   = accs;
+  if (Array.isArray(incTpl))  incomeTemplates  = incTpl;
+  if (incEnt && typeof incEnt === 'object') incomeEntries = incEnt;
+  if (Array.isArray(accTomb))    budgetAccountDeletedIds   = new Set(accTomb);
+  if (Array.isArray(incTplTomb)) incomeTemplateDeletedIds  = new Set(incTplTomb);
+  if (Array.isArray(incEntTomb)) incomeEntryDeletedIds     = new Set(incEntTomb);
+}
+
+async function saveBudgetAccountsAndIncomeLocal() {
+  await dbPut('budgetAccounts',           'budgetAccounts',           budgetAccounts);
+  await dbPut('incomeTemplates',          'incomeTemplates',          incomeTemplates);
+  await dbPut('incomeEntries',            'incomeEntries',            incomeEntries);
+  await dbPut('budgetAccountDeletedIds',  'budgetAccountDeletedIds',  [...budgetAccountDeletedIds]);
+  await dbPut('incomeTemplateDeletedIds', 'incomeTemplateDeletedIds', [...incomeTemplateDeletedIds]);
+  await dbPut('incomeEntryDeletedIds',    'incomeEntryDeletedIds',    [...incomeEntryDeletedIds]);
+}
+
+// ── Account CRUD ───────────────────────────────────────────────────────────
+async function createAccount(input) {
+  const today = new Date().toISOString().slice(0, 10);
+  const acc = {
+    id:           'acc_' + (typeof uid === 'function' ? uid() : Date.now() + '_' + Math.random().toString(36).slice(2, 7)),
+    name:         (input.name || '').trim() || 'Untitled account',
+    type:         ['current', 'savings', 'credit_card'].includes(input.type) ? input.type : 'current',
+    isPrimary:    !!input.isPrimary,
+    balance:      input.balance != null ? Number(input.balance) : 0,
+    balanceAsOf:  input.balanceAsOf || today,
+    color:        input.color || _pickAccountColor(),
+    notes:        input.notes || '',
+    archived:     false,
+    createdAt:    _nowIso(),
+    updatedAt:    _nowIso(),
+  };
+  // If marking primary, unset any other primary first
+  if (acc.isPrimary) {
+    for (const a of budgetAccounts) {
+      if (a.isPrimary && !a.archived) {
+        a.isPrimary = false;
+        a.updatedAt = _nowIso();
+      }
+    }
+  }
+  // If this is the first non-archived account, make it primary by default
+  const otherActive = budgetAccounts.filter(a => !a.archived);
+  if (!otherActive.length && !acc.isPrimary) acc.isPrimary = true;
+
+  budgetAccounts.push(acc);
+  await saveBudgetAccountsAndIncomeLocal();
+  _syncQueue?.enqueue();
+  return acc;
+}
+
+async function updateAccount(id, patch) {
+  const idx = budgetAccounts.findIndex(a => a.id === id);
+  if (idx === -1) return null;
+  // If setting isPrimary=true, unset others
+  if (patch.isPrimary === true) {
+    for (const a of budgetAccounts) {
+      if (a.id !== id && a.isPrimary && !a.archived) {
+        a.isPrimary = false;
+        a.updatedAt = _nowIso();
+      }
+    }
+  }
+  budgetAccounts[idx] = { ...budgetAccounts[idx], ...patch, updatedAt: _nowIso() };
+  await saveBudgetAccountsAndIncomeLocal();
+  _syncQueue?.enqueue();
+  return budgetAccounts[idx];
+}
+
+async function archiveAccount(id) {
+  const acc = budgetAccounts.find(a => a.id === id);
+  if (!acc) return null;
+  // If archiving the primary, demote it and elect a new primary if any other active accounts
+  if (acc.isPrimary) {
+    const others = budgetAccounts.filter(a => a.id !== id && !a.archived);
+    if (others.length) {
+      others[0].isPrimary = true;
+      others[0].updatedAt = _nowIso();
+    }
+  }
+  return updateAccount(id, { archived: true, isPrimary: false });
+}
+
+async function unarchiveAccount(id) {
+  return updateAccount(id, { archived: false });
+}
+
+async function deleteAccountHard(id) {
+  budgetAccounts = budgetAccounts.filter(a => a.id !== id);
+  budgetAccountDeletedIds.add(id);
+  // Promote a new primary if needed
+  const anyPrimary = budgetAccounts.some(a => !a.archived && a.isPrimary);
+  if (!anyPrimary) {
+    const candidate = budgetAccounts.find(a => !a.archived);
+    if (candidate) {
+      candidate.isPrimary = true;
+      candidate.updatedAt = _nowIso();
+    }
+  }
+  await saveBudgetAccountsAndIncomeLocal();
+  _syncQueue?.enqueue();
+}
+
+// Quick action — sets balance to value AND balanceAsOf to today.
+async function updateAccountBalance(id, balance, asOfIso = null) {
+  const today = asOfIso || (new Date().toISOString().slice(0, 10));
+  return updateAccount(id, { balance: Number(balance), balanceAsOf: today });
+}
+
+function getActiveAccounts() {
+  return budgetAccounts.filter(a => !a.archived);
+}
+
+function getPrimaryAccount() {
+  return budgetAccounts.find(a => !a.archived && a.isPrimary) || null;
+}
+
+function getAccountById(id) {
+  return budgetAccounts.find(a => a.id === id) || null;
+}
+
+const _ACCOUNT_PALETTE = ['#5b8dee', '#4cbb8a', '#e8a838', '#b35bee', '#5bd4e8', '#e85d8e'];
+function _pickAccountColor() {
+  const used = new Set(budgetAccounts.map(a => a.color));
+  for (const c of _ACCOUNT_PALETTE) if (!used.has(c)) return c;
+  return _ACCOUNT_PALETTE[budgetAccounts.length % _ACCOUNT_PALETTE.length];
+}
+
+// ── Income template CRUD (mirrors bill template structure) ─────────────────
+async function createIncomeTemplate(input) {
+  const tpl = {
+    id:             'inc_' + (typeof uid === 'function' ? uid() : Date.now() + '_' + Math.random().toString(36).slice(2, 7)),
+    name:           (input.name || '').trim() || 'Untitled income',
+    amount:         Number(input.amount) || 0,
+    variableAmount: !!input.variableAmount,
+    frequency:      input.frequency || { unit: 'month', interval: 1, anchorMonth: null },
+    dayOfMonth:     Math.max(1, Math.min(31, Number(input.dayOfMonth) || 25)),
+    accountId:      input.accountId || (getPrimaryAccount()?.id ?? null),
+    notes:          input.notes || '',
+    archived:       false,
+    createdAt:      _nowIso(),
+    updatedAt:      _nowIso(),
+  };
+  incomeTemplates.push(tpl);
+  await saveBudgetAccountsAndIncomeLocal();
+  _syncQueue?.enqueue();
+  return tpl;
+}
+
+async function updateIncomeTemplate(id, patch) {
+  const idx = incomeTemplates.findIndex(t => t.id === id);
+  if (idx === -1) return null;
+  incomeTemplates[idx] = { ...incomeTemplates[idx], ...patch, updatedAt: _nowIso() };
+  await saveBudgetAccountsAndIncomeLocal();
+  _syncQueue?.enqueue();
+  return incomeTemplates[idx];
+}
+
+async function archiveIncomeTemplate(id) {
+  return updateIncomeTemplate(id, { archived: true });
+}
+
+async function deleteIncomeTemplateHard(id) {
+  incomeTemplates = incomeTemplates.filter(t => t.id !== id);
+  incomeTemplateDeletedIds.add(id);
+  await saveBudgetAccountsAndIncomeLocal();
+  _syncQueue?.enqueue();
+}
+
+function getActiveIncomeTemplates() {
+  return incomeTemplates.filter(t => !t.archived);
+}
+
+function getIncomeTemplateById(id) {
+  return incomeTemplates.find(t => t.id === id) || null;
+}
+
+// ── Income entry CRUD (mirrors transaction structure) ──────────────────────
+async function createIncomeEntry(input) {
+  const date = input.date || (new Date().toISOString().slice(0, 10));
+  const yyyymm = _yyyymmFromString(date);
+  const entry = {
+    id:         'incE_' + (typeof uid === 'function' ? uid() : Date.now() + '_' + Math.random().toString(36).slice(2, 7)),
+    date,
+    amount:     Number(input.amount) || 0,
+    source:     input.source || 'manual',          // 'manual' | 'template_instance'
+    templateId: input.templateId || null,
+    accountId:  input.accountId || (getPrimaryAccount()?.id ?? null),
+    notes:      input.notes || '',
+    paidAt:     input.paidAt || null,               // null = expected/projected
+    createdAt:  _nowIso(),
+    createdBy:  _kvEmailHash || null,
+    updatedAt:  _nowIso(),
+  };
+  if (!incomeEntries[yyyymm]) incomeEntries[yyyymm] = {};
+  incomeEntries[yyyymm][entry.id] = entry;
+  await saveBudgetAccountsAndIncomeLocal();
+  _syncQueue?.enqueue();
+  return entry;
+}
+
+async function updateIncomeEntry(id, patch) {
+  const located = _findIncomeEntry(id);
+  if (!located) return null;
+  const { yyyymm: oldYm, entry: existing } = located;
+  const merged = { ...existing, ...patch, updatedAt: _nowIso() };
+  const newYm = patch.date ? _yyyymmFromString(patch.date) : oldYm;
+
+  if (newYm !== oldYm) {
+    delete incomeEntries[oldYm][id];
+    if (Object.keys(incomeEntries[oldYm]).length === 0) delete incomeEntries[oldYm];
+    if (!incomeEntries[newYm]) incomeEntries[newYm] = {};
+    incomeEntries[newYm][id] = merged;
+  } else {
+    incomeEntries[oldYm][id] = merged;
+  }
+  await saveBudgetAccountsAndIncomeLocal();
+  _syncQueue?.enqueue();
+  return merged;
+}
+
+async function markIncomeEntryReceived(id) {
+  return updateIncomeEntry(id, { paidAt: _nowIso() });
+}
+
+async function deleteIncomeEntry(id) {
+  const located = _findIncomeEntry(id);
+  if (!located) return false;
+  delete incomeEntries[located.yyyymm][id];
+  if (Object.keys(incomeEntries[located.yyyymm]).length === 0) {
+    delete incomeEntries[located.yyyymm];
+  }
+  incomeEntryDeletedIds.add(id);
+  await saveBudgetAccountsAndIncomeLocal();
+  _syncQueue?.enqueue();
+  return true;
+}
+
+function _findIncomeEntry(id) {
+  for (const yyyymm of Object.keys(incomeEntries)) {
+    if (incomeEntries[yyyymm][id]) return { yyyymm, entry: incomeEntries[yyyymm][id] };
+  }
+  return null;
+}
+
+function getIncomeEntriesForMonth(yyyymm) {
+  return Object.values(incomeEntries[yyyymm] || {});
+}
+
+function getIncomeEntriesForRange(startIso, endIso) {
+  const out = [];
+  const startMonth = _yyyymmFromString(startIso);
+  const endMonth   = _yyyymmFromString(endIso);
+  for (const yyyymm of Object.keys(incomeEntries)) {
+    if (yyyymm < startMonth || yyyymm > endMonth) continue;
+    for (const e of Object.values(incomeEntries[yyyymm])) {
+      if (e.date >= startIso && e.date <= endIso) out.push(e);
+    }
+  }
+  return out;
+}
+
+// ── Cash flow projection engine ────────────────────────────────────────────
+//
+// Projects an account's balance forward day-by-day for `daysAhead` days.
+// Returns a structured result the chart and calendar consume directly.
+//
+//   projection = {
+//     account,                    // the account being projected
+//     startDate,                  // ISO date — projection begins from this day
+//     startBalance,               // balance at startDate
+//     points: [                   // one entry per day (today through today+daysAhead)
+//       {
+//         date:    'YYYY-MM-DD',
+//         balance: 1234.56,         // running balance AFTER this day's events apply
+//         events:  [{ type:'bill'|'income'|'tx', amount, label, sourceId }]
+//       }, ...
+//     ],
+//     low:       { date, balance, daysFromStart },  // lowest balance in the window
+//     hasGaps:   boolean,           // true if balanceAsOf was older than today (we did catch-up)
+//     setupComplete: boolean,       // false if no primary account or no balance set
+//   }
+function projectCashFlow(accountId = null, daysAhead = 30, fromIso = null) {
+  const account = accountId ? getAccountById(accountId) : getPrimaryAccount();
+
+  // Setup-not-complete states
+  if (!account) {
+    return {
+      account: null, startDate: null, startBalance: null, points: [],
+      low: null, hasGaps: false, setupComplete: false,
+      reason: 'no_primary_account',
+    };
+  }
+
+  const todayIso = (new Date()).toISOString().slice(0, 10);
+  const startIso = fromIso || todayIso;
+
+  // Catch-up from balanceAsOf to startIso, applying historical events
+  let runningBalance = account.balance;
+  const balanceAsOf  = account.balanceAsOf || todayIso;
+  const hasGaps      = balanceAsOf < startIso;
+  if (hasGaps) {
+    runningBalance = _applyHistoricalEvents(runningBalance, account, balanceAsOf, startIso);
+  }
+  const startBalance = runningBalance;
+
+  // Walk forward day-by-day
+  const points = [];
+  const cursor = new Date(startIso + 'T12:00:00');
+  for (let i = 0; i < daysAhead; i++) {
+    const dayIso = cursor.toISOString().slice(0, 10);
+    const events = _eventsOnDay(account, dayIso);
+    const dayDelta = events.reduce((s, e) => s + e.amount, 0);
+    runningBalance += dayDelta;
+    points.push({
+      date:    dayIso,
+      balance: Math.round(runningBalance * 100) / 100,
+      events,
+    });
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  // Find low point
+  let low = null;
+  for (let i = 0; i < points.length; i++) {
+    if (!low || points[i].balance < low.balance) {
+      low = { date: points[i].date, balance: points[i].balance, daysFromStart: i };
+    }
+  }
+
+  return {
+    account,
+    startDate:    startIso,
+    startBalance: Math.round(startBalance * 100) / 100,
+    points,
+    low,
+    hasGaps,
+    setupComplete: true,
+  };
+}
+
+// Apply all historical bill instances, income entries, and discretionary
+// transactions between fromIso and toIso to a starting balance.
+function _applyHistoricalEvents(startBalance, account, fromIso, toIso) {
+  let bal = startBalance;
+  const months = _enumerateMonths(fromIso, toIso);
+
+  for (const yyyymm of months) {
+    // Bill instances paid in this period (subtract)
+    const bi = billInstances?.[yyyymm] || {};
+    for (const inst of Object.values(bi)) {
+      if (inst.skipped) continue;
+      const tplAccountId = bills.find(b => b.id === inst.billId)?.accountId || getPrimaryAccount()?.id;
+      if (tplAccountId !== account.id) continue;
+      // Use the date the user marked it paid if present, else dueDate
+      const eventDate = (inst.paidAt ? inst.paidAt.slice(0, 10) : inst.dueDate);
+      if (eventDate <= fromIso || eventDate > toIso) continue;
+      bal -= (inst.actualAmount ?? inst.expectedAmount) || 0;
+    }
+
+    // Income entries received in this period (add)
+    const ie = incomeEntries?.[yyyymm] || {};
+    for (const entry of Object.values(ie)) {
+      if (entry.accountId !== account.id) continue;
+      // If paidAt is set, use that; otherwise the entry is pending — only count if entry.date <= toIso
+      const eventDate = entry.paidAt ? entry.paidAt.slice(0, 10) : entry.date;
+      if (eventDate <= fromIso || eventDate > toIso) continue;
+      bal += (entry.amount || 0);
+    }
+
+    // Discretionary transactions (Phase 2) — subtract, regardless of categoryId,
+    // but only if they affect this account. Currently transactions don't have
+    // accountId; assume they all hit the primary account.
+    if (account.isPrimary) {
+      const txs = transactions?.[yyyymm] || {};
+      for (const tx of Object.values(txs)) {
+        if (tx.date <= fromIso || tx.date > toIso) continue;
+        bal -= (tx.amount || 0);
+      }
+    }
+  }
+
+  return bal;
+}
+
+// Returns events landing on a single date for the given account.
+// Combines materialised bill instances, materialised income entries,
+// and template projections for templates that haven't been materialised yet.
+function _eventsOnDay(account, dayIso) {
+  const events = [];
+  const yyyymm = _yyyymmFromString(dayIso);
+  const { year, month } = _parseYyyymm(yyyymm);
+
+  // 1. Bill instances already materialised for this month
+  const bi = billInstances?.[yyyymm] || {};
+  const materialisedBillIds = new Set();
+  for (const inst of Object.values(bi)) {
+    if (inst.dueDate !== dayIso) continue;
+    materialisedBillIds.add(inst.billId);
+    if (inst.skipped || inst.paidAt) continue; // already paid/skipped — not a future event
+    const tpl = bills.find(b => b.id === inst.billId);
+    if (!tpl) continue;
+    const effectiveAccountId = tpl.accountId || getPrimaryAccount()?.id;
+    if (effectiveAccountId !== account.id) continue;
+    events.push({
+      type:     'bill',
+      amount:   -((inst.actualAmount ?? inst.expectedAmount) || 0),
+      label:    tpl.name,
+      sourceId: inst.billId,
+    });
+  }
+
+  // 2. Bill templates due on this day but NOT yet materialised
+  for (const tpl of (bills || [])) {
+    if (tpl.archived) continue;
+    if (materialisedBillIds.has(tpl.id)) continue;
+    if (!shouldBeDueInMonth(tpl, year, month)) continue;
+    const dom = Math.min(tpl.dayOfMonth || 1, _daysInMonth(year, month));
+    if (dom !== Number(dayIso.slice(8, 10))) continue;
+    const effectiveAccountId = tpl.accountId || getPrimaryAccount()?.id;
+    if (effectiveAccountId !== account.id) continue;
+    events.push({
+      type:     'bill',
+      amount:   -(tpl.amount || 0),
+      label:    tpl.name,
+      sourceId: tpl.id,
+    });
+  }
+
+  // 3. Income entries for this day
+  const ie = incomeEntries?.[yyyymm] || {};
+  const materialisedIncomeFromTplIds = new Set();
+  for (const entry of Object.values(ie)) {
+    if (entry.date !== dayIso) continue;
+    if (entry.templateId) materialisedIncomeFromTplIds.add(entry.templateId);
+    if (entry.accountId !== account.id) continue;
+    // Future expected income → counts; past unreceived → still counts but flagged
+    events.push({
+      type:     'income',
+      amount:   (entry.amount || 0),
+      label:    entry.notes || (entry.templateId ? getIncomeTemplateById(entry.templateId)?.name : null) || 'Income',
+      sourceId: entry.id,
+    });
+  }
+
+  // 4. Income templates that would land on this day but haven't been materialised
+  for (const tpl of (incomeTemplates || [])) {
+    if (tpl.archived) continue;
+    if (materialisedIncomeFromTplIds.has(tpl.id)) continue;
+    if (!shouldBeDueInMonth(tpl, year, month)) continue;
+    const dom = Math.min(tpl.dayOfMonth || 25, _daysInMonth(year, month));
+    if (dom !== Number(dayIso.slice(8, 10))) continue;
+    if (tpl.accountId && tpl.accountId !== account.id) continue;
+    if (!tpl.accountId && !account.isPrimary) continue;
+    events.push({
+      type:     'income',
+      amount:   (tpl.amount || 0),
+      label:    tpl.name,
+      sourceId: tpl.id,
+    });
+  }
+
+  return events;
+}
+
+function _enumerateMonths(fromIso, toIso) {
+  const out = [];
+  const start = new Date(fromIso + 'T12:00:00');
+  const end   = new Date(toIso   + 'T12:00:00');
+  const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+  const final  = new Date(end.getFullYear(),   end.getMonth(),   1);
+  while (cursor <= final) {
+    out.push(`${cursor.getFullYear()}-${String(cursor.getMonth()+1).padStart(2,'0')}`);
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+  return out;
+}
+
+// Convenience: just the low-point summary for the dashboard hero card
+function getCashFlowLowPoint(accountId = null, daysAhead = 30) {
+  const proj = projectCashFlow(accountId, daysAhead);
+  if (!proj.setupComplete) return null;
+  return proj.low;
+}
+
+// ── Sync merge ─────────────────────────────────────────────────────────────
+function mergeBudgetAccounts(local, remote) {
+  const map = new Map();
+  for (const a of (local || []))  if (!budgetAccountDeletedIds.has(a.id)) map.set(a.id, a);
+  for (const a of (remote || [])) {
+    if (budgetAccountDeletedIds.has(a.id)) continue;
+    const existing = map.get(a.id);
+    if (!existing) {
+      map.set(a.id, a);
+    } else {
+      const lt = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+      const rt = a.updatedAt        ? new Date(a.updatedAt).getTime()        : 0;
+      if (rt > lt) map.set(a.id, a);
+    }
+  }
+  // Enforce primary-account invariant: at most one primary among non-archived
+  const merged = Array.from(map.values());
+  const activePrimaries = merged.filter(a => !a.archived && a.isPrimary);
+  if (activePrimaries.length > 1) {
+    // Keep the one with the latest updatedAt as primary; demote others
+    activePrimaries.sort((a, b) => (new Date(b.updatedAt).getTime()) - (new Date(a.updatedAt).getTime()));
+    for (let i = 1; i < activePrimaries.length; i++) {
+      activePrimaries[i].isPrimary = false;
+    }
+  }
+  return merged;
+}
+
+function mergeIncomeTemplates(local, remote) {
+  const map = new Map();
+  for (const t of (local || []))  if (!incomeTemplateDeletedIds.has(t.id)) map.set(t.id, t);
+  for (const t of (remote || [])) {
+    if (incomeTemplateDeletedIds.has(t.id)) continue;
+    const existing = map.get(t.id);
+    if (!existing) {
+      map.set(t.id, t);
+    } else {
+      const lt = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+      const rt = t.updatedAt        ? new Date(t.updatedAt).getTime()        : 0;
+      if (rt > lt) map.set(t.id, t);
+    }
+  }
+  return Array.from(map.values());
+}
+
+function mergeIncomeEntries(local, remote) {
+  const out = JSON.parse(JSON.stringify(local || {}));
+  if (!remote) return out;
+  for (const yyyymm of Object.keys(remote)) {
+    if (!out[yyyymm]) out[yyyymm] = {};
+    for (const id of Object.keys(remote[yyyymm])) {
+      if (incomeEntryDeletedIds.has(id)) continue;
+      const ri = remote[yyyymm][id];
+      const li = out[yyyymm][id];
+      if (!li) {
+        out[yyyymm][id] = ri;
+      } else {
+        const lt = li.updatedAt ? new Date(li.updatedAt).getTime() : 0;
+        const rt = ri.updatedAt ? new Date(ri.updatedAt).getTime() : 0;
+        if (rt > lt) out[yyyymm][id] = ri;
+      }
+    }
+  }
+  // Strip locally-tombstoned entries
+  for (const yyyymm of Object.keys(out)) {
+    for (const id of Object.keys(out[yyyymm])) {
+      if (incomeEntryDeletedIds.has(id)) delete out[yyyymm][id];
+    }
+    if (Object.keys(out[yyyymm]).length === 0) delete out[yyyymm];
+  }
+  return out;
+}
+
+// ── Diagnostics ────────────────────────────────────────────────────────────
+if (typeof window !== 'undefined') {
+  window.budgetAccountsDiag = function () {
+    const primary = getPrimaryAccount();
+    const today   = new Date().toISOString().slice(0, 10);
+    const proj    = primary ? projectCashFlow(primary.id, 30) : null;
+    return {
+      accounts:       budgetAccounts.length,
+      activeAccounts: getActiveAccounts().length,
+      primary:        primary ? { id: primary.id, name: primary.name, balance: primary.balance, balanceAsOf: primary.balanceAsOf } : null,
+      incomeTemplates: incomeTemplates.length,
+      activeIncomeTemplates: getActiveIncomeTemplates().length,
+      incomeEntriesMonths: Object.keys(incomeEntries).length,
+      projection: proj && proj.setupComplete ? {
+        startBalance: proj.startBalance,
+        endBalance:   proj.points[proj.points.length - 1]?.balance,
+        low:          proj.low,
+        hasGaps:      proj.hasGaps,
+      } : { setupComplete: false, reason: proj?.reason },
+    };
+  };
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BUDGET ACCOUNTS UI — Phase 3b
+//  Insertion point: in app.js, IMMEDIATELY AFTER the Phase 3a foundations
+//  block (just before the GROCERY LIST section).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── State (UI-only, not persisted) ─────────────────────────────────────────
+let _accountsEditingId       = null;   // account being edited
+let _incomeTplEditingId      = null;   // income template being edited
+let _incomeEntryEditingId    = null;   // income entry being edited
+let _calendarViewMonth       = null;   // 'YYYY-MM' for the cash flow detail modal
+let _balanceUpdateAccountId  = null;   // account whose balance is being updated
+
+// ── Render entry — called by renderBudget when panel === 'accounts' ────────
+function renderBudgetAccounts() {
+  _renderAccountsList();
+  _renderIncomeTemplatesList();
+  _renderIncomeEntriesList();
+}
+
+// ── Accounts list ──────────────────────────────────────────────────────────
+function _renderAccountsList() {
+  const host = document.getElementById('budget-accounts-list');
+  if (!host) return;
+
+  const active   = budgetAccounts.filter(a => !a.archived);
+  const archived = budgetAccounts.filter(a =>  a.archived);
+
+  if (active.length === 0) {
+    host.innerHTML = `
+      <div style="padding:30px 20px;text-align:center;color:var(--muted)">
+        <div style="margin-bottom:10px;color:var(--accent)"><svg aria-hidden="true" style="width:42px;height:42px"><use href="#i-banknote"></use></svg></div>
+        <div style="font-size:15px;font-weight:600;margin-bottom:6px;color:var(--text)">No accounts yet</div>
+        <p style="font-size:13px;line-height:1.5;margin-bottom:16px;max-width:320px;margin-left:auto;margin-right:auto">
+          Add the bank account, savings, or credit card you want to track. The cash flow projection on the dashboard uses your primary account.
+        </p>
+        <button class="btn btn-primary" onclick="openAccountEditor()"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add your first account</button>
+      </div>`;
+    document.getElementById('budget-accounts-archived-section').style.display = 'none';
+    return;
+  }
+
+  host.innerHTML = `<div class="bill-list">${active.map(_renderAccountRow).join('')}</div>`;
+
+  const archivedSection = document.getElementById('budget-accounts-archived-section');
+  const archivedHost    = document.getElementById('budget-accounts-archived-list');
+  if (archived.length) {
+    archivedSection.style.display = '';
+    archivedHost.innerHTML = `<div class="bill-list">${archived.map(_renderAccountRow).join('')}</div>`;
+  } else {
+    archivedSection.style.display = 'none';
+  }
+}
+
+function _renderAccountRow(acc) {
+  const typeLabel = acc.type === 'credit_card' ? 'Credit card' : acc.type === 'savings' ? 'Savings' : 'Current';
+  const asOfLabel = (() => {
+    if (!acc.balanceAsOf) return '';
+    const d = new Date(acc.balanceAsOf + 'T12:00:00');
+    const today = new Date(); today.setHours(0,0,0,0);
+    const dDate = new Date(acc.balanceAsOf + 'T00:00:00');
+    const days = Math.round((today - dDate) / 86400000);
+    if (days === 0)  return 'as of today';
+    if (days === 1)  return 'as of yesterday';
+    if (days < 30)   return `as of ${days} days ago`;
+    return 'as of ' + d.toLocaleDateString(undefined, { day:'numeric', month:'short' });
+  })();
+  const stale = acc.balanceAsOf && (Date.now() - new Date(acc.balanceAsOf + 'T12:00:00').getTime()) > 14 * 86400000;
+
+  const primaryBadge = acc.isPrimary && !acc.archived
+    ? '<span class="bill-tag" style="background:rgba(232,168,56,0.15);color:var(--accent);border-color:rgba(232,168,56,0.3)">PRIMARY</span>'
+    : '';
+
+  const balanceClass = acc.balance < 0 ? 'is-overdue' : '';
+
+  return `
+    <div class="bill-row ${acc.archived ? 'is-skipped' : ''} ${balanceClass}" onclick="openAccountEditor('${acc.id}')" style="cursor:pointer">
+      <div class="bill-day" style="background:${acc.color || 'var(--surface)'};color:#000;border-color:${acc.color || 'var(--border)'};font-size:9px">
+        ${acc.type === 'credit_card' ? 'CC' : acc.type === 'savings' ? 'S' : '£'}
+      </div>
+      <div class="bill-info">
+        <div class="bill-name">${_escapeHtml(acc.name)} ${primaryBadge}</div>
+        <div class="bill-meta">${typeLabel} · ${asOfLabel}${stale ? ' <span style="color:var(--warn)">⚠ update</span>' : ''}</div>
+      </div>
+      <div class="bill-amount">${_money(acc.balance)}</div>
+      <div class="bill-actions">
+        ${!acc.archived
+          ? `<button class="bill-action-btn" onclick="event.stopPropagation();openUpdateBalanceModal('${acc.id}')" title="Update balance"><svg aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>
+             <button class="bill-action-btn bill-action-edit" onclick="event.stopPropagation();openAccountEditor('${acc.id}')" title="Edit"><svg aria-hidden="true"><use href="#i-pencil"></use></svg></button>`
+          : `<button class="bill-action-btn" onclick="event.stopPropagation();handleUnarchiveAccount('${acc.id}')" title="Unarchive"><svg aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>`
+        }
+      </div>
+    </div>`;
+}
+
+async function handleUnarchiveAccount(id) {
+  await unarchiveAccount(id);
+  renderBudgetAccounts();
+  if (_currentView === 'budget') renderBudget();
+}
+
+// ── Account editor modal ───────────────────────────────────────────────────
+function openAccountEditor(id = null) {
+  _accountsEditingId = id;
+  const acc = id ? getAccountById(id) : null;
+  document.getElementById('account-editor-mode-label').textContent = acc ? 'Edit Account' : 'Add Account';
+  document.getElementById('account-editor-save-label').textContent = acc ? 'Save' : 'Create';
+  document.getElementById('account-archive-btn').style.display     = acc && !acc.archived ? 'inline-flex' : 'none';
+  document.getElementById('account-delete-btn').style.display      = acc &&  acc.archived ? 'inline-flex' : 'none';
+
+  document.getElementById('account-name').value         = acc?.name        || '';
+  document.getElementById('account-type').value         = acc?.type        || 'current';
+  document.getElementById('account-balance').value      = acc?.balance     ?? '';
+  document.getElementById('account-balance-asof').value = acc?.balanceAsOf || (new Date().toISOString().slice(0, 10));
+  document.getElementById('account-primary').checked    = !!acc?.isPrimary;
+  document.getElementById('account-color').value        = acc?.color       || '#5b8dee';
+  document.getElementById('account-notes').value        = acc?.notes       || '';
+
+  // If this is the first/only account, force primary on and disable
+  const primaryCheckbox = document.getElementById('account-primary');
+  const otherActive = budgetAccounts.filter(a => !a.archived && a.id !== id);
+  if (otherActive.length === 0 && !acc?.archived) {
+    primaryCheckbox.checked = true;
+    primaryCheckbox.disabled = true;
+    document.getElementById('account-primary-hint').textContent = 'First account is automatically primary.';
+  } else {
+    primaryCheckbox.disabled = false;
+    document.getElementById('account-primary-hint').textContent = 'Cash flow projection uses the primary account.';
+  }
+
+  openModal('account-editor-modal');
+  setTimeout(() => document.getElementById('account-name').focus(), 50);
+}
+
+async function saveAccountFromEditor() {
+  const name = (document.getElementById('account-name').value || '').trim();
+  if (!name) { toast('Account needs a name'); return; }
+  const type = document.getElementById('account-type').value;
+  const balance = parseFloat(document.getElementById('account-balance').value);
+  if (isNaN(balance)) { toast('Enter a valid balance'); return; }
+  const balanceAsOf = document.getElementById('account-balance-asof').value || (new Date().toISOString().slice(0, 10));
+  const isPrimary = document.getElementById('account-primary').checked;
+  const color = document.getElementById('account-color').value || '#5b8dee';
+  const notes = (document.getElementById('account-notes').value || '').trim();
+
+  const patch = { name, type, balance, balanceAsOf, isPrimary, color, notes };
+
+  if (_accountsEditingId) {
+    await updateAccount(_accountsEditingId, patch);
+    toast('Account updated');
+  } else {
+    await createAccount(patch);
+    toast('Account added');
+  }
+
+  closeModal('account-editor-modal');
+  _accountsEditingId = null;
+  renderBudgetAccounts();
+  if (_currentView === 'budget') renderBudget();
+}
+
+async function confirmArchiveAccount() {
+  if (!_accountsEditingId) return;
+  const acc = getAccountById(_accountsEditingId);
+  if (!acc) return;
+  if (!confirm(`Archive "${acc.name}"? It won't appear in projections or as a destination for new bills/income.`)) return;
+  await archiveAccount(_accountsEditingId);
+  closeModal('account-editor-modal');
+  _accountsEditingId = null;
+  toast('Account archived');
+  renderBudgetAccounts();
+  if (_currentView === 'budget') renderBudget();
+}
+
+async function confirmDeleteAccount() {
+  if (!_accountsEditingId) return;
+  const acc = getAccountById(_accountsEditingId);
+  if (!acc) return;
+  if (!confirm(`Permanently delete "${acc.name}"? Bills/income that pointed to this account will need to be reassigned. This can't be undone.`)) return;
+  await deleteAccountHard(_accountsEditingId);
+  closeModal('account-editor-modal');
+  _accountsEditingId = null;
+  toast('Account deleted');
+  renderBudgetAccounts();
+  if (_currentView === 'budget') renderBudget();
+}
+
+// ── Update balance quick action ────────────────────────────────────────────
+function openUpdateBalanceModal(accountId) {
+  const acc = getAccountById(accountId);
+  if (!acc) return;
+  _balanceUpdateAccountId = accountId;
+  document.getElementById('update-balance-name').textContent = acc.name;
+  const input = document.getElementById('update-balance-amount');
+  input.value = acc.balance;
+  document.getElementById('update-balance-current').textContent =
+    `Current: ${_money(acc.balance)} (as of ${acc.balanceAsOf || 'never'})`;
+  openModal('update-balance-modal');
+  setTimeout(() => input.select(), 50);
+}
+
+async function confirmUpdateBalance() {
+  if (!_balanceUpdateAccountId) return;
+  const amt = parseFloat(document.getElementById('update-balance-amount').value);
+  if (isNaN(amt)) { toast('Enter a valid amount'); return; }
+  await updateAccountBalance(_balanceUpdateAccountId, amt);
+  closeModal('update-balance-modal');
+  _balanceUpdateAccountId = null;
+  toast('Balance updated');
+  renderBudgetAccounts();
+  if (_currentView === 'budget') renderBudget();
+}
+
+// ── Income templates ───────────────────────────────────────────────────────
+function _renderIncomeTemplatesList() {
+  const section = document.getElementById('budget-income-templates-section');
+  const host    = document.getElementById('budget-income-templates-list');
+  if (!section || !host) return;
+
+  const active = incomeTemplates.filter(t => !t.archived);
+  if (active.length === 0) {
+    host.innerHTML = `
+      <div style="padding:18px;text-align:center;color:var(--muted);font-size:12px">
+        No income templates. Add salaries, benefits, or any recurring income.
+      </div>`;
+  } else {
+    host.innerHTML = `<div class="bill-list">${active.map(_renderIncomeTemplateRow).join('')}</div>`;
+  }
+}
+
+function _renderIncomeTemplateRow(tpl) {
+  const acc = getAccountById(tpl.accountId);
+  const accLabel = acc ? acc.name : '(no account)';
+  const freq = _frequencyLabel(tpl);
+  return `
+    <div class="bill-row" onclick="openIncomeTemplateEditor('${tpl.id}')" style="cursor:pointer">
+      <div class="bill-day" style="background:rgba(76,187,138,0.15);color:var(--ok);border-color:rgba(76,187,138,0.4)">${tpl.dayOfMonth}</div>
+      <div class="bill-info">
+        <div class="bill-name">${_escapeHtml(tpl.name)}</div>
+        <div class="bill-meta">${freq} · ${_escapeHtml(accLabel)}</div>
+      </div>
+      <div class="bill-amount" style="color:var(--ok)">+${_money(tpl.amount)}</div>
+      <div class="bill-actions">
+        <button class="bill-action-btn bill-action-edit" onclick="event.stopPropagation();openIncomeTemplateEditor('${tpl.id}')" title="Edit"><svg aria-hidden="true"><use href="#i-pencil"></use></svg></button>
+      </div>
+    </div>`;
+}
+
+function openIncomeTemplateEditor(id = null) {
+  _incomeTplEditingId = id;
+  const tpl = id ? getIncomeTemplateById(id) : null;
+  document.getElementById('income-tpl-mode-label').textContent = tpl ? 'Edit Income' : 'Add Income';
+  document.getElementById('income-tpl-save-label').textContent = tpl ? 'Save' : 'Add';
+  document.getElementById('income-tpl-archive-btn').style.display = tpl ? 'inline-flex' : 'none';
+
+  document.getElementById('income-tpl-name').value         = tpl?.name      || '';
+  document.getElementById('income-tpl-amount').value       = tpl?.amount    ?? '';
+  document.getElementById('income-tpl-day').value          = tpl?.dayOfMonth ?? 25;
+  document.getElementById('income-tpl-notes').value        = tpl?.notes     || '';
+
+  // Frequency presets — same as bill editor
+  const freq = tpl?.frequency || { unit: 'month', interval: 1, anchorMonth: null };
+  let preset = 'monthly';
+  if (freq.unit === 'year') preset = 'annual';
+  else if (freq.interval === 3)  preset = 'quarterly';
+  else if (freq.interval === 6)  preset = 'six_monthly';
+  else if (freq.interval === 1)  preset = 'monthly';
+  else                           preset = 'custom';
+  document.getElementById('income-tpl-frequency').value = preset;
+  document.getElementById('income-tpl-anchor-month').value = String(freq.anchorMonth ?? 0);
+  document.getElementById('income-tpl-custom-interval').value = (preset === 'custom' ? freq.interval : 2);
+
+  // Account dropdown
+  const accSel = document.getElementById('income-tpl-account');
+  const accs = getActiveAccounts();
+  const primaryId = getPrimaryAccount()?.id;
+  accSel.innerHTML = accs.map(a =>
+    `<option value="${a.id}" ${a.id === (tpl?.accountId || primaryId) ? 'selected' : ''}>${_escapeHtml(a.name)}${a.isPrimary ? ' (primary)' : ''}</option>`
+  ).join('') || '<option value="">— No accounts —</option>';
+
+  incomeTplFreqChanged();
+  openModal('income-tpl-modal');
+  setTimeout(() => document.getElementById('income-tpl-name').focus(), 50);
+}
+
+function incomeTplFreqChanged() {
+  const preset = document.getElementById('income-tpl-frequency').value;
+  document.getElementById('income-tpl-anchor-row').style.display = preset !== 'monthly' ? 'block' : 'none';
+  document.getElementById('income-tpl-custom-row').style.display = preset === 'custom'  ? 'block' : 'none';
+}
+
+async function saveIncomeTemplateFromEditor() {
+  const name = (document.getElementById('income-tpl-name').value || '').trim();
+  if (!name) { toast('Income needs a name'); return; }
+  const amount = parseFloat(document.getElementById('income-tpl-amount').value);
+  if (isNaN(amount) || amount <= 0) { toast('Enter a valid amount'); return; }
+  const dayOfMonth = parseInt(document.getElementById('income-tpl-day').value, 10);
+  if (isNaN(dayOfMonth) || dayOfMonth < 1 || dayOfMonth > 31) { toast('Day must be 1-31'); return; }
+  const notes = (document.getElementById('income-tpl-notes').value || '').trim();
+  const accountId = document.getElementById('income-tpl-account').value || null;
+
+  const preset = document.getElementById('income-tpl-frequency').value;
+  const anchorMonth = parseInt(document.getElementById('income-tpl-anchor-month').value, 10);
+  const customInt = parseInt(document.getElementById('income-tpl-custom-interval').value, 10);
+  let frequency;
+  if (preset === 'monthly')           frequency = { unit: 'month', interval: 1, anchorMonth: null };
+  else if (preset === 'quarterly')    frequency = { unit: 'month', interval: 3, anchorMonth };
+  else if (preset === 'six_monthly')  frequency = { unit: 'month', interval: 6, anchorMonth };
+  else if (preset === 'annual')       frequency = { unit: 'year',  interval: 1, anchorMonth };
+  else                                frequency = { unit: 'month', interval: Math.max(1, customInt || 2), anchorMonth };
+
+  const patch = { name, amount, dayOfMonth, notes, accountId, frequency };
+
+  if (_incomeTplEditingId) {
+    await updateIncomeTemplate(_incomeTplEditingId, patch);
+    toast('Income updated');
+  } else {
+    await createIncomeTemplate(patch);
+    toast('Income added');
+  }
+  closeModal('income-tpl-modal');
+  _incomeTplEditingId = null;
+  renderBudgetAccounts();
+  if (_currentView === 'budget') renderBudget();
+}
+
+async function confirmArchiveIncomeTemplate() {
+  if (!_incomeTplEditingId) return;
+  const tpl = getIncomeTemplateById(_incomeTplEditingId);
+  if (!tpl) return;
+  if (!confirm(`Archive "${tpl.name}"? Past instances stay; the template won't generate new ones.`)) return;
+  await archiveIncomeTemplate(_incomeTplEditingId);
+  closeModal('income-tpl-modal');
+  _incomeTplEditingId = null;
+  toast('Income archived');
+  renderBudgetAccounts();
+  if (_currentView === 'budget') renderBudget();
+}
+
+// ── One-off income entries ─────────────────────────────────────────────────
+function _renderIncomeEntriesList() {
+  const section = document.getElementById('budget-income-entries-section');
+  const host    = document.getElementById('budget-income-entries-list');
+  if (!section || !host) return;
+
+  // Show last 30 days of one-off (non-template) entries
+  const today = new Date();
+  const past = new Date(today.getTime() - 30 * 86400000);
+  const startIso = past.toISOString().slice(0, 10);
+  const endIso   = today.toISOString().slice(0, 10);
+
+  const entries = getIncomeEntriesForRange(startIso, endIso)
+    .filter(e => !e.templateId)
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  if (entries.length === 0) {
+    host.innerHTML = `
+      <div style="padding:14px;text-align:center;color:var(--muted);font-size:12px">
+        No one-off income in the last 30 days.
+        <button class="btn btn-ghost btn-sm" onclick="openIncomeEntryEditor()" style="margin-top:8px;font-size:11px"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add bonus / refund / gift</button>
+      </div>`;
+  } else {
+    host.innerHTML = `<div class="bill-list">${entries.map(_renderIncomeEntryRow).join('')}</div>`;
+  }
+}
+
+function _renderIncomeEntryRow(entry) {
+  const acc = getAccountById(entry.accountId);
+  const accLabel = acc ? acc.name : '(no account)';
+  const dayLabel = (() => {
+    const d = new Date(entry.date + 'T12:00:00');
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  })();
+  const isFuture = entry.date > new Date().toISOString().slice(0, 10);
+  return `
+    <div class="bill-row" onclick="openIncomeEntryEditor('${entry.id}')" style="cursor:pointer">
+      <div class="bill-day" style="background:rgba(76,187,138,0.15);color:var(--ok);border-color:rgba(76,187,138,0.4);font-size:10px">${entry.date.slice(8, 10)}</div>
+      <div class="bill-info">
+        <div class="bill-name">${_escapeHtml(entry.notes || 'Income')}</div>
+        <div class="bill-meta">${dayLabel} · ${_escapeHtml(accLabel)}${isFuture ? ' · upcoming' : ''}</div>
+      </div>
+      <div class="bill-amount" style="color:var(--ok)">+${_money(entry.amount)}</div>
+      <div class="bill-actions">
+        <button class="bill-action-btn bill-action-edit" onclick="event.stopPropagation();openIncomeEntryEditor('${entry.id}')" title="Edit"><svg aria-hidden="true"><use href="#i-pencil"></use></svg></button>
+      </div>
+    </div>`;
+}
+
+function openIncomeEntryEditor(id = null) {
+  _incomeEntryEditingId = id;
+  const entry = id ? getIncomeEntriesForRange('1970-01-01', '2099-12-31').find(e => e.id === id) : null;
+  document.getElementById('income-entry-mode-label').textContent = entry ? 'Edit Income Entry' : 'Add Income Entry';
+  document.getElementById('income-entry-save-label').textContent = entry ? 'Save' : 'Add';
+  document.getElementById('income-entry-delete-btn').style.display = entry ? 'inline-flex' : 'none';
+
+  document.getElementById('income-entry-notes').value  = entry?.notes  || '';
+  document.getElementById('income-entry-amount').value = entry?.amount ?? '';
+  document.getElementById('income-entry-date').value   = entry?.date   || (new Date().toISOString().slice(0, 10));
+
+  // Account dropdown
+  const accSel = document.getElementById('income-entry-account');
+  const accs = getActiveAccounts();
+  const primaryId = getPrimaryAccount()?.id;
+  accSel.innerHTML = accs.map(a =>
+    `<option value="${a.id}" ${a.id === (entry?.accountId || primaryId) ? 'selected' : ''}>${_escapeHtml(a.name)}${a.isPrimary ? ' (primary)' : ''}</option>`
+  ).join('') || '<option value="">— No accounts —</option>';
+
+  openModal('income-entry-modal');
+  setTimeout(() => document.getElementById('income-entry-notes').focus(), 50);
+}
+
+async function saveIncomeEntryFromEditor() {
+  const notes  = (document.getElementById('income-entry-notes').value || '').trim();
+  const amount = parseFloat(document.getElementById('income-entry-amount').value);
+  if (isNaN(amount) || amount <= 0) { toast('Enter a valid amount'); return; }
+  const date = document.getElementById('income-entry-date').value;
+  if (!date) { toast('Pick a date'); return; }
+  const accountId = document.getElementById('income-entry-account').value || null;
+
+  if (_incomeEntryEditingId) {
+    await updateIncomeEntry(_incomeEntryEditingId, { notes, amount, date, accountId });
+    toast('Income entry updated');
+  } else {
+    await createIncomeEntry({ notes, amount, date, accountId, source: 'manual' });
+    toast('Income entry added');
+  }
+  closeModal('income-entry-modal');
+  _incomeEntryEditingId = null;
+  renderBudgetAccounts();
+  if (_currentView === 'budget') renderBudget();
+}
+
+async function confirmDeleteIncomeEntry() {
+  if (!_incomeEntryEditingId) return;
+  if (!confirm('Delete this income entry?')) return;
+  await deleteIncomeEntry(_incomeEntryEditingId);
+  closeModal('income-entry-modal');
+  _incomeEntryEditingId = null;
+  toast('Income entry deleted');
+  renderBudgetAccounts();
+  if (_currentView === 'budget') renderBudget();
+}
+
+// ── Cash flow chart on the dashboard ───────────────────────────────────────
+function renderCashFlowChart() {
+  const host    = document.getElementById('budget-cashflow-card');
+  if (!host) return;
+
+  const proj = projectCashFlow(null, 30);
+
+  if (!proj.setupComplete) {
+    host.innerHTML = `
+      <div style="background:var(--surface);border:1px dashed var(--border);border-radius:10px;padding:16px;text-align:center">
+        <div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Cash flow · 30 days</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:10px">Set up an account to see your projected balance</div>
+        <button class="btn btn-primary btn-sm" onclick="navTo && navTo('budget'); budgetSwitchPanel('accounts')"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add account</button>
+      </div>`;
+    return;
+  }
+
+  const lowAlert = (proj.low && proj.low.balance < 0)
+    ? `<span style="color:var(--danger);font-weight:700">${_money(proj.low.balance)}</span> low`
+    : (proj.low ? `<span style="color:var(--text);font-weight:600">${_money(proj.low.balance)}</span> low` : '');
+
+  host.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-size:13px;font-weight:600">Cash flow · 30 days</div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span style="font-size:11px;color:var(--muted);font-family:var(--mono)">${_escapeHtml(proj.account.name)}</span>
+          <button class="btn btn-ghost btn-sm" onclick="openCashFlowCalendar()" title="Calendar view" style="padding:4px 7px"><svg class="icon" aria-hidden="true"><use href="#i-calendar"></use></svg></button>
+        </div>
+      </div>
+      <div id="cashflow-svg-host">${_buildCashFlowSvg(proj)}</div>
+      <div style="display:flex;gap:14px;margin-top:8px;font-size:10px;color:var(--muted);font-family:var(--mono)">
+        <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:var(--danger)"></span>bill</span>
+        <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:var(--ok)"></span>payday</span>
+        <span style="margin-left:auto">${lowAlert}</span>
+      </div>
+      ${proj.hasGaps ? `<div style="margin-top:8px;padding:6px 10px;background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.2);border-radius:6px;font-size:11px;color:var(--warn)">
+        <svg aria-hidden="true" style="width:11px;height:11px;vertical-align:-1px"><use href="#i-alert-triangle"></use></svg>
+        Balance was last updated ${(() => {
+          const d = new Date(proj.account.balanceAsOf + 'T12:00:00');
+          const days = Math.round((Date.now() - d.getTime()) / 86400000);
+          return days + ' day' + (days === 1 ? '' : 's') + ' ago';
+        })()} — projection assumes bills paid + income received in between.
+        <button class="btn btn-ghost btn-sm" style="margin-left:6px;font-size:11px;padding:2px 8px" onclick="openUpdateBalanceModal('${proj.account.id}')">Update</button>
+      </div>` : ''}
+    </div>`;
+}
+
+function _buildCashFlowSvg(proj) {
+  // SVG dimensions
+  const W = 480, H = 90;
+  const padL = 4, padR = 4, padT = 12, padB = 14;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  const points = proj.points;
+  if (points.length === 0) return '<svg viewBox="0 0 480 90" width="100%" height="90" aria-hidden="true"></svg>';
+
+  // Y range — include startBalance and zero line for context
+  const balances = points.map(p => p.balance);
+  const minB = Math.min(...balances, proj.startBalance, 0);
+  const maxB = Math.max(...balances, proj.startBalance);
+  const range = (maxB - minB) || 1;
+
+  const xFor = (i) => padL + (i / Math.max(points.length - 1, 1)) * innerW;
+  const yFor = (b) => padT + (1 - (b - minB) / range) * innerH;
+
+  // Zero line if relevant
+  let zeroLine = '';
+  if (minB < 0 && maxB > 0) {
+    const y0 = yFor(0);
+    zeroLine = `<line x1="${padL}" y1="${y0}" x2="${W - padR}" y2="${y0}" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="2,3"/>`;
+  }
+
+  // Build polyline points: each day stays flat then drops/rises (steppy line that
+  // looks more like a bank balance). Simpler: just connect each point.
+  // For a more honest cash-flow look, we use a stepped line: balance is flat
+  // through a day, then jumps at the day boundary.
+  const linePoints = points.map((p, i) => `${xFor(i).toFixed(1)},${yFor(p.balance).toFixed(1)}`).join(' ');
+
+  // Markers for events — bill = red dot, income = green dot
+  const markers = points.map((p, i) => {
+    if (!p.events || p.events.length === 0) return '';
+    const cx = xFor(i).toFixed(1);
+    const cy = yFor(p.balance).toFixed(1);
+    const hasBill   = p.events.some(e => e.type === 'bill');
+    const hasIncome = p.events.some(e => e.type === 'income');
+    // If both, show two stacked
+    if (hasBill && hasIncome) {
+      return `<circle cx="${cx}" cy="${cy}" r="3" fill="var(--ok)"/><circle cx="${cx}" cy="${(yFor(p.balance) - 6).toFixed(1)}" r="3" fill="var(--danger)"/>`;
+    }
+    const fill = hasBill ? 'var(--danger)' : 'var(--ok)';
+    return `<circle cx="${cx}" cy="${cy}" r="3" fill="${fill}"/>`;
+  }).join('');
+
+  // Low-point callout
+  let callout = '';
+  if (proj.low) {
+    const idx = proj.low.daysFromStart;
+    const cx = xFor(idx);
+    const cy = yFor(proj.low.balance);
+    // Vertical guide line
+    callout += `<line x1="${cx}" y1="${padT}" x2="${cx}" y2="${cy + 2}" stroke="rgba(232,80,80,0.35)" stroke-width="0.8" stroke-dasharray="3,3"/>`;
+    // Highlighted dot
+    callout += `<circle cx="${cx}" cy="${cy}" r="4" fill="${proj.low.balance < 0 ? 'var(--danger)' : 'var(--accent)'}" stroke="${proj.low.balance < 0 ? 'var(--danger)' : 'var(--accent)'}" stroke-width="3" stroke-opacity="0.25"/>`;
+    // Label
+    const lowDate = new Date(proj.low.date + 'T12:00:00').toLocaleDateString(undefined, { day:'numeric', month:'short' });
+    // Position label so it doesn't run off the edge
+    const labelX = Math.min(Math.max(cx + 6, padL), W - padR - 90);
+    callout += `<text x="${labelX}" y="${H - 2}" font-size="9" font-family="var(--mono)" fill="var(--muted)">low: ${_money(proj.low.balance)} on ${lowDate}</text>`;
+  }
+
+  return `
+    <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" aria-hidden="true" style="display:block">
+      ${zeroLine}
+      <polyline points="${linePoints}" fill="none" stroke="var(--accent2)" stroke-width="1.5"/>
+      ${markers}
+      ${callout}
+    </svg>`;
+}
+
+// ── Calendar detail modal (Option D) ───────────────────────────────────────
+function openCashFlowCalendar() {
+  if (!_calendarViewMonth) _calendarViewMonth = _yyyymm(new Date());
+  _renderCashFlowCalendar();
+  openModal('cashflow-calendar-modal');
+}
+
+function calendarPrevMonth() {
+  const { year, month } = _parseYyyymm(_calendarViewMonth);
+  const d = new Date(year, month - 1, 1);
+  _calendarViewMonth = _yyyymm(d);
+  _renderCashFlowCalendar();
+}
+function calendarNextMonth() {
+  const { year, month } = _parseYyyymm(_calendarViewMonth);
+  const d = new Date(year, month + 1, 1);
+  _calendarViewMonth = _yyyymm(d);
+  _renderCashFlowCalendar();
+}
+
+function _renderCashFlowCalendar() {
+  const titleEl = document.getElementById('cashflow-calendar-title');
+  const gridHost = document.getElementById('cashflow-calendar-grid');
+  const summaryHost = document.getElementById('cashflow-calendar-summary');
+  if (!titleEl || !gridHost) return;
+
+  const { year, month } = _parseYyyymm(_calendarViewMonth);
+  titleEl.textContent = new Date(year, month, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+  const primary = getPrimaryAccount();
+  if (!primary) {
+    gridHost.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted)">No primary account set</div>';
+    if (summaryHost) summaryHost.innerHTML = '';
+    return;
+  }
+
+  // Build day-by-day events for the whole month
+  const daysIn = _daysInMonth(year, month);
+  const firstDow = new Date(year, month, 1).getDay(); // 0 = Sun
+  const weekStart = budgetSettings.weekStart || 'mon';
+  // Convert firstDow to "days from week start" (0..6)
+  const offsetCells = weekStart === 'mon' ? ((firstDow + 6) % 7) : firstDow;
+
+  const headers = weekStart === 'mon' ? ['M','T','W','T','F','S','S'] : ['S','M','T','W','T','F','S'];
+
+  const cells = [];
+  for (let i = 0; i < offsetCells; i++) {
+    cells.push({ blank: true });
+  }
+  for (let d = 1; d <= daysIn; d++) {
+    const iso = `${_calendarViewMonth}-${String(d).padStart(2, '0')}`;
+    const events = _eventsOnDay(primary, iso);
+    cells.push({ day: d, iso, events });
+  }
+  // Pad to multiple of 7
+  while (cells.length % 7 !== 0) cells.push({ blank: true });
+
+  const todayIso = new Date().toISOString().slice(0, 10);
+
+  gridHost.innerHTML = `
+    <div class="cashflow-cal-grid">
+      ${headers.map(h => `<div class="cashflow-cal-head">${h}</div>`).join('')}
+    </div>
+    <div class="cashflow-cal-grid" style="margin-top:3px">
+      ${cells.map(c => {
+        if (c.blank) return '<div class="cashflow-cal-cell muted"></div>';
+        const hasBill   = c.events.some(e => e.type === 'bill');
+        const hasIncome = c.events.some(e => e.type === 'income');
+        const isToday   = c.iso === todayIso;
+        let cls = 'cashflow-cal-cell';
+        if (hasBill && !hasIncome)  cls += ' is-bill';
+        else if (hasIncome && !hasBill) cls += ' is-pay';
+        else if (hasBill && hasIncome) cls += ' is-mixed';
+        if (isToday) cls += ' is-today';
+        const dayDelta = c.events.reduce((s, e) => s + e.amount, 0);
+        const deltaText = dayDelta !== 0
+          ? `<div class="cashflow-cal-amt" style="color:${dayDelta < 0 ? 'var(--danger)' : 'var(--ok)'}">${dayDelta < 0 ? '−' : '+'}${_money(Math.abs(dayDelta))}</div>`
+          : '';
+        return `<div class="${cls}" onclick="_showCalendarDayDetail('${c.iso}')">
+          <div class="cashflow-cal-day">${c.day}</div>
+          ${deltaText}
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  // Summary: monthly totals
+  const allEvents = cells.filter(c => !c.blank).flatMap(c => c.events);
+  const totalBills  = allEvents.filter(e => e.type === 'bill').reduce((s, e) => s + e.amount, 0); // negative
+  const totalIncome = allEvents.filter(e => e.type === 'income').reduce((s, e) => s + e.amount, 0); // positive
+  const net = totalBills + totalIncome;
+  if (summaryHost) {
+    summaryHost.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:14px">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase">Bills</div>
+          <div style="font-size:14px;font-weight:700;color:var(--danger);font-family:var(--mono);margin-top:2px">${_money(totalBills)}</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase">Income</div>
+          <div style="font-size:14px;font-weight:700;color:var(--ok);font-family:var(--mono);margin-top:2px">+${_money(totalIncome)}</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase">Net</div>
+          <div style="font-size:14px;font-weight:700;color:${net < 0 ? 'var(--danger)' : 'var(--ok)'};font-family:var(--mono);margin-top:2px">${net < 0 ? '−' : '+'}${_money(Math.abs(net))}</div>
+        </div>
+      </div>`;
+  }
+}
+
+function _showCalendarDayDetail(iso) {
+  const primary = getPrimaryAccount();
+  if (!primary) return;
+  const events = _eventsOnDay(primary, iso);
+  if (events.length === 0) return;
+  const lines = events.map(e => {
+    const sign = e.amount < 0 ? '−' : '+';
+    return `${sign}${_money(Math.abs(e.amount))}  ${e.label}`;
+  });
+  const date = new Date(iso + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+  alert(`${date}\n\n${lines.join('\n')}`);
+}
+
+// ── Bill editor extension: account dropdown ────────────────────────────────
+// Wraps the existing openBillEditor to populate the new account dropdown.
+const _origOpenBillEditor = (typeof openBillEditor === 'function') ? openBillEditor : null;
+if (_origOpenBillEditor) {
+  openBillEditor = function(billId = null) {
+    _origOpenBillEditor.call(this, billId);
+    // After the original editor opens, populate the account dropdown
+    setTimeout(() => {
+      const sel = document.getElementById('bill-account');
+      if (!sel) return; // dropdown not in DOM (legacy)
+      const tpl = billId ? bills.find(b => b.id === billId) : null;
+      const accs = getActiveAccounts();
+      const primaryId = getPrimaryAccount()?.id;
+      const selectedId = tpl?.accountId || primaryId;
+      sel.innerHTML = (accs.length ? '' : '<option value="">— No accounts yet —</option>') + accs.map(a =>
+        `<option value="${a.id}" ${a.id === selectedId ? 'selected' : ''}>${_escapeHtml(a.name)}${a.isPrimary ? ' (primary)' : ''}</option>`
+      ).join('');
+    }, 0);
+  };
+}
+// Wrap saveBillFromEditor too so it picks up the accountId from the dropdown
+const _origSaveBillFromEditor = (typeof saveBillFromEditor === 'function') ? saveBillFromEditor : null;
+if (_origSaveBillFromEditor) {
+  saveBillFromEditor = async function() {
+    // Read the accountId BEFORE calling the original (which closes the modal & resets state)
+    const accSel = document.getElementById('bill-account');
+    const accountId = accSel ? (accSel.value || null) : null;
+    const editingId = _budgetEditingBillId;
+    const billCountBefore = bills.length;
+    await _origSaveBillFromEditor.call(this);
+    // After save, patch the bill with accountId. We need to handle three cases:
+    //   1. Edit succeeded → editingId still points at the bill, patch it
+    //   2. New bill created → bills.length grew, patch the new last bill
+    //   3. Validation failed in original → no DB change, do nothing
+    if (!accountId) return; // user didn't pick an account, nothing to patch
+    if (editingId) {
+      // Edit path — patch the existing bill (validation failure here means
+      // the original save would have toasted; our patch is harmless either way
+      // since the bill still has the same id and accountId is a valid field)
+      await updateBill(editingId, { accountId });
+    } else if (bills.length > billCountBefore) {
+      // New bill was successfully created — patch the new one
+      const last = bills[bills.length - 1];
+      if (last) await updateBill(last.id, { accountId });
+    }
+    // else: validation failed creating a new bill; nothing was added; do nothing
+  };
+}
+
+// ── Hero card extension: projected balance + low-point ─────────────────────
+function _augmentHeroWithProjection() {
+  const heroPanel = document.getElementById('budget-hero');
+  if (!heroPanel) return;
+  const proj = projectCashFlow(null, 30);
+  if (!proj.setupComplete) return; // leave Phase 1 hero as-is
+
+  // Find or create the projected-balance row
+  let projRow = document.getElementById('budget-hero-projection');
+  if (!projRow) {
+    projRow = document.createElement('div');
+    projRow.id = 'budget-hero-projection';
+    projRow.style.cssText = 'display:flex;gap:20px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)';
+    heroPanel.appendChild(projRow);
+  }
+
+  const startBal = proj.startBalance;
+  const lowBal   = proj.low?.balance;
+  const lowDate  = proj.low ? new Date(proj.low.date + 'T12:00:00').toLocaleDateString(undefined, { day:'numeric', month:'short' }) : '';
+  const lowColor = (lowBal != null && lowBal < 0) ? 'var(--danger)' : 'var(--text)';
+
+  projRow.innerHTML = `
+    <div style="flex:1;min-width:0">
+      <div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px">Balance now</div>
+      <div style="font-size:14px;font-weight:600;color:var(--text)">${_money(startBal)}</div>
+    </div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px">Low (30d)</div>
+      <div style="font-size:14px;font-weight:600;color:${lowColor}">${_money(lowBal ?? startBal)}</div>
+      ${lowDate ? `<div style="font-size:10px;color:var(--muted);font-family:var(--mono)">${lowDate}</div>` : ''}
+    </div>`;
 }
 
 
@@ -17733,7 +19166,7 @@ async function pushSharedData(code, shareKey) {
         groceries:   canSeeGroceries ? hGroceries : [],
         reminders:   canSeeReminders ? hReminders : [],
         departments: canSeeGroceries ? hDepts     : [],
-        // Budget — Phase 1 (bills) + Phase 2 (categories, transactions).
+        // Budget — Phase 1 (bills) + Phase 2 (categories, transactions) + Phase 3 (accounts, income).
         // Lives at user-level (not per-household), so the same data goes to every share with budget perm.
         bills:                       canSeeBudget ? bills           : [],
         billInstances:               canSeeBudget ? billInstances   : {},
@@ -17742,6 +19175,12 @@ async function pushSharedData(code, shareKey) {
         transactions:                canSeeBudget ? transactions    : {},
         budgetCategoryDeletedIds:    canSeeBudget ? [...budgetCategoryDeletedIds]    : [],
         budgetTransactionDeletedIds: canSeeBudget ? [...budgetTransactionDeletedIds] : [],
+        budgetAccounts:              canSeeBudget ? budgetAccounts  : [],
+        incomeTemplates:             canSeeBudget ? incomeTemplates : [],
+        incomeEntries:               canSeeBudget ? incomeEntries   : {},
+        budgetAccountDeletedIds:     canSeeBudget ? [...budgetAccountDeletedIds]   : [],
+        incomeTemplateDeletedIds:    canSeeBudget ? [...incomeTemplateDeletedIds]  : [],
+        incomeEntryDeletedIds:       canSeeBudget ? [...incomeEntryDeletedIds]    : [],
         lastSynced:  new Date().toISOString(),
       });
       const ciphertext  = await encryptWithShareKey(sk, payload);
@@ -18386,6 +19825,7 @@ async function init() {
   await loadGrocery();
   await loadBudget();
   await loadBudgetSpend();
+  await loadBudgetAccountsAndIncome();
   // Sweep any expired items from the 30-day recycle bin (no-op if loadProfile already did it)
   await purgeExpiredFromBins();
   await checkGroceryRecurring();

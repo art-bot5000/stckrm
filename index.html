@@ -299,6 +299,14 @@
       </div>
 
       <div class="field form-full">
+        <label>Account <span style="font-weight:400;color:var(--muted)">(which account does this bill come out of?)</span></label>
+        <select id="bill-account"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+          <option value="">— No accounts yet —</option>
+        </select>
+      </div>
+
+      <div class="field form-full">
         <label>Notes <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
         <input type="text" id="bill-notes" placeholder="e.g. RIAS policy 12345" maxlength="120">
       </div>
@@ -505,6 +513,232 @@
     <div class="modal-footer" style="margin-top:18px">
       <button class="btn btn-ghost" onclick="dismissBudgetSetup()">Skip</button>
       <button class="btn btn-primary" onclick="confirmBudgetSetup()"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> Create categories</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     ACCOUNT EDITOR MODAL — Phase 3
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="account-editor-modal" style="z-index:300">
+  <div class="modal" style="max-width:460px">
+    <h2><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-banknote"></use></svg> <span id="account-editor-mode-label">Add Account</span></h2>
+
+    <div class="form-grid">
+      <div class="field form-full">
+        <label>Name *</label>
+        <input type="text" id="account-name" maxlength="40" placeholder="e.g. Joint Current">
+      </div>
+      <div class="field form-full">
+        <label>Type</label>
+        <select id="account-type"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+          <option value="current">Current</option>
+          <option value="savings">Savings</option>
+          <option value="credit_card">Credit card</option>
+        </select>
+      </div>
+      <div class="field form-full">
+        <label>Balance (£)</label>
+        <input type="number" id="account-balance" step="0.01" placeholder="0.00"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
+      </div>
+      <div class="field form-full">
+        <label>As of</label>
+        <input type="date" id="account-balance-asof"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">The projection walks forward from this date, applying bills paid and income received since.</div>
+      </div>
+      <div class="field form-full">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:500">
+          <input type="checkbox" id="account-primary" style="margin:0;cursor:pointer">
+          <span>Primary account</span>
+        </label>
+        <div id="account-primary-hint" style="font-size:11px;color:var(--muted);margin-top:4px">Cash flow projection uses the primary account.</div>
+      </div>
+      <div class="field form-full">
+        <label>Colour</label>
+        <input type="color" id="account-color" value="#5b8dee"
+          style="width:80px;height:36px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:2px;cursor:pointer">
+      </div>
+      <div class="field form-full">
+        <label>Notes <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+        <input type="text" id="account-notes" maxlength="120">
+      </div>
+    </div>
+
+    <div class="modal-footer" style="margin-top:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" id="account-archive-btn" onclick="confirmArchiveAccount()" style="display:none;color:var(--danger);margin-right:auto"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg> Archive</button>
+      <button class="btn btn-ghost btn-sm" id="account-delete-btn" onclick="confirmDeleteAccount()" style="display:none;color:var(--danger);margin-right:auto"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete forever</button>
+      <button class="btn btn-ghost" onclick="closeModal('account-editor-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveAccountFromEditor()"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> <span id="account-editor-save-label">Save</span></button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     UPDATE BALANCE QUICK MODAL — Phase 3
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="update-balance-modal" style="z-index:310">
+  <div class="modal" style="max-width:380px">
+    <h2 style="font-size:18px"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-refresh-cw"></use></svg> Update balance</h2>
+    <p class="subtitle" id="update-balance-name">Account</p>
+    <div class="field" style="text-align:left;margin-bottom:8px">
+      <label>New balance (£)</label>
+      <input type="number" id="update-balance-amount" step="0.01" placeholder="0.00"
+        style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:16px">
+      <div id="update-balance-current" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
+    </div>
+    <p style="font-size:11px;color:var(--muted);margin-bottom:0">Sets balance to this value as of today. Use this when you've checked your bank balance.</p>
+    <div class="modal-footer" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeModal('update-balance-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmUpdateBalance()"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> Update</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     INCOME TEMPLATE EDITOR MODAL — Phase 3
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="income-tpl-modal" style="z-index:300">
+  <div class="modal" style="max-width:460px">
+    <h2><svg class="icon icon-lg" aria-hidden="true" style="color:var(--ok)"><use href="#i-banknote"></use></svg> <span id="income-tpl-mode-label">Add Income</span></h2>
+    <p class="subtitle">Recurring income — salary, benefits, regular payments.</p>
+
+    <div class="form-grid">
+      <div class="field form-full">
+        <label>Name *</label>
+        <input type="text" id="income-tpl-name" maxlength="60" placeholder="e.g. Pete salary">
+      </div>
+      <div class="field form-full">
+        <label>Amount (£)</label>
+        <input type="number" id="income-tpl-amount" step="0.01" min="0" placeholder="0.00"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
+      </div>
+      <div class="field form-full">
+        <label>Frequency</label>
+        <select id="income-tpl-frequency" onchange="incomeTplFreqChanged()"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+          <option value="monthly">Monthly</option>
+          <option value="quarterly">Every 3 months</option>
+          <option value="six_monthly">Every 6 months</option>
+          <option value="annual">Annually</option>
+          <option value="custom">Every N months…</option>
+        </select>
+      </div>
+      <div class="field form-full" id="income-tpl-anchor-row" style="display:none">
+        <label>First payment month</label>
+        <select id="income-tpl-anchor-month"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+          <option value="0">January</option><option value="1">February</option><option value="2">March</option>
+          <option value="3">April</option><option value="4">May</option><option value="5">June</option>
+          <option value="6">July</option><option value="7">August</option><option value="8">September</option>
+          <option value="9">October</option><option value="10">November</option><option value="11">December</option>
+        </select>
+      </div>
+      <div class="field form-full" id="income-tpl-custom-row" style="display:none">
+        <label>Repeats every</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="number" id="income-tpl-custom-interval" min="1" max="36" value="2"
+            style="width:80px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
+          <span style="color:var(--muted);font-size:13px">months</span>
+        </div>
+      </div>
+      <div class="field form-full">
+        <label>Day of month *</label>
+        <input type="number" id="income-tpl-day" min="1" max="31" value="25"
+          style="width:80px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
+      </div>
+      <div class="field form-full">
+        <label>Account *</label>
+        <select id="income-tpl-account"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+          <option value="">— No accounts yet —</option>
+        </select>
+      </div>
+      <div class="field form-full">
+        <label>Notes <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+        <input type="text" id="income-tpl-notes" maxlength="120">
+      </div>
+    </div>
+
+    <div class="modal-footer" style="margin-top:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" id="income-tpl-archive-btn" onclick="confirmArchiveIncomeTemplate()" style="display:none;color:var(--danger);margin-right:auto"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg> Archive</button>
+      <button class="btn btn-ghost" onclick="closeModal('income-tpl-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveIncomeTemplateFromEditor()"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> <span id="income-tpl-save-label">Add</span></button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     INCOME ENTRY (one-off) EDITOR MODAL — Phase 3
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="income-entry-modal" style="z-index:300">
+  <div class="modal" style="max-width:420px">
+    <h2><svg class="icon icon-lg" aria-hidden="true" style="color:var(--ok)"><use href="#i-banknote"></use></svg> <span id="income-entry-mode-label">Add Income Entry</span></h2>
+    <p class="subtitle">A one-off bonus, refund, gift or other non-recurring income.</p>
+
+    <div class="form-grid">
+      <div class="field form-full">
+        <label>What was it? <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+        <input type="text" id="income-entry-notes" maxlength="80" placeholder="e.g. Tax refund">
+      </div>
+      <div class="field form-full">
+        <label>Amount (£)</label>
+        <input type="number" id="income-entry-amount" step="0.01" min="0"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
+      </div>
+      <div class="field form-full">
+        <label>Date</label>
+        <input type="date" id="income-entry-date"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+      </div>
+      <div class="field form-full">
+        <label>Account *</label>
+        <select id="income-entry-account"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+          <option value="">— No accounts yet —</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="modal-footer" style="margin-top:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" id="income-entry-delete-btn" onclick="confirmDeleteIncomeEntry()" style="display:none;color:var(--danger);margin-right:auto"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
+      <button class="btn btn-ghost" onclick="closeModal('income-entry-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveIncomeEntryFromEditor()"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> <span id="income-entry-save-label">Add</span></button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     CASH FLOW CALENDAR DETAIL MODAL — Phase 3 (Option D)
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="cashflow-calendar-modal" style="z-index:300">
+  <div class="modal" style="max-width:560px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px">
+      <h2 style="margin:0"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-calendar"></use></svg> Cash flow</h2>
+      <div style="display:flex;align-items:center;gap:6px">
+        <button class="btn btn-ghost btn-sm" onclick="calendarPrevMonth()" aria-label="Previous month" style="padding:6px 9px"><svg class="icon" aria-hidden="true" style="transform:rotate(180deg)"><use href="#i-chevron-right"></use></svg></button>
+        <span id="cashflow-calendar-title" style="font-size:13px;font-weight:600;min-width:130px;text-align:center">—</span>
+        <button class="btn btn-ghost btn-sm" onclick="calendarNextMonth()" aria-label="Next month" style="padding:6px 9px"><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"></use></svg></button>
+      </div>
+    </div>
+
+    <div id="cashflow-calendar-grid"></div>
+
+    <div id="cashflow-calendar-summary"></div>
+
+    <div style="font-size:11px;color:var(--muted);margin-top:14px;line-height:1.5">
+      Cells highlight days where bills or income land on your primary account. Tap a cell to see details.
+    </div>
+
+    <div class="modal-footer" style="margin-top:14px">
+      <button class="btn btn-ghost" onclick="closeModal('cashflow-calendar-modal')">Done</button>
     </div>
   </div>
 </div>
@@ -1284,6 +1518,7 @@
     <button class="budget-subnav-btn active" data-panel="dashboard" onclick="budgetSwitchPanel('dashboard')" style="padding:7px 14px;border-radius:7px;border:none;background:transparent;color:var(--text);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer">Dashboard</button>
     <button class="budget-subnav-btn"        data-panel="bills"     onclick="budgetSwitchPanel('bills')"     style="padding:7px 14px;border-radius:7px;border:none;background:transparent;color:var(--muted);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer">Bills</button>
     <button class="budget-subnav-btn"        data-panel="spend"     onclick="budgetSwitchPanel('spend')"     style="padding:7px 14px;border-radius:7px;border:none;background:transparent;color:var(--muted);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer">Spend</button>
+    <button class="budget-subnav-btn"        data-panel="accounts"  onclick="budgetSwitchPanel('accounts')"  style="padding:7px 14px;border-radius:7px;border:none;background:transparent;color:var(--muted);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer">Accounts</button>
   </div>
 
   <!-- Backfill banner — shown when existing shares lack budget perms -->
@@ -1338,11 +1573,8 @@
       <!-- populated by renderBudgetDashboard() -->
     </div>
 
-    <!-- Phase 3 placeholder -->
-    <div style="background:var(--surface);border:1px dashed var(--border);border-radius:10px;padding:14px;margin-bottom:14px;opacity:0.55">
-      <div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Cash flow · 30 days</div>
-      <div style="font-size:13px;color:var(--muted)">Phase 3 — accounts &amp; projection</div>
-    </div>
+    <!-- Phase 3: Cash flow chart — populated by renderCashFlowChart() -->
+    <div id="budget-cashflow-card" style="margin-bottom:14px"></div>
 
     <!-- Upcoming bills -->
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden">
@@ -1467,6 +1699,48 @@
     </div><!-- /spend-content -->
 
   </div><!-- /panel-spend -->
+
+  <!-- ─── ACCOUNTS PANEL ─── -->
+  <div id="budget-panel-accounts" class="budget-panel" style="display:none">
+
+    <div style="margin-bottom:16px">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:10px">Accounts</div>
+      <div id="budget-accounts-list">
+        <!-- populated by _renderAccountsList -->
+      </div>
+
+      <details id="budget-accounts-archived-section" style="display:none;margin-top:14px">
+        <summary style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;cursor:pointer;display:flex;align-items:center;gap:8px;list-style:none">
+          <svg aria-hidden="true" style="width:12px;height:12px"><use href="#i-chevron-right"></use></svg>
+          Archived accounts
+        </summary>
+        <div id="budget-accounts-archived-list" style="margin-top:10px"></div>
+      </details>
+    </div>
+
+    <!-- Income templates -->
+    <div id="budget-income-templates-section" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:11px;font-weight:700;color:var(--ok);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase">Recurring income</div>
+        <button class="btn btn-ghost btn-sm" onclick="openIncomeTemplateEditor()" style="font-size:11px"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add income</button>
+      </div>
+      <div id="budget-income-templates-list">
+        <!-- populated by _renderIncomeTemplatesList -->
+      </div>
+    </div>
+
+    <!-- One-off income entries -->
+    <div id="budget-income-entries-section" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:11px;font-weight:700;color:var(--ok);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase">One-off income · last 30 days</div>
+        <button class="btn btn-ghost btn-sm" onclick="openIncomeEntryEditor()" style="font-size:11px"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add entry</button>
+      </div>
+      <div id="budget-income-entries-list">
+        <!-- populated by _renderIncomeEntriesList -->
+      </div>
+    </div>
+
+  </div><!-- /panel-accounts -->
 
 </div><!-- /view-budget -->
 

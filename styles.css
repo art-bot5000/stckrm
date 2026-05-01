@@ -1955,3 +1955,77 @@ body.note-open { overflow: hidden; touch-action: none; }
   /* Setup modal rows: stack name and amount */
   .budget-setup-row { flex-wrap: wrap; gap: 6px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   BUDGET — Phase 3 styles (cash flow calendar)
+   Append to the END of styles.css
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Cash flow calendar (Option D detail modal) */
+.cashflow-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+  font-family: var(--mono);
+}
+.cashflow-cal-head {
+  font-size: 9px;
+  color: var(--muted);
+  text-align: center;
+  padding: 3px 0;
+}
+.cashflow-cal-cell {
+  aspect-ratio: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 5px;
+  font-size: 9px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.cashflow-cal-cell:hover {
+  border-color: var(--muted);
+}
+.cashflow-cal-cell.muted {
+  background: transparent;
+  border-color: transparent;
+  cursor: default;
+  pointer-events: none;
+}
+.cashflow-cal-cell.is-bill {
+  background: rgba(232, 80, 80, 0.10);
+  border-color: rgba(232, 80, 80, 0.35);
+}
+.cashflow-cal-cell.is-pay {
+  background: rgba(76, 187, 138, 0.10);
+  border-color: rgba(76, 187, 138, 0.35);
+}
+.cashflow-cal-cell.is-mixed {
+  background: linear-gradient(135deg, rgba(76,187,138,0.10) 0%, rgba(76,187,138,0.10) 50%, rgba(232,80,80,0.10) 50%, rgba(232,80,80,0.10) 100%);
+  border-color: rgba(232, 168, 56, 0.35);
+}
+.cashflow-cal-cell.is-today {
+  border-color: var(--accent) !important;
+  border-width: 1.5px;
+}
+.cashflow-cal-day {
+  font-weight: 600;
+  color: var(--text);
+}
+.cashflow-cal-cell.muted .cashflow-cal-day { display: none; }
+.cashflow-cal-amt {
+  font-size: 8px;
+  font-weight: 500;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Mobile tweaks for calendar */
+@media (max-width: 700px) {
+  .cashflow-cal-cell { padding: 3px 4px; font-size: 8px; }
+  .cashflow-cal-amt { font-size: 7px; }
+}
