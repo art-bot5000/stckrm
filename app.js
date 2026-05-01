@@ -5952,6 +5952,9 @@ async function toggleSnS(id) {
 function updateSnSBanner() {
   const banner = document.getElementById('sns-banner');
   if (!banner) return;
+  // Once dismissed, the banner stays hidden forever (until user clears the
+  // flag via Settings → Reset notifications, or whatever path you've wired).
+  if (settings._snsBannerDismissed) { banner.style.display = 'none'; return; }
   const all      = analyseSnS();
   const eligible = all.filter(r => r.status === 'eligible');
   const active   = all.filter(r => r.status === 'active');
@@ -5963,22 +5966,35 @@ function updateSnSBanner() {
   const totalSaving = [...eligible, ...active].reduce((s,r) => s + (r.annualSaving||0), 0);
   const savingStr   = totalSaving > 0 ? ` — save <strong>£${totalSaving.toFixed(2)}/yr</strong>` : '';
 
+  // Dismiss X — stops propagation so it doesn't trigger switchToSavings
+  const dismissBtn = `<button onclick="event.stopPropagation();dismissSnsBanner()" title="Dismiss" style="flex-shrink:0;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:7px;padding:4px 6px;cursor:pointer;display:inline-flex;align-items:center"><svg class="icon" aria-hidden="true" style="width:13px;height:13px"><use href="#i-x"></use></svg></button>`;
+
   if (qualifies) {
     banner.innerHTML = `<div class="sns-banner" onclick="switchToSavings()">
       <div class="sns-banner-text">💰 You qualify for <strong>Amazon Subscribe &amp; Save 5%</strong> on ${total} items${savingStr}</div>
       <button class="btn btn-ghost btn-sm" style="flex-shrink:0">View savings →</button>
+      ${dismissBtn}
     </div>`;
   } else if (eligible.length > 0) {
     const needed = SNS_MIN_ITEMS - total;
     banner.innerHTML = `<div class="sns-banner" onclick="switchToSavings()">
       <div class="sns-banner-text">💡 <strong>${total} Amazon item${total!==1?'s':''}</strong> could be on Subscribe &amp; Save — ${needed} more needed for 5% discount${savingStr}</div>
       <button class="btn btn-ghost btn-sm" style="flex-shrink:0">View savings →</button>
+      ${dismissBtn}
     </div>`;
   } else {
     banner.style.display = 'none';
     return;
   }
   banner.style.display = 'block';
+}
+
+function dismissSnsBanner() {
+  const banner = document.getElementById('sns-banner');
+  if (banner) banner.style.display = 'none';
+  settings._snsBannerDismissed = true;
+  _saveSettings().then(() => kvPush().catch(() => {}));
+  setTimeout(() => toast('Subscribe & Save tip dismissed'), 200);
 }
 
 function switchToSavings() {
@@ -24524,6 +24540,7 @@ function resetFirstRunPrompts() {
   settings._setupProtectSeen     = false;
   settings._setupCountrySet      = false;
   settings._amazonBannerDismissed = false;
+  settings._snsBannerDismissed    = false;
   settings._mfaPromptDismissed   = false;
   // Also clear the legacy localStorage key for MFA
   try { localStorage.removeItem(_MFA_DISMISSED_KEY); } catch(e) {}
