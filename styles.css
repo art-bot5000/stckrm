@@ -1368,30 +1368,32 @@ body.note-open { overflow: hidden; touch-action: none; }
 .item-card.actions-open .swipe-hint { display: none; }
 .card-action-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   grid-auto-rows: 1fr;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
   height: 100%;
   align-content: center;
 }
 .card-action-tile {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 8px 6px;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 7px 10px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 10px;
   color: var(--text);
   font-family: var(--sans);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, transform 0.1s;
   min-height: 0;
+  white-space: nowrap;
+  overflow: hidden;
 }
 .card-action-tile:hover {
   background: rgba(232, 168, 56, 0.14);
@@ -1402,15 +1404,18 @@ body.note-open { overflow: hidden; touch-action: none; }
   width: 16px;
   height: 16px;
   color: var(--accent);
+  flex-shrink: 0;
 }
 .card-action-tile span {
-  text-align: center;
-  line-height: 1.15;
+  text-align: left;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* On compact view, action tiles get tighter */
 .compact-view .card-action-overlay { padding: 8px; }
-.compact-view .card-action-tile { font-size: 10px; padding: 6px 4px; }
+.compact-view .card-action-tile { font-size: 11px; padding: 6px 8px; gap: 6px; }
 .compact-view .card-action-tile .icon { width: 14px; height: 14px; }
 
 /* Mobile mobile-first: hide desktop-only meta row, keep card vertical */
