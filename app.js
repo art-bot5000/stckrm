@@ -4113,8 +4113,10 @@ function cardHTML(item, threshold) {
 
   return `
   <div class="item-card" style="border-left:3px solid ${color}" data-id="${item.id}"
-    onclick="openEditModal('${item.id}')"
-    ontouchstart="swipeStart(event,'${item.id}')" ontouchmove="swipeMove(event,'${item.id}')" ontouchend="swipeEnd(event,'${item.id}')">
+    onclick="onCardClick(event,'${item.id}')"
+    onmouseenter="onCardHoverEnter('${item.id}')"
+    onmouseleave="onCardHoverLeave('${item.id}')"
+    ontouchstart="onCardTouchStart(event,'${item.id}')" ontouchmove="onCardTouchMove(event,'${item.id}')" ontouchend="onCardTouchEnd(event,'${item.id}')" ontouchcancel="onCardTouchEnd(event,'${item.id}')">
     <div class="swipe-hint" id="swipe-hint-${item.id}"><svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg></div>
     <div class="card-inner">
       <div class="card-top">
@@ -4135,7 +4137,7 @@ function cardHTML(item, threshold) {
            </div>`;
       })()}
       ${pct !== null
-        ? `<div class="card-bar"><div class="card-bar-fill" style="width:${pct}%;background:${fillColor}"></div></div>`
+        ? `<div class="card-bar" data-card-bar><div class="card-bar-fill" style="width:${pct}%;background:${fillColor}"></div></div>`
         : ''}
       ${(lastBoughtAgo || bestPriceStr) ? `
         <div class="card-meta-desktop">
@@ -4156,6 +4158,7 @@ function cardHTML(item, threshold) {
           ${orderBtn}
         </div>
       </div>
+      ${cardActionOverlayHTML(item)}
     </div>
   </div>`;
 }
@@ -4172,6 +4175,174 @@ function _cardOrderButton(item) {
     return `<button class="card-plus-btn" onclick="openOrderFlow('${item.id}','purchase')" title="Log purchase">+1</button>`;
   }
 }
+
+// ── Card action overlay ───────────────────────────────────────
+// Hover (desktop) / long-press (mobile) reveals a blurred panel over the
+// bottom of the card with extra actions (count stock, timeline, history,
+// archive, edit). Visually anchors below the days-left bar.
+function cardActionOverlayHTML(item) {
+  const id = item.id;
+  const isArchived = !!item._archived;
+  const tiles = [
+    { icon: 'i-shopping-cart', label: 'Log Order',     onclick: `openOrderFlow('${id}','purchase')` },
+    { icon: 'i-hash',          label: 'Count Stock',   onclick: `openStockCountModal('${id}')` },
+    { icon: 'i-bar-chart-2',   label: 'Order Timeline', onclick: `openAnalyticsModal('${id}')` },
+    { icon: 'i-banknote',      label: 'Price History', onclick: `openPriceHistoryModal('${id}')` },
+    { icon: 'i-archive',       label: isArchived ? 'Restore' : 'Archive',
+      onclick: isArchived ? `restoreItem('${id}')` : `archiveItem('${id}')` },
+    { icon: 'i-pencil',        label: 'Edit Details',  onclick: `openEditModal('${id}')` },
+  ];
+  return `<div class="card-action-overlay" data-overlay onclick="event.stopPropagation()">
+    <div class="card-action-grid">
+      ${tiles.map(t => `
+        <button type="button" class="card-action-tile" onclick="event.stopPropagation();_dismissCardActions('${id}');${t.onclick}">
+          <svg class="icon" aria-hidden="true"><use href="#${t.icon}"></use></svg>
+          <span>${t.label}</span>
+        </button>`).join('')}
+    </div>
+  </div>`;
+}
+
+// ── Card interaction state ────────────────────────────────────
+const _cardActionState = {
+  // id → { hoverTimer, longPressTimer, longPressFired, suppressClick }
+  by: {},
+};
+const CARD_HOVER_DELAY_MS    = 350;  // hover dwell before showing
+const CARD_LONG_PRESS_MS     = 500;  // press duration to trigger
+const CARD_LONG_PRESS_TOLERANCE = 8; // px of finger movement allowed before cancel
+
+function _getCardEl(id) {
+  return document.querySelector(`.item-card[data-id="${id}"]`);
+}
+
+// Position the overlay so it covers everything from below the days-left bar
+// to the bottom of the card. Sets a CSS variable read by .card-action-overlay.
+function _positionCardOverlay(card) {
+  if (!card) return;
+  const bar = card.querySelector('[data-card-bar]');
+  if (!bar) {
+    card.style.setProperty('--card-overlay-top', '50%');
+    return;
+  }
+  // Distance from the top of .card-inner to the bottom of the bar
+  const inner = card.querySelector('.card-inner');
+  const innerRect = inner.getBoundingClientRect();
+  const barRect   = bar.getBoundingClientRect();
+  const top = Math.max(0, (barRect.bottom - innerRect.top) + 8); // 8px breathing room
+  card.style.setProperty('--card-overlay-top', `${top}px`);
+}
+
+function _showCardActions(id) {
+  const card = _getCardEl(id);
+  if (!card) return;
+  // Hide any others that might be open
+  document.querySelectorAll('.item-card.actions-open').forEach(el => {
+    if (el !== card) el.classList.remove('actions-open');
+  });
+  _positionCardOverlay(card);
+  card.classList.add('actions-open');
+}
+
+function _dismissCardActions(id) {
+  if (id) {
+    const card = _getCardEl(id);
+    if (card) card.classList.remove('actions-open');
+    const st = _cardActionState.by[id];
+    if (st) {
+      clearTimeout(st.hoverTimer);
+      clearTimeout(st.longPressTimer);
+      st.hoverTimer = null; st.longPressTimer = null;
+    }
+  } else {
+    document.querySelectorAll('.item-card.actions-open').forEach(el => el.classList.remove('actions-open'));
+  }
+}
+
+// ── Click on the card body ────────────────────────────────────
+// Suppress the open-edit click if a long-press just fired (touch path);
+// otherwise always open the edit modal (and dismiss any open overlay first).
+function onCardClick(event, id) {
+  const st = _cardActionState.by[id] || {};
+  if (st.suppressClick) {
+    st.suppressClick = false;
+    return;
+  }
+  _dismissCardActions(id);
+  openEditModal(id);
+}
+
+// ── Desktop hover ─────────────────────────────────────────────
+function onCardHoverEnter(id) {
+  // Only on devices that can actually hover (not coarse touch)
+  if (!window.matchMedia || !window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+  const st = _cardActionState.by[id] || (_cardActionState.by[id] = {});
+  clearTimeout(st.hoverTimer);
+  st.hoverTimer = setTimeout(() => _showCardActions(id), CARD_HOVER_DELAY_MS);
+}
+
+function onCardHoverLeave(id) {
+  const st = _cardActionState.by[id];
+  if (st) clearTimeout(st.hoverTimer);
+  _dismissCardActions(id);
+}
+
+// ── Mobile long-press ─────────────────────────────────────────
+// Coexists with the existing right-swipe to log purchase. The long-press
+// is cancelled the moment swipeMove acquires a horizontal lock, so a user
+// who swipes won't accidentally trigger the actions panel.
+function onCardTouchStart(event, id) {
+  swipeStart(event, id);
+  const st = _cardActionState.by[id] || (_cardActionState.by[id] = {});
+  st.longPressFired = false;
+  const t = event.touches[0];
+  st.startX = t.clientX;
+  st.startY = t.clientY;
+  clearTimeout(st.longPressTimer);
+  st.longPressTimer = setTimeout(() => {
+    st.longPressFired = true;
+    st.suppressClick = true;
+    _showCardActions(id);
+    if (navigator.vibrate) navigator.vibrate(20);
+  }, CARD_LONG_PRESS_MS);
+}
+
+function onCardTouchMove(event, id) {
+  swipeMove(event, id);
+  const st = _cardActionState.by[id];
+  if (!st || !st.longPressTimer) return;
+  // Cancel long-press if the finger moved beyond tolerance OR the swipe
+  // handler has decided this gesture is horizontal.
+  const t = event.touches[0];
+  const dx = Math.abs(t.clientX - (st.startX || 0));
+  const dy = Math.abs(t.clientY - (st.startY || 0));
+  const swState = (typeof swipeState !== 'undefined') ? swipeState[id] : null;
+  if (dx > CARD_LONG_PRESS_TOLERANCE || dy > CARD_LONG_PRESS_TOLERANCE || (swState && swState.locked === 'h')) {
+    clearTimeout(st.longPressTimer);
+    st.longPressTimer = null;
+  }
+}
+
+function onCardTouchEnd(event, id) {
+  swipeEnd(event, id);
+  const st = _cardActionState.by[id];
+  if (st) {
+    clearTimeout(st.longPressTimer);
+    st.longPressTimer = null;
+  }
+}
+
+// Dismiss any open overlay when clicking outside any card
+document.addEventListener('click', (e) => {
+  if (!e.target.closest || !e.target.closest('.item-card.actions-open')) {
+    _dismissCardActions();
+  }
+}, true);
+
+// Escape key dismisses
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') _dismissCardActions();
+});
 
 function storePricesCardHTML(item) {
   const prices = (item.storePrices || []).filter(sp => sp.store && sp.price);
