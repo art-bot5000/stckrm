@@ -254,6 +254,8 @@
           </label>
         </div>
         <div id="bill-amount-hint" style="font-size:11px;color:var(--muted);margin-top:4px;display:none">For variable bills (e.g. gas/elec), enter your typical amount as the estimate.</div>
+        <!-- Phase 4.5: history sparkline for variable bills -->
+        <div id="bill-sparkline-host" style="display:none"></div>
       </div>
 
       <div class="field form-full">
@@ -374,6 +376,77 @@
     <div class="modal-footer" style="margin-top:16px">
       <button class="btn btn-ghost" onclick="closeModal('mark-income-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="confirmMarkIncomeReceived()"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> Confirm</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     BILL OVERRIDE MODAL — Phase 4.5
+     One-off override of expectedAmount for a single bill instance.
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="bill-override-modal" style="z-index:310">
+  <div class="modal" style="max-width:380px">
+    <h2 style="font-size:18px;margin-bottom:6px"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-pencil"></use></svg> Override amount</h2>
+    <p class="subtitle" id="bo-subtitle">—</p>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.5">
+      Template amount: <span id="bo-template-amount" style="color:var(--text);font-family:var(--mono);font-weight:600">—</span>
+      <br>This change applies to this month only and doesn't affect the template.
+    </div>
+    <div class="field" style="text-align:left;margin-bottom:8px">
+      <label>This month's expected amount (£)</label>
+      <input type="number" id="bo-amount" step="0.01" min="0" placeholder="0.00"
+        style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
+    </div>
+    <div class="modal-footer" style="margin-top:16px;display:flex;align-items:center;gap:10px">
+      <button class="btn btn-ghost btn-sm" onclick="resetBillOverride()" style="margin-right:auto;font-size:11px">Reset to template</button>
+      <button class="btn btn-ghost" onclick="closeModal('bill-override-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmBillOverride()"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> Save</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     CSV EXPORT MODAL — Phase 4.5
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="csv-export-modal" style="z-index:300">
+  <div class="modal" style="max-width:440px">
+    <h2><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-download"></use></svg> Export to CSV</h2>
+    <p class="subtitle">Download bills, transactions, and income as a single CSV file.</p>
+
+    <div class="form-grid">
+      <div class="field form-full">
+        <label>Date range</label>
+        <select id="csv-export-range" onchange="csvExportRangeChanged()"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+          <option value="last30" selected>Last 30 days</option>
+          <option value="last90">Last 90 days</option>
+          <option value="this_year">This year</option>
+          <option value="last_year">Last year</option>
+          <option value="all_time">All time</option>
+          <option value="custom">Custom range…</option>
+        </select>
+      </div>
+      <div class="field form-full" id="csv-export-custom-row">
+        <label>From</label>
+        <input type="date" id="csv-export-start"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+      </div>
+      <div class="field form-full">
+        <label>To</label>
+        <input type="date" id="csv-export-end"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+      </div>
+    </div>
+
+    <div style="font-size:11px;color:var(--muted);margin-top:14px;line-height:1.5">
+      The CSV has three sections (bills, transactions, income) and uses RFC 4180 encoding — opens cleanly in Excel, Google Sheets, or any spreadsheet app.
+    </div>
+
+    <div class="modal-footer" style="margin-top:14px">
+      <button class="btn btn-ghost" onclick="closeModal('csv-export-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmCsvExport()"><svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg> Download</button>
     </div>
   </div>
 </div>
@@ -1805,6 +1878,15 @@
       <div id="budget-income-entries-list">
         <!-- populated by _renderIncomeEntriesList -->
       </div>
+    </div>
+
+    <!-- Phase 4.5: Data export -->
+    <div style="margin-top:24px;padding-top:14px;border-top:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase">Data</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="openCsvExportModal()" style="font-size:12px"><svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg> Export to CSV</button>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px">Bills, transactions, and income for any date range — opens in Excel or Sheets.</div>
     </div>
 
   </div><!-- /panel-accounts -->

@@ -17160,6 +17160,441 @@ renderBudgetDashboard = function() {
 };
 
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  BUDGET — Phase 4.5 Polish
+//  - Year-over-year category comparison on tiles
+//  - CSV export
+//  - Variable bill amount history sparkline
+//  - Bill instance one-off override
+//
+//  Insertion point: in app.js, IMMEDIATELY AFTER the Phase 4b BUDGET UI block
+//  (just before the GROCERY LIST section).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── State ──────────────────────────────────────────────────────────────────
+let _billOverrideContext   = null;   // { yyyymm, billId, dueDate, original }
+let _csvExportRange        = 'last30'; // dropdown state
+
+// ── Year-over-year category comparison ─────────────────────────────────────
+//
+// Returns { prior: number, delta: number } where:
+//   prior = total spent for category in the same period one year ago
+//   delta = current - prior (positive = spent more this year)
+// Returns null if no transactions in the prior period (don't surface "vs £0").
+
+function getCategoryYoYComparison(categoryId, startIso, endIso) {
+  const priorStart = _shiftIsoYear(startIso, -1);
+  const priorEnd   = _shiftIsoYear(endIso,   -1);
+  const priorSpend = getSpendForCategoryInRange(priorStart, priorEnd, categoryId);
+  if (priorSpend === 0) return null;
+  const currentSpend = getSpendForCategoryInRange(startIso, endIso, categoryId);
+  return {
+    prior: Math.round(priorSpend * 100) / 100,
+    delta: Math.round((currentSpend - priorSpend) * 100) / 100,
+    priorStartIso: priorStart,
+    priorEndIso:   priorEnd,
+  };
+}
+
+function _shiftIsoYear(iso, delta) {
+  // 'YYYY-MM-DD' → shifted year. Handles Feb 29 → Feb 28 in non-leap years.
+  const y = parseInt(iso.slice(0, 4), 10);
+  const m = parseInt(iso.slice(5, 7), 10);
+  const d = parseInt(iso.slice(8, 10), 10);
+  const newYear = y + delta;
+  // Days in the target month/year
+  const daysInTarget = new Date(newYear, m, 0).getDate();
+  const newDay = Math.min(d, daysInTarget);
+  return `${newYear}-${String(m).padStart(2,'0')}-${String(newDay).padStart(2,'0')}`;
+}
+
+// Wrap _renderCategoryTile to append a YoY delta line when applicable
+const _phase45OrigRenderCategoryTile = _renderCategoryTile;
+_renderCategoryTile = function(cat, startIso, endIso, period, clickable) {
+  const baseHtml = _phase45OrigRenderCategoryTile.call(this, cat, startIso, endIso, period, clickable);
+  // Skip for tiles in the Spend panel (which has its own period nav and doesn't
+  // need YoY noise). Heuristic: only show on dashboard tiles, identified by
+  // !clickable (Spend panel tiles are clickable for category filter).
+  if (clickable) return baseHtml;
+  const yoy = getCategoryYoYComparison(cat.id, startIso, endIso);
+  if (!yoy) return baseHtml;
+  // Build the delta line
+  const sign = yoy.delta > 0 ? '+' : '';
+  const color = yoy.delta > 5 ? 'var(--danger)'
+              : yoy.delta < -5 ? 'var(--ok)'
+              : 'var(--muted)';
+  const moreOrLess = yoy.delta > 0 ? 'more' : (yoy.delta < 0 ? 'less' : 'same');
+  const priorLabel = (() => {
+    // Compact label: "vs Apr 24" or "vs May 25" etc.
+    const d = new Date(yoy.priorStartIso + 'T12:00:00');
+    return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+  })();
+  const deltaLine = `
+    <div style="font-size:10px;color:${color};font-family:var(--mono);margin-top:4px">
+      ${sign}${_money(yoy.delta)} ${moreOrLess} vs ${priorLabel}
+    </div>`;
+  // Inject just before the closing </div> of the tile (after the bar div)
+  return baseHtml.replace(/(<\/div>)(\s*<\/div>)$/, '$1' + deltaLine + '$2');
+};
+
+// ── CSV export ─────────────────────────────────────────────────────────────
+//
+// Exports bills paid, transactions, and income entries within a date range to
+// a single CSV file. Three sections concatenated, each with its own header row.
+
+function openCsvExportModal() {
+  // Default range: last 30 days
+  const today = new Date();
+  const past = new Date(today.getTime() - 30 * 86400000);
+  document.getElementById('csv-export-start').value = past.toISOString().slice(0, 10);
+  document.getElementById('csv-export-end').value   = today.toISOString().slice(0, 10);
+  _csvExportRange = 'last30';
+  csvExportRangeChanged();
+  openModal('csv-export-modal');
+}
+
+function csvExportRangeChanged() {
+  const range = document.getElementById('csv-export-range').value;
+  _csvExportRange = range;
+  const today = new Date();
+  let start, end;
+  if (range === 'last30') {
+    end   = today;
+    start = new Date(today.getTime() - 30 * 86400000);
+  } else if (range === 'last90') {
+    end   = today;
+    start = new Date(today.getTime() - 90 * 86400000);
+  } else if (range === 'this_year') {
+    end   = today;
+    start = new Date(today.getFullYear(), 0, 1);
+  } else if (range === 'last_year') {
+    start = new Date(today.getFullYear() - 1, 0, 1);
+    end   = new Date(today.getFullYear() - 1, 11, 31);
+  } else if (range === 'all_time') {
+    start = new Date(2000, 0, 1);
+    end   = today;
+  } else {
+    // 'custom' — leave fields editable
+    document.getElementById('csv-export-custom-row').style.display = 'block';
+    return;
+  }
+  document.getElementById('csv-export-start').value = start.toISOString().slice(0, 10);
+  document.getElementById('csv-export-end').value   = end.toISOString().slice(0, 10);
+  document.getElementById('csv-export-custom-row').style.display = (range === 'custom') ? 'block' : 'none';
+}
+
+function _csvEscape(value) {
+  if (value == null) return '';
+  const s = String(value);
+  // RFC 4180: wrap in quotes if contains comma, quote, or newline; double internal quotes
+  if (/[",\n\r]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+function _buildCsvSection(title, headers, rows) {
+  const lines = [];
+  lines.push(`# ${title}`);
+  lines.push(headers.map(_csvEscape).join(','));
+  for (const row of rows) {
+    lines.push(row.map(_csvEscape).join(','));
+  }
+  return lines.join('\n');
+}
+
+function generateCsvExport(startIso, endIso) {
+  const sections = [];
+
+  // Bills paid section
+  const billRows = [];
+  for (const yyyymm of Object.keys(billInstances)) {
+    for (const inst of Object.values(billInstances[yyyymm])) {
+      const eventDate = inst.paidAt ? inst.paidAt.slice(0, 10) : inst.dueDate;
+      if (eventDate < startIso || eventDate > endIso) continue;
+      if (inst.skipped) continue; // skipped = not really an event
+      const tpl = bills.find(b => b.id === inst.billId);
+      const amount = inst.actualAmount ?? inst.expectedAmount ?? 0;
+      billRows.push([
+        inst.dueDate,
+        tpl?.name || '(deleted bill)',
+        amount.toFixed(2),
+        inst.paidAt ? 'paid' : 'expected',
+        inst.paidAt ? inst.paidAt.slice(0, 10) : '',
+        tpl?.notes || '',
+      ]);
+    }
+  }
+  billRows.sort((a, b) => a[0].localeCompare(b[0]));
+  sections.push(_buildCsvSection(
+    'BILLS',
+    ['Due date', 'Name', 'Amount (£)', 'Status', 'Paid date', 'Notes'],
+    billRows,
+  ));
+
+  // Transactions section
+  const txRows = [];
+  for (const yyyymm of Object.keys(transactions || {})) {
+    for (const tx of Object.values(transactions[yyyymm])) {
+      if (tx.date < startIso || tx.date > endIso) continue;
+      const cat = getBudgetCategoryById(tx.categoryId);
+      txRows.push([
+        tx.date,
+        tx.where || '',
+        (tx.amount || 0).toFixed(2),
+        cat?.name || '',
+        tx.notes || '',
+      ]);
+    }
+  }
+  txRows.sort((a, b) => a[0].localeCompare(b[0]));
+  sections.push(_buildCsvSection(
+    'TRANSACTIONS',
+    ['Date', 'Where', 'Amount (£)', 'Category', 'Notes'],
+    txRows,
+  ));
+
+  // Income entries section
+  const incomeRows = [];
+  for (const yyyymm of Object.keys(incomeEntries || {})) {
+    for (const entry of Object.values(incomeEntries[yyyymm])) {
+      const eventDate = entry.paidAt ? entry.paidAt.slice(0, 10) : entry.date;
+      if (eventDate < startIso || eventDate > endIso) continue;
+      const tpl = entry.templateId ? getIncomeTemplateById(entry.templateId) : null;
+      const acc = getAccountById(entry.accountId);
+      const amount = entry.actualAmount ?? entry.amount ?? 0;
+      incomeRows.push([
+        entry.date,
+        entry.notes || tpl?.name || 'Income',
+        amount.toFixed(2),
+        entry.paidAt ? 'received' : 'expected',
+        entry.paidAt ? entry.paidAt.slice(0, 10) : '',
+        acc?.name || '',
+      ]);
+    }
+  }
+  incomeRows.sort((a, b) => a[0].localeCompare(b[0]));
+  sections.push(_buildCsvSection(
+    'INCOME',
+    ['Date', 'Source', 'Amount (£)', 'Status', 'Received date', 'Account'],
+    incomeRows,
+  ));
+
+  // Header with metadata
+  const header = [
+    `# STOCKROOM Budget Export`,
+    `# Range: ${startIso} to ${endIso}`,
+    `# Generated: ${new Date().toISOString()}`,
+    '',
+  ].join('\n');
+
+  return header + sections.join('\n\n') + '\n';
+}
+
+function confirmCsvExport() {
+  const startIso = document.getElementById('csv-export-start').value;
+  const endIso   = document.getElementById('csv-export-end').value;
+  if (!startIso || !endIso) { toast('Pick a date range'); return; }
+  if (startIso > endIso)    { toast('Start must be before end'); return; }
+
+  const csv = generateCsvExport(startIso, endIso);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `stockroom-budget-${startIso}-to-${endIso}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  closeModal('csv-export-modal');
+  toast('CSV downloaded');
+}
+
+// ── Variable bill amount history sparkline ─────────────────────────────────
+//
+// Returns last N actual amounts paid for a given bill id, sorted oldest-first.
+
+function getBillActualHistory(billId, max = 6) {
+  const history = [];
+  for (const yyyymm of Object.keys(billInstances)) {
+    for (const inst of Object.values(billInstances[yyyymm])) {
+      if (inst.billId !== billId) continue;
+      if (!inst.paidAt) continue;
+      if (inst.actualAmount == null) continue;
+      history.push({ date: inst.paidAt.slice(0, 10), amount: inst.actualAmount });
+    }
+  }
+  history.sort((a, b) => a.date.localeCompare(b.date));
+  return history.slice(-max);
+}
+
+function _renderBillSparkline(billId) {
+  const history = getBillActualHistory(billId, 6);
+  if (history.length < 2) {
+    return ''; // need at least 2 points to draw a line
+  }
+  const W = 240, H = 50;
+  const padX = 4, padY = 8;
+  const innerW = W - padX * 2;
+  const innerH = H - padY * 2;
+  const amounts = history.map(h => h.amount);
+  const minA = Math.min(...amounts);
+  const maxA = Math.max(...amounts);
+  const range = (maxA - minA) || 1;
+  const mean = amounts.reduce((s, a) => s + a, 0) / amounts.length;
+
+  const xFor = (i) => padX + (i / (history.length - 1)) * innerW;
+  const yFor = (a) => padY + (1 - (a - minA) / range) * innerH;
+
+  const linePoints = history.map((h, i) => `${xFor(i).toFixed(1)},${yFor(h.amount).toFixed(1)}`).join(' ');
+  const meanY = yFor(mean).toFixed(1);
+
+  const dots = history.map((h, i) => {
+    const cx = xFor(i).toFixed(1);
+    const cy = yFor(h.amount).toFixed(1);
+    return `<circle cx="${cx}" cy="${cy}" r="2.5" fill="var(--accent2)"/>`;
+  }).join('');
+
+  const minLabel = `<text x="${padX}" y="${(yFor(minA) - 2).toFixed(1)}" font-size="9" font-family="var(--mono)" fill="var(--muted)">${_money(minA)}</text>`;
+  const maxLabel = `<text x="${padX}" y="${(yFor(maxA) + 9).toFixed(1)}" font-size="9" font-family="var(--mono)" fill="var(--muted)">${_money(maxA)}</text>`;
+
+  return `
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-top:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px">Last ${history.length} actual${history.length === 1 ? '' : 's'}</span>
+        <span style="font-size:10px;color:var(--muted);font-family:var(--mono)">avg ${_money(mean)}</span>
+      </div>
+      <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" aria-hidden="true" style="display:block">
+        <line x1="${padX}" y1="${meanY}" x2="${W - padX}" y2="${meanY}" stroke="var(--muted)" stroke-width="0.5" stroke-dasharray="2,3" opacity="0.5"/>
+        <polyline points="${linePoints}" fill="none" stroke="var(--accent2)" stroke-width="1.5"/>
+        ${dots}
+      </svg>
+    </div>`;
+}
+
+// Wrap openBillEditor (final layer) to render the sparkline when the bill is variable
+const _phase45OrigOpenBillEditor = openBillEditor;
+openBillEditor = function(billId = null) {
+  _phase45OrigOpenBillEditor.call(this, billId);
+  setTimeout(() => {
+    const sparkHost = document.getElementById('bill-sparkline-host');
+    if (!sparkHost) return;
+    if (!billId) { sparkHost.innerHTML = ''; sparkHost.style.display = 'none'; return; }
+    const tpl = bills.find(b => b.id === billId);
+    if (!tpl || !tpl.variableAmount) {
+      sparkHost.innerHTML = '';
+      sparkHost.style.display = 'none';
+      return;
+    }
+    const html = _renderBillSparkline(billId);
+    if (!html) { sparkHost.innerHTML = ''; sparkHost.style.display = 'none'; return; }
+    sparkHost.innerHTML = html;
+    sparkHost.style.display = 'block';
+  }, 10);
+};
+
+// ── Bill instance one-off override ─────────────────────────────────────────
+//
+// Lets user set this month's expectedAmount different from the template, without
+// marking paid. Useful when you know in advance: "this month's electricity is £200."
+
+function openBillOverrideModal(yyyymm, billId, dueDate) {
+  const inst = _getInstance(yyyymm, billId, dueDate);
+  if (!inst) return;
+  const tpl  = bills.find(b => b.id === billId);
+  if (!tpl) return;
+  _billOverrideContext = { yyyymm, billId, dueDate: inst.dueDate, original: tpl.amount };
+  document.getElementById('bo-subtitle').textContent =
+    `${tpl.name} — due ${_shortDate(inst.dueDate)}`;
+  document.getElementById('bo-template-amount').textContent = _money(tpl.amount);
+  const amtIn = document.getElementById('bo-amount');
+  amtIn.value = inst.expectedAmount ?? tpl.amount;
+  openModal('bill-override-modal');
+  setTimeout(() => amtIn.select(), 50);
+}
+
+async function confirmBillOverride() {
+  const ctx = _billOverrideContext;
+  if (!ctx) return;
+  const amt = parseFloat(document.getElementById('bo-amount').value);
+  if (isNaN(amt) || amt < 0) { toast('Enter a valid amount'); return; }
+  await _setInstance(ctx.yyyymm, ctx.billId, { expectedAmount: amt }, ctx.dueDate);
+  closeModal('bill-override-modal');
+  _billOverrideContext = null;
+  toast('Amount overridden for this month');
+  if (_currentView === 'budget') await renderBudget();
+}
+
+async function resetBillOverride() {
+  const ctx = _billOverrideContext;
+  if (!ctx) return;
+  await _setInstance(ctx.yyyymm, ctx.billId, { expectedAmount: ctx.original }, ctx.dueDate);
+  closeModal('bill-override-modal');
+  _billOverrideContext = null;
+  toast('Reset to template amount');
+  if (_currentView === 'budget') await renderBudget();
+}
+
+// Override _renderBillRow to: (a) add an override-amount button when unpaid,
+// (b) mark overridden instances with an OVERRIDE tag.
+const _phase45OrigRenderBillRow = _renderBillRow;
+_renderBillRow = function(inst, opts = {}) {
+  let html = _phase45OrigRenderBillRow.call(this, inst, opts);
+  const tpl = bills.find(b => b.id === inst.billId);
+  if (!tpl) return html;
+  const yyyymm = _yyyymmFromString(inst.dueDate);
+
+  // (a) Inject the override button when unpaid + not skipped
+  if (!inst.paidAt && !inst.skipped) {
+    const overrideBtn = `<button class="bill-action-btn" onclick="event.stopPropagation();openBillOverrideModal('${yyyymm}','${inst.billId}','${inst.dueDate}')" title="Override amount this month" style="font-size:10px;font-family:var(--mono);font-weight:700">±£</button>`;
+    // Insert before the existing edit button (matches `bill-action-edit` class)
+    html = html.replace(/(<button[^>]*bill-action-btn bill-action-edit[^<]*<\/button>)/, `${overrideBtn}$1`);
+  }
+
+  // (b) Mark overridden instances visually
+  if (inst.expectedAmount != null && Math.abs(inst.expectedAmount - tpl.amount) > 0.01) {
+    const tag = `<span class="bill-tag" style="background:rgba(232,168,56,0.15);color:var(--accent);border-color:rgba(232,168,56,0.3);font-size:9px">OVERRIDE</span>`;
+    // Inject just before the closing </div> of the .bill-name div. Use a
+    // non-greedy match across nested HTML inside the bill-name (which can
+    // contain a variableTag span).
+    html = html.replace(/(<div class="bill-name">[\s\S]*?)(<\/div>)/, `$1 ${tag}$2`);
+  }
+  return html;
+};
+
+// ── Diagnostics ────────────────────────────────────────────────────────────
+if (typeof window !== 'undefined') {
+  window.budgetPhase45Diag = function () {
+    const billsWithOverrides = [];
+    for (const yyyymm of Object.keys(billInstances)) {
+      for (const inst of Object.values(billInstances[yyyymm])) {
+        const tpl = bills.find(b => b.id === inst.billId);
+        if (!tpl) continue;
+        if (inst.expectedAmount != null && Math.abs(inst.expectedAmount - tpl.amount) > 0.01) {
+          billsWithOverrides.push({
+            name: tpl.name,
+            month: yyyymm,
+            template: tpl.amount,
+            override: inst.expectedAmount,
+          });
+        }
+      }
+    }
+    return {
+      billsWithOverrides,
+      categoriesWithYoYData: budgetCategories.filter(c => !c.archived).map(c => {
+        const today = new Date();
+        const startIso = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-01`;
+        const endIso   = today.toISOString().slice(0, 10);
+        const yoy = getCategoryYoYComparison(c.id, startIso, endIso);
+        return { name: c.name, yoy };
+      }).filter(x => x.yoy != null),
+    };
+  };
+}
+
+
 // ═══════════════════════════════════════════════════════════
 //  GROCERY LIST
 // ═══════════════════════════════════════════════════════════
