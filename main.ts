@@ -409,6 +409,62 @@ async function pruneR2Snapshots(): Promise<{ kept: number; pruned: number }> {
   return { kept: keep.size, pruned };
 }
 
+// ── Per-user prune ────────────────────────────────────────────
+// Same retention rules as the whole-DB prune but applied to a single
+// user's snapshot prefix. Pre-restore snapshots (label='pre-restore')
+// and pre-delete snapshots (label='pre-delete') are always kept — they
+// represent the safety net before destructive operations.
+async function pruneR2SnapshotsForUser(emailHash: string): Promise<{ kept: number; pruned: number }> {
+  if (!r2Configured() || !emailHash) return { kept: 0, pruned: 0 };
+  const all = await listR2Snapshots(`user-backup/${emailHash}/`);
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  const keep = new Set<string>();
+  const dailyChosen  = new Map<string, string>();
+  const weeklyChosen = new Map<string, string>();
+
+  for (const s of all) {
+    // Always keep safety snapshots — they're rare and important
+    const fname = (s.key.split('/').pop() || '').toLowerCase();
+    if (fname.startsWith('pre-restore') || fname.startsWith('pre-delete')) {
+      keep.add(s.key);
+      continue;
+    }
+    const t = new Date(s.lastModified).getTime();
+    const ageMs = now - t;
+    if (ageMs <= day) {
+      // Tier 1 — last 24h: keep all
+      keep.add(s.key);
+    } else if (ageMs <= 30 * day) {
+      // Tier 2 — 1d to 30d: keep the latest snapshot per UTC day
+      const d = new Date(t);
+      const dayKey = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+      dailyChosen.set(dayKey, s.key);
+    } else if (ageMs <= 90 * day) {
+      // Tier 3 — 30d to 90d: keep one per ISO week
+      const d = new Date(t);
+      const tmp = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+      tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay()||7));
+      const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(),0,1));
+      const weekNo = Math.ceil(((tmp.getTime()-yearStart.getTime())/86400000 + 1)/7);
+      const weekKey = `${tmp.getUTCFullYear()}-W${String(weekNo).padStart(2,'0')}`;
+      weeklyChosen.set(weekKey, s.key);
+    }
+    // Older than 90d: not kept — falls through to prune
+  }
+  for (const k of dailyChosen.values()) keep.add(k);
+  for (const k of weeklyChosen.values()) keep.add(k);
+
+  let pruned = 0;
+  for (const s of all) {
+    if (!keep.has(s.key)) {
+      const ok = await deleteR2Snapshot(s.key);
+      if (ok) pruned++;
+    }
+  }
+  return { kept: keep.size, pruned };
+}
+
 // ── Restore from a snapshot ───────────────────────────────
 // SAFETY: takes a pre-restore snapshot first (labelled 'pre-restore')
 // so a bad restore can be undone. Restore overwrites only the durable
@@ -461,9 +517,13 @@ async function backupUserToR2(emailHash: string, label: string = 'manual'): Prom
   if (!emailHash || typeof emailHash !== 'string') return { ok: false, error: 'Invalid emailHash' };
   try {
     const collected: Array<{ key: any; value: any }> = [];
-    // First pass: every user-keyed entry across the durable prefixes
+    // First pass: every user-keyed entry across the durable prefixes (skip
+    // the share* family — they're keyed by share code, joined separately
+    // below — and user_email which is keyed by plaintext email, joined
+    // via reverse-value match).
+    const skipPrefixes = new Set(['user_email', 'share', 'share_key', 'share_data']);
     for (const prefix of R2_DURABLE_PREFIXES) {
-      if (prefix === 'user_email') continue; // handled separately, indexed by email not hash
+      if (skipPrefixes.has(prefix)) continue;
       const iter = kv.list({ prefix: [prefix] });
       for await (const entry of iter) {
         if (Array.isArray(entry.key) && entry.key[1] === emailHash) {
@@ -471,13 +531,47 @@ async function backupUserToR2(emailHash: string, label: string = 'manual'): Prom
         }
       }
     }
-    // Second pass: pull the email→hash reverse-map entry. We don't have the
-    // email plaintext directly, but the user record stores it (and crucially
-    // a 'user_email' value === emailHash), so a single forward scan finds it.
+    // Second pass: email→hash reverse-map entry. value === emailHash for
+    // the row we want.
     const emailIter = kv.list({ prefix: ['user_email'] });
     for await (const entry of emailIter) {
       if (entry.value === emailHash) {
         collected.push({ key: entry.key, value: entry.value });
+      }
+    }
+    // Third pass: shares this user OWNS. We scan the `share` index, parse
+    // each value's ownerEmailHash, and for matches pull the matching
+    // `share_key/{code}/{owner}` and `share_data/{code}/*` entries. This is
+    // an O(total_shares) scan — fine at the scale of consumer apps.
+    const ownedShareCodes: string[] = [];
+    const shareIter = kv.list({ prefix: ['share'] });
+    for await (const entry of shareIter) {
+      // The 'share' prefix matches both ['share', code] and ['share_data', ...].
+      // Filter strictly to the 2-element owner-record shape.
+      if (!Array.isArray(entry.key) || entry.key.length !== 2 || entry.key[0] !== 'share') continue;
+      try {
+        const parsed = JSON.parse(entry.value as string);
+        if (parsed?.ownerEmailHash === emailHash) {
+          collected.push({ key: entry.key, value: entry.value });
+          ownedShareCodes.push(entry.key[1] as string);
+        }
+      } catch (_) { /* non-JSON share entry — skip */ }
+    }
+    if (ownedShareCodes.length) {
+      const codeSet = new Set(ownedShareCodes.map(c => c.toUpperCase()));
+      // share_key entries
+      const shareKeyIter = kv.list({ prefix: ['share_key'] });
+      for await (const entry of shareKeyIter) {
+        if (Array.isArray(entry.key) && codeSet.has((entry.key[1] as string)?.toUpperCase?.() || '')) {
+          collected.push({ key: entry.key, value: entry.value });
+        }
+      }
+      // share_data entries (encrypted blob plus modified-timestamp markers)
+      const shareDataIter = kv.list({ prefix: ['share_data'] });
+      for await (const entry of shareDataIter) {
+        if (Array.isArray(entry.key) && codeSet.has((entry.key[1] as string)?.toUpperCase?.() || '')) {
+          collected.push({ key: entry.key, value: entry.value });
+        }
       }
     }
     const snapshot = {
@@ -488,15 +582,13 @@ async function backupUserToR2(emailHash: string, label: string = 'manual'): Prom
         createdAt: new Date().toISOString(),
         label,
         prefixes: R2_DURABLE_PREFIXES,
+        ownedShareCodes,
       },
       entries: collected,
     };
     const json = JSON.stringify(snapshot);
     const body = new TextEncoder().encode(json);
     const ts  = new Date().toISOString().replace(/[:.]/g, '-');
-    // Per-user snapshots namespaced under user-backup/{emailHash}/ so the
-    // standard prune / list paths over auto/manual/pre-restore prefixes
-    // don't pick them up.
     const key = `user-backup/${emailHash}/${label}-${ts}.json`;
     const res = await r2Fetch('PUT', key, body, { 'content-type': 'application/json' });
     if (!res.ok) {
@@ -530,20 +622,30 @@ async function restoreUserFromR2Snapshot(emailHash: string, snapshotKey: string)
     return { ok: false, error: 'Snapshot metadata emailHash does not match request' };
   }
   // 3. Validate every entry — refuse to restore if any entry doesn't match.
-  // This catches a malformed or maliciously-edited snapshot.
+  // Share entries are allowed if the snapshot's metadata declares the share
+  // code as owned by this user. This is the same join we do in backup.
+  const ownedShareCodes = new Set<string>(
+    Array.isArray(snap.data.meta?.ownedShareCodes)
+      ? (snap.data.meta.ownedShareCodes as string[]).map(c => c.toUpperCase())
+      : []
+  );
   for (const e of entries) {
     if (!Array.isArray(e.key)) {
       return { ok: false, error: 'Invalid entry: key is not an array' };
     }
-    const isUserKey = e.key[1] === emailHash;
-    const isReverseMap = e.key[0] === 'user_email' && e.value === emailHash;
-    if (!isUserKey && !isReverseMap) {
+    const prefix = e.key[0];
+    const isUserKey      = e.key[1] === emailHash;
+    const isReverseMap   = prefix === 'user_email' && e.value === emailHash;
+    const isOwnedShare   = (prefix === 'share' || prefix === 'share_key' || prefix === 'share_data')
+                            && ownedShareCodes.has(((e.key[1] as string) || '').toUpperCase());
+    if (!isUserKey && !isReverseMap && !isOwnedShare) {
       return { ok: false, error: `Snapshot contains entry not belonging to user: ${JSON.stringify(e.key)}` };
     }
   }
   // 4. Wipe the user's current keys across the durable prefixes
+  const wipeSkip = new Set(['user_email', 'share', 'share_key', 'share_data']);
   for (const prefix of R2_DURABLE_PREFIXES) {
-    if (prefix === 'user_email') continue;
+    if (wipeSkip.has(prefix)) continue;
     const iter = kv.list({ prefix: [prefix] });
     for await (const entry of iter) {
       if (Array.isArray(entry.key) && entry.key[1] === emailHash) {
@@ -551,12 +653,38 @@ async function restoreUserFromR2Snapshot(emailHash: string, snapshotKey: string)
       }
     }
   }
-  // Also clear any user_email entry that points to this hash. The snapshot
-  // contains the correct mapping which will be re-written below.
+  // Wipe user_email entries pointing at this hash
   const emailIter = kv.list({ prefix: ['user_email'] });
   for await (const entry of emailIter) {
     if (entry.value === emailHash) {
       try { await kv.delete(entry.key); } catch (e) { console.warn('user_email wipe failed for', entry.key, (e as Error)?.message); }
+    }
+  }
+  // Wipe shares owned by this user — only those declared in the snapshot's
+  // metadata. We DON'T touch shares owned by other users that this user
+  // happens to be a target of (those belong to other users' backups).
+  if (ownedShareCodes.size) {
+    const shareIter = kv.list({ prefix: ['share'] });
+    for await (const entry of shareIter) {
+      if (!Array.isArray(entry.key) || entry.key.length !== 2 || entry.key[0] !== 'share') continue;
+      try {
+        const parsed = JSON.parse(entry.value as string);
+        if (parsed?.ownerEmailHash === emailHash) {
+          await kv.delete(entry.key);
+        }
+      } catch (_) {}
+    }
+    const shareKeyIter = kv.list({ prefix: ['share_key'] });
+    for await (const entry of shareKeyIter) {
+      if (Array.isArray(entry.key) && ownedShareCodes.has(((entry.key[1] as string) || '').toUpperCase())) {
+        try { await kv.delete(entry.key); } catch (_) {}
+      }
+    }
+    const shareDataIter = kv.list({ prefix: ['share_data'] });
+    for await (const entry of shareDataIter) {
+      if (Array.isArray(entry.key) && ownedShareCodes.has(((entry.key[1] as string) || '').toUpperCase())) {
+        try { await kv.delete(entry.key); } catch (_) {}
+      }
     }
   }
   // 5. Write the snapshot's entries back
@@ -577,9 +705,66 @@ async function restoreUserFromR2Snapshot(emailHash: string, snapshotKey: string)
 // Idle hours skip backups; an active editing session gets fine-grained
 // 5-minute snapshots. A separate daily-at-03:00 cron forces a backup
 // regardless so retention pruning always has something to keep.
+// ── Dirty-flag pattern: only back up when data has actually changed ──
+// Per-user variant: each user maintains their own dirty marker so the cron
+// only backs up users whose data has changed since their last snapshot.
+// This replaces the previous whole-DB dirty flag. The old `markKVDirty` /
+// `_isKVDirty` / `_clearKVDirty` helpers are kept for legacy admin endpoints
+// (whole-DB backup-now / restore) but the runtime no longer uses them.
+async function markUserDirty(emailHash: string): Promise<void> {
+  if (!emailHash) return;
+  try {
+    await kv.set(['_user_dirty', emailHash], '1');
+  } catch (e) {
+    console.warn('markUserDirty failed for', emailHash.slice(0,8), (e as Error)?.message);
+  }
+}
+
+async function _isUserDirty(emailHash: string): Promise<boolean> {
+  try {
+    const r = await kv.get(['_user_dirty', emailHash]);
+    return !!r.value;
+  } catch (_) { return true; /* err on the side of backing up */ }
+}
+
+async function _clearUserDirty(emailHash: string): Promise<void> {
+  try { await kv.delete(['_user_dirty', emailHash]); } catch (_) {}
+}
+
+async function _listDirtyUsers(): Promise<string[]> {
+  const out: string[] = [];
+  try {
+    const iter = kv.list({ prefix: ['_user_dirty'] });
+    for await (const entry of iter) {
+      if (Array.isArray(entry.key) && typeof entry.key[1] === 'string') {
+        out.push(entry.key[1] as string);
+      }
+    }
+  } catch (e) {
+    console.warn('_listDirtyUsers failed:', (e as Error)?.message);
+  }
+  return out;
+}
+
+// List every known user's emailHash by scanning the user_email reverse-map.
+// Used by the forced-daily cron so dormant accounts also get snapshotted.
+async function _listAllUserEmailHashes(): Promise<string[]> {
+  const out = new Set<string>();
+  try {
+    const iter = kv.list({ prefix: ['user_email'] });
+    for await (const entry of iter) {
+      if (typeof entry.value === 'string') out.add(entry.value);
+    }
+  } catch (e) {
+    console.warn('_listAllUserEmailHashes failed:', (e as Error)?.message);
+  }
+  return [...out];
+}
+
+// LEGACY — whole-DB dirty flag. No longer used by runtime; preserved so the
+// existing /admin/r2/* endpoints (whole-DB backup-now etc) still compile.
+// Will be removed once those endpoints are deleted.
 async function markKVDirty(): Promise<void> {
-  // Best-effort — failure to mark dirty just means the next 5-min cron
-  // might miss this change, but the forced daily backup will still capture it.
   try {
     await kv.set(['_kv_dirty'], '1');
   } catch (e) {
@@ -591,44 +776,68 @@ async function _isKVDirty(): Promise<boolean> {
   try {
     const r = await kv.get(['_kv_dirty']);
     return !!r.value;
-  } catch (_) { return true; /* err on the side of backing up */ }
+  } catch (_) { return true; }
 }
 
 async function _clearKVDirty(): Promise<void> {
   try { await kv.delete(['_kv_dirty']); } catch (_) {}
 }
 
-// ── Crons: backup every 5 min IF dirty; force daily; prune daily ──
+// ── Crons: per-user backup every 5 min for dirty users; daily forced;
+//          daily prune. Each user has their own snapshot history under
+//          `user-backup/{emailHash}/` so admin restore is per-account.
+
 Deno.cron('stockroom-r2-backup', '*/5 * * * *', async () => {
-  if (!r2Configured()) return; // silent no-op until R2 secrets are set
-  if (!await _isKVDirty()) return; // nothing changed since last backup, skip
-  const result = await backupKVToR2('auto');
-  if (!result.ok) {
-    console.error('R2 backup failed:', result.error);
-    // Leave the dirty flag set so next tick will retry
-  } else {
-    await _clearKVDirty();
-    console.log(`R2 backup OK: ${result.key} (${result.entries} entries, ${(result.size!/1024).toFixed(1)} KB)`);
+  if (!r2Configured()) return;
+  const dirty = await _listDirtyUsers();
+  if (!dirty.length) return;
+  let ok = 0, fail = 0;
+  for (const emailHash of dirty) {
+    const result = await backupUserToR2(emailHash, 'auto');
+    if (result.ok) {
+      await _clearUserDirty(emailHash);
+      ok++;
+    } else {
+      // Leave the dirty flag set so the next tick retries this user
+      console.error(`Per-user R2 backup failed for ${emailHash.slice(0,8)}:`, result.error);
+      fail++;
+    }
   }
+  if (ok || fail) console.log(`Per-user R2 backup tick: ${ok} ok, ${fail} failed (${dirty.length} dirty)`);
 });
 
-// Forced daily backup at 03:00 UTC — guarantees retention always has fresh
-// material to keep, even if no user activity has occurred for days.
+// Forced daily backup at 03:00 UTC — snapshots EVERY known user, even
+// dormant ones, so retention pruning always has fresh material per user.
 Deno.cron('stockroom-r2-backup-forced', '0 3 * * *', async () => {
   if (!r2Configured()) return;
-  const result = await backupKVToR2('auto');
-  if (!result.ok) {
-    console.error('R2 forced daily backup failed:', result.error);
-  } else {
-    await _clearKVDirty();
-    console.log(`R2 forced daily backup OK: ${result.key} (${result.entries} entries, ${(result.size!/1024).toFixed(1)} KB)`);
+  const all = await _listAllUserEmailHashes();
+  let ok = 0, fail = 0;
+  for (const emailHash of all) {
+    const result = await backupUserToR2(emailHash, 'auto');
+    if (result.ok) {
+      await _clearUserDirty(emailHash);
+      ok++;
+    } else {
+      console.error(`Forced daily backup failed for ${emailHash.slice(0,8)}:`, result.error);
+      fail++;
+    }
   }
+  console.log(`Forced daily per-user backup: ${ok} ok, ${fail} failed (${all.length} users)`);
 });
 
 Deno.cron('stockroom-r2-prune', '0 3 * * *', async () => {
   if (!r2Configured()) return;
-  const result = await pruneR2Snapshots();
-  console.log(`R2 prune: kept ${result.kept}, pruned ${result.pruned}`);
+  const all = await _listAllUserEmailHashes();
+  let totalKept = 0, totalPruned = 0;
+  for (const emailHash of all) {
+    const result = await pruneR2SnapshotsForUser(emailHash);
+    totalKept += result.kept;
+    totalPruned += result.pruned;
+  }
+  // Also tidy legacy whole-DB snapshots from before the per-user migration.
+  // These no longer accumulate but the existing ones still respect retention.
+  const legacy = await pruneR2Snapshots();
+  console.log(`Per-user R2 prune: kept ${totalKept}, pruned ${totalPruned} across ${all.length} users (legacy: kept ${legacy.kept}, pruned ${legacy.pruned})`);
 });
 
 // ── Hourly cron ───────────────────────────────────────────
@@ -670,6 +879,23 @@ Deno.cron('stockroom-crypto-migration-notify', '0 9 * * *', async () => {
 // Covers: user data, devices, passkeys, sessions, challenges, wrapped keys,
 //         share targets, share data, recovery OTPs, email verify tokens, schedules.
 async function _deleteAllUserData(kv: Deno.Kv, emailHash: string): Promise<void> {
+  // Take a pre-delete snapshot first so admin can roll the user back if
+  // the deletion was an accident. Best-effort — if R2 is misconfigured or
+  // the snapshot fails, deletion still proceeds (we don't want a backup
+  // failure to block account deletion).
+  try {
+    if (r2Configured()) {
+      const result = await backupUserToR2(emailHash, 'pre-delete');
+      if (result.ok) {
+        console.log(`pre-delete snapshot for ${emailHash.slice(0,8)}: ${result.key}`);
+      } else {
+        console.warn(`pre-delete snapshot failed for ${emailHash.slice(0,8)}: ${result.error}`);
+      }
+    }
+  } catch (e) {
+    console.warn('pre-delete snapshot threw:', (e as Error)?.message);
+  }
+
   const prefixesToScan = [
     ['user',             emailHash],   // verifier, key envelopes, data, settings, etc.
     ['device',           emailHash],   // trusted devices
@@ -728,9 +954,10 @@ async function _deleteAllUserData(kv: Deno.Kv, emailHash: string): Promise<void>
     }
   }
 
-  // Account deletion is a significant state change — mark dirty so it
-  // gets captured in the next backup window
-  await markKVDirty();
+  // Account is gone — clear any dangling dirty marker so the cron doesn't
+  // try to re-snapshot a wiped user. The pre-delete snapshot above is the
+  // record we keep.
+  await _clearUserDirty(emailHash);
 }
 
 // ── Request handler ───────────────────────────────────────
@@ -2210,8 +2437,16 @@ Deno.serve(async (request) => {
       const auto    = all.filter(s => s.key.startsWith('auto/'));
       const manual  = all.filter(s => s.key.startsWith('manual/'));
       const preR    = all.filter(s => s.key.startsWith('pre-restore/'));
+      const userBackups = all.filter(s => s.key.startsWith('user-backup/'));
+      // Per-user totals: count distinct emailHash directories under user-backup/
+      const userHashes = new Set<string>();
+      for (const s of userBackups) {
+        const parts = s.key.split('/');
+        if (parts.length >= 2 && parts[0] === 'user-backup') userHashes.add(parts[1]);
+      }
       const totalSize = all.reduce((sum, s) => sum + s.size, 0);
-      const lastAuto  = auto.at(-1);
+      const lastAuto    = auto.at(-1);
+      const lastUserBackup = userBackups.at(-1);
       return json({
         ok: true,
         configured: true,
@@ -2220,8 +2455,11 @@ Deno.serve(async (request) => {
         autoCount: auto.length,
         manualCount: manual.length,
         preRestoreCount: preR.length,
+        userBackupCount: userBackups.length,
+        userBackupUserCount: userHashes.size,
         totalSizeBytes: totalSize,
         lastAuto: lastAuto ? { key: lastAuto.key, size: lastAuto.size, lastModified: lastAuto.lastModified } : null,
+        lastUserBackup: lastUserBackup ? { key: lastUserBackup.key, size: lastUserBackup.size, lastModified: lastUserBackup.lastModified } : null,
       }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
@@ -2564,7 +2802,7 @@ Deno.serve(async (request) => {
       const hKey = household && household !== 'default' ? household : 'default';
       await kvSet(['user', emailHash, 'data', hKey], ciphertext);
       await kvSet(['user', emailHash, 'modified', hKey], new Date().toISOString());
-      await markKVDirty();
+      await markUserDirty(emailHash);
       return json({ ok: true }, corsHeaders);
     } catch(err) {
       return json({ error: err.message }, corsHeaders, 500);
@@ -2776,7 +3014,9 @@ Deno.serve(async (request) => {
       const hKey = household && household !== 'default' ? household : 'default';
       await kvSet(['share_data', code.toUpperCase(), hKey], ciphertext);
       await kvSet(['share_data', code.toUpperCase(), `${hKey}_modified`], new Date().toISOString());
-      await markKVDirty();
+      // Share data lives under the owner's emailHash conceptually — mark the
+      // owner dirty so the per-user backup captures the new ciphertext.
+      await markUserDirty(ownerEmailHash);
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
@@ -3315,7 +3555,7 @@ Deno.serve(async (request) => {
       } else {
         await kvDel(['note_body', emailHash, noteId]);
       }
-      await markKVDirty();
+      await markUserDirty(emailHash);
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
@@ -3355,7 +3595,7 @@ Deno.serve(async (request) => {
         return json({ error: 'Missing credentials' }, corsHeaders, 400);
       }
       await kvDel(['note_body', emailHash, noteId]);
-      await markKVDirty();
+      await markUserDirty(emailHash);
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
