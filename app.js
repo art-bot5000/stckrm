@@ -777,6 +777,37 @@ function _maybeShowBinHint(section) {
   toast(`Tip: deleted things sit in ${where} for 30 days`);
 }
 
+// Preserve local soft-deletes when applying a wholesale remote replacement.
+// The grocery / reminders sync code paths replace the whole array with the
+// remote on `remoteWins`, but the user may have just soft-deleted items
+// that haven't been pushed yet. This merges the remote list with any local
+// `_deletedAt` markers so freshly deleted items don't resurrect on pull.
+//
+// Returns a new array of items derived from `remote`, with `_deletedAt`
+// (and updatedAt) carried over from any matching local item that was in
+// the recycle bin.
+function _preserveLocalDeletes(remote, local) {
+  if (!Array.isArray(remote)) return remote;
+  if (!Array.isArray(local) || !local.length) return remote;
+  const localDeleted = new Map();
+  for (const it of local) {
+    if (it && it._deletedAt) {
+      // Keep the more recent updatedAt of the two (local edit wins)
+      localDeleted.set(it.id, { _deletedAt: it._deletedAt, updatedAt: it.updatedAt });
+    }
+  }
+  if (!localDeleted.size) return remote;
+  return remote.map(it => {
+    const ld = localDeleted.get(it?.id);
+    if (!ld) return it;
+    // Preserve local soft-delete; keep the later updatedAt so subsequent
+    // sync rounds don't resurrect by stale-timestamp.
+    const localUpd = ld.updatedAt ? new Date(ld.updatedAt).getTime() : 0;
+    const remUpd   = it.updatedAt ? new Date(it.updatedAt).getTime() : 0;
+    return { ...it, _deletedAt: ld._deletedAt, updatedAt: localUpd >= remUpd ? ld.updatedAt : it.updatedAt };
+  });
+}
+
 async function purgeExpiredFromBins() {
   // Purges items, grocery items, and standalone reminders whose 30-day
   // recycle bin window has expired. Writes tombstones so sync doesn't
@@ -8505,7 +8536,10 @@ async function syncNow() {
         const localGEmpty = groceryItems.length === 0;
         const gTombstones = await loadGroceryDeletedIds();
         if (remoteWins || localGEmpty) {
-          groceryItems = remoteG.filter(i => !gTombstones.has(i.id)); await _saveGroceryLocal();
+          // Preserve any local soft-deletes — see _preserveLocalDeletes
+          const incoming = remoteG.filter(i => !gTombstones.has(i.id));
+          groceryItems = _preserveLocalDeletes(incoming, groceryItems);
+          await _saveGroceryLocal();
         } else {
           const localGIds = new Set(groceryItems.map(i => i.id));
           const newG = remoteG.filter(i => !localGIds.has(i.id) && !gTombstones.has(i.id));
@@ -8526,7 +8560,8 @@ async function syncNow() {
         const localREmpty = reminders.length === 0;
         const rTombstones = await loadReminderDeletedIds();
         if (remoteWins || localREmpty) {
-          reminders = remote.reminders.filter(r => !rTombstones.has(r.id));
+          const incomingR = remote.reminders.filter(r => !rTombstones.has(r.id));
+          reminders = _preserveLocalDeletes(incomingR, reminders);
           await saveReminders();
         } else {
           const localRIds = new Set(reminders.map(r => r.id));
@@ -12230,8 +12265,11 @@ async function kvSyncNow(silent = false) {
         const localEmpty = groceryItems.length === 0;
         const groceryTombstones = await loadGroceryDeletedIds();
         if (remoteWins || localEmpty) {
-          // Filter out any items we have locally tombstoned (user deleted them)
-          groceryItems = remote.groceries.filter(i => !groceryTombstones.has(i.id));
+          // Filter out any items we have locally tombstoned (user deleted them).
+          // Then preserve any local soft-deletes that haven't pushed yet —
+          // without this step, freshly deleted items resurrect on pull.
+          const incoming = remote.groceries.filter(i => !groceryTombstones.has(i.id));
+          groceryItems = _preserveLocalDeletes(incoming, groceryItems);
           await _saveGroceryLocal();
         } else {
           // Merge: add remote items not in local AND not tombstoned (i.e. not deleted locally)
@@ -12326,7 +12364,8 @@ async function kvSyncNow(silent = false) {
         const localREmpty = reminders.length === 0;
         const rTombstones = await loadReminderDeletedIds();
         if (remoteWins || localREmpty) {
-          reminders = remote.reminders.filter(r => !rTombstones.has(r.id));
+          const incomingR = remote.reminders.filter(r => !rTombstones.has(r.id));
+          reminders = _preserveLocalDeletes(incomingR, reminders);
           await saveReminders();
         } else {
           const localRIds = new Set(reminders.map(r => r.id));
@@ -18289,6 +18328,128 @@ function _activeGroceryList() {
   return groceryLists.find(l => l.id === activeGroceryListId) || groceryLists[0];
 }
 
+// ── Stock-check / shopping mode helpers ──────────────────────────────
+// A grocery list can run in two modes:
+//   'shopping'   — traditional behaviour. Tick = bought.
+//   'stockcheck' — two-phase workflow. Phase 1 ('check'): tick to mark
+//                  "need to buy". Phase 2 ('shop'): only the needed items
+//                  are shown; tick = bought.
+// Defaults preserve back-compat: missing mode = shopping.
+function _activeGroceryListMode() {
+  const list = _activeGroceryList();
+  return (list?.mode === 'stockcheck') ? 'stockcheck' : 'shopping';
+}
+function _activeGroceryListPhase() {
+  const list = _activeGroceryList();
+  if (list?.mode !== 'stockcheck') return null;
+  return list.shoppingPhase === 'shop' ? 'shop' : 'check';
+}
+// Treat missing `needed` as true so existing items don't disappear when a
+// list is upgraded mid-flight.
+function _itemIsNeeded(item) {
+  return item && item.needed !== false;
+}
+
+async function startGroceryShopping() {
+  const list = _activeGroceryList();
+  if (!list || list.mode !== 'stockcheck') return;
+  const neededCount = _activeGroceryListItems().filter(_itemIsNeeded).length;
+  if (neededCount === 0) {
+    toast('Tick at least one item before starting shopping');
+    return;
+  }
+  list.shoppingPhase = 'shop';
+  list.updatedAt = new Date().toISOString();
+  // Make sure no item is pre-checked when entering the shop phase
+  groceryItems.forEach(i => {
+    if ((i.listId||'default') === list.id && !i._deletedAt && i.checked) {
+      i.checked = false; i.checkedAt = null; i.updatedAt = new Date().toISOString();
+    }
+  });
+  await _saveGroceryLists();
+  await saveGrocery();
+  renderGrocery();
+  toast(`Shopping: ${neededCount} item${neededCount===1?'':'s'} to buy`);
+}
+
+async function backToStockCheck() {
+  const list = _activeGroceryList();
+  if (!list || list.mode !== 'stockcheck') return;
+  list.shoppingPhase = 'check';
+  list.updatedAt = new Date().toISOString();
+  await _saveGroceryLists();
+  renderGrocery();
+}
+
+async function finishGroceryShopping() {
+  const list = _activeGroceryList();
+  if (!list || list.mode !== 'stockcheck') return;
+  if (!confirm("Done shopping?\n\nThis will reset the list — any items you didn't tick off will no longer be marked as needed.")) return;
+  // Wipe both flags on every active item in this list — clean slate for next round
+  groceryItems.forEach(i => {
+    if ((i.listId||'default') === list.id && !i._deletedAt) {
+      if (i.needed)  { i.needed = false; }
+      if (i.checked) { i.checked = false; i.checkedAt = null; }
+      i.updatedAt = new Date().toISOString();
+    }
+  });
+  list.shoppingPhase = 'check';
+  list.updatedAt = new Date().toISOString();
+  await _saveGroceryLists();
+  await saveGrocery();
+  renderGrocery();
+  toast('Stock check ready for next round');
+}
+
+// Renders the phase-control bar above the items list. Inserts/updates a
+// dedicated container so it doesn't fight with other layout.
+function _renderGroceryPhaseBar(list, mode, phase, listItems) {
+  const body = document.getElementById('grocery-list-body');
+  if (!body) return;
+  let bar = document.getElementById('grocery-phase-bar');
+
+  // Hide entirely when not in stockcheck mode or in edit mode
+  if (!list || mode !== 'stockcheck' || groceryEditMode || !activeGroceryListId) {
+    if (bar) bar.style.display = 'none';
+    return;
+  }
+
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'grocery-phase-bar';
+    bar.className = 'grocery-phase-bar';
+    body.parentNode.insertBefore(bar, body);
+  }
+  bar.style.display = 'flex';
+
+  if (phase === 'check') {
+    const neededCount = listItems.filter(_itemIsNeeded).length;
+    const totalCount  = listItems.length;
+    const canStart    = neededCount > 0;
+    bar.innerHTML = `
+      <div class="grocery-phase-info">
+        <div class="grocery-phase-title"><svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> Stock Check</div>
+        <div class="grocery-phase-meta">${neededCount} of ${totalCount} marked to buy</div>
+      </div>
+      <button class="btn btn-primary btn-sm grocery-phase-cta" ${canStart ? '' : 'disabled'} onclick="startGroceryShopping()">
+        <svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg>
+        Start Shopping
+      </button>`;
+  } else { // 'shop'
+    const remaining = listItems.filter(i => !i.checked).length;
+    const total     = listItems.length;
+    bar.innerHTML = `
+      <div class="grocery-phase-info">
+        <div class="grocery-phase-title" style="color:var(--ok)"><svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Shopping</div>
+        <div class="grocery-phase-meta">${total - remaining} of ${total} ticked off${remaining ? ` · ${remaining} to go` : ''}</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="btn btn-ghost btn-sm" onclick="backToStockCheck()" title="Back to stock check"><svg class="icon" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button>
+        <button class="btn btn-primary btn-sm" onclick="finishGroceryShopping()">Done</button>
+      </div>`;
+  }
+}
+
 // ── Grocery List Picker (shown when 2+ lists exist) ──────────────────────
 function renderGroceryListPicker() {
   const body = document.getElementById('grocery-list-body');
@@ -18317,6 +18478,25 @@ function renderGroceryListPicker() {
         const allListItems = groceryItems.filter(i => !i._deletedAt && (i.listId||'default') === l.id);
         const itemCount = allListItems.filter(i => !i.checked).length;
         const checked   = allListItems.filter(i =>  i.checked).length;
+        const isStockcheck = l.mode === 'stockcheck';
+        const phase = l.shoppingPhase === 'shop' ? 'shop' : 'check';
+        // Bespoke status string for stockcheck lists
+        let statusBits;
+        if (isStockcheck) {
+          const neededCount = allListItems.filter(_itemIsNeeded).length;
+          if (phase === 'shop') {
+            statusBits = `${neededCount - allListItems.filter(i => _itemIsNeeded(i) && i.checked).length} of ${neededCount} to buy`;
+          } else {
+            statusBits = `${neededCount} marked to buy · ${allListItems.length} total`;
+          }
+        } else {
+          statusBits = `${itemCount} item${itemCount!==1?'':'s'} remaining${checked ? ` · ${checked} done` : ''}`;
+        }
+
+        // Small mode badge
+        const modeBadge = isStockcheck
+          ? `<span style="font-family:var(--mono);font-size:10px;font-weight:700;padding:2px 7px;border-radius:99px;background:rgba(232,168,56,0.15);color:var(--accent);border:1px solid rgba(232,168,56,0.3);letter-spacing:0.4px;margin-right:6px">${phase==='shop'?'SHOPPING':'STOCK CHECK'}</span>`
+          : '';
 
         // When searching, show matching items inline under the list card
         let matchingItemsHTML = '';
@@ -18342,9 +18522,9 @@ function renderGroceryListPicker() {
         <div onclick="switchGroceryList('${l.id}')" style="display:flex;flex-direction:column;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;cursor:pointer;transition:border-color 0.15s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
           <div style="display:flex;align-items:center;gap:14px">
             <div style="flex:1;min-width:0">
-              <div style="font-size:16px;font-weight:700;margin-bottom:3px">${esc(l.name)}</div>
+              <div style="font-size:16px;font-weight:700;margin-bottom:3px">${modeBadge}${esc(l.name)}</div>
               <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">
-                ${l.store ? `<svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> ${esc(l.store)} · ` : ''}${itemCount} item${itemCount!==1?'s':''} remaining${checked ? ` · ${checked} done` : ''} · ${fmt(l.updatedAt)}
+                ${l.store ? `<svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> ${esc(l.store)} · ` : ''}${statusBits} · ${fmt(l.updatedAt)}
               </div>
             </div>
             <div style="display:flex;gap:6px;flex-shrink:0">
@@ -18393,6 +18573,7 @@ function editGroceryList(id) {
 function _openGroceryListModal(id) {
   document.getElementById('grocery-list-picker-overlay')?.remove();
   const list = id ? groceryLists.find(l => l.id === id) : null;
+  const listMode = list?.mode || 'shopping';
   const overlay = document.createElement('div');
   overlay.id = 'grocery-list-picker-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(0,0,0,0.7);display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px)';
@@ -18404,9 +18585,24 @@ function _openGroceryListModal(id) {
         <label style="font-size:12px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;display:block;margin-bottom:4px">List name</label>
         <input id="gl-name" class="form-input" type="text" value="${esc(list?.name||'')}" placeholder="e.g. Tesco run, Weekend shop…" autocomplete="off">
       </div>
-      <div class="field" style="margin-bottom:20px">
+      <div class="field" style="margin-bottom:14px">
         <label style="font-size:12px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;display:block;margin-bottom:4px">Store (optional)</label>
         <input id="gl-store" class="form-input" type="text" value="${esc(list?.store||'')}" placeholder="e.g. Tesco, Lidl, Amazon…" autocomplete="off">
+      </div>
+      <div class="field" style="margin-bottom:18px">
+        <label style="font-size:12px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;display:block;margin-bottom:8px">List mode</label>
+        <div style="display:flex;gap:8px">
+          <label style="flex:1;display:block;padding:12px 12px;border-radius:10px;border:2px solid ${listMode==='shopping'?'rgba(232,168,56,0.5)':'var(--border)'};background:${listMode==='shopping'?'rgba(232,168,56,0.08)':'var(--surface2)'};cursor:pointer;transition:all 0.15s">
+            <input type="radio" name="gl-mode" value="shopping" ${listMode==='shopping'?'checked':''} style="margin-right:6px;vertical-align:middle">
+            <strong style="font-size:13px">Shopping list</strong>
+            <div style="font-size:11px;color:var(--muted);margin-top:3px;line-height:1.4">Tap to tick items off as you shop.</div>
+          </label>
+          <label style="flex:1;display:block;padding:12px 12px;border-radius:10px;border:2px solid ${listMode==='stockcheck'?'rgba(232,168,56,0.5)':'var(--border)'};background:${listMode==='stockcheck'?'rgba(232,168,56,0.08)':'var(--surface2)'};cursor:pointer;transition:all 0.15s">
+            <input type="radio" name="gl-mode" value="stockcheck" ${listMode==='stockcheck'?'checked':''} style="margin-right:6px;vertical-align:middle">
+            <strong style="font-size:13px">Stock check</strong>
+            <div style="font-size:11px;color:var(--muted);margin-top:3px;line-height:1.4">Tick items you need, then start shopping.</div>
+          </label>
+        </div>
       </div>
       <div style="display:flex;gap:10px">
         <button onclick="document.getElementById('grocery-list-picker-overlay').remove()" style="flex:1;padding:13px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:16px;font-weight:600;cursor:pointer">Cancel</button>
@@ -18421,15 +18617,52 @@ function _openGroceryListModal(id) {
 async function _saveGroceryListModal(id) {
   const name  = document.getElementById('gl-name')?.value.trim();
   const store = document.getElementById('gl-store')?.value.trim();
+  const mode  = document.querySelector('input[name="gl-mode"]:checked')?.value || 'shopping';
   if (!name) { toast('Enter a list name'); return; }
   document.getElementById('grocery-list-picker-overlay')?.remove();
 
   if (id) {
     const list = groceryLists.find(l => l.id === id);
-    if (list) { list.name = name; list.store = store; list.updatedAt = new Date().toISOString(); }
+    if (list) {
+      const prevMode = list.mode || 'shopping';
+      list.name = name;
+      list.store = store;
+      list.mode = mode;
+      // When switching INTO stock-check mode, start with all items un-needed
+      // (the whole point is "look at what you have, tick what you need"),
+      // and reset shoppingPhase so the user starts fresh.
+      if (mode === 'stockcheck' && prevMode !== 'stockcheck') {
+        list.shoppingPhase = 'check';
+        groceryItems.forEach(i => {
+          if ((i.listId||'default') === id && !i._deletedAt) {
+            i.needed = false;
+            // Also clear `checked` so we start from a clean slate
+            if (i.checked) { i.checked = false; i.checkedAt = null; }
+            i.updatedAt = new Date().toISOString();
+          }
+        });
+        await saveGrocery();
+      }
+      // When switching OUT of stock-check mode → ensure items show in shopping mode
+      if (mode === 'shopping' && prevMode === 'stockcheck') {
+        delete list.shoppingPhase;
+        groceryItems.forEach(i => {
+          if ((i.listId||'default') === id && !i._deletedAt && i.needed === false) {
+            // Items that weren't needed during stock check — promote them back so
+            // shopping mode shows them all (preserves existing behaviour).
+            i.needed = true;
+            i.updatedAt = new Date().toISOString();
+          }
+        });
+        await saveGrocery();
+      }
+      list.updatedAt = new Date().toISOString();
+    }
   } else {
     const newId = 'gl_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
-    groceryLists.push({ id: newId, name, store, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    const newList = { id: newId, name, store, mode, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    if (mode === 'stockcheck') newList.shoppingPhase = 'check';
+    groceryLists.push(newList);
     activeGroceryListId = newId;
     try { localStorage.setItem('stockroom_active_grocery_list', newId); } catch(e) {}
   }
@@ -18512,28 +18745,42 @@ function _quickListAutocomplete(val) {
   const preview = document.getElementById('quick-list-preview');
   if (!sugg || !preview) return;
 
-  // Preview pills for all typed entries
+  // Preview pills for all typed entries — parse qty so users see their
+  // "2 Yoghurts" was understood as Yoghurts × 2 before they hit save.
   const parts = val.split(',').map(s => s.trim()).filter(Boolean);
-  preview.innerHTML = parts.map(p => `<span style="padding:4px 12px;border-radius:99px;background:rgba(232,168,56,0.15);border:1px solid rgba(232,168,56,0.3);font-size:13px;color:var(--accent)">${esc(p)}</span>`).join('');
+  preview.innerHTML = parts.map(p => {
+    const parsed = parseGroceryQty(p);
+    const qtyTag = parsed.qty > 1
+      ? ` <span style="font-family:var(--mono);font-size:11px;background:rgba(232,168,56,0.25);padding:1px 6px;border-radius:99px;margin-left:2px">×${parsed.qty}</span>`
+      : '';
+    return `<span style="display:inline-flex;align-items:center;padding:4px 12px;border-radius:99px;background:rgba(232,168,56,0.15);border:1px solid rgba(232,168,56,0.3);font-size:13px;color:var(--accent)">${esc(parsed.name || p)}${qtyTag}</span>`;
+  }).join('');
 
-  // Autocomplete on the last partial token — match ANYWHERE in name
+  // Autocomplete on the last partial token — match ANYWHERE in name.
+  // Strip any quantity prefix the user has typed ("2 yog" → search "yog")
+  // so suggestions still surface.
   const lastPart = val.split(',').pop()?.trim() || '';
   if (lastPart.length < 1) { sugg.style.display = 'none'; return; }
-  const already = new Set(parts.slice(0, -1).map(p => p.toLowerCase()));
+  const parsedLast = parseGroceryQty(lastPart);
+  const searchTerm = parsedLast.name || lastPart;
+  if (searchTerm.length < 1) { sugg.style.display = 'none'; return; }
+  const already = new Set(parts.slice(0, -1).map(p => parseGroceryQty(p).name.toLowerCase()));
   const matches = groceryItems
-    .filter(i => i.name.toLowerCase().includes(lastPart.toLowerCase()) && !already.has(i.name.toLowerCase()))
+    .filter(i => i.name.toLowerCase().includes(searchTerm.toLowerCase()) && !already.has(i.name.toLowerCase()))
     .slice(0, 8);
   if (!matches.length) { sugg.style.display = 'none'; return; }
   sugg.style.display = 'block';
   sugg.innerHTML = matches.map(i => {
-    // Highlight the matching part
+    // Highlight the matching part (against the cleaned search term)
     const lo = i.name.toLowerCase();
-    const lp = lastPart.toLowerCase();
+    const lp = searchTerm.toLowerCase();
     const idx = lo.indexOf(lp);
     const before = esc(i.name.slice(0, idx));
-    const match  = `<strong style="color:var(--accent)">${esc(i.name.slice(idx, idx + lastPart.length))}</strong>`;
-    const after  = esc(i.name.slice(idx + lastPart.length));
-    return `<div onclick="_quickListPickSuggestion('${esc(i.name).replace(/'/g,"\\'")}','${i.department||'other'}')"
+    const match  = `<strong style="color:var(--accent)">${esc(i.name.slice(idx, idx + searchTerm.length))}</strong>`;
+    const after  = esc(i.name.slice(idx + searchTerm.length));
+    // If the user already typed a qty prefix, preserve it when picking
+    const qtyPrefix = parsedLast.qty > 1 ? `${parsedLast.qty} ` : '';
+    return `<div onclick="_quickListPickSuggestion('${esc(qtyPrefix + i.name).replace(/'/g,"\\'")}','${i.department||'other'}')"
       style="padding:10px 14px;cursor:pointer;font-size:14px;border-bottom:1px solid var(--border)"
       onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''"
       >${before}${match}${after}</div>`;
@@ -18565,12 +18812,18 @@ async function _saveQuickList() {
   const newListName = listNameVal || `Quick list ${new Date().toLocaleDateString('en-GB', {day:'numeric',month:'short'})}`;
   groceryLists.push({ id: newListId, name: newListName, store: storeNameVal || '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
 
-  // Add items with best-effort department detection
-  for (const name of names) {
+  // Add items with best-effort department detection. Each entry can carry
+  // a quantity ("2 Yoghurts", "Apples x 3") — parseGroceryQty extracts that.
+  for (const rawName of names) {
+    const parsed = parseGroceryQty(rawName);
+    const name   = parsed.name;
+    if (!name) continue; // skip entries that became empty after parsing
     const existing = groceryItems.find(i => i.name.toLowerCase() === name.toLowerCase());
     const dept = existing?.department || detectDepartment(name) || depts[0]?.id || 'other';
     const newId = 'g_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
-    groceryItems.push({ id: newId, name, department: dept, listId: newListId, notes: '', recurring: false, intervalDays: 7, checked: false, addedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    const newItem = { id: newId, name, department: dept, listId: newListId, notes: '', recurring: false, intervalDays: 7, checked: false, addedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    if (parsed.qty > 1) newItem.qty = parsed.qty;
+    groceryItems.push(newItem);
     appendToGroceryOrder(newId);
   }
 
@@ -18719,6 +18972,55 @@ const DEPT_KEYWORDS = {
   'toiletries': ['soap','shampoo','conditioner','deodorant','toothbrush','toothpaste','razor','shower gel','body wash','moisturiser','lotion','sunscreen','face wash','cotton','floss','mouthwash','lip balm','perfume','aftershave','nail','pad','tampon','sanitary'],
   'baby-care':  ['nappy','baby formula','baby food','dummy','baby bottle','baby wipe','baby lotion'],
 };
+
+// Parse a grocery item name like "2 Yoghurts", "Yoghurts x 2", "Apples (3)"
+// into { name, qty }. Returns { name: trimmed, qty: 1 } if no quantity is
+// confidently detectable. Conservative — we don't want to strip "2L Milk".
+const _GROCERY_UNIT_TOKENS = ['g','kg','mg','ml','l','oz','lb','%','cl','dl','floz','tsp','tbsp','cup','cups','pack','packs','pk','ct'];
+function parseGroceryQty(raw) {
+  const original = (raw || '').trim();
+  if (!original) return { name: '', qty: 1 };
+
+  // Pattern A — trailing "x N" or "× N" (most explicit)
+  // e.g. "Yoghurts x 2", "Apples × 3", "Bread x2"
+  let m = original.match(/^(.+?)\s*[x×X]\s*(\d{1,3})\s*$/);
+  if (m) {
+    const n = parseInt(m[2], 10);
+    if (n >= 1 && n <= 999) return { name: m[1].trim(), qty: n };
+  }
+
+  // Pattern B — trailing "(N)"
+  // e.g. "Yoghurts (2)"
+  m = original.match(/^(.+?)\s*\((\d{1,3})\)\s*$/);
+  if (m) {
+    const n = parseInt(m[2], 10);
+    if (n >= 1 && n <= 999) return { name: m[1].trim(), qty: n };
+  }
+
+  // Pattern C — leading "N x Name" or "Nx Name"
+  // e.g. "3 x Apples", "3x Apples"
+  m = original.match(/^(\d{1,3})\s*[x×X]\s+(.+)$/);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    if (n >= 1 && n <= 999) return { name: m[2].trim(), qty: n };
+  }
+
+  // Pattern D — leading number followed by a word that ISN'T a unit
+  // e.g. "2 Yoghurts" → qty 2, "500g Flour" → no extraction (g is a unit)
+  // Also reject "2L Milk" (digit immediately followed by letters means a unit-like token)
+  m = original.match(/^(\d{1,3})\s+([A-Za-z].*)$/);
+  if (m) {
+    const rest = m[2].trim();
+    // Check if the first word of `rest` is a unit token — if so, don't extract
+    const firstWord = (rest.split(/\s+/)[0] || '').toLowerCase().replace(/[.,;:]$/, '');
+    if (!_GROCERY_UNIT_TOKENS.includes(firstWord)) {
+      const n = parseInt(m[1], 10);
+      if (n >= 1 && n <= 999) return { name: rest, qty: n };
+    }
+  }
+
+  return { name: original, qty: 1 };
+}
 
 function detectDepartment(name) {
   const lower = name.toLowerCase();
@@ -18972,6 +19274,8 @@ function renderGrocery() {
     if (infoEl) infoEl.textContent = '';
     const _binEl = document.getElementById('grocery-recycle-bin');
     if (_binEl) _binEl.style.display = 'none';
+    const _phaseBar = document.getElementById('grocery-phase-bar');
+    if (_phaseBar) _phaseBar.style.display = 'none';
     return;
   }
   // Single list mode — restore controls
@@ -18989,7 +19293,21 @@ function renderGrocery() {
   }
 
   // Filter to active list only (exclude soft-deleted)
-  const listItems = groceryItems.filter(i => !i._deletedAt && (i.listId || 'default') === activeGroceryListId);
+  let listItems = groceryItems.filter(i => !i._deletedAt && (i.listId || 'default') === activeGroceryListId);
+
+  // ── Stock-check / shopping mode ─────────────────────────────────
+  // When the active list is in stockcheck mode + 'shop' phase, narrow the
+  // visible items to those marked as needed during stock-check.
+  const _activeList = _activeGroceryList();
+  const _mode  = _activeGroceryListMode();
+  const _phase = _activeGroceryListPhase();
+  if (_mode === 'stockcheck' && _phase === 'shop' && !groceryEditMode) {
+    listItems = listItems.filter(_itemIsNeeded);
+  }
+
+  // Render the phase-control bar (Start Shopping / Done Shopping etc.).
+  // It sits between the toolbar and the items so it's always visible.
+  _renderGroceryPhaseBar(_activeList, _mode, _phase, listItems);
 
   // Interval info — scoped to active list
   const si = getGroceryShopInterval();
@@ -18998,7 +19316,19 @@ function renderGrocery() {
   if (infoEl) infoEl.textContent = `Shopping every ${si.value} ${unitLabel} · ${listItems.filter(i=>!i.checked).length} item${listItems.filter(i=>!i.checked).length===1?'':'s'} remaining`;
 
   const sub = document.getElementById('grocery-subtitle');
-  if (sub) sub.innerHTML = `${listItems.length} item${listItems.length===1?'':'s'} · ${groceryEditMode ? '<svg class="icon icon-sm" aria-hidden="true"><use href="#i-pencil"></use></svg> editing' : 'tap to check off'}`;
+  if (sub) {
+    let subBits = `${listItems.length} item${listItems.length===1?'':'s'}`;
+    if (groceryEditMode) {
+      subBits += ` · <svg class="icon icon-sm" aria-hidden="true"><use href="#i-pencil"></use></svg> editing`;
+    } else if (_mode === 'stockcheck' && _phase === 'check') {
+      subBits += ` · stock check — tap to mark as needed`;
+    } else if (_mode === 'stockcheck' && _phase === 'shop') {
+      subBits += ` · shopping — tap to tick off`;
+    } else {
+      subBits += ` · tap to check off`;
+    }
+    sub.innerHTML = subBits;
+  }
 
   // Edit mode lock button
   const editBtn = document.getElementById('grocery-edit-toggle');
@@ -19286,16 +19616,52 @@ function groceryItemEditHTML(item, depts, canDrag) {
           onchange="updateGroceryItemInline('${item.id}','notes',this.value)">
       </div>
     </div>
+    ${groceryQtyStepperHTML(item)}
   </div>`;
 }
 
 async function updateGroceryItemInline(id, field, value) {
   const item = groceryItems.find(i => i.id === id);
   if (!item) return;
-  item[field] = value;
+  // For the name field, parse "2 Yoghurts", "Yoghurts x 2" etc. — promote
+  // any embedded quantity to the new qty stepper rather than baking it into
+  // the name.
+  if (field === 'name') {
+    const parsed = parseGroceryQty(value);
+    item.name = parsed.name;
+    if (parsed.qty > 1) item.qty = parsed.qty;
+    // Keep the input visually in sync with the cleaned-up name
+    if (parsed.name !== value || parsed.qty > 1) {
+      const inp = document.getElementById(`gi-name-${id}`);
+      if (inp && inp.value !== parsed.name) inp.value = parsed.name;
+    }
+  } else {
+    item[field] = value;
+  }
   item.updatedAt = new Date().toISOString();
   // Once the user has set a name, clear the _isNew flag
   if (field === 'name') delete item._isNew;
+  await saveGrocery();
+  // Re-render so the qty stepper reflects any extracted number
+  if (field === 'name') renderGrocery();
+}
+
+// Increment / decrement a grocery item's quantity. Min 1, max 999.
+async function _adjustGroceryQty(id, delta) {
+  if (!canWrite('groceries')) { showLockBanner('groceries'); return; }
+  const item = groceryItems.find(i => i.id === id);
+  if (!item) return;
+  const current = (typeof item.qty === 'number' && item.qty > 0) ? item.qty : 1;
+  const next = Math.max(1, Math.min(999, current + delta));
+  if (next === current) return;
+  item.qty = next;
+  item.updatedAt = new Date().toISOString();
+  // Update the visible number in place without a full re-render so taps feel snappy
+  const numEl = document.getElementById(`gqty-${id}`);
+  if (numEl) numEl.textContent = next;
+  // Hide/show stepper minus button at min
+  const minusEl = document.getElementById(`gqtyminus-${id}`);
+  if (minusEl) minusEl.disabled = (next === 1);
   await saveGrocery();
 }
 
@@ -19311,7 +19677,10 @@ async function _groceryNewItemBlur(id) {
     await _saveGroceryLocal(); // local only — don't push a blank item delete
     renderGrocery();
   } else if (item._isNew && item.name.trim()) {
-    // Named successfully — clear _isNew flag and do a real save+sync
+    // Named successfully — parse qty out of the name if present, then save+sync
+    const parsed = parseGroceryQty(item.name);
+    item.name = parsed.name;
+    if (parsed.qty > 1) item.qty = parsed.qty;
     delete item._isNew;
     item.updatedAt = new Date().toISOString();
     await saveGrocery(); // now safe to sync — item has a name
@@ -19534,6 +19903,11 @@ async function addGroceryItemToDept(deptId) {
   groceryEditMode = true;
   // Create a blank item and insert at the top of that dept
   const newId = 'g_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+  // In stockcheck mode, new items default to NOT needed — the user has to
+  // explicitly tick them during the check phase. In shopping mode (default),
+  // we leave `needed` unset so _itemIsNeeded() treats them as true.
+  const _list = groceryLists.find(l => l.id === (activeGroceryListId || 'default'));
+  const _stockcheck = _list?.mode === 'stockcheck';
   const newItem = {
     id: newId, name: '', department: deptId || 'other',
     listId: activeGroceryListId || 'default',
@@ -19541,6 +19915,7 @@ async function addGroceryItemToDept(deptId) {
     checked: false, addedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     _isNew: true,
   };
+  if (_stockcheck) newItem.needed = false;
   groceryItems.unshift(newItem);
   const order = getGroceryManualOrder();
   saveGroceryManualOrder([newId, ...order]);
@@ -20010,8 +20385,16 @@ function groceryItemHTML(item) {
     item.recurring ? `↻ every ${item.intervalDays||7}d` : null,
   ].filter(Boolean).join(' · ');
 
+  // Determine which "ticked" state to render based on the list's mode/phase.
+  // - shopping mode OR shop phase → use `checked` (green, struck-through)
+  // - stockcheck-check phase     → use `needed` (amber, "to buy" highlight)
+  const list = groceryLists.find(l => l.id === (item.listId || 'default'));
+  const inCheckPhase = list && list.mode === 'stockcheck' && (list.shoppingPhase || 'check') === 'check';
+  const isOn = inCheckPhase ? _itemIsNeeded(item) : !!item.checked;
+  const stateClass = isOn ? (inCheckPhase ? ' needed' : ' checked') : '';
+
   // Full-row tap target: no checkbox, no menu button
-  return `<div class="grocery-item${item.checked?' checked':''}" id="gitem-${item.id}"
+  return `<div class="grocery-item${stateClass}" id="gitem-${item.id}"
     role="button" tabindex="0"
     onclick="tapGroceryItem('${item.id}')"
     onkeydown="if(event.key==='Enter'||event.key===' ')tapGroceryItem('${item.id}')"
@@ -20020,6 +20403,26 @@ function groceryItemHTML(item) {
       <div class="grocery-item-name">${esc(item.name)}</div>
       ${meta ? `<div class="grocery-item-meta">${esc(meta)}</div>` : ''}
     </div>
+    ${groceryQtyStepperHTML(item)}
+  </div>`;
+}
+
+// ── Qty stepper markup ────────────────────────────────────
+// Used in both locked and edit-mode rows. Visible always, but quietly styled
+// when qty=1 so it doesn't scream "extra info". stopPropagation on every
+// click so it never collides with row tap-to-check or row drag.
+function groceryQtyStepperHTML(item) {
+  const qty = (typeof item.qty === 'number' && item.qty > 0) ? item.qty : 1;
+  const minusDisabled = qty <= 1;
+  return `<div class="grocery-qty-stepper${qty > 1 ? ' has-qty' : ''}" onclick="event.stopPropagation()">
+    <span class="grocery-qty-num" id="gqty-${item.id}">${qty}</span>
+    <div class="grocery-qty-arrows">
+      <button type="button" class="grocery-qty-btn" aria-label="Increase quantity"
+        onclick="event.stopPropagation();_adjustGroceryQty('${item.id}',1)">▲</button>
+      <button type="button" class="grocery-qty-btn" aria-label="Decrease quantity"
+        id="gqtyminus-${item.id}" ${minusDisabled ? 'disabled' : ''}
+        onclick="event.stopPropagation();_adjustGroceryQty('${item.id}',-1)">▼</button>
+    </div>
   </div>`;
 }
 
@@ -20027,12 +20430,20 @@ async function tapGroceryItem(id) {
   const item = groceryItems.find(i => i.id === id);
   if (!item) return;
 
-  // Optimistic update — flip state immediately in memory
-  item.checked   = !item.checked;
-  item.checkedAt = item.checked ? new Date().toISOString() : null;
+  // In stockcheck-check phase, tap toggles `needed` (mark as needs buying).
+  // Everywhere else, tap toggles `checked` (bought / done).
+  const list = groceryLists.find(l => l.id === (item.listId || 'default'));
+  const inCheckPhase = list && list.mode === 'stockcheck' && (list.shoppingPhase || 'check') === 'check';
 
-  // Update the DOM instantly without waiting for save/re-render
-  _updateGroceryItemDOM(id, item.checked);
+  if (inCheckPhase) {
+    item.needed = !_itemIsNeeded(item);
+  } else {
+    item.checked   = !item.checked;
+    item.checkedAt = item.checked ? new Date().toISOString() : null;
+  }
+
+  // Update the DOM instantly — pass the appropriate boolean for the phase
+  _updateGroceryItemDOM(id, inCheckPhase ? !!item.needed : !!item.checked, inCheckPhase ? 'needed' : 'checked');
 
   // Save locally (IDB, fast), then smart-queue server sync
   await _saveGroceryLocal();
@@ -20058,15 +20469,17 @@ async function toggleGroceryCheck(id, cb) {
 }
 
 // Instantly update a single grocery item's visual state without full re-render
-function _updateGroceryItemDOM(id, checked) {
+function _updateGroceryItemDOM(id, on, kind /* 'checked' | 'needed' */) {
   const el = document.getElementById(`gitem-${id}`);
   if (!el) return;
-  el.classList.toggle('checked', checked);
-  // Strike through name
+  // 'checked' is the green "purchased" state; 'needed' is the amber "to buy" state.
+  // Strip both classes first to handle phase changes cleanly.
+  el.classList.remove('checked', 'needed');
+  if (on) el.classList.add(kind === 'needed' ? 'needed' : 'checked');
   const nameEl = el.querySelector('.grocery-item-name');
-  if (nameEl) nameEl.style.textDecoration = checked ? 'line-through' : '';
-  // Dim the row
-  el.style.opacity = checked ? '0.45' : '';
+  if (nameEl) nameEl.style.textDecoration = (on && kind === 'checked') ? 'line-through' : '';
+  // Dim only when "checked" (bought) — needed-state stays full opacity so it reads as a target
+  el.style.opacity = (on && kind === 'checked') ? '0.45' : '';
 }
 
 async function clearCheckedGrocery() {
@@ -20138,8 +20551,12 @@ function toggleGroceryRecurring() {
 
 async function saveGroceryItem() {
   if (!canWrite("groceries")) { showLockBanner("groceries"); return; }
-  const name = document.getElementById('grocery-f-name').value.trim();
-  if (!name) { showToast('Please enter an item name'); return; }
+  const rawName = document.getElementById('grocery-f-name').value.trim();
+  if (!rawName) { showToast('Please enter an item name'); return; }
+  // Parse "2 Yoghurts", "Apples x 3" etc. so the qty stepper gets it
+  const parsed = parseGroceryQty(rawName);
+  const name   = parsed.name;
+  const parsedQty = parsed.qty;
   const id        = document.getElementById('grocery-edit-id').value;
   const dept      = document.getElementById('grocery-f-dept').value;
   const notes     = document.getElementById('grocery-f-notes').value.trim();
@@ -20150,10 +20567,22 @@ async function saveGroceryItem() {
 
   if (id) {
     const item = groceryItems.find(i => i.id === id);
-    if (item) { Object.assign(item, {name, department:dept, notes, recurring, intervalDays, updatedAt:new Date().toISOString()}); }
+    if (item) {
+      const patch = {name, department:dept, notes, recurring, intervalDays, updatedAt:new Date().toISOString()};
+      // Only adopt the parsed qty if user actually wrote one — never silently
+      // reset the qty when editing an existing item.
+      if (parsedQty > 1) patch.qty = parsedQty;
+      Object.assign(item, patch);
+    }
   } else {
     const newId = 'g_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
-    groceryItems.push({ id: newId, name, department:dept, notes, recurring, intervalDays, checked:false, listId: activeGroceryListId, addedAt:new Date().toISOString(), updatedAt:new Date().toISOString() });
+    const newItem = { id: newId, name, department:dept, notes, recurring, intervalDays, checked:false, listId: activeGroceryListId, addedAt:new Date().toISOString(), updatedAt:new Date().toISOString() };
+    if (parsedQty > 1) newItem.qty = parsedQty;
+    // In stockcheck mode, new items default to NOT needed — the user explicitly
+    // ticks during check phase. In shopping mode, leave `needed` unset.
+    const _list = groceryLists.find(l => l.id === (activeGroceryListId || 'default'));
+    if (_list?.mode === 'stockcheck') newItem.needed = false;
+    groceryItems.push(newItem);
     appendToGroceryOrder(newId);
   }
   await saveGrocery();
