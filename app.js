@@ -20110,7 +20110,15 @@ function renderGrocery() {
   }
 
   if (listItems.length === 0) {
-    body.innerHTML = `<div class="grocery-empty"><div class="grocery-empty-icon" style="color:var(--accent)"><svg aria-hidden="true" style="width:48px;height:48px"><use href="#i-shopping-cart"></use></svg></div><div style="font-size:16px;font-weight:700;margin-bottom:8px">No items in this list yet</div><div style="font-size:13px;color:var(--muted)">Tap <svg class="icon icon-sm" aria-hidden="true" style="vertical-align:middle"><use href="#i-zap"></use></svg> Quick List or <svg class="icon icon-sm" aria-hidden="true" style="vertical-align:middle"><use href="#i-pencil"></use></svg> Edit to add items.</div></div>`;
+    body.innerHTML = `<div class="grocery-empty">
+      <div class="grocery-empty-icon" style="color:var(--accent)"><svg aria-hidden="true" style="width:48px;height:48px"><use href="#i-shopping-cart"></use></svg></div>
+      <div style="font-size:16px;font-weight:700;margin-bottom:8px">No items in this list yet</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:18px">Add items quickly under each department, or use Quick List to paste a comma-separated list.</div>
+      <button onclick="quickAddByDepartment()" class="btn btn-primary" style="display:inline-flex;align-items:center;gap:8px">
+        <svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg>
+        Quick Add by Department
+      </button>
+    </div>`;
     return;
   }
 
@@ -20414,6 +20422,20 @@ async function _adjustGroceryQty(id, delta) {
 async function _groceryNewItemBlur(id) {
   const item = groceryItems.find(i => i.id === id);
   if (!item) return;
+  // Capture which other input the user just clicked into, if any — we want
+  // to keep that input focused across the re-render so Quick Add feels
+  // smooth when filling many depts in a row.
+  const nextFocusId = (document.activeElement?.id || '').startsWith('gi-name-')
+    ? document.activeElement.id
+    : null;
+  const restoreFocus = () => {
+    if (!nextFocusId) return;
+    const el = document.getElementById(nextFocusId);
+    if (el) {
+      el.focus();
+      // Don't re-select; cursor keeps its place wherever the user typed
+    }
+  };
   if (item._isNew && !item.name.trim()) {
     // Never named — remove it silently, no sync needed
     groceryItems = groceryItems.filter(i => i.id !== id);
@@ -20421,6 +20443,7 @@ async function _groceryNewItemBlur(id) {
     saveGroceryManualOrder(order);
     await _saveGroceryLocal(); // local only — don't push a blank item delete
     renderGrocery();
+    restoreFocus();
   } else if (item._isNew && item.name.trim()) {
     // Named successfully — parse qty out of the name if present, then save+sync
     const parsed = parseGroceryQty(item.name);
@@ -20430,6 +20453,7 @@ async function _groceryNewItemBlur(id) {
     item.updatedAt = new Date().toISOString();
     await saveGrocery(); // now safe to sync — item has a name
     renderGrocery();
+    restoreFocus();
   }
 }
 
@@ -20785,7 +20809,20 @@ function toggleSettingsSection(bodyId, headerEl) { toggleSettings(bodyId, header
 
 function toggleGroceryEditMode() {
   groceryEditMode = !groceryEditMode;
-  if (!groceryEditMode) grocerySelected.clear();
+  if (!groceryEditMode) {
+    grocerySelected.clear();
+    // Sweep any unfinished `_isNew` blank items left behind — Quick Add
+    // creates one per dept, and the user may exit edit mode without typing
+    // into all of them. Without this sweep, blank rows would render in
+    // locked mode.
+    const before = groceryItems.length;
+    groceryItems = groceryItems.filter(i => !(i._isNew && !i.name?.trim()));
+    if (groceryItems.length !== before) {
+      const order = getGroceryManualOrder().filter(id => groceryItems.some(i => i.id === id));
+      saveGroceryManualOrder(order);
+      _saveGroceryLocal().catch(() => {});
+    }
+  }
   // When entering edit mode, auto-show the Done editing pill beside the FAB
   if (groceryEditMode) {
     _showGroceryDoneSlide();
@@ -20794,6 +20831,60 @@ function toggleGroceryEditMode() {
   }
   renderGrocery();
   _updateGrocerySelectionBar();
+}
+
+// ── Quick Add: one blank input per department ──────────────────────────
+// Surfaced from the empty-list CTA. Drops one `_isNew` blank into every
+// department, switches to dept-grouped edit mode, and lets the user type
+// into whichever depts they care about. Unused depts collapse out of view
+// the moment the user leaves edit mode (toggleGroceryEditMode sweeps the
+// blanks). Existing inline blur logic handles per-input cleanup.
+async function quickAddByDepartment() {
+  if (!canWrite('groceries')) { showLockBanner('groceries'); return; }
+  if (!activeGroceryListId) return;
+  const depts = groceryDepts.length ? groceryDepts : DEFAULT_DEPTS;
+  // Force dept-grouped view so the per-dept blanks are visible in their groups
+  grocerySort = 'dept';
+  try { localStorage.setItem('stockroom_grocery_sort', 'dept'); } catch (e) {}
+  const now = new Date().toISOString();
+  // Create one blank `_isNew` item per dept — phase-aware default for `needed`
+  const list = _activeGroceryList();
+  const isStockcheck = list?.mode === 'stockcheck';
+  const inCheckPhase = isStockcheck && (list.shoppingPhase || 'check') === 'check';
+  const newIds = [];
+  depts.forEach(dept => {
+    const newId = 'g_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6) + '_' + dept.id;
+    const newItem = {
+      id: newId,
+      name: '',
+      department: dept.id,
+      listId: activeGroceryListId,
+      notes: '',
+      recurring: false,
+      intervalDays: 0,
+      checked: false,
+      addedAt: now,
+      updatedAt: now,
+      _isNew: true,
+    };
+    if (isStockcheck) newItem.needed = !inCheckPhase; // shop phase: needed=true; check phase: needed=false
+    groceryItems.push(newItem);
+    newIds.push(newId);
+  });
+  // Append all new blanks to the manual-order list so they sort sensibly
+  const order = getGroceryManualOrder();
+  saveGroceryManualOrder([...order, ...newIds]);
+  // Enter edit mode (without going through toggleGroceryEditMode so we don't
+  // double-sweep). _showGroceryDoneSlide gives the user the visible exit cue.
+  groceryEditMode = true;
+  _showGroceryDoneSlide();
+  await _saveGroceryLocal();
+  renderGrocery();
+  // Focus the first dept's input so the user can start typing immediately
+  setTimeout(() => {
+    const firstInput = document.getElementById(`gi-name-${newIds[0]}`);
+    if (firstInput) { firstInput.focus(); firstInput.select(); }
+  }, 100);
 }
 
 // Show the "Done editing" amber pill sliding left from FAB — always visible in edit mode
