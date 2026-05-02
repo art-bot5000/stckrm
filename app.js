@@ -286,13 +286,15 @@ async function _seedDemoData() {
   // ── Grocery departments — use the defaults ─────────────────────────────
   groceryDepts = DEFAULT_DEPTS.map(d => ({...d}));
 
-  // ── Grocery lists — one Shopping (mid-shop), one Stock Check (mid-check) ──
+  // ── Grocery lists — both stockcheck. Tesco run is mid-shop (filter visible),
+  //                    Weekly stock check is in the check phase (planning).
   groceryLists = [
     {
       id: 'demo_gl_tesco',
       name: 'Tesco run',
       store: 'Tesco',
-      mode: 'shopping',
+      mode: 'stockcheck',
+      shoppingPhase: 'shop',
       createdAt: iso(daysAgo(3)),
       updatedAt: now,
     },
@@ -313,13 +315,14 @@ async function _seedDemoData() {
   // Items in the Shopping list — a few already ticked, others remaining.
   // Items in the Stock Check list — half marked needed (amber), rest not.
   groceryItems = [
-    // Tesco run — Shopping mode
-    { id: 'demo_g_eggs',      name: 'Free range eggs',     department: 'dairy',     listId: 'demo_gl_tesco', notes: '6-pack', recurring: false, intervalDays: 7, checked: true,  checkedAt: iso(daysAgo(0)), addedAt: iso(daysAgo(3)), updatedAt: now },
-    { id: 'demo_g_bread',     name: 'Sourdough loaf',      department: 'bakery',    listId: 'demo_gl_tesco', notes: '',        recurring: false, intervalDays: 7, checked: true,  checkedAt: iso(daysAgo(0)), addedAt: iso(daysAgo(3)), updatedAt: now },
-    { id: 'demo_g_yog',       name: 'Greek yoghurt',       department: 'dairy',     listId: 'demo_gl_tesco', notes: '500g',    recurring: false, intervalDays: 7, qty: 2, checked: false, addedAt: iso(daysAgo(3)), updatedAt: now },
-    { id: 'demo_g_chick',     name: 'Chicken thighs',      department: 'meat-fish', listId: 'demo_gl_tesco', notes: 'Skin-on', recurring: false, intervalDays: 7, checked: false, addedAt: iso(daysAgo(2)), updatedAt: now },
-    { id: 'demo_g_apples',    name: 'Pink Lady apples',    department: 'fruit-veg', listId: 'demo_gl_tesco', notes: '',        recurring: false, intervalDays: 7, qty: 6, checked: false, addedAt: iso(daysAgo(2)), updatedAt: now },
-    { id: 'demo_g_pasta',     name: 'Penne pasta',         department: 'cupboard',  listId: 'demo_gl_tesco', notes: '500g',    recurring: false, intervalDays: 7, checked: false, addedAt: iso(daysAgo(2)), updatedAt: now },
+    // Tesco run — stockcheck-shop. needed:true on every item (they were marked
+    // during stock check); 2 already ticked off, 4 still to buy.
+    { id: 'demo_g_eggs',      name: 'Free range eggs',     department: 'dairy',     listId: 'demo_gl_tesco', notes: '6-pack', recurring: false, intervalDays: 7, needed: true, checked: true,  checkedAt: iso(daysAgo(0)), addedAt: iso(daysAgo(3)), updatedAt: now },
+    { id: 'demo_g_bread',     name: 'Sourdough loaf',      department: 'bakery',    listId: 'demo_gl_tesco', notes: '',        recurring: false, intervalDays: 7, needed: true, checked: true,  checkedAt: iso(daysAgo(0)), addedAt: iso(daysAgo(3)), updatedAt: now },
+    { id: 'demo_g_yog',       name: 'Greek yoghurt',       department: 'dairy',     listId: 'demo_gl_tesco', notes: '500g',    recurring: false, intervalDays: 7, qty: 2, needed: true, checked: false, addedAt: iso(daysAgo(3)), updatedAt: now },
+    { id: 'demo_g_chick',     name: 'Chicken thighs',      department: 'meat-fish', listId: 'demo_gl_tesco', notes: 'Skin-on', recurring: false, intervalDays: 7, needed: true, checked: false, addedAt: iso(daysAgo(2)), updatedAt: now },
+    { id: 'demo_g_apples',    name: 'Pink Lady apples',    department: 'fruit-veg', listId: 'demo_gl_tesco', notes: '',        recurring: false, intervalDays: 7, qty: 6, needed: true, checked: false, addedAt: iso(daysAgo(2)), updatedAt: now },
+    { id: 'demo_g_pasta',     name: 'Penne pasta',         department: 'cupboard',  listId: 'demo_gl_tesco', notes: '500g',    recurring: false, intervalDays: 7, needed: true, checked: false, addedAt: iso(daysAgo(2)), updatedAt: now },
 
     // Stock check list — these need to be in `needed` state for the demo
     // to show off the stockcheck workflow nicely
@@ -548,8 +551,8 @@ const _DEMO_NUDGE_CONTENT = {
   },
   groceries: {
     text: "This list is in Stock Check mode — tap items to mark them as needed, then hit Start Shopping to filter to just those.",
-    anchor: '#grocery-active-toolbar',
-    placement: 'bottom',
+    anchor: '#grocery-list-body',
+    placement: 'top',
   },
   savings: {
     text: "Stockroom finds money for you — it spots Subscribe & Save eligibility from your real prices. Two items here qualify.",
@@ -19380,7 +19383,11 @@ async function _saveGroceryListModal(id) {
     }
   } else {
     const newId = 'gl_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
-    groceryLists.push({ id: newId, name, store, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    groceryLists.push({
+      id: newId, name, store,
+      mode: 'stockcheck', shoppingPhase: 'check',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
     activeGroceryListId = newId;
     try { localStorage.setItem('stockroom_active_grocery_list', newId); } catch(e) {}
   }
@@ -19525,10 +19532,17 @@ async function _saveQuickList() {
   const storeNameVal = document.getElementById('ql-store-name')?.value.trim();
   const depts = groceryDepts.length ? groceryDepts : DEFAULT_DEPTS;
 
-  // Create a new list for this quick session
+  // Create a new list for this quick session. Quick List is "I'm building a
+  // shopping list right now" — so it lands directly in stockcheck-shop phase
+  // with every item pre-marked as needed. From the user's perspective this
+  // works exactly like the old Shopping mode (tap to tick off as you go).
   const newListId  = 'gl_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
   const newListName = listNameVal || `Quick list ${new Date().toLocaleDateString('en-GB', {day:'numeric',month:'short'})}`;
-  groceryLists.push({ id: newListId, name: newListName, store: storeNameVal || '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+  groceryLists.push({
+    id: newListId, name: newListName, store: storeNameVal || '',
+    mode: 'stockcheck', shoppingPhase: 'shop',
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  });
 
   // Add items with best-effort department detection. Each entry can carry
   // a quantity ("2 Yoghurts", "Apples x 3") — parseGroceryQty extracts that.
@@ -19539,7 +19553,7 @@ async function _saveQuickList() {
     const existing = groceryItems.find(i => i.name.toLowerCase() === name.toLowerCase());
     const dept = existing?.department || detectDepartment(name) || depts[0]?.id || 'other';
     const newId = 'g_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
-    const newItem = { id: newId, name, department: dept, listId: newListId, notes: '', recurring: false, intervalDays: 7, checked: false, addedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    const newItem = { id: newId, name, department: dept, listId: newListId, notes: '', recurring: false, intervalDays: 7, checked: false, needed: true, addedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     if (parsed.qty > 1) newItem.qty = parsed.qty;
     groceryItems.push(newItem);
     appendToGroceryOrder(newId);
@@ -19961,9 +19975,10 @@ function renderGrocery() {
   const multiList = groceryLists.length > 1;
   const listBrowsing = multiList && !activeGroceryListId;
 
-  // Active-list toolbar — holds "All lists" (when multi-list) and the
-  // shopping/stockcheck mode toggle. Rendered as one block so the two
-  // controls sit on the same line.
+  // Active-list toolbar — only the "All lists" back-button now. The
+  // stockcheck/shopping mode pill was removed: lists default to stockcheck,
+  // and the workflow uses Start Shopping / Done buttons (in the phase bar)
+  // to move between phases.
   let toolbar = document.getElementById('grocery-active-toolbar');
   if (!toolbar) {
     toolbar = document.createElement('div');
@@ -19972,34 +19987,14 @@ function renderGrocery() {
     body.parentNode.insertBefore(toolbar, body);
   }
 
-  // Show toolbar only when an active list is selected (not in picker mode)
-  if (activeGroceryListId) {
-    const list = _activeGroceryList();
-    const mode = list?.mode === 'stockcheck' ? 'stockcheck' : 'shopping';
-    const allListsBtn = multiList
-      ? `<button class="btn btn-ghost btn-sm" onclick="_groceryGoToAllLists()" style="flex-shrink:0">← All lists</button>`
-      : `<span style="flex:1"></span>`;
-    toolbar.innerHTML = `
-      ${allListsBtn}
-      <div class="grocery-mode-toggle" role="tablist" aria-label="List mode">
-        <button class="grocery-mode-btn ${mode==='shopping'?'active':''}"
-          role="tab" aria-selected="${mode==='shopping'}"
-          onclick="setGroceryListMode('shopping')"
-          title="Shopping list — tick items as you shop">
-          <svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg>
-          Shopping
-        </button>
-        <button class="grocery-mode-btn ${mode==='stockcheck'?'active':''}"
-          role="tab" aria-selected="${mode==='stockcheck'}"
-          onclick="setGroceryListMode('stockcheck')"
-          title="Stock check — tick items you need, then start shopping">
-          <svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg>
-          Stock Check
-        </button>
-      </div>`;
+  // Show the toolbar only when there's an active list AND we have multiple
+  // lists to navigate between. With a single list, there's nothing to show.
+  if (activeGroceryListId && multiList) {
+    toolbar.innerHTML = `<button class="btn btn-ghost btn-sm" onclick="_groceryGoToAllLists()" style="flex-shrink:0">← All lists</button>`;
     toolbar.style.display = 'flex';
   } else {
     toolbar.style.display = 'none';
+    toolbar.innerHTML = '';
   }
 
   // Remove legacy dynamic back-button if it exists from a previous render
@@ -20649,11 +20644,13 @@ async function addGroceryItemToDept(deptId) {
   groceryEditMode = true;
   // Create a blank item and insert at the top of that dept
   const newId = 'g_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
-  // In stockcheck mode, new items default to NOT needed — the user has to
-  // explicitly tick them during the check phase. In shopping mode (default),
-  // we leave `needed` unset so _itemIsNeeded() treats them as true.
+  // Phase-aware default for `needed`:
+  // - stockcheck + check phase → needed: false (user ticks during check)
+  // - stockcheck + shop phase  → needed: true  (you're adding it BECAUSE you need it)
+  // - shopping mode            → leave unset (irrelevant in this mode)
   const _list = groceryLists.find(l => l.id === (activeGroceryListId || 'default'));
-  const _stockcheck = _list?.mode === 'stockcheck';
+  const _isStockcheck  = _list?.mode === 'stockcheck';
+  const _isCheckPhase  = _isStockcheck && (_list.shoppingPhase || 'check') === 'check';
   const newItem = {
     id: newId, name: '', department: deptId || 'other',
     listId: activeGroceryListId || 'default',
@@ -20661,7 +20658,7 @@ async function addGroceryItemToDept(deptId) {
     checked: false, addedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     _isNew: true,
   };
-  if (_stockcheck) newItem.needed = false;
+  if (_isStockcheck) newItem.needed = !_isCheckPhase; // true in shop phase, false in check phase
   groceryItems.unshift(newItem);
   const order = getGroceryManualOrder();
   saveGroceryManualOrder([newId, ...order]);
@@ -21324,10 +21321,12 @@ async function saveGroceryItem() {
     const newId = 'g_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
     const newItem = { id: newId, name, department:dept, notes, recurring, intervalDays, checked:false, listId: activeGroceryListId, addedAt:new Date().toISOString(), updatedAt:new Date().toISOString() };
     if (parsedQty > 1) newItem.qty = parsedQty;
-    // In stockcheck mode, new items default to NOT needed — the user explicitly
-    // ticks during check phase. In shopping mode, leave `needed` unset.
+    // Phase-aware default for `needed` — see addGroceryItemToDept for the rule.
     const _list = groceryLists.find(l => l.id === (activeGroceryListId || 'default'));
-    if (_list?.mode === 'stockcheck') newItem.needed = false;
+    if (_list?.mode === 'stockcheck') {
+      const _isCheckPhase = (_list.shoppingPhase || 'check') === 'check';
+      newItem.needed = !_isCheckPhase;
+    }
     groceryItems.push(newItem);
     appendToGroceryOrder(newId);
   }
