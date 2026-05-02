@@ -832,6 +832,18 @@
   .grocery-item { display:flex; align-items:center; gap:12px; padding:16px 0; border-bottom:1px solid rgba(46,51,80,0.35); min-height:56px; }
   .grocery-item.checked { opacity:0.4; }
   .grocery-item.checked .grocery-item-name { text-decoration:line-through; color:var(--muted); }
+  /* Shop phase: items NOT marked needed during stock check render as
+     suppressed — same strikethrough as checked, slightly more opacity so
+     the user can distinguish "didn't need" (paler) from "bought" (more
+     dimmed). Tap to "buy anyway" → flips to active. */
+  .grocery-item.unneeded-suppressed {
+    opacity: 0.32;
+    font-style: italic;
+  }
+  .grocery-item.unneeded-suppressed .grocery-item-name {
+    color: var(--muted);
+    text-decoration-style: dashed;
+  }
   /* Stock-check: "needed" = amber-tinted, full opacity, no strikethrough */
   .grocery-item.needed {
     background: rgba(232,168,56,0.06);

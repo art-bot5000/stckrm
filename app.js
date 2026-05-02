@@ -19206,8 +19206,12 @@ function _renderGroceryPhaseBar(list, mode, phase, listItems) {
         Start Shopping
       </button>`;
   } else { // 'shop'
-    const remaining = listItems.filter(i => !i.checked).length;
-    const total     = listItems.length;
+    // Shop-phase count is over the buy-list only (items marked needed during
+    // stock check). Items that weren't marked are visually suppressed but
+    // don't count as "to buy" — they're not on the shopping list.
+    const needed = listItems.filter(_itemIsNeeded);
+    const remaining = needed.filter(i => !i.checked).length;
+    const total     = needed.length;
     bar.innerHTML = `
       <div class="grocery-phase-info">
         <div class="grocery-phase-title" style="color:var(--ok)"><svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Shopping</div>
@@ -20037,14 +20041,14 @@ function renderGrocery() {
   let listItems = groceryItems.filter(i => !i._deletedAt && (i.listId || 'default') === activeGroceryListId);
 
   // ── Stock-check / shopping mode ─────────────────────────────────
-  // When the active list is in stockcheck mode + 'shop' phase, narrow the
-  // visible items to those marked as needed during stock-check.
+  // In shop phase we DON'T filter the list — items the user didn't mark
+  // as needed during stock check stay visible, but render as pre-checked
+  // (greyed out, struck-through). The user can still tap them to "buy
+  // anyway", which un-greys them. This avoids items disappearing without
+  // explanation and gives the user an out if they change their mind.
   const _activeList = _activeGroceryList();
   const _mode  = _activeGroceryListMode();
   const _phase = _activeGroceryListPhase();
-  if (_mode === 'stockcheck' && _phase === 'shop' && !groceryEditMode) {
-    listItems = listItems.filter(_itemIsNeeded);
-  }
 
   // Render the phase-control bar (Start Shopping / Done Shopping etc.).
   // It sits between the toolbar and the items so it's always visible.
@@ -21129,12 +21133,33 @@ function groceryItemHTML(item) {
   ].filter(Boolean).join(' · ');
 
   // Determine which "ticked" state to render based on the list's mode/phase.
-  // - shopping mode OR shop phase → use `checked` (green, struck-through)
-  // - stockcheck-check phase     → use `needed` (amber, "to buy" highlight)
+  // - shopping mode (legacy)        → use `checked` (green, struck-through)
+  // - stockcheck-check phase        → use `needed` (amber, "to buy" highlight)
+  // - stockcheck-shop phase:
+  //     • items marked needed       → use `checked` (struck through when bought)
+  //     • items NOT marked needed   → render as pre-checked / suppressed so
+  //                                   only the buy-list stands out. Tapping
+  //                                   re-activates them ("buy anyway").
   const list = groceryLists.find(l => l.id === (item.listId || 'default'));
-  const inCheckPhase = list && list.mode === 'stockcheck' && (list.shoppingPhase || 'check') === 'check';
-  const isOn = inCheckPhase ? _itemIsNeeded(item) : !!item.checked;
-  const stateClass = isOn ? (inCheckPhase ? ' needed' : ' checked') : '';
+  const isStockcheck = list && list.mode === 'stockcheck';
+  const inCheckPhase = isStockcheck && (list.shoppingPhase || 'check') === 'check';
+  const inShopPhase  = isStockcheck && list.shoppingPhase === 'shop';
+
+  let stateClass = '';
+  if (inCheckPhase) {
+    if (_itemIsNeeded(item)) stateClass = ' needed';
+  } else if (inShopPhase) {
+    if (!_itemIsNeeded(item)) {
+      // Wasn't on the buy-list — render as suppressed/checked so the active
+      // shopping items stand out. The actual `checked` field stays untouched.
+      stateClass = ' checked unneeded-suppressed';
+    } else if (item.checked) {
+      stateClass = ' checked';
+    }
+  } else {
+    // Legacy shopping mode
+    if (item.checked) stateClass = ' checked';
+  }
 
   // Full-row tap target: no checkbox, no menu button
   return `<div class="grocery-item${stateClass}" id="gitem-${item.id}"
@@ -21173,28 +21198,44 @@ async function tapGroceryItem(id) {
   const item = groceryItems.find(i => i.id === id);
   if (!item) return;
 
-  // In stockcheck-check phase, tap toggles `needed` (mark as needs buying).
-  // Everywhere else, tap toggles `checked` (bought / done).
   const list = groceryLists.find(l => l.id === (item.listId || 'default'));
-  const inCheckPhase = list && list.mode === 'stockcheck' && (list.shoppingPhase || 'check') === 'check';
+  const isStockcheck = list && list.mode === 'stockcheck';
+  const inCheckPhase = isStockcheck && (list.shoppingPhase || 'check') === 'check';
+  const inShopPhase  = isStockcheck && list.shoppingPhase === 'shop';
 
+  let kind;  // which state actually changed — feeds into the DOM update + animation
   if (inCheckPhase) {
+    // Stock-check: tap toggles `needed`
     item.needed = !_itemIsNeeded(item);
+    kind = 'needed';
+  } else if (inShopPhase && !_itemIsNeeded(item)) {
+    // Shop phase, item was rendered as suppressed (not on the buy-list).
+    // Tap re-activates it: it joins the buy-list and is unchecked.
+    item.needed = true;
+    item.checked = false;
+    item.checkedAt = null;
+    kind = 'reactivate';
   } else {
+    // Shopping mode (legacy) or shop phase + needed item: toggle checked
     item.checked   = !item.checked;
     item.checkedAt = item.checked ? new Date().toISOString() : null;
+    kind = 'checked';
   }
-
-  // Update the DOM instantly — pass the appropriate boolean for the phase
-  _updateGroceryItemDOM(id, inCheckPhase ? !!item.needed : !!item.checked, inCheckPhase ? 'needed' : 'checked');
 
   // Save locally (IDB, fast), then smart-queue server sync
   await _saveGroceryLocal();
   _smartSync.enqueueGrocery();
   bcPost({ type: 'GROCERY_CHANGED' });
 
-  // Full re-render deferred — lets item animate to bottom of dept smoothly
-  setTimeout(() => renderGrocery(), 350);
+  // Reactivation needs a full re-render so the suppressed visual flips
+  // off. Other paths can do a fast DOM update first, then a debounced
+  // re-render to slide the item to its new dept position.
+  if (kind === 'reactivate') {
+    renderGrocery();
+  } else {
+    _updateGroceryItemDOM(id, kind === 'needed' ? !!item.needed : !!item.checked, kind);
+    setTimeout(() => renderGrocery(), 350);
+  }
 }
 
 async function toggleGroceryCheck(id, cb) {
