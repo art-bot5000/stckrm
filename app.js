@@ -119,6 +119,683 @@ const DB_STORES  = ['items','settings','reminders','groceries','departments','de
 
 let _db = null;
 
+// ── DEMO MODE storage shim ─────────────────────────────────────────────
+// When window._demoMode is true, the three IDB primitives below route to
+// per-store in-memory Maps instead of opening the real IndexedDB. This
+// effectively gives the entire app an in-memory backend with zero changes
+// to any caller — every load/save path eventually goes through these three
+// functions. Demo data lives only for the lifetime of the tab.
+const _demoStorage = Object.fromEntries(DB_STORES.map(s => [s, new Map()]));
+function _demoStoreFor(name) {
+  if (!_demoStorage[name]) _demoStorage[name] = new Map();
+  return _demoStorage[name];
+}
+function _demoClear() {
+  for (const k of Object.keys(_demoStorage)) _demoStorage[k] = new Map();
+}
+
+// ── DEMO MODE seed ──────────────────────────────────────────────────────
+// Populates every visible tab with realistic example data so the demo lands
+// on something useful. All in-memory only — written via dbPut into the
+// _demoStorage Maps, so a tab refresh wipes it cleanly.
+async function _seedDemoData() {
+  if (!window._demoMode) return;
+  const today    = new Date();
+  const iso      = d => d.toISOString();
+  const ymd      = d => d.toISOString().slice(0, 10);
+  const daysAgo  = n => { const d = new Date(today); d.setDate(d.getDate() - n); return d; };
+  const now      = iso(today);
+  const ym       = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
+  const prevYm   = (() => {
+    const d = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  })();
+
+  // ── Stockroom items ───────────────────────────────────────────────────
+  // Each item demonstrates a different feature. Days/qty/months are tuned
+  // so the status colours come out as designed (Critical / Low / Good).
+  items = [
+    // CRITICAL — out of stock, no logs
+    {
+      id: 'demo_i_milk',
+      name: 'Semi-Skimmed Milk 4-pint',
+      category: 'Dairy', emoji: '🥛',
+      qty: 1, months: 0.18, daysPerUnit: 5.5,
+      logs: [
+        { id: 'demo_l_milk_1', date: ymd(daysAgo(7)), qty: 1, price: '1.85', store: 'Tesco', usingFromDate: ymd(daysAgo(7)) },
+      ],
+      tags: ['Household'],
+      addedAt: iso(daysAgo(60)), updatedAt: now,
+    },
+    // LOW — running out in ~5 days
+    {
+      id: 'demo_i_pepsi',
+      name: 'Pepsi Max 24-pack',
+      category: 'Drinks', emoji: '🥤',
+      qty: 24, months: 1, daysPerUnit: 1.27,
+      logs: [
+        { id: 'demo_l_pepsi_1', date: ymd(daysAgo(35)), qty: 1, price: '12.50', store: 'Tesco', usingFromDate: ymd(daysAgo(35)) },
+        { id: 'demo_l_pepsi_2', date: ymd(daysAgo(21)), qty: 1, price: '12.99', store: 'Tesco', usingFromDate: ymd(daysAgo(21)) },
+      ],
+      tags: ['Personal'],
+      // Recent stock count — exposes the projected-units feature
+      stockCount: 4, stockCountDate: ymd(daysAgo(2)),
+      // Multi-store prices — drives the Subscribe & Save savings widget
+      storePrices: [
+        { store: 'Tesco', price: '12.99', notes: '' },
+        { store: 'Amazon', price: '11.50', notes: 'Subscribe & Save' },
+        { store: 'Sainsbury\'s', price: '13.50', notes: '' },
+      ],
+      addedAt: iso(daysAgo(120)), updatedAt: now,
+    },
+    // PENDING DELIVERY — appears in the Pending Deliveries section at the top
+    {
+      id: 'demo_i_coffee',
+      name: 'Italian Espresso Coffee Beans 1kg',
+      category: 'Drinks', emoji: '☕',
+      qty: 1, months: 1.5, daysPerUnit: 45.75,
+      logs: [
+        { id: 'demo_l_coffee_1', date: ymd(daysAgo(50)), qty: 1, price: '11.95', store: 'Amazon', usingFromDate: ymd(daysAgo(50)) },
+        // Pending — ordered but not yet delivered
+        { id: 'demo_l_coffee_2', date: ymd(today), qty: 1, price: '12.99', store: 'Amazon', pendingDelivery: true },
+      ],
+      ordered: true,
+      tags: ['Personal'],
+      addedAt: iso(daysAgo(150)), updatedAt: now,
+    },
+    // GOOD — well-stocked toothpaste with replacement reminder
+    {
+      id: 'demo_i_toothpaste',
+      name: 'Toothpaste 75ml',
+      category: 'Personal Care', emoji: '🦷',
+      qty: 2, months: 3, daysPerUnit: 45.75,
+      logs: [
+        { id: 'demo_l_tp_1', date: ymd(daysAgo(14)), qty: 2, price: '4.50', store: 'Boots', usingFromDate: ymd(daysAgo(14)) },
+      ],
+      tags: ['Household'],
+      addedAt: iso(daysAgo(200)), updatedAt: now,
+    },
+    // GOOD — kitchen roll with multi-pack
+    {
+      id: 'demo_i_kitchenroll',
+      name: 'Kitchen Roll 4-pack',
+      category: 'Household', emoji: '🧻',
+      qty: 4, months: 1.5, daysPerUnit: 11.4,
+      logs: [
+        { id: 'demo_l_kr_1', date: ymd(daysAgo(20)), qty: 1, price: '4.50', store: 'Tesco', usingFromDate: ymd(daysAgo(20)) },
+      ],
+      tags: ['Household'],
+      addedAt: iso(daysAgo(180)), updatedAt: now,
+    },
+    // GOOD — washing-up liquid with Amazon S&S eligibility
+    {
+      id: 'demo_i_fairy',
+      name: 'Washing Up Liquid 870ml',
+      category: 'Household', emoji: '🧼',
+      qty: 1, months: 2, daysPerUnit: 61,
+      logs: [
+        { id: 'demo_l_fairy_1', date: ymd(daysAgo(25)), qty: 1, price: '3.50', store: 'Tesco', usingFromDate: ymd(daysAgo(25)) },
+      ],
+      tags: ['Household'],
+      storePrices: [
+        { store: 'Tesco', price: '3.50', notes: '' },
+        { store: 'Amazon', price: '3.10', notes: 'Subscribe & Save eligible' },
+      ],
+      addedAt: iso(daysAgo(90)), updatedAt: now,
+    },
+    // GOOD — toothbrush heads (replacement reminder linked below)
+    {
+      id: 'demo_i_brushheads',
+      name: 'Oral-B Toothbrush Heads 4-pack',
+      category: 'Personal Care', emoji: '🪥',
+      qty: 4, months: 12, daysPerUnit: 91.5,
+      logs: [
+        { id: 'demo_l_bh_1', date: ymd(daysAgo(45)), qty: 1, price: '14.99', store: 'Amazon', usingFromDate: ymd(daysAgo(45)) },
+      ],
+      tags: ['Personal'],
+      replacementInterval: 3, replacementUnit: 'months',
+      lastReplaced: ymd(daysAgo(75)),
+      addedAt: iso(daysAgo(300)), updatedAt: now,
+    },
+    // GOOD — laundry detergent
+    {
+      id: 'demo_i_laundry',
+      name: 'Laundry Detergent 50 wash',
+      category: 'Household', emoji: '🧺',
+      qty: 50, months: 3, daysPerUnit: 1.83,
+      logs: [
+        { id: 'demo_l_ld_1', date: ymd(daysAgo(30)), qty: 1, price: '11.00', store: 'Tesco', usingFromDate: ymd(daysAgo(30)) },
+      ],
+      tags: ['Household'],
+      addedAt: iso(daysAgo(220)), updatedAt: now,
+    },
+  ];
+
+  // ── Settings ───────────────────────────────────────────────────────────
+  settings = {
+    ...settings,
+    threshold: 20,
+    country: 'GB',
+    customTags: ['Personal', 'Household'],
+    _setupProtectSeen: true,
+    _setupCountrySet: true,
+    // Pretend the wizard finished on a fictional yesterday
+    lastSynced: iso(daysAgo(1)),
+  };
+
+  // ── Grocery departments — use the defaults ─────────────────────────────
+  groceryDepts = DEFAULT_DEPTS.map(d => ({...d}));
+
+  // ── Grocery lists — one Shopping (mid-shop), one Stock Check (mid-check) ──
+  groceryLists = [
+    {
+      id: 'demo_gl_tesco',
+      name: 'Tesco run',
+      store: 'Tesco',
+      mode: 'shopping',
+      createdAt: iso(daysAgo(3)),
+      updatedAt: now,
+    },
+    {
+      id: 'demo_gl_stockcheck',
+      name: 'Weekly stock check',
+      store: '',
+      mode: 'stockcheck',
+      shoppingPhase: 'check',
+      createdAt: iso(daysAgo(5)),
+      updatedAt: now,
+    },
+  ];
+  activeGroceryListId = 'demo_gl_stockcheck';
+  try { localStorage.setItem('stockroom_active_grocery_list', activeGroceryListId); } catch(e) {}
+
+  // ── Grocery items ──────────────────────────────────────────────────────
+  // Items in the Shopping list — a few already ticked, others remaining.
+  // Items in the Stock Check list — half marked needed (amber), rest not.
+  groceryItems = [
+    // Tesco run — Shopping mode
+    { id: 'demo_g_eggs',      name: 'Free range eggs',     department: 'dairy',     listId: 'demo_gl_tesco', notes: '6-pack', recurring: false, intervalDays: 7, checked: true,  checkedAt: iso(daysAgo(0)), addedAt: iso(daysAgo(3)), updatedAt: now },
+    { id: 'demo_g_bread',     name: 'Sourdough loaf',      department: 'bakery',    listId: 'demo_gl_tesco', notes: '',        recurring: false, intervalDays: 7, checked: true,  checkedAt: iso(daysAgo(0)), addedAt: iso(daysAgo(3)), updatedAt: now },
+    { id: 'demo_g_yog',       name: 'Greek yoghurt',       department: 'dairy',     listId: 'demo_gl_tesco', notes: '500g',    recurring: false, intervalDays: 7, qty: 2, checked: false, addedAt: iso(daysAgo(3)), updatedAt: now },
+    { id: 'demo_g_chick',     name: 'Chicken thighs',      department: 'meat-fish', listId: 'demo_gl_tesco', notes: 'Skin-on', recurring: false, intervalDays: 7, checked: false, addedAt: iso(daysAgo(2)), updatedAt: now },
+    { id: 'demo_g_apples',    name: 'Pink Lady apples',    department: 'fruit-veg', listId: 'demo_gl_tesco', notes: '',        recurring: false, intervalDays: 7, qty: 6, checked: false, addedAt: iso(daysAgo(2)), updatedAt: now },
+    { id: 'demo_g_pasta',     name: 'Penne pasta',         department: 'cupboard',  listId: 'demo_gl_tesco', notes: '500g',    recurring: false, intervalDays: 7, checked: false, addedAt: iso(daysAgo(2)), updatedAt: now },
+
+    // Stock check list — these need to be in `needed` state for the demo
+    // to show off the stockcheck workflow nicely
+    { id: 'demo_g_butter',    name: 'Butter',              department: 'dairy',     listId: 'demo_gl_stockcheck', notes: 'Salted', recurring: false, intervalDays: 14, checked: false, needed: true,  addedAt: iso(daysAgo(5)), updatedAt: now },
+    { id: 'demo_g_pasta2',    name: 'Spaghetti',           department: 'cupboard',  listId: 'demo_gl_stockcheck', notes: '',       recurring: false, intervalDays: 14, checked: false, needed: true,  addedAt: iso(daysAgo(5)), updatedAt: now },
+    { id: 'demo_g_olive',     name: 'Olive oil',           department: 'cupboard',  listId: 'demo_gl_stockcheck', notes: 'Extra virgin', recurring: false, intervalDays: 30, qty: 1, checked: false, needed: true, addedAt: iso(daysAgo(5)), updatedAt: now },
+    { id: 'demo_g_rice',      name: 'Basmati rice 1kg',    department: 'cupboard',  listId: 'demo_gl_stockcheck', notes: '', recurring: false, intervalDays: 30, checked: false, needed: false, addedAt: iso(daysAgo(5)), updatedAt: now },
+    { id: 'demo_g_tomato',    name: 'Chopped tomatoes',    department: 'cupboard',  listId: 'demo_gl_stockcheck', notes: 'Tinned', recurring: false, intervalDays: 14, qty: 4, checked: false, needed: false, addedAt: iso(daysAgo(5)), updatedAt: now },
+    { id: 'demo_g_cereal',    name: 'Granola',             department: 'cupboard',  listId: 'demo_gl_stockcheck', notes: '', recurring: false, intervalDays: 14, checked: false, needed: false, addedAt: iso(daysAgo(5)), updatedAt: now },
+    { id: 'demo_g_juice',     name: 'Orange juice',        department: 'drinks',    listId: 'demo_gl_stockcheck', notes: 'No bits', recurring: false, intervalDays: 7, checked: false, needed: false, addedAt: iso(daysAgo(5)), updatedAt: now },
+    { id: 'demo_g_bin',       name: 'Bin bags',            department: 'household', listId: 'demo_gl_stockcheck', notes: '', recurring: false, intervalDays: 60, checked: false, needed: false, addedAt: iso(daysAgo(5)), updatedAt: now },
+  ];
+
+  // ── Reminders — replacement schedules ──────────────────────────────────
+  reminders = [
+    {
+      id: 'demo_r_brushheads',
+      name: 'Replace toothbrush heads',
+      interval: 3, unit: 'months',
+      lastReplaced: ymd(daysAgo(75)),
+      notes: 'Use Oral-B compatible',
+      linkedItemId: 'demo_i_brushheads',
+      createdAt: iso(daysAgo(300)),
+    },
+    {
+      id: 'demo_r_boiler',
+      name: 'Annual boiler service',
+      interval: 12, unit: 'months',
+      lastReplaced: ymd(daysAgo(380)),  // overdue!
+      notes: 'British Gas — book online',
+      linkedItemId: null,
+      createdAt: iso(daysAgo(800)),
+    },
+    {
+      id: 'demo_r_smoke',
+      name: 'Replace smoke detector batteries',
+      interval: 6, unit: 'months',
+      lastReplaced: ymd(daysAgo(150)),
+      notes: '9V battery — check stairs and bedrooms',
+      linkedItemId: null,
+      createdAt: iso(daysAgo(500)),
+    },
+  ];
+
+  // ── Notes ──────────────────────────────────────────────────────────────
+  notes = [
+    {
+      id: 'demo_n_meals',
+      title: 'Meal ideas this week',
+      body: '• Sunday: roast chicken\n• Tuesday: pasta bake\n• Thursday: stir-fry (need to buy sauce)\n• Saturday: pizza night 🍕',
+      locked: false, pinned: true, archived: false, colour: null,
+      tickBoxesVisible: false, tickBoxes: {},
+      createdAt: iso(daysAgo(2)), updatedAt: now,
+      deletedAt: null,
+    },
+    {
+      id: 'demo_n_admin',
+      title: 'Household admin',
+      body: 'Boiler service due — see reminder.\nBin day moved to Thursdays from this week.\nNext-door asked us to feed cat 12-15 May.',
+      locked: false, pinned: false, archived: false, colour: null,
+      tickBoxesVisible: false, tickBoxes: {},
+      createdAt: iso(daysAgo(7)), updatedAt: now,
+      deletedAt: null,
+    },
+  ];
+
+  // ── Budget — accounts, categories, bills, transactions, income ─────────
+  budgetAccounts = [
+    {
+      id: 'demo_acc_main', name: 'Current account', type: 'current',
+      isPrimary: true, balance: 2842.50, balanceAsOf: ymd(daysAgo(1)),
+      color: '#5b8dee', notes: '', archived: false,
+      createdAt: iso(daysAgo(365)), updatedAt: now,
+    },
+    {
+      id: 'demo_acc_savings', name: 'Savings', type: 'savings',
+      isPrimary: false, balance: 8500.00, balanceAsOf: ymd(daysAgo(1)),
+      color: '#4cbb8a', notes: '', archived: false,
+      createdAt: iso(daysAgo(365)), updatedAt: now,
+    },
+  ];
+
+  budgetCategories = [
+    { id: 'demo_cat_grocery',  name: 'Groceries',     monthlyBudget: 450, weeklyBudget: null, budgetCycle: 'monthly', color: '#e8a838', archived: false, createdAt: iso(daysAgo(180)), updatedAt: now },
+    { id: 'demo_cat_eatout',   name: 'Eating out',    monthlyBudget: 150, weeklyBudget: null, budgetCycle: 'monthly', color: '#e85d8e', archived: false, createdAt: iso(daysAgo(180)), updatedAt: now },
+    { id: 'demo_cat_petrol',   name: 'Fuel',          monthlyBudget: 200, weeklyBudget: null, budgetCycle: 'monthly', color: '#5b8dee', archived: false, createdAt: iso(daysAgo(180)), updatedAt: now },
+  ];
+
+  bills = [
+    { id: 'demo_bill_council', name: 'Council tax', amount: 165.00, variableAmount: false, frequency: { unit: 'month', interval: 1, anchorMonth: null }, dayOfMonth: 1,  categoryId: null, notes: '', archived: false, createdAt: iso(daysAgo(180)), updatedAt: now },
+    { id: 'demo_bill_broadband', name: 'Broadband', amount: 32.00, variableAmount: false, frequency: { unit: 'month', interval: 1, anchorMonth: null }, dayOfMonth: 15, categoryId: null, notes: '', archived: false, createdAt: iso(daysAgo(180)), updatedAt: now },
+    { id: 'demo_bill_gas', name: 'Gas & electric', amount: 95.00, variableAmount: true, frequency: { unit: 'month', interval: 1, anchorMonth: null }, dayOfMonth: 22, categoryId: null, notes: 'Variable — averages around £95', archived: false, createdAt: iso(daysAgo(180)), updatedAt: now },
+  ];
+  billInstances = {};
+
+  // Realistic transactions across the last ~30 days
+  const txList = [
+    { id: 'demo_tx_1',  date: ymd(daysAgo(2)),  amount: 47.83, categoryId: 'demo_cat_grocery', description: 'Tesco', accountId: 'demo_acc_main' },
+    { id: 'demo_tx_2',  date: ymd(daysAgo(4)),  amount: 22.50, categoryId: 'demo_cat_eatout',  description: 'Costa Coffee × 2', accountId: 'demo_acc_main' },
+    { id: 'demo_tx_3',  date: ymd(daysAgo(5)),  amount: 65.40, categoryId: 'demo_cat_petrol',  description: 'BP', accountId: 'demo_acc_main' },
+    { id: 'demo_tx_4',  date: ymd(daysAgo(7)),  amount: 84.12, categoryId: 'demo_cat_grocery', description: 'Sainsbury\'s', accountId: 'demo_acc_main' },
+    { id: 'demo_tx_5',  date: ymd(daysAgo(9)),  amount: 38.00, categoryId: 'demo_cat_eatout',  description: 'Pizza Express', accountId: 'demo_acc_main' },
+    { id: 'demo_tx_6',  date: ymd(daysAgo(12)), amount: 52.71, categoryId: 'demo_cat_grocery', description: 'Tesco', accountId: 'demo_acc_main' },
+    { id: 'demo_tx_7',  date: ymd(daysAgo(15)), amount: 70.20, categoryId: 'demo_cat_petrol',  description: 'Shell', accountId: 'demo_acc_main' },
+    { id: 'demo_tx_8',  date: ymd(daysAgo(19)), amount: 91.05, categoryId: 'demo_cat_grocery', description: 'Sainsbury\'s', accountId: 'demo_acc_main' },
+    { id: 'demo_tx_9',  date: ymd(daysAgo(22)), amount: 28.50, categoryId: 'demo_cat_eatout',  description: 'Wagamama', accountId: 'demo_acc_main' },
+    { id: 'demo_tx_10', date: ymd(daysAgo(27)), amount: 64.30, categoryId: 'demo_cat_grocery', description: 'Tesco', accountId: 'demo_acc_main' },
+  ];
+  transactions = { [ym]: {} };
+  for (const tx of txList) {
+    const txYm = tx.date.slice(0, 7);
+    if (!transactions[txYm]) transactions[txYm] = {};
+    transactions[txYm][tx.id] = { ...tx, createdAt: iso(daysAgo(0)), updatedAt: now };
+  }
+
+  incomeTemplates = [
+    {
+      id: 'demo_inc_salary', name: 'Salary', amount: 3200, variableAmount: false,
+      frequency: { unit: 'month', interval: 1, anchorMonth: null },
+      dayOfMonth: 25, accountId: 'demo_acc_main', notes: '',
+      archived: false, createdAt: iso(daysAgo(365)), updatedAt: now,
+    },
+  ];
+  incomeEntries = {};
+
+  budgetSettings = {
+    ...((typeof budgetSettings === 'object' && budgetSettings) || {}),
+    payDayOfMonth: 25,
+  };
+
+  // ── Persist everything to the in-memory shim ──────────────────────────
+  // Goes through the same dbPut / save functions a real account would use,
+  // so the rest of the app sees identical data shapes.
+  await dbPut('items',        'items',        items);
+  await dbPut('settings',     'settings',     settings);
+  await dbPut('reminders',    'reminders',    reminders);
+  await dbPut('groceries',    'items',        groceryItems);
+  await dbPut('departments',  'departments',  groceryDepts);
+  await dbPut('groceryLists', 'groceryLists', groceryLists);
+  await dbPut('items',        'notes',        notes);
+  await dbPut('bills',            'bills',            bills);
+  await dbPut('billInstances',    'billInstances',    billInstances);
+  await dbPut('budgetSettings',   'budgetSettings',   budgetSettings);
+  await dbPut('budgetCategories', 'budgetCategories', budgetCategories);
+  await dbPut('transactions',     'transactions',     transactions);
+  await dbPut('budgetAccounts',   'budgetAccounts',   budgetAccounts);
+  await dbPut('incomeTemplates',  'incomeTemplates',  incomeTemplates);
+  await dbPut('incomeEntries',    'incomeEntries',    incomeEntries);
+
+  // Pre-populate the default profile with all four arrays. Without this,
+  // the first-run profiles init in init() would only capture items+settings,
+  // and a subsequent loadProfile('default') would overwrite reminders /
+  // groceries / departments with [] from the partial profile.
+  await dbPut('profiles', 'profiles', {
+    default: {
+      name: 'Home',
+      colour: '#e8a838',
+      items:       JSON.parse(JSON.stringify(items)),
+      settings:    JSON.parse(JSON.stringify(settings)),
+      reminders:   JSON.parse(JSON.stringify(reminders)),
+      groceries:   JSON.parse(JSON.stringify(groceryItems)),
+      departments: JSON.parse(JSON.stringify(groceryDepts)),
+    },
+  });
+}
+
+// ── DEMO MODE banner ────────────────────────────────────────────────────
+// Persistent banner pinned at the top of the app while in demo mode.
+// Three controls: a label, "Save my work" (opens conversion path), and
+// "Exit demo".
+function _showDemoBanner() {
+  if (!window._demoMode) return;
+  if (document.getElementById('demo-banner')) return;
+  const banner = document.createElement('div');
+  banner.id = 'demo-banner';
+  banner.className = 'demo-banner';
+  banner.innerHTML = `
+    <span class="demo-banner-label">
+      <span class="demo-banner-icon" aria-hidden="true">🎮</span>
+      <strong>Demo mode</strong>
+      <span class="demo-banner-sub">— sample data, nothing saved</span>
+    </span>
+    <span class="demo-banner-actions">
+      <button class="demo-banner-tour" onclick="_demoReplayTour()" title="Replay the guided tour">Tour</button>
+      <button class="demo-banner-save" onclick="_demoStartConversion()">
+        <svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>
+        Save my work
+      </button>
+      <button class="demo-banner-exit" onclick="_exitDemo()" title="Exit demo">
+        <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+      </button>
+    </span>`;
+  document.body.insertBefore(banner, document.body.firstChild);
+  // Push the rest of the page down so the banner doesn't overlap content.
+  // We use a CSS variable so other layout (header, FAB) can read the offset.
+  document.documentElement.style.setProperty('--demo-banner-offset', '38px');
+  document.body.classList.add('has-demo-banner');
+}
+
+function _hideDemoBanner() {
+  const banner = document.getElementById('demo-banner');
+  if (banner) banner.remove();
+  document.documentElement.style.removeProperty('--demo-banner-offset');
+  document.body.classList.remove('has-demo-banner');
+}
+
+function _exitDemo() {
+  if (!confirm('Exit demo? Any changes you made here will be lost.')) return;
+  // Wipe in-memory state and bounce back to landing
+  _demoClear();
+  window._demoMode = false;
+  _hideDemoBanner();
+  location.href = '/';
+}
+
+// ── DEMO MODE contextual nudges ─────────────────────────────────────────
+// Small dismissible callouts that appear on each tab the first time it's
+// visited during a demo session. Not modal — they don't block interaction,
+// just point at something interesting. Dismissed state lives in
+// localStorage so a refresh during the same session doesn't replay them.
+const _DEMO_NUDGE_CONTENT = {
+  stockroom: {
+    text: "These items show every status — Critical, Low, Good, even a pending delivery. Tap any card for details, or long-press for actions.",
+    anchor: '#items-grid',
+    placement: 'top',
+  },
+  groceries: {
+    text: "This list is in Stock Check mode — tap items to mark them as needed, then hit Start Shopping to filter to just those.",
+    anchor: '#grocery-active-toolbar',
+    placement: 'bottom',
+  },
+  savings: {
+    text: "Stockroom finds money for you — it spots Subscribe & Save eligibility from your real prices. Two items here qualify.",
+    anchor: '#view-savings',
+    placement: 'top',
+  },
+  budget: {
+    text: "Bills, transactions, accounts and net worth — all encrypted client-side. Your bank doesn't see anything.",
+    anchor: '#view-budget',
+    placement: 'top',
+  },
+};
+
+function _demoNudgeKey(which) { return `stockroom_demo_nudge_${which}`; }
+function _demoNudgeDismissed(which) {
+  try { return localStorage.getItem(_demoNudgeKey(which)) === '1'; }
+  catch (e) { return false; }
+}
+function _demoNudgeMarkSeen(which) {
+  try { localStorage.setItem(_demoNudgeKey(which), '1'); } catch (e) {}
+}
+function _demoNudgeReset() {
+  for (const key of Object.keys(_DEMO_NUDGE_CONTENT)) {
+    try { localStorage.removeItem(_demoNudgeKey(key)); } catch (e) {}
+  }
+}
+
+function _showDemoNudge(which) {
+  if (!window._demoMode) return;
+  if (_demoNudgeDismissed(which)) return;
+  const cfg = _DEMO_NUDGE_CONTENT[which];
+  if (!cfg) return;
+  // Drop any existing nudge before showing the new one — only one at a time
+  _hideAllDemoNudges();
+
+  const anchor = document.querySelector(cfg.anchor);
+  if (!anchor) return; // can't render without a target
+
+  const nudge = document.createElement('div');
+  nudge.className = 'demo-nudge';
+  nudge.dataset.nudge = which;
+  nudge.innerHTML = `
+    <div class="demo-nudge-arrow"></div>
+    <div class="demo-nudge-body">
+      <span class="demo-nudge-icon" aria-hidden="true">💡</span>
+      <span class="demo-nudge-text">${cfg.text}</span>
+    </div>
+    <button class="demo-nudge-ok" onclick="_dismissDemoNudge('${which}')">Got it</button>`;
+  document.body.appendChild(nudge);
+
+  _positionDemoNudge(nudge, anchor, cfg.placement);
+
+  // Reposition on resize / scroll so the nudge keeps tracking the anchor
+  const reposition = () => _positionDemoNudge(nudge, anchor, cfg.placement);
+  nudge._reposition = reposition;
+  window.addEventListener('resize', reposition);
+  window.addEventListener('scroll', reposition, { passive: true });
+
+  // Slide-in animation kicks off after the element is in the DOM
+  requestAnimationFrame(() => nudge.classList.add('visible'));
+}
+
+function _positionDemoNudge(nudge, anchor, placement) {
+  const rect = anchor.getBoundingClientRect();
+  const nudgeRect = nudge.getBoundingClientRect();
+  const margin = 8;
+  // Always horizontally centred on the anchor, clamped to viewport
+  let left = rect.left + (rect.width / 2) - (nudgeRect.width / 2);
+  left = Math.max(12, Math.min(left, window.innerWidth - nudgeRect.width - 12));
+  let top;
+  let actualPlacement = placement;
+  if (placement === 'bottom') {
+    top = rect.bottom + margin;
+  } else {
+    // 'top' — sit above the anchor, but if there's not enough room, flip to below
+    top = rect.top - nudgeRect.height - margin;
+    if (top < 50) { top = rect.bottom + margin; actualPlacement = 'bottom'; }
+  }
+  nudge.style.left = `${Math.round(left)}px`;
+  nudge.style.top  = `${Math.round(top)}px`;
+  nudge.dataset.placement = actualPlacement;
+}
+
+function _dismissDemoNudge(which) {
+  _demoNudgeMarkSeen(which);
+  const nudge = document.querySelector(`.demo-nudge[data-nudge="${which}"]`);
+  if (!nudge) return;
+  nudge.classList.remove('visible');
+  if (nudge._reposition) {
+    window.removeEventListener('resize', nudge._reposition);
+    window.removeEventListener('scroll', nudge._reposition);
+  }
+  setTimeout(() => nudge.remove(), 250);
+}
+
+function _hideAllDemoNudges() {
+  document.querySelectorAll('.demo-nudge').forEach(el => {
+    if (el._reposition) {
+      window.removeEventListener('resize', el._reposition);
+      window.removeEventListener('scroll', el._reposition);
+    }
+    el.remove();
+  });
+}
+
+// Public: replay all nudges (called from the banner's "Replay tour" link)
+function _demoReplayTour() {
+  if (!window._demoMode) return;
+  _demoNudgeReset();
+  _hideAllDemoNudges();
+  // Show whichever tab the user is on
+  const view = _currentView || 'stock';
+  const which = ({ stock: 'stockroom', grocery: 'groceries', savings: 'savings', budget: 'budget' })[view];
+  if (which) _showDemoNudge(which);
+  toast('Tour reset');
+}
+
+// ── DEMO → real account conversion ──────────────────────────────────────
+// "Save my work" captures the in-memory state right now, opens registration,
+// and after the user successfully registers we restore that state and write
+// it to real IDB (and to the server via the first kvSyncNow). Net effect:
+// the user spent 5 minutes playing with demo data, decided to keep it, and
+// their first sign-in lands on exactly the state they were just looking at.
+let _demoConvertSeed = null;
+
+function _demoStartConversion() {
+  // Snapshot every in-memory data variable so registration can restore it
+  // afterwards. We deep-clone so any subsequent UI interactions during the
+  // signup wizard (closing the banner, etc.) can't mutate the snapshot.
+  try {
+    _demoConvertSeed = {
+      items:           JSON.parse(JSON.stringify(items || [])),
+      settings:        JSON.parse(JSON.stringify(settings || {})),
+      reminders:       JSON.parse(JSON.stringify(reminders || [])),
+      notes:           JSON.parse(JSON.stringify(notes || [])),
+      groceryItems:    JSON.parse(JSON.stringify(groceryItems || [])),
+      groceryDepts:    JSON.parse(JSON.stringify(groceryDepts || [])),
+      groceryLists:    JSON.parse(JSON.stringify(groceryLists || [])),
+      bills:           JSON.parse(JSON.stringify(bills || [])),
+      billInstances:   JSON.parse(JSON.stringify(billInstances || {})),
+      budgetSettings:  JSON.parse(JSON.stringify(budgetSettings || {})),
+      budgetCategories:JSON.parse(JSON.stringify(budgetCategories || [])),
+      transactions:    JSON.parse(JSON.stringify(transactions || {})),
+      budgetAccounts:  JSON.parse(JSON.stringify(budgetAccounts || [])),
+      incomeTemplates: JSON.parse(JSON.stringify(incomeTemplates || [])),
+      incomeEntries:   JSON.parse(JSON.stringify(incomeEntries || {})),
+    };
+  } catch (e) {
+    console.error('Demo conversion snapshot failed:', e);
+    _demoConvertSeed = null;
+    toast('Could not save your work — please try again');
+    return;
+  }
+  // The banner stays — it changes message until conversion completes,
+  // so the user has a visual cue they're still in demo flow.
+  const banner = document.getElementById('demo-banner');
+  if (banner) {
+    const sub = banner.querySelector('.demo-banner-sub');
+    if (sub) sub.textContent = '— sign up to keep your data';
+    const saveBtn = banner.querySelector('.demo-banner-save');
+    if (saveBtn) saveBtn.style.display = 'none';
+  }
+  // Make sure the registration wizard is visible — demo mode had it hidden.
+  const wiz = document.getElementById('wizard');
+  if (wiz) wiz.style.display = 'flex';
+  document.body.classList.add('wizard-active');
+  // Send the user into the registration wizard. showKvRegister() opens the
+  // create-account screen; after kvRegister() finishes we'll catch the
+  // _demoConvertSeed flag and restore.
+  if (typeof showKvRegister === 'function') {
+    showKvRegister();
+  } else {
+    toast('Sign-up unavailable — try refreshing');
+  }
+}
+
+// Called from kvRegister immediately after kvStoreSession succeeds. Switches
+// the storage backend from in-memory to real IDB, restores the captured
+// demo state to the in-memory variables, and persists it. The next
+// kvSyncNow (which fires from _enterStockroom) will push everything up.
+async function _demoCompleteConversion() {
+  if (!_demoConvertSeed) return;
+  const seed = _demoConvertSeed;
+  _demoConvertSeed = null;
+  // Flip the storage shim BEFORE we persist — every dbPut from here on
+  // hits real IDB.
+  window._demoMode = false;
+  _demoClear();
+
+  // Restore the in-memory state from the snapshot. We merge user settings
+  // (email, MFA config) on top of the demo settings — registration just
+  // populated those, and we don't want to clobber them.
+  items           = seed.items;
+  reminders       = seed.reminders;
+  notes           = seed.notes;
+  groceryItems    = seed.groceryItems;
+  groceryDepts    = seed.groceryDepts;
+  groceryLists    = seed.groceryLists;
+  bills           = seed.bills;
+  billInstances   = seed.billInstances;
+  budgetSettings  = seed.budgetSettings;
+  budgetCategories= seed.budgetCategories;
+  transactions    = seed.transactions;
+  budgetAccounts  = seed.budgetAccounts;
+  incomeTemplates = seed.incomeTemplates;
+  incomeEntries   = seed.incomeEntries;
+  // Carry over demo settings but keep the new account's auth-related fields
+  settings = {
+    ...seed.settings,
+    ...settings,
+    // Setup flags reset for the real account so the protect screen flow
+    // works correctly with the new recovery codes
+    _setupProtectSeen: false,
+    _setupCountrySet:  true, // GB was set during demo
+  };
+
+  // Persist all in-memory state to real IDB. Each dbPut bypasses the shim
+  // now that _demoMode is false. Mirror the keys used by the various
+  // load/save helpers so subsequent reads find everything.
+  try {
+    await dbPut('items',            'items',            items);
+    await dbPut('settings',         'settings',         settings);
+    await dbPut('reminders',        'reminders',        reminders);
+    await dbPut('groceries',        'items',            groceryItems);
+    await dbPut('departments',      'departments',      groceryDepts);
+    await dbPut('groceryLists',     'groceryLists',     groceryLists);
+    await dbPut('items',            'notes',            notes);
+    await dbPut('bills',            'bills',            bills);
+    await dbPut('billInstances',    'billInstances',    billInstances);
+    await dbPut('budgetSettings',   'budgetSettings',   budgetSettings);
+    await dbPut('budgetCategories', 'budgetCategories', budgetCategories);
+    await dbPut('transactions',     'transactions',     transactions);
+    await dbPut('budgetAccounts',   'budgetAccounts',   budgetAccounts);
+    await dbPut('incomeTemplates',  'incomeTemplates',  incomeTemplates);
+    await dbPut('incomeEntries',    'incomeEntries',    incomeEntries);
+    // Stash a profile so loadProfile finds something
+    if (typeof saveCurrentProfile === 'function') {
+      try { await saveCurrentProfile(); } catch(e) {}
+    }
+  } catch (e) {
+    console.error('Demo conversion persist failed:', e);
+  }
+  _hideDemoBanner();
+  toast('Your demo data is now your account');
+}
+
 function openDB() {
   if (_db) return Promise.resolve(_db);
   return new Promise((resolve, reject) => {
@@ -138,6 +815,10 @@ function openDB() {
 }
 
 async function dbGet(store, key) {
+  if (window._demoMode) {
+    const v = _demoStoreFor(store).get(key);
+    return v === undefined ? null : v;
+  }
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx  = db.transaction(store, 'readonly');
@@ -148,6 +829,13 @@ async function dbGet(store, key) {
 }
 
 async function dbPut(store, key, value) {
+  if (window._demoMode) {
+    // Deep-clone on write so callers mutating the value later don't corrupt
+    // the "stored" state — IDB does this naturally via structured clone.
+    try { _demoStoreFor(store).set(key, JSON.parse(JSON.stringify(value))); }
+    catch (e) { _demoStoreFor(store).set(key, value); }
+    return;
+  }
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx  = db.transaction(store, 'readwrite');
@@ -158,6 +846,10 @@ async function dbPut(store, key, value) {
 }
 
 async function dbDelete(store, key) {
+  if (window._demoMode) {
+    _demoStoreFor(store).delete(key);
+    return;
+  }
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx  = db.transaction(store, 'readwrite');
@@ -6322,6 +7014,19 @@ function showView(name, btn) {
   updateFab(name);
   // Clear grocery done-slide when leaving grocery view
   if (name !== 'grocery') _hideGroceryDoneSlide?.();
+  // Demo mode — surface a one-time contextual nudge for relevant tabs.
+  // Stockroom auto-fires from init, so we only handle the other three here.
+  if (window._demoMode) {
+    const nudgeMap = { grocery: 'groceries', savings: 'savings', budget: 'budget' };
+    const which = nudgeMap[name];
+    if (which) {
+      // Small delay so the tab's content has rendered before the callout
+      // tries to anchor to it
+      setTimeout(() => _showDemoNudge(which), 400);
+    } else {
+      _hideAllDemoNudges();
+    }
+  }
 }
 
 // navTo — called by sidebar links (no btn element needed)
@@ -9556,6 +10261,13 @@ async function kvRegister() {
       await dbPut('settings', `device_setup_${devId}_protect_seen`, null);
       await dbPut('settings', `device_setup_${devId}_country_set`, null);
     } catch(e) {}
+    // ── Demo → real account: convert the in-memory demo data into this
+    // account's starting state. This must run AFTER kvStoreSession (so the
+    // session is durable) but BEFORE the email-verification step writes
+    // anything else to IDB, so the storage backend swap is clean.
+    if (window._demoMode && _demoConvertSeed) {
+      try { await _demoCompleteConversion(); } catch (e) { console.error('demo convert failed:', e); }
+    }
     // Verify email ownership before continuing to protect screen
     await showEmailVerification(email, emailHash, () => showProtectDataScreen(recoveryCodes));
   } catch(err) {
@@ -18344,10 +19056,65 @@ function _activeGroceryListPhase() {
   if (list?.mode !== 'stockcheck') return null;
   return list.shoppingPhase === 'shop' ? 'shop' : 'check';
 }
-// Treat missing `needed` as true so existing items don't disappear when a
-// list is upgraded mid-flight.
+// Strict check — an item is "needed" only when explicitly flagged. This is
+// what the stockcheck workflow demands: items the user didn't tick during
+// stock check must NOT appear in shopping mode.
+//
+// Note: in shopping mode (the default), this helper is irrelevant — the
+// `needed` flag is ignored entirely and all non-deleted items show.
 function _itemIsNeeded(item) {
-  return item && item.needed !== false;
+  return !!(item && item.needed === true);
+}
+
+// Navigate from the active list view back to the "all lists" picker.
+// Called from the toolbar's "← All lists" button.
+function _groceryGoToAllLists() {
+  groceryEditMode = false;
+  activeGroceryListId = '';
+  try { localStorage.removeItem('stockroom_active_grocery_list'); } catch(e) {}
+  renderGrocery();
+}
+
+// Switch the active list between 'shopping' and 'stockcheck'. Called from
+// the toolbar mode toggle. Handles the data side-effects of the swap so
+// callers don't have to know.
+async function setGroceryListMode(newMode) {
+  if (!canWrite('groceries')) { showLockBanner('groceries'); return; }
+  const list = _activeGroceryList();
+  if (!list) return;
+  const prevMode = list.mode || 'shopping';
+  if (prevMode === newMode) return;
+
+  list.mode = newMode;
+  list.updatedAt = new Date().toISOString();
+
+  if (newMode === 'stockcheck') {
+    // Fresh stock check: reset everything in this list — `needed=false`
+    // (user has to explicitly tick what they need), `checked=false` (clean slate).
+    list.shoppingPhase = 'check';
+    groceryItems.forEach(i => {
+      if ((i.listId||'default') === list.id && !i._deletedAt) {
+        if (i.needed !== false) i.needed = false;
+        if (i.checked) { i.checked = false; i.checkedAt = null; }
+        i.updatedAt = new Date().toISOString();
+      }
+    });
+  } else {
+    // Back to plain shopping list: drop the phase and promote any items
+    // that had `needed=false` so they reappear (preserves the user's list).
+    delete list.shoppingPhase;
+    groceryItems.forEach(i => {
+      if ((i.listId||'default') === list.id && !i._deletedAt && i.needed === false) {
+        i.needed = true;
+        i.updatedAt = new Date().toISOString();
+      }
+    });
+  }
+
+  await _saveGroceryLists();
+  await saveGrocery();
+  renderGrocery();
+  toast(newMode === 'stockcheck' ? 'Stock check mode' : 'Shopping mode');
 }
 
 async function startGroceryShopping() {
@@ -18573,7 +19340,6 @@ function editGroceryList(id) {
 function _openGroceryListModal(id) {
   document.getElementById('grocery-list-picker-overlay')?.remove();
   const list = id ? groceryLists.find(l => l.id === id) : null;
-  const listMode = list?.mode || 'shopping';
   const overlay = document.createElement('div');
   overlay.id = 'grocery-list-picker-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(0,0,0,0.7);display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px)';
@@ -18585,24 +19351,9 @@ function _openGroceryListModal(id) {
         <label style="font-size:12px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;display:block;margin-bottom:4px">List name</label>
         <input id="gl-name" class="form-input" type="text" value="${esc(list?.name||'')}" placeholder="e.g. Tesco run, Weekend shop…" autocomplete="off">
       </div>
-      <div class="field" style="margin-bottom:14px">
+      <div class="field" style="margin-bottom:20px">
         <label style="font-size:12px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;display:block;margin-bottom:4px">Store (optional)</label>
         <input id="gl-store" class="form-input" type="text" value="${esc(list?.store||'')}" placeholder="e.g. Tesco, Lidl, Amazon…" autocomplete="off">
-      </div>
-      <div class="field" style="margin-bottom:18px">
-        <label style="font-size:12px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;display:block;margin-bottom:8px">List mode</label>
-        <div style="display:flex;gap:8px">
-          <label style="flex:1;display:block;padding:12px 12px;border-radius:10px;border:2px solid ${listMode==='shopping'?'rgba(232,168,56,0.5)':'var(--border)'};background:${listMode==='shopping'?'rgba(232,168,56,0.08)':'var(--surface2)'};cursor:pointer;transition:all 0.15s">
-            <input type="radio" name="gl-mode" value="shopping" ${listMode==='shopping'?'checked':''} style="margin-right:6px;vertical-align:middle">
-            <strong style="font-size:13px">Shopping list</strong>
-            <div style="font-size:11px;color:var(--muted);margin-top:3px;line-height:1.4">Tap to tick items off as you shop.</div>
-          </label>
-          <label style="flex:1;display:block;padding:12px 12px;border-radius:10px;border:2px solid ${listMode==='stockcheck'?'rgba(232,168,56,0.5)':'var(--border)'};background:${listMode==='stockcheck'?'rgba(232,168,56,0.08)':'var(--surface2)'};cursor:pointer;transition:all 0.15s">
-            <input type="radio" name="gl-mode" value="stockcheck" ${listMode==='stockcheck'?'checked':''} style="margin-right:6px;vertical-align:middle">
-            <strong style="font-size:13px">Stock check</strong>
-            <div style="font-size:11px;color:var(--muted);margin-top:3px;line-height:1.4">Tick items you need, then start shopping.</div>
-          </label>
-        </div>
       </div>
       <div style="display:flex;gap:10px">
         <button onclick="document.getElementById('grocery-list-picker-overlay').remove()" style="flex:1;padding:13px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:16px;font-weight:600;cursor:pointer">Cancel</button>
@@ -18617,52 +19368,19 @@ function _openGroceryListModal(id) {
 async function _saveGroceryListModal(id) {
   const name  = document.getElementById('gl-name')?.value.trim();
   const store = document.getElementById('gl-store')?.value.trim();
-  const mode  = document.querySelector('input[name="gl-mode"]:checked')?.value || 'shopping';
   if (!name) { toast('Enter a list name'); return; }
   document.getElementById('grocery-list-picker-overlay')?.remove();
 
   if (id) {
     const list = groceryLists.find(l => l.id === id);
     if (list) {
-      const prevMode = list.mode || 'shopping';
       list.name = name;
       list.store = store;
-      list.mode = mode;
-      // When switching INTO stock-check mode, start with all items un-needed
-      // (the whole point is "look at what you have, tick what you need"),
-      // and reset shoppingPhase so the user starts fresh.
-      if (mode === 'stockcheck' && prevMode !== 'stockcheck') {
-        list.shoppingPhase = 'check';
-        groceryItems.forEach(i => {
-          if ((i.listId||'default') === id && !i._deletedAt) {
-            i.needed = false;
-            // Also clear `checked` so we start from a clean slate
-            if (i.checked) { i.checked = false; i.checkedAt = null; }
-            i.updatedAt = new Date().toISOString();
-          }
-        });
-        await saveGrocery();
-      }
-      // When switching OUT of stock-check mode → ensure items show in shopping mode
-      if (mode === 'shopping' && prevMode === 'stockcheck') {
-        delete list.shoppingPhase;
-        groceryItems.forEach(i => {
-          if ((i.listId||'default') === id && !i._deletedAt && i.needed === false) {
-            // Items that weren't needed during stock check — promote them back so
-            // shopping mode shows them all (preserves existing behaviour).
-            i.needed = true;
-            i.updatedAt = new Date().toISOString();
-          }
-        });
-        await saveGrocery();
-      }
       list.updatedAt = new Date().toISOString();
     }
   } else {
     const newId = 'gl_' + Date.now() + '_' + Math.random().toString(36).slice(2,5);
-    const newList = { id: newId, name, store, mode, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-    if (mode === 'stockcheck') newList.shoppingPhase = 'check';
-    groceryLists.push(newList);
+    groceryLists.push({ id: newId, name, store, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
     activeGroceryListId = newId;
     try { localStorage.setItem('stockroom_active_grocery_list', newId); } catch(e) {}
   }
@@ -19243,22 +19961,50 @@ function renderGrocery() {
   const multiList = groceryLists.length > 1;
   const listBrowsing = multiList && !activeGroceryListId;
 
-  // Update back-to-lists button visibility
-  let backBtn = document.getElementById('grocery-back-to-lists');
-  if (multiList) {
-    if (!backBtn) {
-      backBtn = document.createElement('button');
-      backBtn.id = 'grocery-back-to-lists';
-      backBtn.className = 'btn btn-ghost btn-sm';
-      backBtn.textContent = '← All lists';
-      backBtn.onclick = () => { groceryEditMode = false; activeGroceryListId = ''; renderGrocery(); };
-      backBtn.style.cssText = 'margin-bottom:12px;display:block';
-      body.parentNode.insertBefore(backBtn, body);
-    }
-    backBtn.style.display = activeGroceryListId ? 'inline-flex' : 'none';
-  } else if (backBtn) {
-    backBtn.remove();
+  // Active-list toolbar — holds "All lists" (when multi-list) and the
+  // shopping/stockcheck mode toggle. Rendered as one block so the two
+  // controls sit on the same line.
+  let toolbar = document.getElementById('grocery-active-toolbar');
+  if (!toolbar) {
+    toolbar = document.createElement('div');
+    toolbar.id = 'grocery-active-toolbar';
+    toolbar.className = 'grocery-active-toolbar';
+    body.parentNode.insertBefore(toolbar, body);
   }
+
+  // Show toolbar only when an active list is selected (not in picker mode)
+  if (activeGroceryListId) {
+    const list = _activeGroceryList();
+    const mode = list?.mode === 'stockcheck' ? 'stockcheck' : 'shopping';
+    const allListsBtn = multiList
+      ? `<button class="btn btn-ghost btn-sm" onclick="_groceryGoToAllLists()" style="flex-shrink:0">← All lists</button>`
+      : `<span style="flex:1"></span>`;
+    toolbar.innerHTML = `
+      ${allListsBtn}
+      <div class="grocery-mode-toggle" role="tablist" aria-label="List mode">
+        <button class="grocery-mode-btn ${mode==='shopping'?'active':''}"
+          role="tab" aria-selected="${mode==='shopping'}"
+          onclick="setGroceryListMode('shopping')"
+          title="Shopping list — tick items as you shop">
+          <svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg>
+          Shopping
+        </button>
+        <button class="grocery-mode-btn ${mode==='stockcheck'?'active':''}"
+          role="tab" aria-selected="${mode==='stockcheck'}"
+          onclick="setGroceryListMode('stockcheck')"
+          title="Stock check — tick items you need, then start shopping">
+          <svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg>
+          Stock Check
+        </button>
+      </div>`;
+    toolbar.style.display = 'flex';
+  } else {
+    toolbar.style.display = 'none';
+  }
+
+  // Remove legacy dynamic back-button if it exists from a previous render
+  const legacyBack = document.getElementById('grocery-back-to-lists');
+  if (legacyBack) legacyBack.remove();
 
   // Show list picker if no active list or browsing mode
   if (multiList && !activeGroceryListId) {
@@ -20415,13 +21161,13 @@ function groceryQtyStepperHTML(item) {
   const qty = (typeof item.qty === 'number' && item.qty > 0) ? item.qty : 1;
   const minusDisabled = qty <= 1;
   return `<div class="grocery-qty-stepper${qty > 1 ? ' has-qty' : ''}" onclick="event.stopPropagation()">
-    <span class="grocery-qty-num" id="gqty-${item.id}">${qty}</span>
     <div class="grocery-qty-arrows">
-      <button type="button" class="grocery-qty-btn" aria-label="Increase quantity"
-        onclick="event.stopPropagation();_adjustGroceryQty('${item.id}',1)">▲</button>
       <button type="button" class="grocery-qty-btn" aria-label="Decrease quantity"
         id="gqtyminus-${item.id}" ${minusDisabled ? 'disabled' : ''}
-        onclick="event.stopPropagation();_adjustGroceryQty('${item.id}',-1)">▼</button>
+        onclick="event.stopPropagation();_adjustGroceryQty('${item.id}',-1)">−</button>
+      <span class="grocery-qty-num" id="gqty-${item.id}">${qty}</span>
+      <button type="button" class="grocery-qty-btn" aria-label="Increase quantity"
+        onclick="event.stopPropagation();_adjustGroceryQty('${item.id}',1)">+</button>
     </div>
   </div>`;
 }
@@ -22208,7 +22954,29 @@ async function init() {
   const protectSeen = await getProtectSeenForDevice();
   console.log('[DIAG] init branch: seen=', seen, 'kvConnected=', kvConnected, '_kvKey=', !!_kvKey, 'protectSeen=', protectSeen);
 
-  if (_joinCode) {
+  if (window._landingAction === 'demo') {
+    // Demo mode — skip wizard, skip login, skip MFA. Seed in-memory data and
+    // render straight into the app. Nothing persists past this tab session
+    // because the dbGet/dbPut/dbDelete shim routes to in-memory Maps.
+    document.body.classList.remove('wizard-active');
+    const wiz = document.getElementById('wizard');
+    if (wiz) wiz.style.display = 'none';
+    window.scrollTo(0, 0);
+    // Mark setup flags as seen so legacy "first run" UI doesn't pop up
+    settings.country = settings.country || 'GB';
+    settings.threshold = settings.threshold || 20;
+    settings._setupProtectSeen = true;
+    settings._setupCountrySet  = true;
+    await _seedDemoData();
+    await _saveSettings();
+    scheduleRender(...RENDER_REGIONS);
+    _showDemoBanner();
+    hideDataLoadingOverlay();
+    // Surface the first contextual nudge once the layout settles. Items
+    // grid renders synchronously but card images / stat strips finish a
+    // tick later — 1.5s gives the eye time to land on the page first.
+    setTimeout(() => _showDemoNudge('stockroom'), 1500);
+  } else if (_joinCode) {
     // join flow handled by handleURLAction above
   } else if (kvConnected) {
     if (!_kvKey) {
@@ -22990,6 +23758,21 @@ function handleURLAction() {
   // a refresh on /app?action=register still does the right thing.
   if (action === 'login' || action === 'register') {
     window._landingAction = action;
+    history.replaceState(null, '', location.pathname);
+    return;
+  }
+
+  // ── Demo mode: ?action=demo ───────────────────────────────────────────
+  // Sets the global demo flag (which the dbGet/dbPut/dbDelete shim picks
+  // up) and signals the init flow to skip wizard/login and seed data.
+  // No backend calls are made — kvConnected stays false, sync paths bail.
+  if (action === 'demo') {
+    window._demoMode = true;
+    window._landingAction = 'demo';
+    // Hide the wizard right now so it doesn't flash before init runs
+    const _wiz = document.getElementById('wizard');
+    if (_wiz) _wiz.style.display = 'none';
+    document.body.classList.remove('wizard-active');
     history.replaceState(null, '', location.pathname);
     return;
   }

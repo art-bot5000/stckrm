@@ -3443,6 +3443,19 @@
 
 <script src="app.js" defer></script>
 <script>
+// Demo mode early detection — set the flag and hide the wizard before
+// app.js boots, so the wizard doesn't flash on screen during loadData().
+(function() {
+  try {
+    var p = new URLSearchParams(location.search);
+    if (p.get('action') === 'demo') {
+      window._demoMode = true;
+      var w = document.getElementById('wizard');
+      if (w) w.style.display = 'none';
+      document.body.classList.remove('wizard-active');
+    }
+  } catch(e) {}
+})();
 // selectCountry stub — works before app.js loads so country buttons are immediately clickable
 if (typeof selectCountry === 'undefined') {
   window.selectCountry = function(code) {

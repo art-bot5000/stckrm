@@ -863,12 +863,12 @@
   .grocery-qty-stepper {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
     flex-shrink: 0;
-    padding: 4px 4px 4px 8px;
-    border-radius: 8px;
+    padding: 4px 6px;
+    border-radius: 10px;
     border: 1px solid transparent;
-    margin-left: 6px;
+    margin-left: 8px;
     transition: background 0.15s, border-color 0.15s;
   }
   .grocery-qty-stepper.has-qty {
@@ -877,44 +877,92 @@
   }
   .grocery-qty-num {
     font-family: var(--mono);
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 700;
     color: var(--muted);
-    min-width: 16px;
-    text-align: right;
+    min-width: 22px;
+    text-align: center;
     line-height: 1;
   }
   .grocery-qty-stepper.has-qty .grocery-qty-num { color: var(--accent); }
   .grocery-qty-arrows {
     display: flex;
-    flex-direction: column;
-    gap: 1px;
+    flex-direction: row;
+    gap: 4px;
   }
   .grocery-qty-btn {
-    background: transparent;
-    border: 0;
-    color: var(--muted);
-    font-size: 9px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 700;
     line-height: 1;
     cursor: pointer;
-    padding: 4px 6px;
-    border-radius: 4px;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: background 0.12s, border-color 0.12s, transform 0.08s;
   }
   .grocery-qty-btn:hover:not(:disabled) {
-    background: rgba(255,255,255,0.06);
-    color: var(--text);
+    background: rgba(232,168,56,0.10);
+    border-color: rgba(232,168,56,0.40);
+    color: var(--accent);
   }
   .grocery-qty-btn:active:not(:disabled) {
+    transform: scale(0.92);
     background: rgba(232,168,56,0.18);
     color: var(--accent);
   }
   .grocery-qty-btn:disabled {
-    opacity: 0.25;
+    opacity: 0.30;
     cursor: not-allowed;
   }
   .grocery-item.checked .grocery-qty-stepper { opacity: 0.5; }
+
+  /* Active-list toolbar — back-to-all-lists + mode toggle on one row */
+  .grocery-active-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .grocery-mode-toggle {
+    display: inline-flex;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 99px;
+    padding: 3px;
+    flex-shrink: 0;
+  }
+  .grocery-mode-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: transparent;
+    border: 0;
+    color: var(--muted);
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 12px;
+    border-radius: 99px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .grocery-mode-btn .icon { width: 13px; height: 13px; }
+  .grocery-mode-btn:hover:not(.active) { color: var(--text); }
+  .grocery-mode-btn.active {
+    background: var(--accent);
+    color: #111;
+  }
 
   .grocery-empty { text-align:center; padding:60px 20px; color:var(--muted); }
   .grocery-empty-icon { font-size:48px; margin-bottom:12px; }
@@ -2411,4 +2459,189 @@ body.note-open { overflow: hidden; touch-action: none; }
 @media (max-width: 700px) {
   .cashflow-cal-cell { padding: 3px 4px; font-size: 8px; }
   .cashflow-cal-amt { font-size: 7px; }
+}
+
+/* ─── Demo mode banner ───────────────────────────────────────────────── */
+.demo-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 400;
+  background: linear-gradient(90deg, rgba(232,168,56,0.20) 0%, rgba(232,168,56,0.12) 100%);
+  border-bottom: 1px solid rgba(232,168,56,0.4);
+  padding: 7px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--text);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  min-height: 38px;
+  box-sizing: border-box;
+}
+.demo-banner-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+.demo-banner-icon { font-size: 14px; flex-shrink: 0; }
+.demo-banner-label strong { color: var(--accent); flex-shrink: 0; }
+.demo-banner-sub {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.demo-banner-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
+  align-items: center;
+}
+.demo-banner-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--accent);
+  color: #111;
+  border: 0;
+  border-radius: 7px;
+  padding: 6px 10px;
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 11px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.1s, box-shadow 0.15s;
+}
+.demo-banner-save:hover { box-shadow: 0 2px 8px rgba(232,168,56,0.35); }
+.demo-banner-save:active { transform: scale(0.96); }
+.demo-banner-save .icon { width: 12px; height: 12px; }
+.demo-banner-exit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.18);
+  color: var(--muted);
+  border-radius: 7px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.12s, border-color 0.12s;
+}
+.demo-banner-exit:hover { background: rgba(255,255,255,0.05); color: var(--text); border-color: rgba(255,255,255,0.30); }
+.demo-banner-exit .icon { width: 13px; height: 13px; }
+
+/* When the demo banner is present, push the rest of the layout down so it
+   doesn't overlap the sticky header. The :root variable lets other sticky
+   elements (header, FAB) opt in to the offset if needed. */
+body.has-demo-banner { padding-top: var(--demo-banner-offset, 38px); }
+
+/* On narrow screens, hide the descriptive sub-text — keep the action buttons */
+@media (max-width: 480px) {
+  .demo-banner-sub { display: none; }
+  .demo-banner-save { padding: 6px 9px; font-size: 11px; }
+}
+
+/* ─── Demo mode contextual nudges ───────────────────────────────────── */
+.demo-nudge {
+  position: fixed;
+  z-index: 350;
+  max-width: 320px;
+  background: var(--surface);
+  border: 1px solid rgba(232,168,56,0.45);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-family: var(--sans);
+  color: var(--text);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.35), 0 2px 6px rgba(232,168,56,0.18);
+  opacity: 0;
+  transform: translateY(6px) scale(0.97);
+  transition: opacity 0.22s, transform 0.22s;
+  pointer-events: auto;
+}
+.demo-nudge.visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.demo-nudge-arrow {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: var(--surface);
+  border-right: 1px solid rgba(232,168,56,0.45);
+  border-bottom: 1px solid rgba(232,168,56,0.45);
+  transform: rotate(45deg);
+  bottom: -7px;
+  left: 50%;
+  margin-left: -6px;
+}
+.demo-nudge[data-placement="bottom"] .demo-nudge-arrow {
+  bottom: auto;
+  top: -7px;
+  border-right: none;
+  border-bottom: none;
+  border-left: 1px solid rgba(232,168,56,0.45);
+  border-top: 1px solid rgba(232,168,56,0.45);
+}
+.demo-nudge-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 10px;
+}
+.demo-nudge-icon { font-size: 16px; flex-shrink: 0; line-height: 1.4; }
+.demo-nudge-text { flex: 1; min-width: 0; }
+.demo-nudge-ok {
+  background: var(--accent);
+  color: #111;
+  border: 0;
+  border-radius: 7px;
+  padding: 6px 12px;
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-block;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.1s;
+}
+.demo-nudge-ok:active { transform: scale(0.95); }
+
+/* Tour button in the demo banner */
+.demo-banner-tour {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.18);
+  color: var(--muted);
+  border-radius: 7px;
+  padding: 6px 9px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.demo-banner-tour:hover {
+  background: rgba(255,255,255,0.05);
+  color: var(--text);
+  border-color: rgba(255,255,255,0.30);
+}
+
+/* On narrow screens, the Tour link's label hides — keep just the actions
+   that matter most (Save, Exit). The Replay button stays accessible from
+   refreshing the page if someone really wants the nudges back. */
+@media (max-width: 480px) {
+  .demo-banner-tour { display: none; }
 }
