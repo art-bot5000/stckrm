@@ -444,6 +444,135 @@ async function restoreFromR2Snapshot(key: string): Promise<{ ok: boolean; restor
   return { ok: true, restored, preRestoreKey: pre.key };
 }
 
+// ── Per-user backup / restore ─────────────────────────────────
+// Differs from the whole-DB backup above: filters KV entries to a single
+// user's emailHash, so admins can snapshot or roll back one user's data
+// without touching anyone else's. The snapshot stays encrypted because
+// every user blob is already encrypted client-side — the server never
+// sees plaintext; restore writes the same ciphertext back.
+//
+// Inclusion rule: an entry belongs to the user if `key[1] === emailHash`.
+// We also pull the `user_email` reverse-map entry by scanning that prefix
+// for one whose value matches the email associated with this hash. Without
+// it, restoring a wiped account leaves the email→hash mapping orphaned
+// and login lookups would fail.
+async function backupUserToR2(emailHash: string, label: string = 'manual'): Promise<{ ok: boolean; key?: string; size?: number; entries?: number; error?: string }> {
+  if (!r2Configured()) return { ok: false, error: 'R2 not configured' };
+  if (!emailHash || typeof emailHash !== 'string') return { ok: false, error: 'Invalid emailHash' };
+  try {
+    const collected: Array<{ key: any; value: any }> = [];
+    // First pass: every user-keyed entry across the durable prefixes
+    for (const prefix of R2_DURABLE_PREFIXES) {
+      if (prefix === 'user_email') continue; // handled separately, indexed by email not hash
+      const iter = kv.list({ prefix: [prefix] });
+      for await (const entry of iter) {
+        if (Array.isArray(entry.key) && entry.key[1] === emailHash) {
+          collected.push({ key: entry.key, value: entry.value });
+        }
+      }
+    }
+    // Second pass: pull the email→hash reverse-map entry. We don't have the
+    // email plaintext directly, but the user record stores it (and crucially
+    // a 'user_email' value === emailHash), so a single forward scan finds it.
+    const emailIter = kv.list({ prefix: ['user_email'] });
+    for await (const entry of emailIter) {
+      if (entry.value === emailHash) {
+        collected.push({ key: entry.key, value: entry.value });
+      }
+    }
+    const snapshot = {
+      meta: {
+        version: 1,
+        kind: 'user',
+        emailHash,
+        createdAt: new Date().toISOString(),
+        label,
+        prefixes: R2_DURABLE_PREFIXES,
+      },
+      entries: collected,
+    };
+    const json = JSON.stringify(snapshot);
+    const body = new TextEncoder().encode(json);
+    const ts  = new Date().toISOString().replace(/[:.]/g, '-');
+    // Per-user snapshots namespaced under user-backup/{emailHash}/ so the
+    // standard prune / list paths over auto/manual/pre-restore prefixes
+    // don't pick them up.
+    const key = `user-backup/${emailHash}/${label}-${ts}.json`;
+    const res = await r2Fetch('PUT', key, body, { 'content-type': 'application/json' });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      return { ok: false, error: `R2 PUT ${res.status}: ${text.slice(0, 200)}` };
+    }
+    return { ok: true, key, size: body.length, entries: collected.length };
+  } catch (e) {
+    return { ok: false, error: String((e as Error)?.message || e) };
+  }
+}
+
+async function restoreUserFromR2Snapshot(emailHash: string, snapshotKey: string): Promise<{ ok: boolean; restored?: number; preRestoreKey?: string; error?: string }> {
+  if (!r2Configured()) return { ok: false, error: 'R2 not configured' };
+  if (!emailHash || !snapshotKey) return { ok: false, error: 'Missing emailHash or snapshotKey' };
+  // Belt-and-braces: the snapshot key path itself must contain the emailHash.
+  // Prevents an admin pasting the wrong key from a different user.
+  if (!snapshotKey.includes(`/${emailHash}/`)) {
+    return { ok: false, error: 'Snapshot does not belong to this user (path mismatch)' };
+  }
+  // 1. Take a safety snapshot of the user's current state
+  const pre = await backupUserToR2(emailHash, 'pre-restore');
+  if (!pre.ok) return { ok: false, error: 'Pre-restore snapshot failed: ' + pre.error };
+  // 2. Fetch the target snapshot
+  const snap = await getR2Snapshot(snapshotKey);
+  if (!snap.ok || !snap.data) return { ok: false, error: 'Fetch snapshot failed: ' + snap.error };
+  const entries = snap.data.entries as Array<{ key: any; value: any }>;
+  if (!Array.isArray(entries)) return { ok: false, error: 'Invalid snapshot format' };
+  // Verify the snapshot's metadata claims it's for this user.
+  if (snap.data.meta?.emailHash && snap.data.meta.emailHash !== emailHash) {
+    return { ok: false, error: 'Snapshot metadata emailHash does not match request' };
+  }
+  // 3. Validate every entry — refuse to restore if any entry doesn't match.
+  // This catches a malformed or maliciously-edited snapshot.
+  for (const e of entries) {
+    if (!Array.isArray(e.key)) {
+      return { ok: false, error: 'Invalid entry: key is not an array' };
+    }
+    const isUserKey = e.key[1] === emailHash;
+    const isReverseMap = e.key[0] === 'user_email' && e.value === emailHash;
+    if (!isUserKey && !isReverseMap) {
+      return { ok: false, error: `Snapshot contains entry not belonging to user: ${JSON.stringify(e.key)}` };
+    }
+  }
+  // 4. Wipe the user's current keys across the durable prefixes
+  for (const prefix of R2_DURABLE_PREFIXES) {
+    if (prefix === 'user_email') continue;
+    const iter = kv.list({ prefix: [prefix] });
+    for await (const entry of iter) {
+      if (Array.isArray(entry.key) && entry.key[1] === emailHash) {
+        try { await kv.delete(entry.key); } catch (e) { console.warn('User restore wipe failed for', entry.key, (e as Error)?.message); }
+      }
+    }
+  }
+  // Also clear any user_email entry that points to this hash. The snapshot
+  // contains the correct mapping which will be re-written below.
+  const emailIter = kv.list({ prefix: ['user_email'] });
+  for await (const entry of emailIter) {
+    if (entry.value === emailHash) {
+      try { await kv.delete(entry.key); } catch (e) { console.warn('user_email wipe failed for', entry.key, (e as Error)?.message); }
+    }
+  }
+  // 5. Write the snapshot's entries back
+  let restored = 0;
+  for (const e of entries) {
+    try {
+      await kv.set(e.key, e.value);
+      restored++;
+    } catch (err) {
+      console.warn('User restore write failed for', e.key, (err as Error)?.message);
+    }
+  }
+  console.log(`User restore for ${emailHash.slice(0,8)}…: ${restored}/${entries.length} entries from ${snapshotKey}; pre-restore: ${pre.key}`);
+  return { ok: true, restored, preRestoreKey: pre.key };
+}
+
 // ── Dirty-flag pattern: only back up when data has actually changed ──
 // Idle hours skip backups; an active editing session gets fine-grained
 // 5-minute snapshots. A separate daily-at-03:00 cron forces a backup
@@ -2180,6 +2309,75 @@ Deno.serve(async (request) => {
       const result = await sendBackupHeartbeatEmail();
       return json(result, corsHeaders, result.ok ? 200 : 500);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Admin: per-user backup ────────────────────────────
+  // Body: { adminSecret, adminToken, emailHash, label? }
+  // Snapshots a single user's KV state to R2. Useful before risky operations
+  // (rolling out a schema change, helping a user with a stuck account, etc).
+  if (url.pathname === '/admin/user/backup' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      const emailHash = (body.emailHash || '').toString();
+      const label     = (body.label || 'manual').toString();
+      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);
+      if (!/^[a-f0-9]{16,128}$/i.test(emailHash)) return json({ error: 'emailHash must be hex' }, corsHeaders, 400);
+      const result = await backupUserToR2(emailHash, label);
+      await _writeAuditLog({ action: url.pathname, outcome: result.ok ? 'success' : 'error', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `emailHash=${emailHash.slice(0,8)} entries=${result.entries||0}` });
+      return json(result, corsHeaders, result.ok ? 200 : 500);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Admin: list per-user snapshots ────────────────────
+  // Body: { adminSecret, adminToken, emailHash }
+  if (url.pathname === '/admin/user/list-backups' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      const emailHash = (body.emailHash || '').toString();
+      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);
+      if (!/^[a-f0-9]{16,128}$/i.test(emailHash)) return json({ error: 'emailHash must be hex' }, corsHeaders, 400);
+      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `emailHash=${emailHash.slice(0,8)}` });
+      const all = await listR2Snapshots(`user-backup/${emailHash}/`);
+      return json({ ok: true, snapshots: all.slice(-100).reverse() }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Admin: per-user restore from snapshot ─────────────
+  // Body: { adminSecret, adminToken, emailHash, snapshotKey, confirm: 'RESTORE' }
+  // Wipes the user's current keys then writes the snapshot's entries back.
+  // A pre-restore safety snapshot is taken automatically.
+  if (url.pathname === '/admin/user/restore' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      const emailHash   = (body.emailHash   || '').toString();
+      const snapshotKey = (body.snapshotKey || '').toString();
+      const confirm     = body.confirm;
+      if (confirm !== 'RESTORE') return json({ error: 'Confirmation phrase missing — body.confirm must equal "RESTORE"' }, corsHeaders, 400);
+      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);
+      if (!snapshotKey) return json({ error: 'Missing snapshotKey' }, corsHeaders, 400);
+      if (!/^[a-f0-9]{16,128}$/i.test(emailHash)) return json({ error: 'emailHash must be hex' }, corsHeaders, 400);
+      console.warn(`ADMIN USER RESTORE initiated for ${emailHash.slice(0,8)} from snapshot: ${snapshotKey}`);
+      const result = await restoreUserFromR2Snapshot(emailHash, snapshotKey);
+      await _writeAuditLog({ action: url.pathname, outcome: result.ok ? 'success' : 'error', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `emailHash=${emailHash.slice(0,8)} key=${snapshotKey} restored=${result.restored||0}${result.error ? ' err='+result.error : ''}` });
+      if (!result.ok) return json({ error: result.error }, corsHeaders, 500);
+      console.warn(`ADMIN USER RESTORE complete: ${result.restored} entries; safety snapshot at ${result.preRestoreKey}`);
+      return json(result, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
   }
 
   // Client sends recovery code hash to identify slot,

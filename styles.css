@@ -1111,6 +1111,12 @@
   /* Settings view — same width as Account & Security */
   #view-settings { max-width: 720px; }
 }
+/* Notes view on mobile — view sits at body level (outside #main), so it
+   doesn't inherit #main's 16px/12px padding. Match it explicitly so notes
+   don't render edge-to-edge. */
+@media (max-width: 899px) {
+  #view-notes { padding: 16px 12px; }
+}
 /* Mobile: Hi greeting flush with logo */
 @media (max-width:899px) {
   #header-greeting { margin-left:6px !important; }

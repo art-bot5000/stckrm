@@ -340,14 +340,31 @@ function renderTable(accounts) {
     badge.textContent = (a.cryptoVersion || '') + (a.migrated ? ' ✓' : '');
     tdVersion.appendChild(badge);
 
-    // Delete button — bind handler in JS so user data never enters an attribute
+    // Action buttons — bind handlers in JS so user data never enters attributes
     const tdAction = document.createElement('td');
+    tdAction.style.whiteSpace = 'nowrap';
+
+    const backupBtn = document.createElement('button');
+    backupBtn.className = 'btn-ghost';
+    backupBtn.style.cssText = 'padding:3px 9px;font-size:11px;margin:0 4px 0 0';
+    backupBtn.textContent = 'Backup';
+    backupBtn.title = 'Snapshot this user\'s KV state to R2';
+    backupBtn.addEventListener('click', () => userBackup(a.emailHash, a.email || a.emailHash));
+
+    const restoreBtn = document.createElement('button');
+    restoreBtn.className = 'btn-ghost';
+    restoreBtn.style.cssText = 'padding:3px 9px;font-size:11px;margin:0 4px 0 0';
+    restoreBtn.textContent = 'Restore…';
+    restoreBtn.title = 'Restore this user from a previous snapshot';
+    restoreBtn.addEventListener('click', () => openUserRestoreModal(a.emailHash, a.email || a.emailHash));
+
     const btn = document.createElement('button');
     btn.className   = 'btn-danger';
     btn.style.cssText = 'padding:3px 9px;font-size:11px;margin:0';
     btn.textContent = 'Delete';
     btn.addEventListener('click', () => confirmDelete(a.emailHash, a.email || a.emailHash));
-    tdAction.appendChild(btn);
+
+    tdAction.append(backupBtn, restoreBtn, btn);
 
     tr.append(tdEmail, tdHash, tdCreated, tdVersion, tdAction);
     tbody.appendChild(tr);
@@ -383,6 +400,119 @@ async function loadCryptoStatus() {
     const d = await adminPost('/admin/crypto-status');
     log(`Crypto — v1: ${d.v1}  v2: ${d.v2}  total: ${d.total}  switchover: ${d.switchoverDate}`, 'log-ok');
   } catch(e) { log('Error: ' + e.message, 'log-err'); }
+}
+
+// ── Per-user backup ─────────────────────────────────────
+async function userBackup(emailHash, label) {
+  if (!confirm(`Take a backup snapshot of:\n\n${label}\n\nThis stores the user's encrypted KV record in R2.`)) return;
+  log(`Backing up ${label}…`);
+  try {
+    const r = await adminPost('/admin/user/backup', { emailHash, label: 'manual' });
+    log(`✓ Backup saved: ${r.entries} entries, ${(r.size/1024).toFixed(1)} KB → ${r.key}`, 'log-ok');
+  } catch(e) { log('Backup error: ' + e.message, 'log-err'); }
+}
+
+// ── Per-user restore — modal lists snapshots, asks for confirmation ────
+async function openUserRestoreModal(emailHash, label) {
+  let snapshots = [];
+  try {
+    const r = await adminPost('/admin/user/list-backups', { emailHash });
+    snapshots = r.snapshots || [];
+  } catch(e) { log('List backups error: ' + e.message, 'log-err'); return; }
+  if (!snapshots.length) {
+    log(`No snapshots found for ${label}. Take a Backup first.`, 'log-warn');
+    return;
+  }
+  // Build modal — DOM only, no innerHTML for user-controlled values
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:2000;display:flex;align-items:center;justify-content:center;padding:16px';
+  const modal = document.createElement('div');
+  modal.style.cssText = 'background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:640px;width:100%;max-height:85vh;overflow-y:auto';
+  const h = document.createElement('h2');
+  h.style.cssText = 'font-size:14px;font-weight:700;margin-bottom:6px';
+  h.textContent = 'Restore user from snapshot';
+  const sub = document.createElement('div');
+  sub.style.cssText = 'color:var(--muted);font-size:12px;margin-bottom:14px';
+  sub.textContent = label;
+  const warn = document.createElement('div');
+  warn.style.cssText = 'background:rgba(224,92,92,0.10);border:1px solid rgba(224,92,92,0.4);border-radius:8px;padding:10px 12px;font-size:11px;line-height:1.5;margin-bottom:14px;color:var(--text)';
+  warn.textContent = 'Restoring wipes the user\'s current data and replaces it with the snapshot\'s contents. A pre-restore safety snapshot is taken automatically. The user\'s passphrase / passkeys are restored from the snapshot — if they\'ve been changed since the snapshot, the new credentials are lost.';
+  modal.append(h, sub, warn);
+  // List of snapshots
+  const list = document.createElement('div');
+  list.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-bottom:14px';
+  let chosenKey = null;
+  let chosenRow = null;
+  for (const s of snapshots) {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-family:var(--mono);font-size:11px';
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'snap';
+    radio.value = s.key;
+    radio.style.margin = '0';
+    radio.addEventListener('change', () => {
+      chosenKey = s.key;
+      if (chosenRow) chosenRow.style.borderColor = 'var(--border)';
+      row.style.borderColor = 'var(--accent)';
+      chosenRow = row;
+      confirmInput.disabled = false;
+    });
+    const meta = document.createElement('div');
+    meta.style.flex = '1';
+    // Show just the filename portion (after the last /) for readability
+    const fname = s.key.split('/').pop() || s.key;
+    const dateLine = document.createElement('div');
+    dateLine.textContent = new Date(s.lastModified).toLocaleString();
+    dateLine.style.cssText = 'color:var(--text);font-weight:600';
+    const sizeLine = document.createElement('div');
+    sizeLine.textContent = `${fname} · ${(s.size/1024).toFixed(1)} KB`;
+    sizeLine.style.cssText = 'color:var(--muted);font-size:10px;margin-top:2px';
+    meta.append(dateLine, sizeLine);
+    row.append(radio, meta);
+    list.appendChild(row);
+  }
+  modal.appendChild(list);
+  // Confirmation phrase
+  const confLabel = document.createElement('div');
+  confLabel.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:6px';
+  confLabel.textContent = 'Type RESTORE to confirm:';
+  const confirmInput = document.createElement('input');
+  confirmInput.type = 'text';
+  confirmInput.placeholder = 'RESTORE';
+  confirmInput.style.cssText = 'font-family:var(--mono);letter-spacing:2px;text-align:center;text-transform:uppercase';
+  confirmInput.disabled = true;
+  modal.append(confLabel, confirmInput);
+  // Buttons
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex;gap:8px;margin-top:14px;justify-content:flex-end';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn-ghost';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', () => overlay.remove());
+  const restoreBtn = document.createElement('button');
+  restoreBtn.className = 'btn-danger';
+  restoreBtn.textContent = 'Restore';
+  restoreBtn.addEventListener('click', async () => {
+    if (!chosenKey) { log('Pick a snapshot first.', 'log-warn'); return; }
+    if (confirmInput.value.trim() !== 'RESTORE') { log('Type RESTORE to confirm.', 'log-warn'); return; }
+    restoreBtn.disabled = true;
+    cancelBtn.disabled = true;
+    log(`Restoring ${label} from ${chosenKey}…`, 'log-warn');
+    try {
+      const r = await adminPost('/admin/user/restore', { emailHash, snapshotKey: chosenKey, confirm: 'RESTORE' });
+      log(`✓ Restored ${r.restored} entries; pre-restore safety snapshot at ${r.preRestoreKey}`, 'log-ok');
+      overlay.remove();
+    } catch(e) {
+      log('Restore error: ' + e.message, 'log-err');
+      restoreBtn.disabled = false;
+      cancelBtn.disabled = false;
+    }
+  });
+  actions.append(cancelBtn, restoreBtn);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
 }
 
 async function revokeAllSessions() {

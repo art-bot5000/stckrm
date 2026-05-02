@@ -1404,6 +1404,25 @@ async function addReminderTombstone(id) {
   } catch(e) {}
 }
 
+// ── Grocery list tombstones ──────────────────────────────────────────
+// Without these, deleting a list locally hard-removes it but the next
+// pull restores it from the remote payload (the items get filtered by
+// item-level _deletedAt, but the list itself has no tombstone).
+async function loadGroceryListDeletedIds() {
+  try {
+    const stored = await dbGet('groceryLists', '_deletedIds');
+    return new Set(Array.isArray(stored) ? stored : []);
+  } catch(e) { return new Set(); }
+}
+async function addGroceryListTombstone(id) {
+  try {
+    const set = await loadGroceryListDeletedIds();
+    set.add(id);
+    const arr = [...set].slice(-500);
+    await dbPut('groceryLists', '_deletedIds', arr);
+  } catch(e) {}
+}
+
 async function loadDeletedIds() {
   const stored = await dbGet('deletedIds', 'deletedIds');
   if (stored) return new Set(stored);
@@ -5436,6 +5455,7 @@ async function createTagFromPicker() {
   if (!settings.tagColors) settings.tagColors = [null, null, null, null, null];
   const swatchIdx = _getSelectedTagSwatch();
   settings.tagColors[slot] = TAG_PICKER_PALETTE[swatchIdx];
+  settings.customTagsUpdatedAt = new Date().toISOString();
   await _saveSettings();
   _syncQueue.enqueue();
   // Auto-apply the new tag to the current item
@@ -5567,6 +5587,7 @@ async function addTag(name) {
   if (firstEmpty === -1) return;
   tags[firstEmpty] = name;
   settings.customTags = tags;
+  settings.customTagsUpdatedAt = new Date().toISOString();
   await _saveSettings();
   buildTagFilterBar();
   buildShoppingTagFilterBarInline();
@@ -5580,6 +5601,7 @@ async function deleteTag(index) {
   const tags = getCustomTags();
   tags[index] = '';
   settings.customTags = tags;
+  settings.customTagsUpdatedAt = new Date().toISOString();
   items.forEach(item => {
     if (item.tags) item.tags = item.tags.filter(t => t !== index);
   });
@@ -9232,11 +9254,23 @@ async function syncNow() {
 
       if (remote.settings) {
         const localTags     = settings.customTags;
+        const localTagsTs   = settings.customTagsUpdatedAt;
         settings            = { ...remote.settings, ...settings };
         const remoteTags    = remote.settings.customTags || [];
-        const localDefined  = (localTags||[]).filter(t=>t&&t.trim()).length;
-        const remoteDefined = remoteTags.filter(t=>t&&t.trim()).length;
-        settings.customTags = localDefined >= remoteDefined ? (localTags||[]) : remoteTags;
+        const remoteTagsTs  = remote.settings.customTagsUpdatedAt;
+        const localMs  = localTagsTs  ? new Date(localTagsTs).getTime()  : 0;
+        const remoteMs = remoteTagsTs ? new Date(remoteTagsTs).getTime() : 0;
+        if (remoteMs > localMs) {
+          settings.customTags = remoteTags;
+          settings.customTagsUpdatedAt = remoteTagsTs;
+        } else if (localMs > 0) {
+          settings.customTags = localTags || [];
+          settings.customTagsUpdatedAt = localTagsTs;
+        } else {
+          const localDefined  = (localTags||[]).filter(t=>t&&t.trim()).length;
+          const remoteDefined = remoteTags.filter(t=>t&&t.trim()).length;
+          settings.customTags = localDefined >= remoteDefined ? (localTags||[]) : remoteTags;
+        }
         await _saveSettings();
       }
       if (remote.groceries) {
@@ -12835,10 +12869,12 @@ async function kvPush() {
     Object.entries(allProfiles).map(([k, p]) => [k, { name: p.name, colour: p.colour }])
   );
   const tombstones = await loadDeletedIds();
+  const groceryListTombstones = await loadGroceryListDeletedIds();
   const payload = JSON.stringify({
     items, settings, lastSynced: settings.lastSynced || new Date().toISOString(),
     groceries: groceryItems, departments: groceryDepts,
     groceryLists,
+    groceryListDeletedIds: [...groceryListTombstones],
     reminders, deletedIds: [...tombstones],
     householdDir, activeProfile,
     shareTargets: _shareTargets,
@@ -12966,14 +13002,32 @@ async function kvSyncNow(silent = false) {
       await saveData();
       if (remote.settings) {
         const localTags = settings.customTags;
+        const localTagsTs  = settings.customTagsUpdatedAt;
+        const remoteTagsTs = remote.settings.customTagsUpdatedAt;
         // Merge: remote wins for most settings, but local wins for user preferences
         // EXCEPTION: MFA config always takes from remote — it's a security setting
         // that must never be downgraded by stale local state.
         const remoteMfa = remote.settings.mfa;
         settings = { ...remote.settings, ...settings };
         if (remoteMfa !== undefined) settings.mfa = remoteMfa; // remote MFA always wins
+        // Tag merge: side with the newer customTagsUpdatedAt wins. This honours
+        // explicit deletions (which used to be reverted by a count-based merge
+        // that always picked whichever side had MORE defined tags).
         const remoteTags = remote.settings.customTags || [];
-        settings.customTags = (localTags||[]).filter(t=>t&&t.trim()).length >= (remoteTags).filter(t=>t&&t.trim()).length ? (localTags||[]) : remoteTags;
+        const localMs  = localTagsTs  ? new Date(localTagsTs).getTime()  : 0;
+        const remoteMs = remoteTagsTs ? new Date(remoteTagsTs).getTime() : 0;
+        if (remoteMs > localMs) {
+          settings.customTags = remoteTags;
+          settings.customTagsUpdatedAt = remoteTagsTs;
+        } else if (localMs > 0) {
+          settings.customTags = localTags || [];
+          settings.customTagsUpdatedAt = localTagsTs;
+        } else {
+          // Neither side has a timestamp — fall back to the previous heuristic
+          // for once-only legacy migration. After the first edit on either side
+          // we'll have a timestamp and the better path takes over.
+          settings.customTags = (localTags||[]).filter(t=>t&&t.trim()).length >= remoteTags.filter(t=>t&&t.trim()).length ? (localTags||[]) : remoteTags;
+        }
         await _saveSettings();
       }
       if (remote.groceries) {
@@ -13005,19 +13059,32 @@ async function kvSyncNow(silent = false) {
       }
       // Restore grocery lists (named lists per store)
       if (remote.groceryLists && Array.isArray(remote.groceryLists)) {
+        const localGLTombstones = await loadGroceryListDeletedIds();
+        // Merge any remote tombstones the user (or another device) wrote
+        if (Array.isArray(remote.groceryListDeletedIds)) {
+          remote.groceryListDeletedIds.forEach(id => localGLTombstones.add(id));
+          await dbPut('groceryLists', '_deletedIds', [...localGLTombstones]);
+        }
+        // Filter out remote lists we have tombstoned locally — they were deleted
+        const remoteFiltered = remote.groceryLists.filter(l => !localGLTombstones.has(l.id));
         const localListsEmpty = groceryLists.length <= 1 && groceryLists[0]?.id === 'default';
-        if (remoteWins || localListsEmpty || remote.groceryLists.length > groceryLists.length) {
-          groceryLists = remote.groceryLists;
+        if (remoteWins || localListsEmpty || remoteFiltered.length > groceryLists.length) {
+          groceryLists = remoteFiltered;
           await _saveGroceryLists();
         } else {
-          // Merge: add any lists not present locally
+          // Merge: add any lists not present locally (and not tombstoned)
           const localListIds = new Set(groceryLists.map(l => l.id));
-          const newLists = remote.groceryLists.filter(l => !localListIds.has(l.id));
+          const newLists = remoteFiltered.filter(l => !localListIds.has(l.id));
           if (newLists.length) {
             groceryLists = [...groceryLists, ...newLists];
             await _saveGroceryLists();
           }
         }
+        // Also prune any locally-present lists that match a tombstone
+        // (covers the edge case where the local set was rebuilt from remote)
+        const before = groceryLists.length;
+        groceryLists = groceryLists.filter(l => !localGLTombstones.has(l.id));
+        if (groceryLists.length !== before) await _saveGroceryLists();
       }
       // Budget — bills, instances, settings (Phase 1)
       if (Array.isArray(remote.bills)) {
@@ -13521,30 +13588,31 @@ function updateSyncPill(state, provider) {
 
 function applyAdaptiveColourTemp() {
   const h = new Date().getHours();
-  let tint = 'rgba(0,0,0,0)';
+  // The viewport-tint overlay was removed — it painted an orange/amber wash
+  // over every view except Notes (which has its own opaque bg), creating
+  // an inconsistent look. We keep the subtle --ok / --accent2 hue shifts
+  // through the day since those are tied to specific UI elements, not a
+  // full-screen overlay.
+  const tint = 'rgba(0,0,0,0)';
   let surfaceOpacity = '0.82';
 
   if (h >= 22 || h < 6) {
-    // Late night / early morning: warm amber tint, more opaque surfaces
-    tint = 'rgba(60,25,0,0.08)';
+    // Late night / early morning: more opaque surfaces
     surfaceOpacity = '0.92';
     document.documentElement.style.setProperty('--ok',    '#3db87a');
     document.documentElement.style.setProperty('--accent2','#4f82e0');
   } else if (h >= 6 && h < 10) {
     // Morning: cool blue-white, crisp
-    tint = 'rgba(10,20,60,0.04)';
     surfaceOpacity = '0.78';
     document.documentElement.style.setProperty('--ok',    '#4cbb8a');
     document.documentElement.style.setProperty('--accent2','#5b8dee');
   } else if (h >= 18 && h < 22) {
-    // Evening: subtle warm shift
-    tint = 'rgba(40,15,0,0.05)';
+    // Evening
     surfaceOpacity = '0.86';
     document.documentElement.style.setProperty('--ok',    '#45b882');
     document.documentElement.style.setProperty('--accent2','#547ee8');
   } else {
     // Daytime: neutral
-    tint = 'rgba(0,0,0,0)';
     surfaceOpacity = '0.82';
     document.documentElement.style.setProperty('--ok',    '#4cbb8a');
     document.documentElement.style.setProperty('--accent2','#5b8dee');
@@ -19421,6 +19489,9 @@ async function deleteGroceryList(id) {
     }
   });
   groceryLists = groceryLists.filter(l => l.id !== id);
+  // Tombstone the list ID so a sync pull doesn't resurrect it from a stale
+  // remote payload.
+  await addGroceryListTombstone(id);
   if (activeGroceryListId === id) {
     activeGroceryListId = groceryLists[0]?.id || 'default';
     try { localStorage.setItem('stockroom_active_grocery_list', activeGroceryListId); } catch(e) {}
