@@ -14142,6 +14142,358 @@ async function deleteBillHard(id) {
   _syncQueue?.enqueue();
 }
 
+// ── Bills import / template export ─────────────────────────────────────
+// Lets the user bulk-add bills via CSV: download a template, fill it in,
+// upload it, see a preview of what will be imported (with any per-row
+// errors flagged), confirm to commit. The template carries inline comment
+// lines (prefixed with #) explaining each field's accepted values.
+
+const _BILLS_TEMPLATE_CSV = `# STOCKROOM bills template — fill in the rows below this header and import.
+# Lines starting with # are comments and ignored on import.
+#
+# Columns:
+#   name           — the bill's display name (required)
+#   amount         — number, e.g. 95.50 (required, use 0 for unknown variable)
+#   variableAmount — yes/no  (optional; default no. "yes" = the amount changes month to month)
+#   frequency      — one of: monthly, weekly, yearly, daily  (required)
+#   dayOfMonth     — 1–31, the day the bill is due  (required)
+#   category       — name of an existing budget category, or blank  (optional)
+#   notes          — anything else, free text  (optional; wrap in quotes if it contains commas)
+#
+# The example rows below show the format. Replace them with your own.
+name,amount,variableAmount,frequency,dayOfMonth,category,notes
+Council tax,165.00,no,monthly,1,,
+Broadband,32.00,no,monthly,15,,Provider XYZ
+Gas & electric,95.00,yes,monthly,22,,"Variable, averages around £95"
+Car insurance,420.00,no,yearly,1,,Renewal in March
+TV licence,13.50,no,monthly,5,,
+`;
+
+function downloadBillsTemplate() {
+  // Prepend a UTF-8 BOM so Excel opens the file in the right encoding.
+  // Without it Excel mangles £, €, accented characters etc.
+  const blob = new Blob(['\ufeff' + _BILLS_TEMPLATE_CSV], { type: 'text/csv;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'stockroom-bills-template.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Revoke shortly after to free the object URL — some browsers need a tick
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast('Template downloaded — fill it in and use Import to bring the bills in');
+}
+
+// Minimal CSV parser supporting quoted fields and embedded commas / quotes.
+// RFC 4180 style: quotes escape with double-quote, fields may be wrapped in
+// quotes if they contain a comma, quote, or newline. Returns an array of
+// row arrays (each row is an array of strings).
+function _parseCsv(text) {
+  // Strip BOM if present
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i+1] === '"') { field += '"'; i++; } // escaped quote
+        else inQuotes = false;
+      } else {
+        field += c;
+      }
+    } else {
+      if (c === '"') {
+        inQuotes = true;
+      } else if (c === ',') {
+        row.push(field); field = '';
+      } else if (c === '\r') {
+        // ignore — we'll handle the \n
+      } else if (c === '\n') {
+        row.push(field); field = '';
+        rows.push(row); row = [];
+      } else {
+        field += c;
+      }
+    }
+  }
+  // Final field / row
+  if (field.length || row.length) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+// Take parsed CSV rows and produce { items, errors } where items is an
+// array of validated bill template inputs ready for createBill, and errors
+// is an array of per-row issues for the preview modal.
+function _validateBillsCsv(rows) {
+  const items  = [];
+  const errors = [];
+  // Find the header row — first non-comment, non-empty row
+  let headerIdx = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const first = (rows[i][0] || '').trim();
+    if (!first) continue;
+    if (first.startsWith('#')) continue;
+    headerIdx = i;
+    break;
+  }
+  if (headerIdx === -1) {
+    return { items: [], errors: [{ row: 0, msg: 'No header row found — make sure the file includes the column names line.' }] };
+  }
+  const header = rows[headerIdx].map(h => h.trim().toLowerCase());
+  const col = (name) => header.indexOf(name);
+  const required = ['name', 'amount', 'frequency', 'dayofmonth'];
+  for (const r of required) {
+    if (col(r) === -1) {
+      return { items: [], errors: [{ row: headerIdx + 1, msg: `Required column "${r}" missing from header` }] };
+    }
+  }
+  const iName    = col('name');
+  const iAmount  = col('amount');
+  const iVar     = col('variableamount');
+  const iFreq    = col('frequency');
+  const iDay     = col('dayofmonth');
+  const iCat     = col('category');
+  const iNotes   = col('notes');
+
+  const validUnits = { monthly:'month', weekly:'week', yearly:'year', daily:'day', month:'month', week:'week', year:'year', day:'day' };
+  const yesValues  = new Set(['yes', 'y', 'true', '1']);
+  const noValues   = new Set(['no', 'n', 'false', '0', '']);
+
+  // Build a category-name → id lookup so users can write the human name
+  const catLookup = new Map();
+  if (Array.isArray(budgetCategories)) {
+    for (const c of budgetCategories) {
+      if (c && c.name) catLookup.set(c.name.trim().toLowerCase(), c.id);
+    }
+  }
+
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    const first = (row[0] || '').trim();
+    if (!first || first.startsWith('#')) continue; // skip blanks and comments
+    const lineNum = i + 1; // 1-indexed for human display
+
+    const name = (row[iName] || '').trim();
+    if (!name) {
+      errors.push({ row: lineNum, msg: 'Missing name — row skipped' });
+      continue;
+    }
+    const amountRaw = (row[iAmount] || '').trim().replace(/[£$€,]/g, '');
+    const amount = parseFloat(amountRaw);
+    if (!isFinite(amount) || amount < 0) {
+      errors.push({ row: lineNum, msg: `"${name}": amount "${row[iAmount]}" is not a valid number — row skipped` });
+      continue;
+    }
+    const freqRaw  = (iFreq >= 0 ? row[iFreq] : '').trim().toLowerCase();
+    const freqUnit = validUnits[freqRaw];
+    if (!freqUnit) {
+      errors.push({ row: lineNum, msg: `"${name}": frequency "${row[iFreq]}" not recognised (use monthly/weekly/yearly/daily) — row skipped` });
+      continue;
+    }
+    const dayRaw = (row[iDay] || '').trim();
+    const day    = parseInt(dayRaw, 10);
+    if (!isFinite(day) || day < 1 || day > 31) {
+      errors.push({ row: lineNum, msg: `"${name}": dayOfMonth "${row[iDay]}" must be 1–31 — row skipped` });
+      continue;
+    }
+    let variable = false;
+    if (iVar >= 0) {
+      const v = (row[iVar] || '').trim().toLowerCase();
+      if (yesValues.has(v))      variable = true;
+      else if (noValues.has(v))  variable = false;
+      else {
+        errors.push({ row: lineNum, msg: `"${name}": variableAmount "${row[iVar]}" should be yes/no — assumed no` });
+        // don't skip; just default to no
+      }
+    }
+    let categoryId = null;
+    if (iCat >= 0) {
+      const catRaw = (row[iCat] || '').trim();
+      if (catRaw) {
+        const found = catLookup.get(catRaw.toLowerCase());
+        if (found) categoryId = found;
+        else errors.push({ row: lineNum, msg: `"${name}": category "${catRaw}" not found — leaving uncategorised` });
+      }
+    }
+    const notes = iNotes >= 0 ? (row[iNotes] || '').trim() : '';
+    items.push({
+      name, amount, variableAmount: variable,
+      frequency: { unit: freqUnit, interval: 1, anchorMonth: null },
+      dayOfMonth: day,
+      categoryId, notes,
+    });
+  }
+  return { items, errors };
+}
+
+// Open a file picker, parse the selected CSV, then show a preview modal.
+function openImportBills() {
+  if (!canWrite('budget')) { showLockBanner('budget'); return; }
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.csv,text/csv,text/plain';
+  input.style.display = 'none';
+  input.addEventListener('change', async () => {
+    const file = input.files && input.files[0];
+    document.body.removeChild(input);
+    if (!file) return;
+    let text;
+    try {
+      text = await file.text();
+    } catch (e) {
+      toast('Could not read the file');
+      return;
+    }
+    const rows = _parseCsv(text);
+    const { items, errors } = _validateBillsCsv(rows);
+    _showBillsImportPreview(items, errors, file.name);
+  });
+  document.body.appendChild(input);
+  input.click();
+}
+
+function _showBillsImportPreview(items, errors, filename) {
+  document.getElementById('bills-import-overlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'bills-import-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);padding:16px';
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+  const card = document.createElement('div');
+  card.style.cssText = 'background:var(--surface);border-radius:14px;width:100%;max-width:640px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 12px 48px rgba(0,0,0,0.6)';
+  // Header
+  const header = document.createElement('div');
+  header.style.cssText = 'padding:18px 20px 12px;border-bottom:1px solid var(--border)';
+  const titleRow = document.createElement('div');
+  titleRow.style.cssText = 'display:flex;justify-content:space-between;align-items:flex-start;gap:12px';
+  const titleBox = document.createElement('div');
+  const title = document.createElement('h3');
+  title.style.cssText = 'font-size:17px;font-weight:700;margin:0';
+  title.textContent = 'Import bills';
+  const sub = document.createElement('p');
+  sub.style.cssText = 'font-size:12px;color:var(--muted);margin:4px 0 0;font-family:var(--mono)';
+  sub.textContent = filename;
+  titleBox.append(title, sub);
+  const xBtn = document.createElement('button');
+  xBtn.style.cssText = 'background:transparent;border:0;color:var(--muted);font-size:24px;line-height:1;cursor:pointer;padding:0 4px';
+  xBtn.innerHTML = '×';
+  xBtn.title = 'Close';
+  xBtn.addEventListener('click', close);
+  titleRow.append(titleBox, xBtn);
+  header.appendChild(titleRow);
+  // Counts strip
+  const countStrip = document.createElement('div');
+  countStrip.style.cssText = 'display:flex;gap:14px;margin-top:10px;font-size:12px';
+  const okCount = document.createElement('span');
+  okCount.style.cssText = 'color:var(--ok);font-weight:700';
+  okCount.textContent = `✓ ${items.length} ready to import`;
+  countStrip.appendChild(okCount);
+  if (errors.length) {
+    const errCount = document.createElement('span');
+    errCount.style.cssText = 'color:var(--warn);font-weight:700';
+    errCount.textContent = `⚠ ${errors.length} issue${errors.length===1?'':'s'}`;
+    countStrip.appendChild(errCount);
+  }
+  header.appendChild(countStrip);
+  card.appendChild(header);
+
+  // Body — scroll area with errors then preview
+  const body = document.createElement('div');
+  body.style.cssText = 'padding:14px 20px;overflow-y:auto;flex:1';
+
+  if (errors.length) {
+    const errBox = document.createElement('div');
+    errBox.style.cssText = 'background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.3);border-radius:8px;padding:10px 12px;margin-bottom:14px';
+    const eh = document.createElement('div');
+    eh.style.cssText = 'font-size:11px;font-weight:700;color:var(--warn);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px';
+    eh.textContent = 'Issues found';
+    errBox.appendChild(eh);
+    for (const err of errors) {
+      const row = document.createElement('div');
+      row.style.cssText = 'font-size:12px;color:var(--text);margin:3px 0;font-family:var(--mono)';
+      row.textContent = `Line ${err.row}: ${err.msg}`;
+      errBox.appendChild(row);
+    }
+    body.appendChild(errBox);
+  }
+
+  if (items.length) {
+    const ph = document.createElement('div');
+    ph.style.cssText = 'font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px';
+    ph.textContent = 'Preview';
+    body.appendChild(ph);
+    const list = document.createElement('div');
+    list.style.cssText = 'display:flex;flex-direction:column;gap:6px';
+    for (const item of items) {
+      const r = document.createElement('div');
+      r.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px';
+      const left = document.createElement('div');
+      left.style.minWidth = '0';
+      const nm = document.createElement('div');
+      nm.style.cssText = 'font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      nm.textContent = item.name;
+      const meta = document.createElement('div');
+      meta.style.cssText = 'font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:2px';
+      const freqLabel = ({ month:'monthly', week:'weekly', year:'yearly', day:'daily' })[item.frequency.unit] || item.frequency.unit;
+      meta.textContent = `${freqLabel} · day ${item.dayOfMonth}${item.variableAmount ? ' · variable' : ''}${item.notes ? ' · ' + item.notes : ''}`;
+      left.append(nm, meta);
+      const amt = document.createElement('div');
+      amt.style.cssText = 'font-weight:700;font-size:13px;color:var(--text);flex-shrink:0;font-family:var(--mono)';
+      amt.textContent = `£${item.amount.toFixed(2)}`;
+      r.append(left, amt);
+      list.appendChild(r);
+    }
+    body.appendChild(list);
+  } else {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'text-align:center;padding:30px 0;color:var(--muted);font-size:13px';
+    empty.textContent = 'No valid rows to import. Check the issues above and try again.';
+    body.appendChild(empty);
+  }
+  card.appendChild(body);
+
+  // Footer — actions
+  const footer = document.createElement('div');
+  footer.style.cssText = 'padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-ghost';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', close);
+  footer.appendChild(cancelBtn);
+  if (items.length) {
+    const importBtn = document.createElement('button');
+    importBtn.className = 'btn btn-primary';
+    importBtn.textContent = `Import ${items.length} bill${items.length === 1 ? '' : 's'}`;
+    importBtn.addEventListener('click', async () => {
+      importBtn.disabled = true;
+      cancelBtn.disabled = true;
+      importBtn.textContent = 'Importing…';
+      let added = 0;
+      for (const item of items) {
+        try { await createBill(item); added++; }
+        catch (e) { console.warn('Bill create failed:', item.name, e); }
+      }
+      // Regenerate the current month so newly-imported bills materialise
+      try { await budgetRegenerateMonth?.(); } catch (e) {}
+      try { await renderBudget?.(); } catch (e) {}
+      close();
+      toast(`Imported ${added} bill${added === 1 ? '' : 's'}`);
+    });
+    footer.appendChild(importBtn);
+  }
+  card.appendChild(footer);
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+}
+
 // ── Instance ops ───────────────────────────────────────────────────────────
 // Phase 4: instances are keyed by `${billId}__${dueDate}` to support templates
 // that produce multiple instances per month (weekly, 4-weekly). The (yyyymm,

@@ -1732,7 +1732,9 @@
     <!-- Action row -->
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px">
       <div style="font-size:12px;color:var(--muted)" id="budget-bills-summary">—</div>
-      <div style="display:flex;gap:6px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="downloadBillsTemplate()" title="Download a CSV template you can fill in and import"><svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg> Template</button>
+        <button class="btn btn-ghost btn-sm" onclick="openImportBills()" title="Import bills from a filled-in CSV template"><svg class="icon" aria-hidden="true"><use href="#i-upload"></use></svg> Import</button>
         <button class="btn btn-ghost btn-sm" onclick="budgetMarkAllStandingPaid()" id="budget-mark-standing-btn" title="Mark all monthly bills due in the past as paid"><svg class="icon" aria-hidden="true"><use href="#i-check-circle-2"></use></svg> Mark past-due paid</button>
         <button class="btn btn-ghost btn-sm" onclick="budgetRegenerateMonth()" title="Regenerate this month from current templates"><svg class="icon" aria-hidden="true"><use href="#i-refresh-cw"></use></svg> Regenerate</button>
       </div>
