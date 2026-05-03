@@ -929,9 +929,14 @@ let dropboxConnected = false;
 function openModal(id) {
   const el = document.getElementById(id);
   if (!el) { console.error('openModal: element not found:', id); return; }
-  // Hide FAB and done-slide while any modal is open
+  // Hide FAB and done-slide while any modal is open. Use display:none rather
+  // than opacity:0 so the FAB can't intercept clicks targeted at the modal
+  // (it sits at z-index 1100 vs modal 200–500). updateFab restores it on
+  // tab change; closeModal restores it explicitly below.
   const fabBtn = document.getElementById('fab-btn');
-  if (fabBtn) fabBtn.style.opacity = '0';
+  if (fabBtn) { fabBtn.dataset.modalHid = '1'; fabBtn.style.display = 'none'; }
+  const fabContainer = document.getElementById('fab-container');
+  if (fabContainer) fabContainer.style.display = 'none';
   document.getElementById('grocery-done-slide')?.remove();
   closeFab(true);
   try {
@@ -959,7 +964,13 @@ function closeModal(id) {
     const anyOpen = document.querySelector('.modal-backdrop.open, .modal.open');
     if (!anyOpen) {
       const fabBtn = document.getElementById('fab-btn');
-      if (fabBtn && fabBtn.style.display !== 'none') fabBtn.style.opacity = '1';
+      if (fabBtn && fabBtn.dataset.modalHid === '1') {
+        // Re-show only if updateFab would normally show it (i.e. we're on a
+        // mobile-FAB-eligible view). Letting updateFab do the work is safer
+        // than guessing here.
+        delete fabBtn.dataset.modalHid;
+        if (typeof updateFab === 'function') updateFab(_currentView);
+      }
       // Restore done-editing slide if still in grocery edit mode
       if (_currentView === 'grocery' && groceryEditMode) _showGroceryDoneSlide();
     }
@@ -3404,6 +3415,16 @@ async function loadProfile(key) {
     const deletedIds = await loadDeletedIds();
     items        = (profile.items || []).filter(i => !deletedIds.has(i.id));
     settings     = { threshold: 20, country: 'GB', ...profile.settings };
+    // The profile blob is a snapshot — _saveSettings() writes to IDB but not
+    // to the profile, so settings flags (banner dismissals, MFA prompts, etc)
+    // can be stale here. Re-read from IDB and overlay so the latest local
+    // edits win. Without this, dismissed banners reappear after init.
+    try {
+      const liveSettings = await dbGet('settings', 'settings');
+      if (liveSettings && typeof liveSettings === 'object') {
+        settings = { ...settings, ...liveSettings };
+      }
+    } catch (e) { /* fall back to profile settings */ }
     reminders    = profile.reminders   || [];
     groceryItems = profile.groceries   || [];
     groceryDepts = profile.departments?.length ? profile.departments : DEFAULT_DEPTS.map(d => ({...d}));
@@ -3976,7 +3997,13 @@ function dismissAmazonBanner() {
   const banner = document.getElementById('amazon-banner-mobile');
   if (banner) banner.style.display = 'none';
   settings._amazonBannerDismissed = true;
-  _saveSettings().then(() => kvPush().catch(() => {}));
+  // Write to both IDB (immediate, this device) and the profile blob (which
+  // is what kvPush serialises to the server). _saveSettings alone wouldn't
+  // update the profile; without that, a subsequent loadProfile would
+  // overwrite the local flag from the stale snapshot in IDB.
+  _saveSettings()
+    .then(() => activeProfile ? saveCurrentProfile() : null)
+    .then(() => kvPush().catch(() => {}));
   setTimeout(() => toast('Amazon order import is available anytime in Account & Security → Data'), 400);
 }
 
@@ -19448,7 +19475,14 @@ async function loadGrocery() {
   groceryItems.forEach(i => { if (!i.listId) { i.listId = 'default'; needsSave = true; } });
   if (needsSave) await _saveGroceryLocal();
   activeGroceryListId = localStorage.getItem('stockroom_active_grocery_list') || 'default';
-  if (!groceryLists.find(l => l.id === activeGroceryListId)) activeGroceryListId = 'default';
+  // If the stored active id points at a deleted (or missing) list, fall back
+  // to the first non-deleted list, or 'default' if there are none active.
+  const activeOk = groceryLists.find(l => l.id === activeGroceryListId && !l._deletedAt);
+  if (!activeOk) {
+    const firstActive = groceryLists.find(l => !l._deletedAt);
+    activeGroceryListId = firstActive?.id || 'default';
+    try { localStorage.setItem('stockroom_active_grocery_list', activeGroceryListId); } catch (e) {}
+  }
 }
 
 async function _saveGroceryLists() {
@@ -19460,7 +19494,11 @@ function _activeGroceryListItems() {
 }
 
 function _activeGroceryList() {
-  return groceryLists.find(l => l.id === activeGroceryListId) || groceryLists[0];
+  // Skip soft-deleted lists when resolving — a list in the recycle bin
+  // shouldn't be the "active" one.
+  return groceryLists.find(l => l.id === activeGroceryListId && !l._deletedAt)
+      || groceryLists.find(l => !l._deletedAt)
+      || groceryLists[0];
 }
 
 // ── Stock-check / shopping mode helpers ──────────────────────────────
@@ -19650,7 +19688,9 @@ function renderGroceryListPicker() {
   const query = (document.getElementById('grocery-search')?.value || '').toLowerCase().trim();
   if (!body) return;
 
-  let lists = [...groceryLists].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  // Active lists only (soft-deleted ones go in their own section below).
+  let lists = [...groceryLists].filter(l => !l._deletedAt).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  const deletedLists = groceryLists.filter(l => l._deletedAt).sort((a, b) => new Date(b._deletedAt) - new Date(a._deletedAt));
 
   // When searching, include lists that match by name/store OR contain matching items
   if (query) {
@@ -19723,12 +19763,39 @@ function renderGroceryListPicker() {
             </div>
             <div style="display:flex;gap:6px;flex-shrink:0">
               <button onclick="event.stopPropagation();editGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:13px;cursor:pointer"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
-              ${groceryLists.length > 1 ? `<button onclick="event.stopPropagation();deleteGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--danger);font-size:13px;cursor:pointer"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>` : ''}
+              ${lists.length > 1 ? `<button onclick="event.stopPropagation();deleteGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--danger);font-size:13px;cursor:pointer"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>` : ''}
             </div>
           </div>
           ${matchingItemsHTML}
         </div>`; }).join('')}
-    </div>`;
+    </div>
+    ${deletedLists.length ? `
+      <div class="recycle-bin-section" style="margin-top:24px">
+        <div class="recycle-bin-header">
+          <div class="recycle-bin-title">
+            <svg class="icon icon-md" aria-hidden="true"><use href="#i-trash-2"></use></svg>
+            Recently Deleted Lists
+            <span class="recycle-bin-count">${deletedLists.length}</span>
+          </div>
+        </div>
+        <div class="recycle-bin-subtitle">Lists are permanently deleted after 30 days.</div>
+        ${deletedLists.map(l => {
+          const days = Math.max(0, Math.ceil(30 - (Date.now() - new Date(l._deletedAt).getTime()) / 86400000));
+          const totalItems = groceryItems.filter(i => (i.listId||'default') === l.id).length;
+          return `
+            <div class="recycle-bin-row">
+              <div class="recycle-bin-row-info">
+                <div class="recycle-bin-row-name">${esc(l.name)}</div>
+                <div class="recycle-bin-row-meta">${l.store ? esc(l.store) + ' · ' : ''}${totalItems} item${totalItems===1?'':'s'} · ${days} day${days===1?'':'s'} left</div>
+              </div>
+              <div style="display:flex;gap:6px;flex-shrink:0">
+                <button onclick="restoreGroceryList('${l.id}')" class="btn btn-ghost btn-sm" style="padding:5px 10px;font-size:11px"><svg class="icon" aria-hidden="true"><use href="#i-rotate-ccw"></use></svg> Restore</button>
+                <button onclick="purgeGroceryList('${l.id}')" class="btn btn-ghost btn-sm" style="padding:5px 9px;font-size:11px;color:var(--danger)" title="Permanently delete now"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
+              </div>
+            </div>`;
+        }).join('')}
+      </div>
+    ` : ''}`;
 
   // Switch sort button labels for multi-list view
   const _deptBtn = document.getElementById('grocery-sort-dept');
@@ -19738,7 +19805,7 @@ function renderGroceryListPicker() {
   const sub = document.getElementById('grocery-subtitle');
   if (sub) sub.textContent = query
     ? `${lists.length} list${lists.length!==1?'s':''} match`
-    : `${groceryLists.length} list${groceryLists.length!==1?'s':''} · tap to open`;
+    : `${lists.length} list${lists.length!==1?'s':''} · tap to open`;
 }
 
 function switchGroceryList(id) {
@@ -19820,17 +19887,20 @@ async function _saveGroceryListModal(id) {
 }
 
 async function deleteGroceryList(id) {
-  if (groceryLists.length <= 1) { toast("Can't delete the last list"); return; }
+  const remainingActive = groceryLists.filter(l => !l._deletedAt && l.id !== id);
+  if (remainingActive.length === 0) { toast("Can't delete your only list"); return; }
   const list = groceryLists.find(l => l.id === id);
   const listName = list?.name || 'this list';
   const itemCount = groceryItems.filter(i => !i._deletedAt && (i.listId||'default') === id).length;
   if (!confirm(
     `Delete "${listName}"?\n\n` +
     (itemCount
-      ? `${itemCount} item${itemCount===1?'':'s'} will be moved to the recycle bin and can be restored within 30 days.`
-      : `The list is empty.`)
+      ? `The list and its ${itemCount} item${itemCount===1?'':'s'} will be moved to Recently Deleted Lists and can be restored within 30 days.`
+      : `It will appear in Recently Deleted Lists for 30 days, then be permanently removed.`)
   )) return;
-  // Soft-delete the items (move them to the recycle bin) rather than hard-delete
+  // Soft-delete the items behind the scenes (so a list restore brings them
+  // back too). Per-item recycle bin UI is hidden — users only see the list-
+  // level recycle bin on the All lists picker.
   const stamp = new Date().toISOString();
   groceryItems.forEach(i => {
     if ((i.listId||'default') === id && !i._deletedAt) {
@@ -19840,18 +19910,86 @@ async function deleteGroceryList(id) {
       }
     }
   });
-  groceryLists = groceryLists.filter(l => l.id !== id);
-  // Tombstone the list ID so a sync pull doesn't resurrect it from a stale
-  // remote payload.
-  await addGroceryListTombstone(id);
+  // Soft-delete the list itself: keep the record with _deletedAt so the
+  // user can restore it. We DON'T add a tombstone yet — that happens only
+  // on permanent delete (Empty / 30-day auto-purge). Without _deletedAt
+  // the active-lists view would still show this list.
+  if (list) {
+    list._deletedAt = stamp;
+    list.updatedAt  = stamp;
+  }
   if (activeGroceryListId === id) {
-    activeGroceryListId = groceryLists[0]?.id || 'default';
+    activeGroceryListId = remainingActive[0]?.id || 'default';
     try { localStorage.setItem('stockroom_active_grocery_list', activeGroceryListId); } catch(e) {}
   }
   await _saveGroceryLists();
   await saveGrocery();
   renderGrocery();
-  toast(itemCount ? `List deleted, ${itemCount} item${itemCount===1?'':'s'} in recycle bin` : 'List deleted');
+  toast(itemCount ? `List moved to Recently Deleted, ${itemCount} item${itemCount===1?'':'s'} included` : 'List moved to Recently Deleted');
+}
+
+// Restore a soft-deleted grocery list and any items that were soft-deleted
+// at the same time (matching deletion timestamp ± a few seconds).
+async function restoreGroceryList(id) {
+  const list = groceryLists.find(l => l.id === id);
+  if (!list || !list._deletedAt) return;
+  const deletedAt = list._deletedAt;
+  const deletedMs = new Date(deletedAt).getTime();
+  delete list._deletedAt;
+  list.updatedAt = new Date().toISOString();
+  // Restore items that were soft-deleted at the same moment as this list
+  // (they were cascade-deleted by deleteGroceryList). Use a 5-second
+  // tolerance so cascade-batched deletes group together cleanly. Items
+  // deleted at other times stay in their own soft-delete state.
+  let restoredItems = 0;
+  groceryItems.forEach(i => {
+    if (!i._deletedAt) return;
+    if ((i.listId||'default') !== id) return;
+    const itemMs = new Date(i._deletedAt).getTime();
+    if (Math.abs(itemMs - deletedMs) <= 5000) {
+      delete i._deletedAt;
+      i.updatedAt = new Date().toISOString();
+      if (typeof touchField === 'function') {
+        try { touchField(i, '_deletedAt'); } catch(e) {}
+      }
+      restoredItems++;
+    }
+  });
+  await _saveGroceryLists();
+  await saveGrocery();
+  renderGrocery();
+  toast(restoredItems ? `Restored "${list.name}" with ${restoredItems} item${restoredItems===1?'':'s'}` : `Restored "${list.name}"`);
+}
+
+// Permanently delete a soft-deleted grocery list — bypasses the recycle bin.
+async function purgeGroceryList(id) {
+  const list = groceryLists.find(l => l.id === id);
+  if (!list) return;
+  if (!confirm(`Permanently delete "${list.name}"? This cannot be undone.`)) return;
+  groceryLists = groceryLists.filter(l => l.id !== id);
+  // Hard-remove the items too
+  groceryItems = groceryItems.filter(i => (i.listId||'default') !== id);
+  // NOW add the tombstone — sync needs to know not to resurrect this list
+  await addGroceryListTombstone(id);
+  await _saveGroceryLists();
+  await saveGrocery();
+  renderGrocery();
+  toast(`"${list.name}" permanently deleted`);
+}
+
+// Auto-purge soft-deleted lists older than 30 days. Called on app init
+// alongside purgeExpiredFromBins.
+async function purgeExpiredGroceryLists() {
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const toPurge = groceryLists.filter(l => l._deletedAt && new Date(l._deletedAt).getTime() < cutoff);
+  if (!toPurge.length) return;
+  for (const list of toPurge) {
+    groceryLists = groceryLists.filter(l => l.id !== list.id);
+    groceryItems = groceryItems.filter(i => (i.listId||'default') !== list.id);
+    await addGroceryListTombstone(list.id);
+  }
+  await _saveGroceryLists();
+  await saveGrocery();
 }
 
 // ── Quick List ────────────────────────────────────────────────────────────
@@ -20001,7 +20139,8 @@ async function _saveQuickList() {
 function openChangeGroceryItemStore(itemId) {
   document.getElementById('grocery-store-picker-overlay')?.remove();
   const item = groceryItems.find(i => i.id === itemId);
-  const stores = [...new Set(groceryLists.filter(l => l.store).map(l => l.store))];
+  const activeLists = groceryLists.filter(l => !l._deletedAt);
+  const stores = [...new Set(activeLists.filter(l => l.store).map(l => l.store))];
   const overlay = document.createElement('div');
   overlay.id = 'grocery-store-picker-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(0,0,0,0.7);display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px)';
@@ -20011,7 +20150,7 @@ function openChangeGroceryItemStore(itemId) {
       <h3 style="font-size:17px;font-weight:700;margin-bottom:4px;text-align:center">Move to list</h3>
       <p style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:14px">Choose which list to move <strong>${esc(item?.name||'this item')}</strong> to</p>
       <div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto;margin-bottom:16px">
-        ${groceryLists.map(l => `
+        ${activeLists.map(l => `
           <button onclick="_moveItemToList('${itemId}','${l.id}')"
             style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:${(item?.listId||'default')===l.id?'rgba(232,168,56,0.12)':'var(--surface2)'};border:2px solid ${(item?.listId||'default')===l.id?'rgba(232,168,56,0.5)':'var(--border)'};border-radius:10px;cursor:pointer;text-align:left;width:100%">
             <span style="font-size:16px;font-weight:600;color:var(--text);flex:1">${esc(l.name)}</span>
@@ -20052,6 +20191,7 @@ async function _moveSelectedToList(listId) {
 function openChangeSelectedStore() {
   if (grocerySelected.size === 0) return;
   document.getElementById('grocery-store-picker-overlay')?.remove();
+  const activeLists = groceryLists.filter(l => !l._deletedAt);
   const overlay = document.createElement('div');
   overlay.id = 'grocery-store-picker-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(0,0,0,0.7);display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px)';
@@ -20060,7 +20200,7 @@ function openChangeSelectedStore() {
       <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 18px"></div>
       <h3 style="font-size:17px;font-weight:700;margin-bottom:14px;text-align:center">Move ${grocerySelected.size} item${grocerySelected.size!==1?'s':''} to list</h3>
       <div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto;margin-bottom:16px">
-        ${groceryLists.map(l => `
+        ${activeLists.map(l => `
           <button onclick="_moveSelectedToList('${l.id}')"
             style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--surface2);border:2px solid var(--border);border-radius:10px;cursor:pointer;text-align:left;width:100%">
             <span style="font-size:16px;font-weight:600;color:var(--text);flex:1">${esc(l.name)}</span>
@@ -20691,28 +20831,13 @@ function renderGroceryRecycleBin() {
   const body = document.getElementById('grocery-list-body');
   if (!body) return;
   let bin = document.getElementById('grocery-recycle-bin');
-
-  // Show items in the recycle bin that belong to the active list, plus any
-  // "orphan" items whose original list no longer exists (so they can still
-  // be restored after a list is deleted).
-  const activeId = activeGroceryListId || '';
-  const validListIds = new Set(groceryLists.map(l => l.id));
-  validListIds.add('default');
-  const trashed = activeId
-    ? groceryItems
-        .filter(i => {
-          if (!i._deletedAt || _expiredFromBin(i)) return false;
-          const lid = i.listId || 'default';
-          // Belongs to the active list, or is an orphan from a deleted list
-          return lid === activeId || !validListIds.has(lid);
-        })
-        .sort((a, b) => new Date(b._deletedAt) - new Date(a._deletedAt))
-    : [];
-
-  if (!trashed.length) {
-    if (bin) bin.style.display = 'none';
-    return;
-  }
+  // Per-item recycle bin is intentionally hidden — users find it confusing
+  // to see individual ticked-off items here. The "Recently Deleted Lists"
+  // section on the All lists picker handles whole-list recovery instead.
+  // Soft-delete still happens behind the scenes for sync correctness, just
+  // not surfaced. Auto-purge after 30 days continues to apply.
+  if (bin) bin.style.display = 'none';
+  return;
 
   if (!bin) {
     bin = document.createElement('div');
@@ -20783,7 +20908,7 @@ function groceryItemEditHTML(item, depts, canDrag) {
         style="background:transparent;border:none;border-bottom:1px solid rgba(46,51,80,0.5);width:100%;color:var(--text);padding:0 0 2px;outline:none;font-weight:600;font-size:inherit"
         placeholder="${isNew ? 'Item name…' : ''}"
         onchange="updateGroceryItemInline('${item.id}','name',this.value)"
-        ${isNew ? `onblur="_groceryNewItemBlur('${item.id}')"` : ''}>
+        ${isNew ? `oninput="_groceryNewItemAutocomplete('${item.id}', this.value)" onblur="_groceryNewItemBlur('${item.id}')"` : ''}>
       <div style="display:flex;gap:6px;margin-top:3px;align-items:center">
         ${metaLine ? `<span class="grocery-item-meta" style="flex-shrink:0;font-size:inherit">${esc(metaLine)}</span>` : ''}
         <input type="text" value="${esc(item.notes||'')}" placeholder="Add note…"
@@ -20841,10 +20966,135 @@ async function _adjustGroceryQty(id, delta) {
   await saveGrocery();
 }
 
+// ── Autocomplete on inline new-item inputs ────────────────────────────
+// Same idea as the Quick List autocomplete, but applied to the blank rows
+// the user types into during edit mode. Source pool is every item the
+// user has ever added to ANY grocery list (their personal "item history"),
+// deduplicated by case-insensitive name. Picking a suggestion fills the
+// name AND moves the row to the suggestion's department if different —
+// saves a step when typing items that belong elsewhere.
+function _groceryNewItemAutocomplete(itemId, raw) {
+  const value = (raw || '').trim();
+  if (value.length < 1) { _hideGroceryAutocompletePopover(); return; }
+
+  // Strip any quantity prefix the user has typed so suggestions surface
+  // correctly. Keep the prefix so we can re-attach it on pick.
+  const parsed     = parseGroceryQty(value);
+  const searchTerm = (parsed.name || value).toLowerCase();
+  if (searchTerm.length < 1) { _hideGroceryAutocompletePopover(); return; }
+
+  // Build a deduplicated suggestion pool from ALL items across every list.
+  // Map: lowercase-name → { name, department } using the most recent dept.
+  const seen = new Map();
+  for (const i of groceryItems) {
+    if (!i.name || i._deletedAt) continue;
+    if (i.id === itemId) continue; // exclude the blank we're typing into
+    const key = i.name.trim().toLowerCase();
+    if (!key) continue;
+    if (!seen.has(key)) {
+      seen.set(key, { name: i.name.trim(), department: i.department || 'other', updatedAt: i.updatedAt });
+    } else {
+      const cur = seen.get(key);
+      // Prefer the entry with the latest updatedAt — in case dept changed
+      if ((i.updatedAt || '') > (cur.updatedAt || '')) {
+        seen.set(key, { name: cur.name, department: i.department || cur.department, updatedAt: i.updatedAt });
+      }
+    }
+  }
+  const matches = [...seen.values()]
+    .filter(s => s.name.toLowerCase().includes(searchTerm))
+    .sort((a, b) => {
+      // Prioritise startsWith over contains
+      const aStarts = a.name.toLowerCase().startsWith(searchTerm) ? 0 : 1;
+      const bStarts = b.name.toLowerCase().startsWith(searchTerm) ? 0 : 1;
+      if (aStarts !== bStarts) return aStarts - bStarts;
+      return a.name.localeCompare(b.name);
+    })
+    .slice(0, 6);
+  if (!matches.length) { _hideGroceryAutocompletePopover(); return; }
+
+  const pop = _ensureGroceryAutocompletePopover();
+  const input = document.getElementById(`gi-name-${itemId}`);
+  if (!input) { _hideGroceryAutocompletePopover(); return; }
+
+  const qtyPrefix = parsed.qty > 1 ? `${parsed.qty} ` : '';
+  pop.innerHTML = matches.map(m => {
+    const lo  = m.name.toLowerCase();
+    const idx = lo.indexOf(searchTerm);
+    const before = esc(m.name.slice(0, idx));
+    const matchTxt = `<strong style="color:var(--accent)">${esc(m.name.slice(idx, idx + searchTerm.length))}</strong>`;
+    const after = esc(m.name.slice(idx + searchTerm.length));
+    const fullName = (qtyPrefix + m.name).replace(/'/g, "\\'");
+    const dept = m.department || 'other';
+    return `<div
+      onmousedown="event.preventDefault()"
+      onclick="_groceryNewItemPickSuggestion('${itemId}','${esc(fullName)}','${esc(dept)}')"
+      style="padding:9px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)"
+      onmouseover="this.style.background='var(--surface2)'"
+      onmouseout="this.style.background=''"
+    >${before}${matchTxt}${after}<span style="color:var(--muted);font-size:11px;margin-left:8px">${esc(dept)}</span></div>`;
+  }).join('');
+
+  // Position below the input. Account for scroll so the popover tracks.
+  const rect = input.getBoundingClientRect();
+  pop.style.left  = `${Math.round(rect.left + window.scrollX)}px`;
+  pop.style.top   = `${Math.round(rect.bottom + window.scrollY + 2)}px`;
+  pop.style.width = `${Math.max(180, Math.round(rect.width))}px`;
+  pop.style.display = 'block';
+}
+
+function _ensureGroceryAutocompletePopover() {
+  let pop = document.getElementById('grocery-new-autocomplete');
+  if (pop) return pop;
+  pop = document.createElement('div');
+  pop.id = 'grocery-new-autocomplete';
+  pop.style.cssText = 'position:absolute;z-index:300;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,0.35);max-height:240px;overflow-y:auto;display:none';
+  document.body.appendChild(pop);
+  return pop;
+}
+
+function _hideGroceryAutocompletePopover() {
+  const pop = document.getElementById('grocery-new-autocomplete');
+  if (pop) pop.style.display = 'none';
+}
+
+// Pick a suggestion: fill the input, parse qty, move dept if different,
+// keep the row in edit mode (don't blur).
+async function _groceryNewItemPickSuggestion(itemId, fullName, dept) {
+  const item = groceryItems.find(i => i.id === itemId);
+  const input = document.getElementById(`gi-name-${itemId}`);
+  if (!item || !input) { _hideGroceryAutocompletePopover(); return; }
+  // Parse "2 Yoghurts" into name+qty so the qty stepper updates
+  const parsed = parseGroceryQty(fullName);
+  item.name = parsed.name || fullName.trim();
+  if (parsed.qty > 1) item.qty = parsed.qty;
+  if (dept && dept !== item.department) item.department = dept;
+  // Promote out of "_isNew" — the user has explicitly chosen a name now,
+  // so it's a real saved item. Subsequent edits go through normal flow.
+  delete item._isNew;
+  item.updatedAt = new Date().toISOString();
+  _hideGroceryAutocompletePopover();
+  await saveGrocery();
+  // Re-render so the dept reordering and stepper update are visible
+  renderGrocery();
+  // Try to refocus on the next blank input (so the user can keep tab-walking)
+  const nextBlank = groceryItems.find(i => i._isNew && !i.name.trim());
+  if (nextBlank) {
+    setTimeout(() => {
+      const el = document.getElementById(`gi-name-${nextBlank.id}`);
+      if (el) { el.focus(); el.select(); }
+    }, 50);
+  }
+}
+
 // Called when a new blank item's name field loses focus — remove if still empty
 async function _groceryNewItemBlur(id) {
   const item = groceryItems.find(i => i.id === id);
   if (!item) return;
+  // Hide the autocomplete popover. Small delay so a click on a suggestion
+  // (which fires its onclick after the blur) still has time to land before
+  // the popover disappears.
+  setTimeout(() => _hideGroceryAutocompletePopover(), 150);
   // Capture which other input the user just clicked into, if any — we want
   // to keep that input focused across the re-render so Quick Add feels
   // smooth when filling many depts in a row.
@@ -23617,6 +23867,8 @@ async function init() {
   await loadBudgetAccountsAndIncome();
   // Sweep any expired items from the 30-day recycle bin (no-op if loadProfile already did it)
   await purgeExpiredFromBins();
+  // Same for soft-deleted grocery lists older than 30 days
+  await purgeExpiredGroceryLists();
   await checkGroceryRecurring();
   renderReminders(); // pre-render for badge count
 

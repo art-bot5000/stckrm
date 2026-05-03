@@ -2633,7 +2633,7 @@
 </div>
 
 <!-- ═══ BARCODE SCANNER MODAL ═══ -->
-<div class="modal-backdrop" id="barcode-modal">
+<div class="modal-backdrop" id="barcode-modal" style="z-index:500">
   <div class="modal" style="max-width:420px">
     <h2><svg class="icon icon-lg" aria-hidden="true"><use href="#i-camera"></use></svg> Scan Barcode</h2>
     <p class="subtitle">Point your camera at the product barcode.</p>
@@ -3482,7 +3482,7 @@ window._loadScanner = function() {
     s.src = 'scanner.js';
     s.defer = true;
     s.onload = () => { window._scannerLoaded = true; resolve(); };
-    s.onerror = reject;
+    s.onerror = (e) => { console.error('scanner.js failed to load:', e); reject(e); };
     document.head.appendChild(s);
   });
 };
@@ -3491,10 +3491,21 @@ window._loadScanner = function() {
 // After _loadScanner() resolves, scanner.js redefines these on window,
 // so we re-call them — they're no longer the stub at that point.
 window._scannerStub = function(name, args) {
-  window._loadScanner().then(() => {
-    // scanner.js has loaded and overwritten window[name] with the real function
-    if (typeof window[name] === 'function') window[name](...args);
-  });
+  window._loadScanner()
+    .then(() => {
+      // scanner.js has loaded; its top-level function declarations have
+      // overwritten window[name] with the real implementation.
+      if (typeof window[name] === 'function') {
+        window[name](...args);
+      } else {
+        console.error('scanner.js loaded but', name, 'is not callable');
+        if (typeof toast === 'function') toast('Scanner unavailable — please reload the page');
+      }
+    })
+    .catch(err => {
+      console.error('Could not load scanner:', err);
+      if (typeof toast === 'function') toast('Scanner unavailable — please reload the page');
+    });
 };
 window.openBarcodeScanner  = function(...a) { window._scannerStub('openBarcodeScanner', a); };
 window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarcodeScan', a); };
