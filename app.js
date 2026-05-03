@@ -27227,7 +27227,207 @@ const _phase5RenderBudgetDashboard = renderBudgetDashboard;
 renderBudgetDashboard = function() {
   _phase5RenderBudgetDashboard.call(this);
   _renderCarryOverTile();
+  _renderSafeToSpendTile();
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BUDGET — Phase 5b: "Safe to spend" tile
+//
+//  Headline number = how much is genuinely free after committing every
+//  pound that already has a job. Intentionally conservative.
+//
+//    Safe to spend (current/future month) =
+//        end-of-month projected balance       (incl. income still to come, bills still due)
+//      − unspent budget remaining             (what you've earmarked but not yet spent)
+//      − total carry-over                     (set aside for future split bills)
+//
+//    Safe to spend (past month) = actual surplus that month
+//      = income received − bills paid − discretionary spend
+//
+//  We use projectCashFlow (the same engine driving the cash-flow chart) so
+//  the number stays consistent with what's shown there.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Sum of the absolute "remaining budget" across all active categories, in
+// the given calendar month. Categories without a budget contribute 0. Over-
+// budget categories contribute negatively (so they pull the safe-to-spend
+// number down — you've borrowed against future). Returns rounded GBP number.
+function _getUnspentBudgetForMonth(yyyymm) {
+  let total = 0;
+  for (const cat of getActiveBudgetCategories()) {
+    let monthlyBudget;
+    if (cat.budgetCycle === 'monthly') monthlyBudget = cat.monthlyBudget;
+    else if (cat.weeklyBudget != null) monthlyBudget = cat.weeklyBudget * 4.345;
+    else monthlyBudget = null;
+    if (monthlyBudget == null) continue; // no budget set — don't subtract anything
+    const spent = getSpendForCategory(yyyymm, cat.id);
+    total += (monthlyBudget - spent);
+  }
+  return Math.round(total * 100) / 100;
+}
+
+// Sum of income entries marked `paidAt` for the given month.
+function _getReceivedIncomeForMonth(yyyymm) {
+  let total = 0;
+  for (const e of getIncomeEntriesForMonth(yyyymm)) {
+    if (!e.paidAt) continue;
+    total += (e.actualAmount ?? e.amount) || 0;
+  }
+  return Math.round(total * 100) / 100;
+}
+
+// Projected balance at the last day of the target month. Walks forward from
+// today using projectCashFlow. Returns null if setup isn't complete.
+function _getEndOfMonthProjectedBalance(yyyymm) {
+  const todayIso = (new Date()).toISOString().slice(0, 10);
+  const { year, month } = _parseYyyymm(yyyymm);
+  const lastDay = _daysInMonth(year, month);
+  const endIso  = _isoDate(year, month, lastDay);
+  // daysAhead must reach at least the end-of-month date (inclusive).
+  const a = new Date(todayIso + 'T12:00:00');
+  const b = new Date(endIso   + 'T12:00:00');
+  const daysAhead = Math.max(1, Math.ceil((b.getTime() - a.getTime()) / 86400000) + 1);
+  const proj = projectCashFlow(null, daysAhead);
+  if (!proj.setupComplete) return null;
+  // Find the point exactly at end-of-month
+  const endPoint = proj.points.find(p => p.date === endIso);
+  if (endPoint) return endPoint.balance;
+  // Fallback: last point in the projection
+  const last = proj.points[proj.points.length - 1];
+  return last ? last.balance : proj.startBalance;
+}
+
+// Returns { amount, mode, breakdown } where mode ∈ 'past' | 'current' |
+// 'future' | 'no-setup'. amount is rounded GBP. breakdown carries the
+// inputs so the modal can show the working.
+function getSafeToSpend(yyyymm) {
+  const todayMonth = _yyyymm(new Date());
+  const isFuture = yyyymm > todayMonth;
+  const isPast   = yyyymm < todayMonth;
+
+  if (isPast) {
+    // Past months: actual P&L for the month — what was left after the dust
+    // settled. Carry-over is current-state, so we don't subtract it here.
+    const incomeReceived = _getReceivedIncomeForMonth(yyyymm);
+    const billsPaid      = getPaidSoFar(yyyymm);
+    const spend          = getTotalSpendForMonth(yyyymm);
+    return {
+      amount: Math.round((incomeReceived - billsPaid - spend) * 100) / 100,
+      mode: 'past',
+      breakdown: { incomeReceived, billsPaid, spend },
+    };
+  }
+
+  const endBalance = _getEndOfMonthProjectedBalance(yyyymm);
+  if (endBalance == null) {
+    return { amount: null, mode: 'no-setup', breakdown: null };
+  }
+  const budgetRemaining = _getUnspentBudgetForMonth(yyyymm);
+  const carryOver       = getTotalCarryOver().total;
+
+  return {
+    amount: Math.round((endBalance - budgetRemaining - carryOver) * 100) / 100,
+    mode: isFuture ? 'future' : 'current',
+    breakdown: { endBalance, budgetRemaining, carryOver },
+  };
+}
+
+function _renderSafeToSpendTile() {
+  const host = document.getElementById('budget-safe-to-spend-tile');
+  if (!host) return;
+  const yyyymm = _budgetViewMonth || _yyyymm(new Date());
+  const result = getSafeToSpend(yyyymm);
+
+  if (result.mode === 'no-setup') {
+    // No primary account / balance set — hide the tile rather than show a
+    // misleading zero. The hero card already nudges users to set up an
+    // account elsewhere.
+    host.style.display = 'none';
+    return;
+  }
+  host.style.display = 'block';
+
+  const amt = result.amount;
+  const isNegative = amt < 0;
+  const colorClass = isNegative ? 'var(--danger)' : 'var(--ok)';
+  const subLabel = result.mode === 'past'    ? 'After bills, income & spend that month'
+                 : result.mode === 'future'  ? 'Projected after bills, budgets & carry-over'
+                 :                              'After bills, budgets & carry-over';
+
+  host.innerHTML = `
+    <div onclick="openSafeToSpendBreakdown()" style="cursor:pointer;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 18px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <div style="min-width:0;flex:1">
+          <div style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">Safe to spend</div>
+          <div style="font-size:28px;font-weight:700;font-family:var(--sans);color:${colorClass};letter-spacing:-0.5px">${_money(amt)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">${subLabel}</div>
+        </div>
+        <div style="flex-shrink:0;color:var(--muted)">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-right"></use></svg>
+        </div>
+      </div>
+    </div>`;
+}
+
+function openSafeToSpendBreakdown() {
+  const yyyymm = _budgetViewMonth || _yyyymm(new Date());
+  const result = getSafeToSpend(yyyymm);
+  const titleEl = document.getElementById('safe-modal-month');
+  const amountEl = document.getElementById('safe-modal-amount');
+  const bodyEl = document.getElementById('safe-modal-body');
+  if (!titleEl || !amountEl || !bodyEl) return;
+
+  const { year, month } = _parseYyyymm(yyyymm);
+  const monthLabel = new Date(year, month, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  titleEl.textContent = monthLabel;
+  amountEl.textContent = result.amount != null ? _money(result.amount) : '—';
+  amountEl.style.color = (result.amount != null && result.amount < 0) ? 'var(--danger)' : 'var(--ok)';
+
+  if (result.mode === 'no-setup') {
+    bodyEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">Set a primary account with a current balance to see this calculation. Go to Accounts to add one.</div>`;
+    openModal('safe-to-spend-modal');
+    return;
+  }
+
+  const row = (label, value, sign, subtle = false) => {
+    const valueColor = subtle ? 'var(--muted)' : 'var(--text)';
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:10px 16px;border-bottom:1px solid var(--border)">
+        <div style="font-size:13px;color:${subtle ? 'var(--muted)' : 'var(--text)'}">${label}</div>
+        <div style="font-family:var(--mono);font-size:14px;font-weight:${subtle ? '500' : '600'};color:${valueColor}">${sign}${_money(Math.abs(value))}</div>
+      </div>`;
+  };
+
+  if (result.mode === 'past') {
+    const { incomeReceived, billsPaid, spend } = result.breakdown;
+    bodyEl.innerHTML = `
+      ${row('Income received',   incomeReceived, '+')}
+      ${row('Bills paid',        billsPaid,      '−')}
+      ${row('Discretionary spend', spend,        '−')}
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:14px 16px;background:rgba(255,255,255,0.02)">
+        <div style="font-size:13px;font-weight:700">Surplus / shortfall</div>
+        <div style="font-family:var(--mono);font-size:15px;font-weight:700;color:${result.amount < 0 ? 'var(--danger)' : 'var(--ok)'}">${_money(result.amount)}</div>
+      </div>
+      <div style="padding:12px 16px;font-size:11px;color:var(--muted);border-top:1px solid var(--border)">Past month: shows what was actually left over once income, bills and spend had all settled.</div>`;
+  } else {
+    const { endBalance, budgetRemaining, carryOver } = result.breakdown;
+    const futureNote = result.mode === 'future'
+      ? '<div style="padding:10px 16px;font-size:11px;color:var(--accent);background:rgba(232,168,56,0.06);border-bottom:1px solid var(--border)">Projected — assumes bills, income and budgets continue as set up.</div>'
+      : '';
+    bodyEl.innerHTML = `
+      ${futureNote}
+      ${row('Projected balance at month end', endBalance, '')}
+      ${row('Less: budget still to spend', budgetRemaining, '−', true)}
+      ${row('Less: carry-over set aside',   carryOver,       '−', true)}
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:14px 16px;background:rgba(255,255,255,0.02)">
+        <div style="font-size:13px;font-weight:700">Safe to spend</div>
+        <div style="font-family:var(--mono);font-size:15px;font-weight:700;color:${result.amount < 0 ? 'var(--danger)' : 'var(--ok)'}">${_money(result.amount)}</div>
+      </div>
+      <div style="padding:12px 16px;font-size:11px;color:var(--muted);border-top:1px solid var(--border)">If you stick to your category budgets and pay all bills, this is what's truly free. Negative numbers mean you'd need to cut something or top up the account.</div>`;
+  }
+
+  openModal('safe-to-spend-modal');
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  AMAZON ORDER HISTORY IMPORTER

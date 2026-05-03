@@ -911,6 +911,30 @@
 
 
 <!-- ═══════════════════════════════════════════════════════════════════════
+     SAFE TO SPEND BREAKDOWN MODAL — explains the calculation
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="safe-to-spend-modal" style="z-index:300">
+  <div class="modal" style="max-width:480px">
+    <h2><svg class="icon icon-lg" aria-hidden="true" style="color:var(--ok)"><use href="#i-banknote"></use></svg> Safe to spend · <span id="safe-modal-month" style="font-weight:400;color:var(--muted)">—</span></h2>
+    <p class="subtitle">What's truly free after every committed pound has been accounted for.</p>
+
+    <div style="background:linear-gradient(135deg,rgba(76,187,138,0.10),rgba(76,187,138,0.04));border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:14px;text-align:center">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">Total</div>
+      <div style="font-size:30px;font-weight:700;color:var(--ok);font-family:var(--sans);letter-spacing:-0.5px" id="safe-modal-amount">£0.00</div>
+    </div>
+
+    <div id="safe-modal-body" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+      <!-- populated by openSafeToSpendBreakdown() -->
+    </div>
+
+    <div class="modal-footer" style="margin-top:14px">
+      <button class="btn btn-ghost" onclick="closeModal('safe-to-spend-modal')">Done</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
      CARRY-OVER BREAKDOWN MODAL — lists each split-payment bill's progress
      ═══════════════════════════════════════════════════════════════════════ -->
 <div class="modal-backdrop" id="carryover-modal" style="z-index:300">
@@ -1750,6 +1774,10 @@
         </div>
       </div>
     </div>
+
+    <!-- Phase 5b: Safe to spend headline tile. Hidden until a primary
+         account with a balance is set up. -->
+    <div id="budget-safe-to-spend-tile" style="display:none"></div>
 
     <!-- Phase 5: Carry-over (split-payment) tile. Hidden by default —
          shown by _renderCarryOverTile() if any split bills exist. -->
