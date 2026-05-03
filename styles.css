@@ -2670,3 +2670,58 @@ body.has-demo-banner { padding-top: var(--demo-banner-offset, 38px); }
 .safe-modal-row-link { transition: background 0.12s; }
 .safe-modal-row-link:hover { background: rgba(255,255,255,0.025); }
 .safe-modal-row-link:hover svg { color: var(--accent) !important; }
+
+/* Bill editor "How is this paid?" radio rows. Default `.field label`
+   cascade forces uppercase + letter-spacing + small grey font, which
+   destroys these clickable description rows. Reset the inherited bits
+   forcefully so the labels read as full sentences. The !important is
+   intentional — it overrides the inline `style` attribute too if the
+   browser merges incorrectly, and beats any future cascade additions. */
+.strategy-option,
+.strategy-option * {
+  text-transform: none !important;
+  letter-spacing: normal !important;
+}
+.strategy-option {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 10px;
+  font-weight: 400 !important;
+  font-size: 13px !important;
+  color: var(--text) !important;
+  cursor: pointer;
+  padding: 6px 4px;
+  margin-bottom: 0 !important;
+  border-radius: 6px;
+  transition: background 0.12s;
+}
+.strategy-option:hover { background: rgba(255,255,255,0.03); }
+.strategy-option input[type="radio"] {
+  margin: 3px 0 0 0;
+  flex-shrink: 0;
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+}
+.strategy-option-text {
+  flex: 1;
+  min-width: 0;
+}
+.strategy-option-title {
+  display: block;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.35;
+}
+.strategy-option-desc {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+  margin-top: 3px;
+  line-height: 1.4;
+}
+/* Inside the strategy section, the "Split across" mini-label needs the
+   normal uppercase form-label look — keep it. The reset above only
+   targets `.strategy-option`, not all labels in the section. */

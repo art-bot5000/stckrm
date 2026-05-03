@@ -14224,6 +14224,73 @@ function _lastPaidDueDate(billId) {
   return latest;
 }
 
+// Returns true if the template is a split-strategy bill in an active
+// saving cycle for the viewed month — i.e. NOT due this month, but the
+// next-due date is in the future and we're between the previous payment
+// (or template creation) and that next-due. Used to surface split bills
+// in the "Saving up" section of the bills panel.
+function _isSplitBillSavingForMonth(template, viewYyyymm) {
+  if (!template || template.archived) return false;
+  if (template.paymentStrategy !== 'split') return false;
+  if (!template.splitInto || !template.splitInto.count) return false;
+  const { year, month } = _parseYyyymm(viewYyyymm);
+  // If due this month, it belongs in the regular bills list, not saving-up.
+  if (shouldBeDueInMonth(template, year, month)) return false;
+  // Need a future due date relative to the viewed month.
+  const next = _nextDueDateForTemplate(template, viewYyyymm);
+  if (!next) return false;
+  // The viewed month must end on or after the bill's creation. Otherwise
+  // we're looking at a month before the bill existed and there's nothing
+  // to save up. (We compare end-of-month against createdAt date so a bill
+  // created on the 3rd still surfaces in saving-up for that same month.)
+  const created = (template.createdAt || _nowIso()).slice(0, 10);
+  const endIso  = _isoDate(year, month, _daysInMonth(year, month));
+  if (endIso < created) return false;
+  return true;
+}
+
+// For a split bill, given a *viewed* month, returns the cycle progress as
+// it stands at the END of that month (i.e. how much would be saved by the
+// end of the viewed month, assuming the user pays in the per-period amount
+// each period). Different from getBillCarryOver which is "now"-relative.
+//
+//   slot       = whole periods elapsed from cycle start to month end
+//   totalSlots = template.splitInto.count
+//   accrued    = slot × perPeriod, capped at target
+//   nextDueIso = the upcoming due date relative to this month
+function getBillCycleProgressForMonth(template, viewYyyymm) {
+  if (!template) return null;
+  const split = template.splitInto;
+  if (template.paymentStrategy !== 'split' || !split || !split.count) return null;
+  const amount = Number(template.amount) || 0;
+  if (amount <= 0) return null;
+
+  // Cycle anchor: previous due date strictly before the viewed month, else
+  // the template's createdAt date.
+  const prevDue = _prevDueDateForTemplate(template, viewYyyymm);
+  const anchorIso = prevDue || (template.createdAt || _nowIso()).slice(0, 10);
+
+  // End of viewed month
+  const { year, month } = _parseYyyymm(viewYyyymm);
+  const endIso = _isoDate(year, month, _daysInMonth(year, month));
+
+  const elapsed = Math.max(0, _periodsBetween(anchorIso, endIso, split.unit));
+  const slot    = Math.min(elapsed, split.count);
+  const perPeriod = Math.round((amount / split.count) * 100) / 100;
+  const accrued   = Math.round(perPeriod * slot * 100) / 100;
+
+  return {
+    accrued,
+    target: amount,
+    perPeriod,
+    slot,
+    totalSlots: split.count,
+    cycleAnchorIso: anchorIso,
+    nextDueIso:    _nextDueDateForTemplate(template, viewYyyymm),
+    unit:          split.unit,
+  };
+}
+
 // Returns the next-due (unpaid, not skipped) instance dueDate for a bill, or
 // null. Used to know when the current cycle ends.
 function _nextDueDate(billId) {
@@ -14240,6 +14307,60 @@ function _nextDueDate(billId) {
     }
   }
   return next;
+}
+
+// Returns the next month (yyyymm) the template is due on or after the given
+// reference month. Walks forward from `fromYyyymm` (inclusive) up to a sane
+// horizon. Useful for split bills where the next payment may be many
+// months in the future and not yet materialised.
+function _nextDueMonthForTemplate(template, fromYyyymm) {
+  const { year, month } = _parseYyyymm(fromYyyymm);
+  // Search up to 24 months ahead — covers annual + a year of buffer.
+  for (let i = 0; i < 24; i++) {
+    const cursorY = year + Math.floor((month + i) / 12);
+    const cursorM = (month + i) % 12;
+    if (shouldBeDueInMonth(template, cursorY, cursorM)) {
+      return `${cursorY}-${String(cursorM + 1).padStart(2, '0')}`;
+    }
+  }
+  return null;
+}
+
+// Returns the ISO date of the template's next instance on or after the given
+// reference yyyymm. Combines _nextDueMonthForTemplate with the template's
+// dayOfMonth (clamped to month length).
+function _nextDueDateForTemplate(template, fromYyyymm) {
+  const dueMonth = _nextDueMonthForTemplate(template, fromYyyymm);
+  if (!dueMonth) return null;
+  const { year, month } = _parseYyyymm(dueMonth);
+  const dom = _clampDayOfMonth(template.dayOfMonth || 1, year, month);
+  return _isoDate(year, month, dom);
+}
+
+// Returns the previous due date for a template strictly BEFORE the given
+// reference month (yyyymm). Walks backward up to 24 months. Returns null if
+// no prior instance exists in that window (or if all candidates predate the
+// template's creation — in that case the saving cycle anchors on createdAt
+// instead).
+function _prevDueDateForTemplate(template, fromYyyymm) {
+  const { year, month } = _parseYyyymm(fromYyyymm);
+  const createdIso = (template.createdAt || _nowIso()).slice(0, 10);
+  for (let i = 1; i <= 24; i++) {
+    // Compute (year, month - i) handling negative wraparound
+    const rawM = month - i;
+    const realY = year + Math.floor(rawM / 12);
+    const realM = ((rawM % 12) + 12) % 12;
+    if (shouldBeDueInMonth(template, realY, realM)) {
+      const dom = _clampDayOfMonth(template.dayOfMonth || 1, realY, realM);
+      const candidate = _isoDate(realY, realM, dom);
+      // Reject candidates that predate template creation. These are
+      // theoretical due dates that never happened (the template didn't
+      // exist yet) and shouldn't anchor a saving cycle.
+      if (candidate < createdIso) return null;
+      return candidate;
+    }
+  }
+  return null;
 }
 
 // Returns { accrued, target, slot, totalSlots, perPeriod, cycleAnchorIso,
@@ -15213,15 +15334,37 @@ function renderBudgetBills() {
   paid.sort((a, b)    => (b.paidAt || '').localeCompare(a.paidAt || ''));
   skipped.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 
-  // Templates not active in this month + not archived
+  // Templates not active in this month + not archived. Split bills currently
+  // saving up for a future due date get their own "Saving up" section, so
+  // exclude them from the generic "Other bills" list.
   const { year, month } = _parseYyyymm(yyyymm);
-  const inactiveTemplates = bills.filter(b => !b.archived && !shouldBeDueInMonth(b, year, month));
+  const savingUpTemplates = bills.filter(b => _isSplitBillSavingForMonth(b, yyyymm));
+  const savingUpIds = new Set(savingUpTemplates.map(b => b.id));
+  const inactiveTemplates = bills.filter(b =>
+       !b.archived
+    && !shouldBeDueInMonth(b, year, month)
+    && !savingUpIds.has(b.id)
+  );
   const archivedTemplates = bills.filter(b => b.archived);
 
   // Populate sections
   _renderBillSection('budget-bills-due',     due.map(i => _renderBillRow(i)),     due.length);
   _renderBillSection('budget-bills-paid',    paid.map(i => _renderBillRow(i)),    paid.length);
   _renderBillSection('budget-bills-skipped', skipped.map(i => _renderBillRow(i)), skipped.length);
+
+  // "Saving up" — split bills accumulating for a future due date
+  const savingSection = document.getElementById('budget-bills-savingup-section');
+  const savingList    = document.getElementById('budget-bills-savingup-list');
+  const savingCount   = document.getElementById('budget-bills-savingup-count');
+  if (savingSection && savingList && savingCount) {
+    if (savingUpTemplates.length) {
+      savingSection.style.display = '';
+      savingCount.textContent     = savingUpTemplates.length;
+      savingList.innerHTML        = `<div class="bill-list">${savingUpTemplates.map(t => _renderSavingUpBillRow(t, yyyymm)).join('')}</div>`;
+    } else {
+      savingSection.style.display = 'none';
+    }
+  }
 
   // "Other bills" — templates inactive this month
   const otherSection = document.getElementById('budget-bills-other-section');
@@ -15251,11 +15394,23 @@ function renderBudgetBills() {
     }
   }
 
-  // Summary
+  // Summary — total includes both real instances and the per-period set-
+  // asides for split bills currently saving for a future due date.
   const summary = document.getElementById('budget-bills-summary');
   if (summary) {
-    const expectedTotal = all.filter(i => !i.skipped).reduce((s, i) => s + ((i.actualAmount ?? i.expectedAmount) || 0), 0);
-    summary.innerHTML = `${all.length} bill${all.length !== 1 ? 's' : ''} this month · expected total <strong style="color:var(--text)">${_money(expectedTotal)}</strong>`;
+    let expectedTotal = all.filter(i => !i.skipped)
+      .reduce((s, i) => s + ((i.actualAmount ?? i.expectedAmount) || 0), 0);
+    let savingUpTotal = 0;
+    for (const tpl of savingUpTemplates) {
+      const progress = getBillCycleProgressForMonth(tpl, yyyymm);
+      if (progress) savingUpTotal += progress.perPeriod;
+    }
+    expectedTotal += savingUpTotal;
+    const totalCount = all.length + savingUpTemplates.length;
+    const savingNote = savingUpTotal > 0
+      ? ` <span style="color:var(--accent2)">(incl. ${_money(savingUpTotal)} set aside)</span>`
+      : '';
+    summary.innerHTML = `${totalCount} bill${totalCount !== 1 ? 's' : ''} this month · expected total <strong style="color:var(--text)">${_money(expectedTotal)}</strong>${savingNote}`;
   }
 }
 
@@ -15358,6 +15513,34 @@ function _renderBillTemplateRow(tpl) {
         <div class="bill-meta">${freq}${tpl.archived ? ' · archived' : ''}${splitMeta}</div>
       </div>
       <div class="bill-amount">${_money(tpl.amount)}</div>
+      <div class="bill-actions">
+        <button class="bill-action-btn bill-action-edit" onclick="event.stopPropagation();openBillEditor('${tpl.id}')" title="Edit"><svg aria-hidden="true"><use href="#i-pencil"></use></svg></button>
+      </div>
+    </div>`;
+}
+
+// ── Saving-up bill row (split bills not due this month, accumulating) ──
+// Shows the per-period set-aside amount as the prominent figure (this is
+// what you should think of as "due" for budgeting purposes), with the
+// total target, slot in cycle, and next-due date as meta.
+function _renderSavingUpBillRow(tpl, viewYyyymm) {
+  const progress = getBillCycleProgressForMonth(tpl, viewYyyymm);
+  if (!progress) return '';
+  const dueLabel = progress.nextDueIso
+    ? new Date(progress.nextDueIso + 'T12:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+    : 'no future due date';
+  const unitLabel = progress.unit === 'week' ? 'wk' : 'mo';
+  const meta = `${progress.slot}/${progress.totalSlots} ${unitLabel} · ${_money(progress.accrued)} of ${_money(progress.target)} saved · due ${dueLabel}`;
+  return `
+    <div class="bill-row" style="border-left:2px solid var(--accent2)" onclick="openBillEditor('${tpl.id}')">
+      <div class="bill-day" style="color:var(--accent2);border-color:rgba(91,141,238,0.4);background:rgba(91,141,238,0.08)">
+        <svg style="width:14px;height:14px" aria-hidden="true"><use href="#i-piggy-bank"></use></svg>
+      </div>
+      <div class="bill-info">
+        <div class="bill-name">${_escapeHtml(tpl.name)}</div>
+        <div class="bill-meta">${meta}</div>
+      </div>
+      <div class="bill-amount" style="color:var(--accent2)">${_money(progress.perPeriod)}</div>
       <div class="bill-actions">
         <button class="bill-action-btn bill-action-edit" onclick="event.stopPropagation();openBillEditor('${tpl.id}')" title="Edit"><svg aria-hidden="true"><use href="#i-pencil"></use></svg></button>
       </div>
@@ -15500,13 +15683,13 @@ function billOnFreqPresetChange() {
   if (showAnchor) {
     if (preset === 'annual') {
       anchorLabel.textContent = 'Month it pays';
-      anchorHint.textContent  = '';
+      anchorHint.textContent  = 'The month the bill leaves your account each year.';
     } else {
       anchorLabel.textContent = 'First payment month';
       const intervalText = preset === 'quarterly'   ? 'every 3 months'
                         : preset === 'six_monthly'  ? 'every 6 months'
                         : 'every N months';
-      anchorHint.textContent  = `Repeats ${intervalText} from this anchor.`;
+      anchorHint.textContent  = `The first month the bill leaves your account. Then ${intervalText} after that.`;
     }
   }
 
@@ -18880,13 +19063,13 @@ billOnFreqPresetChange = function() {
   if (showAnchorMonth) {
     if (preset === 'annual' || (isCustom && customUnit === 'year')) {
       anchorLabel.textContent = 'Month it pays';
-      anchorHint.textContent  = '';
+      anchorHint.textContent  = 'The month the bill leaves your account each year.';
     } else {
       anchorLabel.textContent = 'First payment month';
       const intervalText = preset === 'quarterly'   ? 'every 3 months'
                         : preset === 'six_monthly'  ? 'every 6 months'
                         : 'every N months';
-      anchorHint.textContent  = `Repeats ${intervalText} from this anchor.`;
+      anchorHint.textContent  = `The first month the bill leaves your account. Then ${intervalText} after that.`;
     }
   }
 };

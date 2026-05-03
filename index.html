@@ -319,19 +319,19 @@
            hidden by JS for monthly bills. -->
       <div class="field form-full" id="bill-payment-strategy-section" style="display:none">
         <label>How is this paid?</label>
-        <div style="display:flex;flex-direction:column;gap:6px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px">
-          <label style="display:flex;align-items:flex-start;gap:8px;font-weight:400;cursor:pointer;padding:4px 0;text-transform:none;letter-spacing:normal;color:var(--text);font-size:13px;margin-bottom:0">
-            <input type="radio" name="bill-payment-strategy" value="lump" style="margin-top:3px;cursor:pointer;flex-shrink:0" checked>
-            <span style="flex:1;min-width:0;text-transform:none;letter-spacing:normal">
-              <span style="display:block;font-weight:600;color:var(--text);font-size:13px">Pay in full when due</span>
-              <span style="display:block;font-size:11px;color:var(--muted);font-weight:400;margin-top:2px">Comes out of that month's income in one lump.</span>
+        <div style="display:flex;flex-direction:column;gap:4px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+          <label class="strategy-option">
+            <input type="radio" name="bill-payment-strategy" value="lump" checked>
+            <span class="strategy-option-text">
+              <span class="strategy-option-title">Pay in full when due</span>
+              <span class="strategy-option-desc">Comes out of that month's income in one lump.</span>
             </span>
           </label>
-          <label style="display:flex;align-items:flex-start;gap:8px;font-weight:400;cursor:pointer;padding:4px 0;text-transform:none;letter-spacing:normal;color:var(--text);font-size:13px;margin-bottom:0">
-            <input type="radio" name="bill-payment-strategy" value="split" style="margin-top:3px;cursor:pointer;flex-shrink:0">
-            <span style="flex:1;min-width:0;text-transform:none;letter-spacing:normal">
-              <span style="display:block;font-weight:600;color:var(--text);font-size:13px">Set aside a bit each period</span>
-              <span style="display:block;font-size:11px;color:var(--muted);font-weight:400;margin-top:2px">Spreads the cost across the cycle and accumulates in carry-over.</span>
+          <label class="strategy-option">
+            <input type="radio" name="bill-payment-strategy" value="split">
+            <span class="strategy-option-text">
+              <span class="strategy-option-title">Set aside a bit each period</span>
+              <span class="strategy-option-desc">Spreads the cost across the cycle and accumulates in carry-over.</span>
             </span>
           </label>
         </div>
@@ -1858,6 +1858,17 @@
         <span id="budget-bills-skipped-count" style="background:rgba(120,128,160,0.15);border:1px solid rgba(120,128,160,0.3);color:var(--muted);font-size:10px;padding:1px 7px;border-radius:99px"></span>
       </div>
       <div id="budget-bills-skipped-list"></div>
+    </div>
+
+    <!-- Saving-up section (split-strategy bills not due this month but in
+         their saving cycle). Shows the per-period set-aside amount, slot
+         in cycle, current accrual, and the next-due date. -->
+    <div id="budget-bills-savingup-section" style="display:none;margin-bottom:24px">
+      <div style="font-size:11px;font-weight:700;color:var(--accent2);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:8px">
+        <span class="status-dot" style="display:inline-block;margin-right:6px;background:var(--accent2)"></span>Saving up
+        <span id="budget-bills-savingup-count" style="background:rgba(91,141,238,0.15);border:1px solid rgba(91,141,238,0.3);color:var(--accent2);font-size:10px;padding:1px 7px;border-radius:99px"></span>
+      </div>
+      <div id="budget-bills-savingup-list"></div>
     </div>
 
     <!-- Templates not active this month (annual/quarterly bills falling outside this month) -->
