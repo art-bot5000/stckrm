@@ -14131,6 +14131,11 @@ async function createBill(input) {
     categoryId:     input.categoryId || null,
     notes:          input.notes || '',
     archived:       false,
+    // Phase 5: payment strategy. 'lump' (default) = pay in full from that
+    // month's income. 'split' = set aside a portion each period across the
+    // cycle. splitInto only meaningful when paymentStrategy === 'split'.
+    paymentStrategy: input.paymentStrategy === 'split' ? 'split' : 'lump',
+    splitInto:       _normaliseSplitInto(input.splitInto, input.frequency),
     createdAt:      _nowIso(),
     updatedAt:      _nowIso(),
   };
@@ -14138,6 +14143,16 @@ async function createBill(input) {
   await saveBudgetLocal();
   _syncQueue?.enqueue();
   return tpl;
+}
+
+// Coerce splitInto into a clean { unit, count } shape, or null.
+// Only meaningful for split-strategy bills with a frequency longer than a
+// single period of the chosen unit.
+function _normaliseSplitInto(raw, freq) {
+  if (!raw || typeof raw !== 'object') return null;
+  const unit  = raw.unit === 'week' ? 'week' : 'month';
+  const count = Math.max(1, Math.min(60, parseInt(raw.count, 10) || 1));
+  return { unit, count };
 }
 
 async function updateBill(id, patch) {
@@ -14167,6 +14182,142 @@ async function deleteBillHard(id) {
   }
   await saveBudgetLocal();
   _syncQueue?.enqueue();
+}
+
+// ── Carry-over (split-strategy bills) ──────────────────────────────────────
+// Bills with frequency longer than a single month can opt into a "split"
+// strategy where the user sets aside a portion each month/week across the
+// cycle. The total currently set aside (the "carry-over") is computed from:
+//   amount per period       = template.amount / splitInto.count
+//   periods elapsed in cycle = whole periods since the cycle's start anchor
+//   accrued                 = min(periods elapsed, splitInto.count) × per-period
+// The cycle's anchor is whichever is most recent of:
+//   - the last paid instance's dueDate
+//   - the bill's createdAt
+// (We use the dueDate of the last payment, not paidAt, because the cycle is
+//  conceptually anchored on the bill's calendar, not when it was actioned.)
+
+// Returns a number (count of whole units between the two ISO dates, may be
+// negative if to < from).
+function _periodsBetween(fromIso, toIso, unit) {
+  const a = new Date(fromIso + 'T12:00:00');
+  const b = new Date(toIso   + 'T12:00:00');
+  if (isNaN(a.getTime()) || isNaN(b.getTime())) return 0;
+  if (unit === 'week') {
+    return Math.floor((b.getTime() - a.getTime()) / (7 * 86400000));
+  }
+  // 'month': calendar months between the two dates, ignoring day-of-month
+  const months = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
+  return months;
+}
+
+// Returns the most recent paid-instance dueDate for a bill, or null if none.
+function _lastPaidDueDate(billId) {
+  let latest = null;
+  for (const yyyymm of Object.keys(billInstances)) {
+    for (const key of Object.keys(billInstances[yyyymm])) {
+      const inst = billInstances[yyyymm][key];
+      if (inst.billId !== billId || !inst.paidAt) continue;
+      if (!latest || (inst.dueDate || '') > latest) latest = inst.dueDate || null;
+    }
+  }
+  return latest;
+}
+
+// Returns the next-due (unpaid, not skipped) instance dueDate for a bill, or
+// null. Used to know when the current cycle ends.
+function _nextDueDate(billId) {
+  const today = new Date().toISOString().slice(0, 10);
+  let next = null;
+  for (const yyyymm of Object.keys(billInstances)) {
+    for (const key of Object.keys(billInstances[yyyymm])) {
+      const inst = billInstances[yyyymm][key];
+      if (inst.billId !== billId) continue;
+      if (inst.paidAt || inst.skipped) continue;
+      if (!inst.dueDate) continue;
+      if (inst.dueDate < today) continue; // past-due — not part of next cycle
+      if (!next || inst.dueDate < next) next = inst.dueDate;
+    }
+  }
+  return next;
+}
+
+// Returns { accrued, target, slot, totalSlots, perPeriod, cycleAnchorIso,
+// nextDueIso } for a split-strategy bill, or null if the bill isn't split or
+// doesn't have a usable splitInto.
+function getBillCarryOver(template, todayIso = null) {
+  if (!template || template.archived) return null;
+  if (template.paymentStrategy !== 'split') return null;
+  const split = template.splitInto;
+  if (!split || !split.count || split.count < 1) return null;
+  const amount = Number(template.amount) || 0;
+  if (amount <= 0) return null;
+
+  const today = todayIso || new Date().toISOString().slice(0, 10);
+
+  // Cycle anchor: last paid dueDate, else createdAt (date portion only).
+  const lastPaid = _lastPaidDueDate(template.id);
+  const anchorIso = lastPaid || (template.createdAt || _nowIso()).slice(0, 10);
+
+  const elapsed = Math.max(0, _periodsBetween(anchorIso, today, split.unit));
+  const slot = Math.min(elapsed, split.count);
+  const perPeriod = Math.round((amount / split.count) * 100) / 100;
+  const accrued = Math.round(perPeriod * slot * 100) / 100;
+
+  return {
+    accrued,
+    target: amount,
+    perPeriod,
+    slot,                  // 0..splitInto.count
+    totalSlots: split.count,
+    cycleAnchorIso: anchorIso,
+    nextDueIso:    _nextDueDate(template.id),
+    unit:          split.unit,
+  };
+}
+
+// Sum of all active split bills' accrued amounts. Used by the dashboard tile.
+function getTotalCarryOver() {
+  let total = 0;
+  const breakdown = [];
+  for (const tpl of bills) {
+    const co = getBillCarryOver(tpl);
+    if (!co) continue;
+    total += co.accrued;
+    breakdown.push({ template: tpl, ...co });
+  }
+  return { total: Math.round(total * 100) / 100, breakdown };
+}
+
+// Suggests a sensible default splitInto for a bill template based on its
+// frequency. Quarterly → {month, 3}, six-monthly → {month, 6}, annual →
+// {month, 12}, custom monthly N → {month, N}, custom weekly N → {week, N},
+// custom yearly → {month, 12}. Monthly bills get null (no split applicable).
+function _suggestSplitInto(freq) {
+  if (!freq) return { unit: 'month', count: 3 };
+  if (freq.unit === 'year')  return { unit: 'month', count: 12 * Math.max(1, freq.interval || 1) };
+  if (freq.unit === 'month') {
+    const n = Math.max(1, freq.interval || 1);
+    if (n <= 1) return null;
+    return { unit: 'month', count: n };
+  }
+  if (freq.unit === 'week') {
+    const n = Math.max(1, freq.interval || 1);
+    if (n <= 1) return null;
+    return { unit: 'week', count: n };
+  }
+  return { unit: 'month', count: 3 };
+}
+
+// True if a bill template's frequency is long enough that a split strategy
+// makes sense (i.e. > 1 month between payments). Used to decide whether to
+// show the split UI in the editor.
+function _billCanSplit(freq) {
+  if (!freq) return false;
+  if (freq.unit === 'year')  return true;
+  if (freq.unit === 'month') return Math.max(1, freq.interval || 1) > 1;
+  if (freq.unit === 'week')  return Math.max(1, freq.interval || 1) > 4; // > ~1 month
+  return false;
 }
 
 // ── Bills import / template export ─────────────────────────────────────
@@ -15153,6 +15304,17 @@ function _renderBillRow(inst, opts = {}) {
     metaText = _relativeDay(inst.dueDate);
   }
 
+  // Phase 5: split-payment indicator. For unpaid instances of split bills,
+  // show "Slot N of M · saved £X" so the user sees their progress through
+  // the cycle at a glance.
+  let splitMeta = '';
+  if (tpl && tpl.paymentStrategy === 'split' && !isPaid && !isSkipped) {
+    const co = getBillCarryOver(tpl);
+    if (co) {
+      splitMeta = ` · <span style="color:var(--accent2)">${co.slot}/${co.totalSlots} · ${_money(co.accrued)} saved</span>`;
+    }
+  }
+
   // Action buttons depend on state
   let actions = '';
   if (isPaid) {
@@ -15171,7 +15333,7 @@ function _renderBillRow(inst, opts = {}) {
       <div class="bill-day">${day}</div>
       <div class="bill-info">
         <div class="bill-name">${_escapeHtml(name)} ${variableTag}</div>
-        <div class="bill-meta">${metaText}</div>
+        <div class="bill-meta">${metaText}${splitMeta}</div>
       </div>
       <div class="bill-amount ${tpl?.variableAmount && !isPaid ? 'is-variable' : ''}">${_money(amount)}</div>
       <div class="bill-actions">${actions}</div>
@@ -15181,12 +15343,19 @@ function _renderBillRow(inst, opts = {}) {
 // ── Bill template row (for "Other bills" + "Archived" sections) ────────────
 function _renderBillTemplateRow(tpl) {
   const freq = _frequencyLabel(tpl);
+  let splitMeta = '';
+  if (tpl.paymentStrategy === 'split' && !tpl.archived) {
+    const co = getBillCarryOver(tpl);
+    if (co) {
+      splitMeta = ` · <span style="color:var(--accent2)">${co.slot}/${co.totalSlots} · ${_money(co.accrued)} saved</span>`;
+    }
+  }
   return `
     <div class="bill-row ${tpl.archived ? 'is-skipped' : ''}" onclick="openBillEditor('${tpl.id}')">
       <div class="bill-day">${tpl.dayOfMonth}</div>
       <div class="bill-info">
         <div class="bill-name">${_escapeHtml(tpl.name)}</div>
-        <div class="bill-meta">${freq}${tpl.archived ? ' · archived' : ''}</div>
+        <div class="bill-meta">${freq}${tpl.archived ? ' · archived' : ''}${splitMeta}</div>
       </div>
       <div class="bill-amount">${_money(tpl.amount)}</div>
       <div class="bill-actions">
@@ -15285,8 +15454,34 @@ function openBillEditor(billId = null) {
   document.getElementById('bill-anchor-month').value      = String(freq.anchorMonth ?? 0);
   document.getElementById('bill-custom-interval').value   = (preset === 'custom' ? freq.interval : 2);
 
+  // Phase 5: payment strategy + split-into
+  const strategy = tpl?.paymentStrategy === 'split' ? 'split' : 'lump';
+  const lumpRadio  = document.querySelector('input[name="bill-payment-strategy"][value="lump"]');
+  const splitRadio = document.querySelector('input[name="bill-payment-strategy"][value="split"]');
+  if (lumpRadio)  lumpRadio.checked  = (strategy === 'lump');
+  if (splitRadio) splitRadio.checked = (strategy === 'split');
+  // Default the split-into fields. If the bill already has a splitInto use
+  // it, otherwise suggest one based on the frequency.
+  const suggested = tpl?.splitInto || _suggestSplitInto(freq) || { unit: 'month', count: 3 };
+  const countEl = document.getElementById('bill-split-count');
+  const unitEl  = document.getElementById('bill-split-unit');
+  if (countEl) {
+    countEl.value = String(suggested.count);
+    // If editing an existing bill that already has its own split values,
+    // mark as user-edited so frequency changes don't overwrite. For new
+    // bills, leave the flag clear so suggestions auto-update.
+    if (tpl?.splitInto) countEl.dataset.userEdited = '1';
+    else delete countEl.dataset.userEdited;
+  }
+  if (unitEl) {
+    unitEl.value = suggested.unit;
+    if (tpl?.splitInto) unitEl.dataset.userEdited = '1';
+    else delete unitEl.dataset.userEdited;
+  }
+
   billOnFreqPresetChange();
   _refreshBillVariableHint();
+  _refreshBillSplitVisibility();
   openModal('bill-editor-modal');
   setTimeout(() => document.getElementById('bill-name').focus(), 50);
 }
@@ -15314,6 +15509,48 @@ function billOnFreqPresetChange() {
       anchorHint.textContent  = `Repeats ${intervalText} from this anchor.`;
     }
   }
+
+  _refreshBillSplitVisibility();
+}
+
+// Show or hide the payment-strategy section depending on whether the current
+// frequency makes a split strategy meaningful (cycle > 1 month).
+function _refreshBillSplitVisibility() {
+  const preset    = document.getElementById('bill-frequency-preset')?.value;
+  const customInt = parseInt(document.getElementById('bill-custom-interval')?.value, 10);
+  let freq;
+  if (preset === 'monthly')           freq = { unit: 'month', interval: 1 };
+  else if (preset === 'quarterly')    freq = { unit: 'month', interval: 3 };
+  else if (preset === 'six_monthly')  freq = { unit: 'month', interval: 6 };
+  else if (preset === 'annual')       freq = { unit: 'year',  interval: 1 };
+  else                                freq = { unit: 'month', interval: Math.max(1, customInt || 2) };
+
+  const section   = document.getElementById('bill-payment-strategy-section');
+  const splitRow  = document.getElementById('bill-split-row');
+  const canSplit  = _billCanSplit(freq);
+  if (section)  section.style.display  = canSplit ? 'block' : 'none';
+
+  // If split is hidden, force lump and clear the row visibility.
+  if (!canSplit) {
+    const lumpRadio = document.querySelector('input[name="bill-payment-strategy"][value="lump"]');
+    if (lumpRadio) lumpRadio.checked = true;
+    if (splitRow) splitRow.style.display = 'none';
+    return;
+  }
+  // Show the split row only when "split" is selected.
+  const splitRadio = document.querySelector('input[name="bill-payment-strategy"][value="split"]');
+  if (splitRow) splitRow.style.display = splitRadio?.checked ? 'block' : 'none';
+
+  // When custom interval changes, refresh the suggested split count if user
+  // hasn't typed in their own value yet (heuristic: if it matches the prior
+  // suggestion, update it; otherwise leave alone).
+  const suggestion = _suggestSplitInto(freq);
+  const countEl = document.getElementById('bill-split-count');
+  const unitEl  = document.getElementById('bill-split-unit');
+  if (suggestion && countEl && unitEl && countEl.dataset.userEdited !== '1') {
+    countEl.value = String(suggestion.count);
+    unitEl.value  = suggestion.unit;
+  }
 }
 
 function _refreshBillVariableHint() {
@@ -15322,6 +15559,14 @@ function _refreshBillVariableHint() {
 }
 document.addEventListener('change', e => {
   if (e.target?.id === 'bill-variable') _refreshBillVariableHint();
+  if (e.target?.name === 'bill-payment-strategy') _refreshBillSplitVisibility();
+  if (e.target?.id === 'bill-custom-interval') _refreshBillSplitVisibility();
+});
+// Track manual edits to the split-count input so frequency changes don't
+// stomp on user-entered values.
+document.addEventListener('input', e => {
+  if (e.target?.id === 'bill-split-count')  e.target.dataset.userEdited = '1';
+  if (e.target?.id === 'bill-split-unit')   e.target.dataset.userEdited = '1';
 });
 
 async function saveBillFromEditor() {
@@ -15344,7 +15589,22 @@ async function saveBillFromEditor() {
   else if (preset === 'annual')       frequency = { unit: 'year',  interval: 1, anchorMonth };
   else                                frequency = { unit: 'month', interval: Math.max(1, customInt || 2), anchorMonth };
 
-  const patch = { name, amount, variableAmount, dayOfMonth, notes, frequency };
+  // Phase 5: payment strategy + split-into. Only relevant when the bill's
+  // cycle is longer than one month, otherwise force lump.
+  let paymentStrategy = 'lump';
+  let splitInto       = null;
+  if (_billCanSplit(frequency)) {
+    const stratEl = document.querySelector('input[name="bill-payment-strategy"]:checked');
+    paymentStrategy = stratEl?.value === 'split' ? 'split' : 'lump';
+    if (paymentStrategy === 'split') {
+      const splitCount = parseInt(document.getElementById('bill-split-count').value, 10);
+      const splitUnit  = document.getElementById('bill-split-unit').value === 'week' ? 'week' : 'month';
+      if (isNaN(splitCount) || splitCount < 1) { toast('Split count must be at least 1'); return; }
+      splitInto = { unit: splitUnit, count: Math.min(60, splitCount) };
+    }
+  }
+
+  const patch = { name, amount, variableAmount, dayOfMonth, notes, frequency, paymentStrategy, splitInto };
 
   if (_budgetEditingBillId) {
     await updateBill(_budgetEditingBillId, patch);
@@ -16188,6 +16448,10 @@ function _renderTransactionRow(tx) {
 function spendSwitchPeriod(period) {
   if (period !== 'week' && period !== 'month') return;
   _spendPeriod = period;
+  // Reset reference date so the new period always anchors on today.
+  // Without this, switching week→month while viewing a stale ref week could
+  // land you on the wrong calendar month and hide today's transactions.
+  _spendReferenceDate = null;
   renderBudgetSpend();
 }
 
@@ -26858,6 +27122,112 @@ async function handleReactivation(token) {
     toast('Error: ' + e.message);
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BUDGET — Phase 5: Split-payment carry-over
+//
+//  Bills with a cycle longer than one month can opt into "split" payment,
+//  where the user sets aside a portion each period (month or week) across
+//  the cycle. This block:
+//   - Renders a Carry-over tile on the dashboard with the household total.
+//   - Tappable → opens a breakdown modal listing each split bill's progress.
+//   - Re-runs whenever the dashboard re-renders.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function _renderCarryOverTile() {
+  const host = document.getElementById('budget-carryover-tile');
+  if (!host) return;
+  const { total, breakdown } = getTotalCarryOver();
+  if (!breakdown.length) {
+    host.style.display = 'none';
+    return;
+  }
+  host.style.display = 'block';
+
+  // Find the most pressing next-due bill among split bills (the one with
+  // the smallest remaining funding gap, sorted by next-due date).
+  let nextLabel = '';
+  const upcoming = breakdown
+    .filter(b => b.nextDueIso)
+    .sort((a, b) => a.nextDueIso.localeCompare(b.nextDueIso));
+  if (upcoming.length) {
+    const next = upcoming[0];
+    const remaining = Math.max(0, next.target - next.accrued);
+    const dueLabel = _shortDate(next.nextDueIso);
+    if (remaining > 0) {
+      nextLabel = `Next: ${_escapeHtml(next.template.name)} · ${_money(remaining)} short by ${dueLabel}`;
+    } else {
+      nextLabel = `Next: ${_escapeHtml(next.template.name)} · fully funded · due ${dueLabel}`;
+    }
+  }
+
+  host.innerHTML = `
+    <div onclick="openCarryOverBreakdown()" style="cursor:pointer;background:linear-gradient(135deg,rgba(91,141,238,0.10),rgba(91,141,238,0.04));border:1px solid var(--border);border-radius:14px;padding:16px 18px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <div style="min-width:0">
+          <div style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">Carry-over set aside</div>
+          <div style="font-size:24px;font-weight:700;font-family:var(--sans);color:var(--text);letter-spacing:-0.3px">${_money(total)}</div>
+          ${nextLabel ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">${nextLabel}</div>` : ''}
+        </div>
+        <div style="flex-shrink:0;display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px;font-family:var(--mono)">
+          ${breakdown.length} bill${breakdown.length === 1 ? '' : 's'}
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-right"></use></svg>
+        </div>
+      </div>
+    </div>`;
+}
+
+function openCarryOverBreakdown() {
+  const { total, breakdown } = getTotalCarryOver();
+  const host = document.getElementById('carryover-modal-list');
+  const totalEl = document.getElementById('carryover-modal-total');
+  if (totalEl) totalEl.textContent = _money(total);
+  if (!host) return;
+
+  if (!breakdown.length) {
+    host.innerHTML = `<div style="padding:24px 16px;text-align:center;color:var(--muted);font-size:13px">No split-payment bills yet</div>`;
+  } else {
+    // Sort by next-due ascending; bills without a next-due date go last.
+    breakdown.sort((a, b) => {
+      if (!a.nextDueIso && !b.nextDueIso) return 0;
+      if (!a.nextDueIso) return 1;
+      if (!b.nextDueIso) return -1;
+      return a.nextDueIso.localeCompare(b.nextDueIso);
+    });
+    host.innerHTML = breakdown.map(b => {
+      const pct = Math.min(100, Math.round((b.accrued / b.target) * 100));
+      const remaining = Math.max(0, b.target - b.accrued);
+      const remainingLabel = remaining > 0
+        ? `${_money(remaining)} to go`
+        : 'Fully funded';
+      const dueLabel = b.nextDueIso ? `due ${_shortDate(b.nextDueIso)}` : 'no upcoming due date';
+      const unitLabel = b.unit === 'week' ? 'wk' : 'mo';
+      return `
+        <div style="padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer" onclick="closeModal('carryover-modal');openBillEditor('${b.template.id}')">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:6px">
+            <div style="font-size:14px;font-weight:600;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_escapeHtml(b.template.name)}</div>
+            <div style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--text);flex-shrink:0">${_money(b.accrued)} / ${_money(b.target)}</div>
+          </div>
+          <div style="height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;margin-bottom:6px">
+            <div style="height:100%;width:${pct}%;background:var(--accent2);border-radius:3px"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);font-family:var(--mono)">
+            <span>${b.slot}/${b.totalSlots} ${unitLabel} · ${_money(b.perPeriod)}/${unitLabel}</span>
+            <span>${remainingLabel} · ${dueLabel}</span>
+          </div>
+        </div>`;
+    }).join('');
+  }
+  openModal('carryover-modal');
+}
+
+// Wrap the existing dashboard render once more so the carry-over tile is
+// updated on every dashboard refresh. Preserves the Phase 4b override.
+const _phase5RenderBudgetDashboard = renderBudgetDashboard;
+renderBudgetDashboard = function() {
+  _phase5RenderBudgetDashboard.call(this);
+  _renderCarryOverTile();
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  AMAZON ORDER HISTORY IMPORTER
