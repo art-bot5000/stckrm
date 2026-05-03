@@ -16875,6 +16875,46 @@ async function loadBudgetAccountsAndIncome() {
   if (Array.isArray(accTomb))    budgetAccountDeletedIds   = new Set(accTomb);
   if (Array.isArray(incTplTomb)) incomeTemplateDeletedIds  = new Set(incTplTomb);
   if (Array.isArray(incEntTomb)) incomeEntryDeletedIds     = new Set(incEntTomb);
+
+  // One-time cleanup: drop unpaid template-instance entries whose template
+  // was deleted or archived. These are stale ghosts that otherwise keep
+  // producing phantom income in the projection. Paid-out entries are kept.
+  await _purgePhantomUnpaidIncomeEntries();
+}
+
+// Sweeps incomeEntries and removes any unpaid template-instance entries
+// that reference a missing or archived template. Persists if any changes
+// were made. Cheap to run on every load.
+async function _purgePhantomUnpaidIncomeEntries() {
+  const validIds = new Set();
+  for (const t of (incomeTemplates || [])) {
+    if (!t.archived) validIds.add(t.id);
+  }
+  let touched = false;
+  const monthsToRefresh = new Set();
+  for (const yyyymm of Object.keys(incomeEntries)) {
+    const month = incomeEntries[yyyymm];
+    for (const entryId of Object.keys(month)) {
+      const e = month[entryId];
+      if (!e.templateId) continue;
+      if (e.paidAt) continue;
+      if (validIds.has(e.templateId)) continue;
+      delete month[entryId];
+      monthsToRefresh.add(yyyymm);
+      touched = true;
+    }
+    if (Object.keys(month).length === 0) delete incomeEntries[yyyymm];
+  }
+  if (touched) {
+    // Drop these months from materialisedMonths so a future re-open will
+    // rebuild them from current templates rather than skipping.
+    if (budgetSettings && Array.isArray(budgetSettings.materialisedMonths)) {
+      budgetSettings.materialisedMonths = budgetSettings.materialisedMonths
+        .filter(m => !monthsToRefresh.has(m));
+    }
+    await saveBudgetAccountsAndIncomeLocal();
+    if (typeof saveBudgetLocal === 'function') await saveBudgetLocal();
+  }
 }
 
 async function saveBudgetAccountsAndIncomeLocal() {
@@ -17022,21 +17062,79 @@ async function createIncomeTemplate(input) {
 async function updateIncomeTemplate(id, patch) {
   const idx = incomeTemplates.findIndex(t => t.id === id);
   if (idx === -1) return null;
-  incomeTemplates[idx] = { ...incomeTemplates[idx], ...patch, updatedAt: _nowIso() };
+  const prev = incomeTemplates[idx];
+  incomeTemplates[idx] = { ...prev, ...patch, updatedAt: _nowIso() };
+
+  // If anything that affects the projection has changed, prune unpaid
+  // materialised instances for the current month onward and re-materialise
+  // so the projection picks up the new schedule/amount immediately.
+  const scheduleChanged =
+       (patch.dayOfMonth   !== undefined && patch.dayOfMonth   !== prev.dayOfMonth)
+    || (patch.amount       !== undefined && patch.amount       !== prev.amount)
+    || (patch.accountId    !== undefined && patch.accountId    !== prev.accountId)
+    || (patch.frequency    !== undefined && JSON.stringify(patch.frequency) !== JSON.stringify(prev.frequency));
+  if (scheduleChanged) {
+    const todayMonth = _yyyymm(new Date());
+    await _pruneUnpaidIncomeEntriesForTemplate(id, todayMonth);
+    // Re-materialise the current month so the new entries appear immediately.
+    if (typeof materialiseMonth === 'function' && _budgetViewMonth) {
+      await materialiseMonth(_budgetViewMonth, { force: false, persist: true });
+    } else {
+      await materialiseMonth(todayMonth, { force: false, persist: true });
+    }
+  }
+
   await saveBudgetAccountsAndIncomeLocal();
   _syncQueue?.enqueue();
   return incomeTemplates[idx];
 }
 
 async function archiveIncomeTemplate(id) {
+  // Also prune any unpaid materialised entries — once archived, the template
+  // shouldn't keep producing phantom income in the projection.
+  await _pruneUnpaidIncomeEntriesForTemplate(id, /* fromMonth */ null);
   return updateIncomeTemplate(id, { archived: true });
 }
 
 async function deleteIncomeTemplateHard(id) {
+  // Strip any unpaid template-instance entries from the materialised store
+  // BEFORE removing the template. Paid-out entries are kept as historical
+  // record (the money actually arrived).
+  await _pruneUnpaidIncomeEntriesForTemplate(id, /* fromMonth */ null);
   incomeTemplates = incomeTemplates.filter(t => t.id !== id);
   incomeTemplateDeletedIds.add(id);
   await saveBudgetAccountsAndIncomeLocal();
   _syncQueue?.enqueue();
+}
+
+// Removes all unpaid template-instance income entries for a given template.
+// `fromMonth` (YYYY-MM, optional): if given, only prunes entries from that
+// month onward. Useful when editing a template — we don't want to wipe past
+// months that have already been reconciled.
+async function _pruneUnpaidIncomeEntriesForTemplate(templateId, fromMonth = null) {
+  let touched = false;
+  for (const yyyymm of Object.keys(incomeEntries)) {
+    if (fromMonth && yyyymm < fromMonth) continue;
+    const month = incomeEntries[yyyymm];
+    for (const entryId of Object.keys(month)) {
+      const e = month[entryId];
+      if (e.templateId !== templateId) continue;
+      if (e.paidAt) continue; // keep — actual money received
+      delete month[entryId];
+      // Re-materialisation needs to be allowed to re-create entries for
+      // updated templates, so drop the month from materialisedMonths too.
+      const mIdx = budgetSettings.materialisedMonths?.indexOf(yyyymm) ?? -1;
+      if (mIdx >= 0) budgetSettings.materialisedMonths.splice(mIdx, 1);
+      touched = true;
+    }
+    if (Object.keys(month).length === 0) delete incomeEntries[yyyymm];
+  }
+  if (touched) {
+    await saveBudgetAccountsAndIncomeLocal();
+    if (typeof saveBudgetLocal === 'function') await saveBudgetLocal();
+    _syncQueue?.enqueue();
+  }
+  return touched;
 }
 
 function getActiveIncomeTemplates() {
@@ -17306,6 +17404,12 @@ function _eventsOnDay(account, dayIso) {
     if (entry.date !== dayIso) continue;
     if (entry.templateId) materialisedIncomeFromTplIds.add(entry.templateId);
     if (entry.accountId !== account.id) continue;
+    // Defensive: skip phantom unpaid entries whose template was deleted
+    // or archived (they're stale ghosts in the materialised store).
+    if (entry.templateId && !entry.paidAt) {
+      const tpl = getIncomeTemplateById(entry.templateId);
+      if (!tpl || tpl.archived) continue;
+    }
     // Future expected income → counts; past unreceived → still counts but flagged
     events.push({
       type:     'income',
@@ -18552,6 +18656,16 @@ _eventsOnDay = function(account, dayIso) {
       materialisedIncomeKeysOnDay.add(`${entry.templateId}__${entry.date}`);
     }
     if (entry.accountId !== account.id) continue;
+
+    // Defensive: skip phantom entries from a template that has been
+    // deleted or archived. Once paid (paidAt set), the entry is real
+    // money and we keep it regardless. Unpaid template-instances whose
+    // template no longer exists are stale ghosts.
+    if (entry.templateId && !entry.paidAt) {
+      const tpl = getIncomeTemplateById(entry.templateId);
+      if (!tpl || tpl.archived) continue;
+    }
+
     // For variable income with no actual yet, fall back to the projected (averaged) amount
     let amt = entry.actualAmount;
     if (amt == null) {
@@ -27276,30 +27390,68 @@ function _getReceivedIncomeForMonth(yyyymm) {
   return Math.round(total * 100) / 100;
 }
 
-// Projected balance at the last day of the target month. Walks forward from
-// today using projectCashFlow. Returns null if setup isn't complete.
-function _getEndOfMonthProjectedBalance(yyyymm) {
+// Sum of expected income entries (paidAt === null) for the given month,
+// excluding phantom entries from deleted/archived templates. Used in the
+// Safe-to-spend breakdown so the "income still to come" line is honest.
+function _getExpectedIncomeForMonth(yyyymm) {
+  const primary = getPrimaryAccount();
+  if (!primary) return 0;
+  let total = 0;
+  const seenTemplateDates = new Set();
+  for (const e of getIncomeEntriesForMonth(yyyymm)) {
+    if (e.paidAt) continue;
+    if (e.accountId !== primary.id) continue;
+    if (e.templateId) {
+      const tpl = getIncomeTemplateById(e.templateId);
+      if (!tpl || tpl.archived) continue;          // phantom — skip
+      seenTemplateDates.add(`${e.templateId}__${e.date}`);
+    }
+    total += (e.actualAmount ?? e.amount) || 0;
+  }
+  // Also include unmaterialised template instances landing in this month.
+  const { year, month } = _parseYyyymm(yyyymm);
+  for (const tpl of (incomeTemplates || [])) {
+    if (tpl.archived) continue;
+    if (tpl.accountId && tpl.accountId !== primary.id) continue;
+    if (!tpl.accountId && !primary.isPrimary) continue;
+    const dates = (typeof getInstanceDatesInMonth === 'function')
+      ? getInstanceDatesInMonth(tpl, year, month)
+      : [];
+    for (const d of dates) {
+      const key = `${tpl.id}__${d}`;
+      if (seenTemplateDates.has(key)) continue;
+      const amt = (typeof getProjectedIncomeAmount === 'function')
+        ? getProjectedIncomeAmount(tpl)
+        : tpl.amount;
+      total += amt || 0;
+    }
+  }
+  return Math.round(total * 100) / 100;
+}
+
+// Returns { startBalance, endBalance } for the target month using
+// projectCashFlow. For the current month, startBalance = balance now.
+// For future months, we walk forward through every prior month so all
+// scheduled bills and income are applied.
+function _getMonthEndProjection(yyyymm) {
   const todayIso = (new Date()).toISOString().slice(0, 10);
   const { year, month } = _parseYyyymm(yyyymm);
   const lastDay = _daysInMonth(year, month);
   const endIso  = _isoDate(year, month, lastDay);
-  // daysAhead must reach at least the end-of-month date (inclusive).
   const a = new Date(todayIso + 'T12:00:00');
   const b = new Date(endIso   + 'T12:00:00');
   const daysAhead = Math.max(1, Math.ceil((b.getTime() - a.getTime()) / 86400000) + 1);
   const proj = projectCashFlow(null, daysAhead);
   if (!proj.setupComplete) return null;
-  // Find the point exactly at end-of-month
   const endPoint = proj.points.find(p => p.date === endIso);
-  if (endPoint) return endPoint.balance;
-  // Fallback: last point in the projection
-  const last = proj.points[proj.points.length - 1];
-  return last ? last.balance : proj.startBalance;
+  const endBalance = endPoint ? endPoint.balance
+                              : (proj.points[proj.points.length - 1]?.balance ?? proj.startBalance);
+  return { startBalance: proj.startBalance, endBalance };
 }
 
 // Returns { amount, mode, breakdown } where mode ∈ 'past' | 'current' |
-// 'future' | 'no-setup'. amount is rounded GBP. breakdown carries the
-// inputs so the modal can show the working.
+// 'future' | 'no-setup'. The breakdown carries enough sub-totals for the
+// modal to render every line as its own row.
 function getSafeToSpend(yyyymm) {
   const todayMonth = _yyyymm(new Date());
   const isFuture = yyyymm > todayMonth;
@@ -27318,17 +27470,48 @@ function getSafeToSpend(yyyymm) {
     };
   }
 
-  const endBalance = _getEndOfMonthProjectedBalance(yyyymm);
-  if (endBalance == null) {
+  const proj = _getMonthEndProjection(yyyymm);
+  if (proj == null) {
     return { amount: null, mode: 'no-setup', breakdown: null };
   }
+
+  // For the *current* month we want a transparent breakdown:
+  //   balance now + income still to come − bills still to pay
+  //                = balance at month end
+  // For *future* months, "balance now" + "income to come" + "bills to pay"
+  // span multiple months and aren't directly meaningful, so we use the
+  // projected balance at month-end as the starting point and just show
+  // budget + carry-over deductions.
   const budgetRemaining = _getUnspentBudgetForMonth(yyyymm);
   const carryOver       = getTotalCarryOver().total;
 
+  if (isFuture) {
+    return {
+      amount: Math.round((proj.endBalance - budgetRemaining - carryOver) * 100) / 100,
+      mode: 'future',
+      breakdown: {
+        endBalance: proj.endBalance,
+        budgetRemaining,
+        carryOver,
+      },
+    };
+  }
+
+  // Current month — break it apart for the modal
+  const balanceNow   = proj.startBalance;
+  const incomeToCome = _getExpectedIncomeForMonth(yyyymm);
+  const billsToPay   = getLeftToPay(yyyymm);
+
   return {
-    amount: Math.round((endBalance - budgetRemaining - carryOver) * 100) / 100,
-    mode: isFuture ? 'future' : 'current',
-    breakdown: { endBalance, budgetRemaining, carryOver },
+    amount: Math.round((balanceNow + incomeToCome - billsToPay - budgetRemaining - carryOver) * 100) / 100,
+    mode: 'current',
+    breakdown: {
+      balanceNow,
+      incomeToCome,
+      billsToPay,
+      budgetRemaining,
+      carryOver,
+    },
   };
 }
 
@@ -27389,41 +27572,71 @@ function openSafeToSpendBreakdown() {
     return;
   }
 
-  const row = (label, value, sign, subtle = false) => {
+  // Render a row. `linkAction` (optional) becomes the onclick, and the row
+  // gets a hover affordance when present. Sub-totals (subtle) are dimmer.
+  const row = (label, value, sign, opts = {}) => {
+    const subtle = !!opts.subtle;
+    const linkAction = opts.linkAction || null;
     const valueColor = subtle ? 'var(--muted)' : 'var(--text)';
+    const cursor = linkAction ? 'cursor:pointer' : '';
+    const onclick = linkAction ? `onclick="${linkAction}"` : '';
+    const hover = linkAction ? 'class="safe-modal-row-link"' : '';
+    const arrow = linkAction
+      ? `<svg class="icon icon-sm" aria-hidden="true" style="color:var(--muted);margin-left:6px;flex-shrink:0"><use href="#i-chevron-right"></use></svg>`
+      : '';
+    const labelCol = `<div style="display:flex;align-items:center;font-size:13px;color:${subtle ? 'var(--muted)' : 'var(--text)'};min-width:0">
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${label}</span>${arrow}
+      </div>`;
     return `
-      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:10px 16px;border-bottom:1px solid var(--border)">
-        <div style="font-size:13px;color:${subtle ? 'var(--muted)' : 'var(--text)'}">${label}</div>
-        <div style="font-family:var(--mono);font-size:14px;font-weight:${subtle ? '500' : '600'};color:${valueColor}">${sign}${_money(Math.abs(value))}</div>
+      <div ${hover} ${onclick} style="display:flex;justify-content:space-between;align-items:baseline;padding:10px 16px;border-bottom:1px solid var(--border);${cursor}">
+        ${labelCol}
+        <div style="font-family:var(--mono);font-size:14px;font-weight:${subtle ? '500' : '600'};color:${valueColor};flex-shrink:0;margin-left:12px">${sign}${_money(Math.abs(value))}</div>
       </div>`;
   };
+
+  // Final totals row (bold, highlighted)
+  const totalRow = (label, value) => {
+    const color = value < 0 ? 'var(--danger)' : 'var(--ok)';
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:14px 16px;background:rgba(255,255,255,0.02)">
+        <div style="font-size:13px;font-weight:700">${label}</div>
+        <div style="font-family:var(--mono);font-size:15px;font-weight:700;color:${color}">${_money(value)}</div>
+      </div>`;
+  };
+
+  // Navigation helpers — close the modal then switch panel
+  const goBills      = `closeModal('safe-to-spend-modal');budgetSwitchPanel('bills')`;
+  const goSpend      = `closeModal('safe-to-spend-modal');budgetSwitchPanel('spend')`;
+  const goCarryOver  = `closeModal('safe-to-spend-modal');setTimeout(openCarryOverBreakdown,80)`;
 
   if (result.mode === 'past') {
     const { incomeReceived, billsPaid, spend } = result.breakdown;
     bodyEl.innerHTML = `
-      ${row('Income received',   incomeReceived, '+')}
-      ${row('Bills paid',        billsPaid,      '−')}
-      ${row('Discretionary spend', spend,        '−')}
-      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:14px 16px;background:rgba(255,255,255,0.02)">
-        <div style="font-size:13px;font-weight:700">Surplus / shortfall</div>
-        <div style="font-family:var(--mono);font-size:15px;font-weight:700;color:${result.amount < 0 ? 'var(--danger)' : 'var(--ok)'}">${_money(result.amount)}</div>
-      </div>
+      ${row('Income received',     incomeReceived, '+')}
+      ${row('Bills paid',          billsPaid,      '−', { linkAction: goBills })}
+      ${row('Discretionary spend', spend,          '−', { linkAction: goSpend })}
+      ${totalRow('Surplus / shortfall', result.amount)}
       <div style="padding:12px 16px;font-size:11px;color:var(--muted);border-top:1px solid var(--border)">Past month: shows what was actually left over once income, bills and spend had all settled.</div>`;
-  } else {
+  } else if (result.mode === 'future') {
     const { endBalance, budgetRemaining, carryOver } = result.breakdown;
-    const futureNote = result.mode === 'future'
-      ? '<div style="padding:10px 16px;font-size:11px;color:var(--accent);background:rgba(232,168,56,0.06);border-bottom:1px solid var(--border)">Projected — assumes bills, income and budgets continue as set up.</div>'
-      : '';
     bodyEl.innerHTML = `
-      ${futureNote}
+      <div style="padding:10px 16px;font-size:11px;color:var(--accent);background:rgba(232,168,56,0.06);border-bottom:1px solid var(--border)">Projected — assumes bills, income and budgets continue as set up.</div>
       ${row('Projected balance at month end', endBalance, '')}
-      ${row('Less: budget still to spend', budgetRemaining, '−', true)}
-      ${row('Less: carry-over set aside',   carryOver,       '−', true)}
-      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:14px 16px;background:rgba(255,255,255,0.02)">
-        <div style="font-size:13px;font-weight:700">Safe to spend</div>
-        <div style="font-family:var(--mono);font-size:15px;font-weight:700;color:${result.amount < 0 ? 'var(--danger)' : 'var(--ok)'}">${_money(result.amount)}</div>
-      </div>
-      <div style="padding:12px 16px;font-size:11px;color:var(--muted);border-top:1px solid var(--border)">If you stick to your category budgets and pay all bills, this is what's truly free. Negative numbers mean you'd need to cut something or top up the account.</div>`;
+      ${row('Less: budget still to spend', budgetRemaining, '−', { subtle: true, linkAction: goSpend })}
+      ${row('Less: carry-over set aside',  carryOver,       '−', { subtle: true, linkAction: goCarryOver })}
+      ${totalRow('Safe to spend', result.amount)}
+      <div style="padding:12px 16px;font-size:11px;color:var(--muted);border-top:1px solid var(--border)">If you stick to your category budgets and pay all bills, this is what's truly free. Negative means you'd need to cut something or top up the account.</div>`;
+  } else {
+    // Current month — fully transparent breakdown
+    const { balanceNow, incomeToCome, billsToPay, budgetRemaining, carryOver } = result.breakdown;
+    bodyEl.innerHTML = `
+      ${row('Account balance now',          balanceNow,      '')}
+      ${row('Plus: income still to come',   incomeToCome,    '+', { subtle: true })}
+      ${row('Less: bills still to pay',     billsToPay,      '−', { subtle: true, linkAction: goBills })}
+      ${row('Less: budget still to spend',  budgetRemaining, '−', { subtle: true, linkAction: goSpend })}
+      ${row('Less: carry-over set aside',   carryOver,       '−', { subtle: true, linkAction: goCarryOver })}
+      ${totalRow('Safe to spend', result.amount)}
+      <div style="padding:12px 16px;font-size:11px;color:var(--muted);border-top:1px solid var(--border)">If you stick to your category budgets and pay all bills, this is what's truly free. Tap a row to jump to the relevant section.</div>`;
   }
 
   openModal('safe-to-spend-modal');

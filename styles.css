@@ -2663,3 +2663,10 @@ body.has-demo-banner { padding-top: var(--demo-banner-offset, 38px); }
 @media (max-width: 480px) {
   .demo-banner-tour { display: none; }
 }
+
+/* Safe-to-spend modal: tappable rows ("Less: bills…", etc.) get a subtle
+   hover state so it's clear they're clickable. The chevron icon next to
+   the label tints to accent on hover. */
+.safe-modal-row-link { transition: background 0.12s; }
+.safe-modal-row-link:hover { background: rgba(255,255,255,0.025); }
+.safe-modal-row-link:hover svg { color: var(--accent) !important; }

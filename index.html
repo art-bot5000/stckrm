@@ -320,25 +320,25 @@
       <div class="field form-full" id="bill-payment-strategy-section" style="display:none">
         <label>How is this paid?</label>
         <div style="display:flex;flex-direction:column;gap:6px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px">
-          <label style="display:flex;align-items:flex-start;gap:8px;font-weight:400;cursor:pointer;padding:4px 0">
-            <input type="radio" name="bill-payment-strategy" value="lump" style="margin-top:3px;cursor:pointer" checked>
-            <span style="flex:1;min-width:0">
-              <span style="font-weight:600;color:var(--text);font-size:13px">Pay in full when due</span>
-              <span style="display:block;font-size:11px;color:var(--muted);margin-top:2px">Comes out of that month's income in one lump.</span>
+          <label style="display:flex;align-items:flex-start;gap:8px;font-weight:400;cursor:pointer;padding:4px 0;text-transform:none;letter-spacing:normal;color:var(--text);font-size:13px;margin-bottom:0">
+            <input type="radio" name="bill-payment-strategy" value="lump" style="margin-top:3px;cursor:pointer;flex-shrink:0" checked>
+            <span style="flex:1;min-width:0;text-transform:none;letter-spacing:normal">
+              <span style="display:block;font-weight:600;color:var(--text);font-size:13px">Pay in full when due</span>
+              <span style="display:block;font-size:11px;color:var(--muted);font-weight:400;margin-top:2px">Comes out of that month's income in one lump.</span>
             </span>
           </label>
-          <label style="display:flex;align-items:flex-start;gap:8px;font-weight:400;cursor:pointer;padding:4px 0">
-            <input type="radio" name="bill-payment-strategy" value="split" style="margin-top:3px;cursor:pointer">
-            <span style="flex:1;min-width:0">
-              <span style="font-weight:600;color:var(--text);font-size:13px">Set aside a bit each period</span>
-              <span style="display:block;font-size:11px;color:var(--muted);margin-top:2px">Spreads the cost across the cycle and accumulates in carry-over.</span>
+          <label style="display:flex;align-items:flex-start;gap:8px;font-weight:400;cursor:pointer;padding:4px 0;text-transform:none;letter-spacing:normal;color:var(--text);font-size:13px;margin-bottom:0">
+            <input type="radio" name="bill-payment-strategy" value="split" style="margin-top:3px;cursor:pointer;flex-shrink:0">
+            <span style="flex:1;min-width:0;text-transform:none;letter-spacing:normal">
+              <span style="display:block;font-weight:600;color:var(--text);font-size:13px">Set aside a bit each period</span>
+              <span style="display:block;font-size:11px;color:var(--muted);font-weight:400;margin-top:2px">Spreads the cost across the cycle and accumulates in carry-over.</span>
             </span>
           </label>
         </div>
 
         <!-- Split-into row — shown only when "split" is selected -->
         <div id="bill-split-row" style="display:none;margin-top:10px">
-          <label style="font-size:12px;color:var(--muted);margin-bottom:6px;display:block">Split across</label>
+          <label style="font-size:11px;color:var(--muted);margin-bottom:6px;display:block;text-transform:uppercase;letter-spacing:0.5px;font-weight:700">Split across</label>
           <div style="display:flex;gap:8px;align-items:center">
             <input type="number" id="bill-split-count" min="1" max="60" value="3"
               style="width:80px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
