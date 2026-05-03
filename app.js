@@ -115,7 +115,7 @@ function getStores(code) { return STORES_BY_COUNTRY[code] || STORES_BY_COUNTRY.O
 
 const DB_NAME    = 'stockroom';
 const DB_VERSION = 5;
-const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists','reminderDeletedIds','bills','billInstances','budgetSettings','budgetCategories','transactions','budgetCategoryDeletedIds','budgetTransactionDeletedIds','budgetAccounts','incomeTemplates','incomeEntries','budgetAccountDeletedIds','incomeTemplateDeletedIds','incomeEntryDeletedIds'];
+const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists','reminderDeletedIds','bills','billInstances','budgetSettings','budgetCategories','transactions','budgetCategoryDeletedIds','budgetTransactionDeletedIds','budgetAccounts','incomeTemplates','incomeEntries','budgetAccountDeletedIds','incomeTemplateDeletedIds','incomeEntryDeletedIds','billsDeletedIds'];
 
 let _db = null;
 
@@ -12907,6 +12907,7 @@ async function kvPush() {
     shareTargets: _shareTargets,
     notes: notes.map(n => ({ ...n, body: n.locked ? undefined : n.body })),
     bills, billInstances, budgetSettings,
+    billsDeletedIds: [...billsDeletedIds],
     budgetCategories, transactions,
     budgetCategoryDeletedIds:    [...budgetCategoryDeletedIds],
     budgetTransactionDeletedIds: [...budgetTransactionDeletedIds],
@@ -13114,6 +13115,24 @@ async function kvSyncNow(silent = false) {
         if (groceryLists.length !== before) await _saveGroceryLists();
       }
       // Budget — bills, instances, settings (Phase 1)
+      // Tombstones first so the merge functions can use them to drop
+      // resurrected entries from peers that hadn't seen the delete yet.
+      if (Array.isArray(remote.billsDeletedIds)) {
+        billsDeletedIds = mergeBudgetTombstoneSet(billsDeletedIds, remote.billsDeletedIds);
+        // Apply newly-arrived tombstones to local state
+        if (billsDeletedIds.size > 0) {
+          bills = bills.filter(b => !billsDeletedIds.has(b.id));
+          for (const yyyymm of Object.keys(billInstances)) {
+            for (const key of Object.keys(billInstances[yyyymm])) {
+              const inst = billInstances[yyyymm][key];
+              if (inst && billsDeletedIds.has(inst.billId)) {
+                delete billInstances[yyyymm][key];
+              }
+            }
+            if (Object.keys(billInstances[yyyymm]).length === 0) delete billInstances[yyyymm];
+          }
+        }
+      }
       if (Array.isArray(remote.bills)) {
         bills = mergeBills(bills, remote.bills);
       }
@@ -13123,7 +13142,7 @@ async function kvSyncNow(silent = false) {
       if (remote.budgetSettings && typeof remote.budgetSettings === 'object') {
         budgetSettings = mergeBudgetSettings(budgetSettings, remote.budgetSettings);
       }
-      if (Array.isArray(remote.bills) || remote.billInstances || remote.budgetSettings) {
+      if (Array.isArray(remote.bills) || remote.billInstances || remote.budgetSettings || Array.isArray(remote.billsDeletedIds)) {
         await saveBudgetLocal();
       }
       // Budget — discretionary spend (Phase 2)
@@ -14004,6 +14023,7 @@ document.addEventListener('pointerdown', (e) => {
 // ── State ──────────────────────────────────────────────────────────────────
 let bills          = [];          // bill templates (recurring)
 let billInstances  = {};          // { 'YYYY-MM': { [billId]: instance } }
+let billsDeletedIds = new Set();  // tombstones for hard-deleted bill templates
 let budgetSettings = {
   weekStart: 'mon',                // 'mon' | 'sun' — Phase 2+ consumer
   materialisedMonths: [],          // months we've generated instances for (union-merged)
@@ -14014,6 +14034,7 @@ async function loadBudget() {
   const storedBills    = await dbGet('bills',          'bills');
   const storedInstances = await dbGet('billInstances', 'billInstances');
   const storedSettings = await dbGet('budgetSettings', 'budgetSettings');
+  const storedTomb     = await dbGet('billsDeletedIds', 'billsDeletedIds');
 
   if (Array.isArray(storedBills)) bills = storedBills;
   if (storedInstances && typeof storedInstances === 'object') billInstances = storedInstances;
@@ -14021,12 +14042,29 @@ async function loadBudget() {
     budgetSettings = { ...budgetSettings, ...storedSettings };
     if (!Array.isArray(budgetSettings.materialisedMonths)) budgetSettings.materialisedMonths = [];
   }
+  if (Array.isArray(storedTomb)) billsDeletedIds = new Set(storedTomb);
+  // Apply tombstones to in-memory state defensively in case they arrived
+  // before the bills array was loaded (e.g. from a remote sync that landed
+  // partially). Filters bills and strips matching instances.
+  if (billsDeletedIds.size > 0) {
+    bills = bills.filter(b => !billsDeletedIds.has(b.id));
+    for (const yyyymm of Object.keys(billInstances)) {
+      for (const key of Object.keys(billInstances[yyyymm])) {
+        const inst = billInstances[yyyymm][key];
+        if (inst && billsDeletedIds.has(inst.billId)) {
+          delete billInstances[yyyymm][key];
+        }
+      }
+      if (Object.keys(billInstances[yyyymm]).length === 0) delete billInstances[yyyymm];
+    }
+  }
 }
 
 async function saveBudgetLocal() {
-  await dbPut('bills',          'bills',          bills);
-  await dbPut('billInstances',  'billInstances',  billInstances);
-  await dbPut('budgetSettings', 'budgetSettings', budgetSettings);
+  await dbPut('bills',           'bills',           bills);
+  await dbPut('billInstances',   'billInstances',   billInstances);
+  await dbPut('budgetSettings',  'budgetSettings',  budgetSettings);
+  await dbPut('billsDeletedIds', 'billsDeletedIds', [...billsDeletedIds]);
 }
 
 // ── Date helpers ───────────────────────────────────────────────────────────
@@ -14168,7 +14206,10 @@ async function archiveBill(id) {
   return updateBill(id, { archived: true });
 }
 
-// Hard delete only used in admin-style flows; archive is the user-facing action.
+// Hard delete: removes the template, all materialised instances across every
+// month, AND records a tombstone so other devices syncing this account drop
+// the bill rather than re-introducing it. Tombstones are append-only and
+// cleaned up nightly server-side once propagated.
 async function deleteBillHard(id) {
   bills = bills.filter(b => b.id !== id);
   // Also strip from all materialised months — handle both old (billId) and
@@ -14179,7 +14220,9 @@ async function deleteBillHard(id) {
         delete billInstances[yyyymm][key];
       }
     }
+    if (Object.keys(billInstances[yyyymm]).length === 0) delete billInstances[yyyymm];
   }
+  billsDeletedIds.add(id);
   await saveBudgetLocal();
   _syncQueue?.enqueue();
 }
@@ -14977,6 +15020,11 @@ function mergeBills(local, remote) {
       if (rt > lt) map.set(tpl.id, tpl);
     }
   }
+  // Drop anything tombstoned. This is what stops a hard-deleted bill from
+  // popping back in from a peer device that hadn't yet seen the delete.
+  if (typeof billsDeletedIds !== 'undefined' && billsDeletedIds && billsDeletedIds.size > 0) {
+    for (const id of billsDeletedIds) map.delete(id);
+  }
   return Array.from(map.values());
 }
 
@@ -14984,10 +15032,13 @@ function mergeBills(local, remote) {
 function mergeBillInstances(local, remote) {
   const out = { ...(local || {}) };
   if (!remote) return out;
+  const tomb = (typeof billsDeletedIds !== 'undefined' && billsDeletedIds) ? billsDeletedIds : new Set();
   for (const yyyymm of Object.keys(remote)) {
     if (!out[yyyymm]) out[yyyymm] = {};
     for (const billId of Object.keys(remote[yyyymm])) {
       const ri = remote[yyyymm][billId];
+      // Skip instances belonging to a tombstoned template
+      if (ri && tomb.has(ri.billId)) continue;
       const li = out[yyyymm][billId];
       if (!li) {
         out[yyyymm][billId] = ri;
@@ -14997,6 +15048,13 @@ function mergeBillInstances(local, remote) {
         if (rt > lt) out[yyyymm][billId] = ri;
       }
     }
+    // Also strip any local instances tied to a tombstoned bill (might have
+    // been added by an earlier sync before the tombstone arrived).
+    for (const key of Object.keys(out[yyyymm])) {
+      const li = out[yyyymm][key];
+      if (li && tomb.has(li.billId)) delete out[yyyymm][key];
+    }
+    if (Object.keys(out[yyyymm]).length === 0) delete out[yyyymm];
   }
   return out;
 }
@@ -15618,6 +15676,9 @@ function openBillEditor(billId = null) {
   document.getElementById('bill-editor-mode-label').textContent = tpl ? 'Edit Bill' : 'Add Bill';
   document.getElementById('bill-save-label').textContent        = tpl ? 'Save Changes' : 'Save Bill';
   document.getElementById('bill-archive-btn').style.display     = tpl ? 'inline-flex' : 'none';
+  // Phase 5: also show the Delete button alongside Archive when editing
+  const delBtn = document.getElementById('bill-delete-btn');
+  if (delBtn) delBtn.style.display = tpl ? 'inline-flex' : 'none';
 
   document.getElementById('bill-name').value          = tpl?.name      || '';
   document.getElementById('bill-amount').value        = tpl?.amount    ?? '';
@@ -15815,6 +15876,48 @@ async function confirmArchiveBill() {
   closeModal('bill-editor-modal');
   _budgetEditingBillId = null;
   toast('Bill archived');
+  await renderBudget();
+}
+
+// Hard delete — wipes the template AND all materialised instances across
+// every month. Irreversible. Strong two-step confirmation since this also
+// removes any payment history for the bill.
+async function confirmDeleteBill() {
+  if (!_budgetEditingBillId) return;
+  const tpl = bills.find(b => b.id === _budgetEditingBillId);
+  if (!tpl) return;
+
+  // Count historical instances + paid history so the confirm prompt is honest.
+  let totalInstances = 0;
+  let paidCount = 0;
+  for (const yyyymm of Object.keys(billInstances)) {
+    for (const key of Object.keys(billInstances[yyyymm])) {
+      const inst = billInstances[yyyymm][key];
+      if (inst.billId !== _budgetEditingBillId) continue;
+      totalInstances++;
+      if (inst.paidAt) paidCount++;
+    }
+  }
+
+  let msg = `Permanently delete "${tpl.name}"?\n\n`;
+  if (totalInstances > 0) {
+    msg += `This also removes ${totalInstances} bill instance${totalInstances === 1 ? '' : 's'}`;
+    if (paidCount > 0) msg += ` (including ${paidCount} marked paid)`;
+    msg += `.\n\n`;
+  }
+  msg += `This cannot be undone. To keep history, archive instead.`;
+  if (!confirm(msg)) return;
+
+  // Second confirmation — extra safety for paid bills, since wiping payment
+  // history is the kind of thing you might regret on the second click.
+  if (paidCount > 0) {
+    if (!confirm(`Are you sure? ${paidCount} paid record${paidCount === 1 ? '' : 's'} will be lost forever.`)) return;
+  }
+
+  await deleteBillHard(_budgetEditingBillId);
+  closeModal('bill-editor-modal');
+  _budgetEditingBillId = null;
+  toast(`"${tpl.name}" deleted`);
   await renderBudget();
 }
 
@@ -19072,6 +19175,11 @@ billOnFreqPresetChange = function() {
       anchorHint.textContent  = `The first month the bill leaves your account. Then ${intervalText} after that.`;
     }
   }
+
+  // Phase 5: refresh the split-payment section visibility too — without
+  // this, switching from quarterly back to monthly leaves the strategy
+  // section visible (and vice versa).
+  if (typeof _refreshBillSplitVisibility === 'function') _refreshBillSplitVisibility();
 };
 
 // Override saveBillFromEditor to translate the new presets into frequency objects
@@ -19124,7 +19232,22 @@ saveBillFromEditor = async function() {
     if (dayOfMonth < 1 || dayOfMonth > 31) { toast('Day must be 1-31'); return; }
   }
 
-  const patch = { name, amount, variableAmount, dayOfMonth, notes, frequency };
+  // Phase 5: payment strategy + split-into. Only meaningful when the bill's
+  // cycle is longer than one month, otherwise force lump.
+  let paymentStrategy = 'lump';
+  let splitInto       = null;
+  if (typeof _billCanSplit === 'function' && _billCanSplit(frequency)) {
+    const stratEl = document.querySelector('input[name="bill-payment-strategy"]:checked');
+    paymentStrategy = stratEl?.value === 'split' ? 'split' : 'lump';
+    if (paymentStrategy === 'split') {
+      const splitCount = parseInt(document.getElementById('bill-split-count').value, 10);
+      const splitUnit  = document.getElementById('bill-split-unit').value === 'week' ? 'week' : 'month';
+      if (isNaN(splitCount) || splitCount < 1) { toast('Split count must be at least 1'); return; }
+      splitInto = { unit: splitUnit, count: Math.min(60, splitCount) };
+    }
+  }
+
+  const patch = { name, amount, variableAmount, dayOfMonth, notes, frequency, paymentStrategy, splitInto };
 
   if (_budgetEditingBillId) {
     await updateBill(_budgetEditingBillId, patch);

@@ -367,7 +367,8 @@
     </div>
 
     <div class="modal-footer" style="margin-top:20px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <button class="btn btn-ghost btn-sm" id="bill-archive-btn" onclick="confirmArchiveBill()" style="display:none;color:var(--danger);margin-right:auto"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Archive</button>
+      <button class="btn btn-ghost btn-sm" id="bill-archive-btn" onclick="confirmArchiveBill()" style="display:none;color:var(--muted)"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg> Archive</button>
+      <button class="btn btn-ghost btn-sm" id="bill-delete-btn" onclick="confirmDeleteBill()" style="display:none;color:var(--danger);margin-right:auto"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
       <button class="btn btn-ghost" onclick="closeModal('bill-editor-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveBillFromEditor()"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> <span id="bill-save-label">Save Bill</span></button>
     </div>
