@@ -12,7 +12,7 @@
   <meta property="og:description" content="Track everything in your home. Get one monthly shopping list. Save time, money, and the planet.">
   <meta property="og:type" content="website">
 
-  <link rel="manifest" href="/app/manifest.json">
+  <link rel="manifest" href="https://app.stckrm.com/manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -651,7 +651,7 @@
     </a>
     <div class="header-actions">
       <!-- Signed-in: direct link to app -->
-      <a class="btn btn-primary" id="signed-in-cta" href="/app">
+      <a class="btn btn-primary" id="signed-in-cta" href="https://app.stckrm.com">
         Open Stockroom
         <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
       </a>
@@ -700,7 +700,7 @@
       </div>
 
       <div class="hero-cta">
-        <a class="btn btn-primary btn-large" id="hero-signed-in-cta" href="/app">
+        <a class="btn btn-primary btn-large" id="hero-signed-in-cta" href="https://app.stckrm.com">
           <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
           Open Stockroom
         </a>
@@ -712,10 +712,6 @@
           <svg aria-hidden="true"><use href="#i-key"/></svg>
           Log in
         </button>
-        <a class="btn btn-ghost btn-large" id="hero-demo" href="/app?action=demo" style="border-style:dashed">
-          <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
-          Try Demo
-        </a>
       </div>
 
       <span class="hero-trust">
@@ -901,7 +897,7 @@
     <div class="footer-links">
       <a href="#benefits">Benefits</a>
       <a href="#how">How it works</a>
-      <a href="/app">Open app</a>
+      <a href="https://app.stckrm.com">Open app</a>
     </div>
     <div style="font-family:var(--mono);font-size:11px;letter-spacing:1px;">
       © <span id="year"></span> · Built with care
@@ -935,7 +931,7 @@
                     window.navigator.standalone === true;
   } catch (e) {}
   if (_isStandalone) {
-    window.location.replace('/app');
+    window.location.replace('https://app.stckrm.com/');
   }
 
   (function init() {
@@ -961,7 +957,7 @@
     if (isSignedIn) {
       // Signed-in users never need the marketing page — go straight to the app.
       // The app's own init will restore the session and land on the Stockroom view.
-      window.location.replace('/app');
+      window.location.replace('https://app.stckrm.com/');
       return;
     } else if (rememberedEmail) {
       // Show the welcome-back card with the remembered email
@@ -977,11 +973,11 @@
     // Send the user into the existing login flow.
     // The app's existing logic (showKvLogin) auto-skips to the auth step
     // if a remembered email is present, matching current behaviour exactly.
-    window.location.href = '/app?action=login';
+    window.location.href = 'https://app.stckrm.com/?action=login';
   }
 
   function goRegister() {
-    window.location.href = '/app?action=register';
+    window.location.href = 'https://app.stckrm.com/?action=register';
   }
 
   function forgetEmail() {
