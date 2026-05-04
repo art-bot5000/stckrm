@@ -14119,11 +14119,15 @@ function shouldBeDueInMonth(template, year, monthZeroIdx) {
 
 // ── Materialisation ────────────────────────────────────────────────────────
 // Generate instances for a month from current active templates.
-// Idempotent: returns early if already materialised, unless `force` is true
-// (force is used by "Regenerate this month" in the bills list).
+// Idempotent: per-template loop skips templates whose instance already exists,
+// so repeated calls only add NEW templates' instances. `force` rebuilds from
+// scratch (used by "Regenerate this month" in the bills list).
 async function materialiseMonth(yyyymm, { force = false, persist = true } = {}) {
   const already = budgetSettings.materialisedMonths.includes(yyyymm);
-  if (already && !force) return billInstances[yyyymm] || {};
+  // Don't early-return on already-materialised. We still want to add
+  // instances for newly-created templates that didn't exist when this
+  // month was first materialised. The for-loop body is the idempotent
+  // part — it skips templates whose instance already exists.
 
   const { year, month } = _parseYyyymm(yyyymm);
   const monthInstances  = (force ? {} : (billInstances[yyyymm] || {}));
@@ -14297,6 +14301,10 @@ function _isSplitBillSavingForMonth(template, viewYyyymm) {
 // end of the viewed month, assuming the user pays in the per-period amount
 // each period). Different from getBillCarryOver which is "now"-relative.
 //
+// Anchor is the previous theoretical due date in the bill's calendar,
+// regardless of when the template was created — picking split mode is the
+// user asserting they're saving on the bill's natural cycle.
+//
 //   slot       = whole periods elapsed from cycle start to month end
 //   totalSlots = template.splitInto.count
 //   accrued    = slot × perPeriod, capped at target
@@ -14308,9 +14316,11 @@ function getBillCycleProgressForMonth(template, viewYyyymm) {
   const amount = Number(template.amount) || 0;
   if (amount <= 0) return null;
 
-  // Cycle anchor: previous due date strictly before the viewed month, else
-  // the template's createdAt date.
-  const prevDue = _prevDueDateForTemplate(template, viewYyyymm);
+  // Cycle anchor: previous theoretical due date strictly before the viewed
+  // month, ignoring the createdAt cap (the user picking split mode is
+  // asserting they save on the bill's calendar). Falls back to createdAt
+  // only if there's no prior due date in the bill's history at all.
+  const prevDue = _prevDueDateForTemplate(template, viewYyyymm, /* respectCreatedAt */ false);
   const anchorIso = prevDue || (template.createdAt || _nowIso()).slice(0, 10);
 
   // End of viewed month
@@ -14382,10 +14392,16 @@ function _nextDueDateForTemplate(template, fromYyyymm) {
 
 // Returns the previous due date for a template strictly BEFORE the given
 // reference month (yyyymm). Walks backward up to 24 months. Returns null if
-// no prior instance exists in that window (or if all candidates predate the
-// template's creation — in that case the saving cycle anchors on createdAt
-// instead).
-function _prevDueDateForTemplate(template, fromYyyymm) {
+// no prior instance exists in that window.
+//
+// `respectCreatedAt` (default true): when true, candidates predating the
+// template's createdAt are rejected — useful for the "Saving up" section
+// which shouldn't credit the user with savings for months before the bill
+// was added. When false, returns the theoretical previous due regardless,
+// which is what the carry-over math needs: a user adding a long-cycle bill
+// is asserting "I've been saving for this on the bill's natural calendar",
+// even if the bill didn't yet exist in the app.
+function _prevDueDateForTemplate(template, fromYyyymm, respectCreatedAt = true) {
   const { year, month } = _parseYyyymm(fromYyyymm);
   const createdIso = (template.createdAt || _nowIso()).slice(0, 10);
   for (let i = 1; i <= 24; i++) {
@@ -14396,10 +14412,7 @@ function _prevDueDateForTemplate(template, fromYyyymm) {
     if (shouldBeDueInMonth(template, realY, realM)) {
       const dom = _clampDayOfMonth(template.dayOfMonth || 1, realY, realM);
       const candidate = _isoDate(realY, realM, dom);
-      // Reject candidates that predate template creation. These are
-      // theoretical due dates that never happened (the template didn't
-      // exist yet) and shouldn't anchor a saving cycle.
-      if (candidate < createdIso) return null;
+      if (respectCreatedAt && candidate < createdIso) return null;
       return candidate;
     }
   }
@@ -14409,6 +14422,17 @@ function _prevDueDateForTemplate(template, fromYyyymm) {
 // Returns { accrued, target, slot, totalSlots, perPeriod, cycleAnchorIso,
 // nextDueIso } for a split-strategy bill, or null if the bill isn't split or
 // doesn't have a usable splitInto.
+//
+// Cycle anchor selection (used for the "how much should be saved by now"
+// math):
+//   1. The most recent ACTUAL paid due date — real money out always wins.
+//   2. Else the previous theoretical due date in the bill's calendar.
+//      Picking split mode is the user asserting "I save on this bill's
+//      natural cycle", so we credit them even if the theoretical due
+//      predates when the bill was added to the app.
+//   3. Else the template's createdAt — only used as a fallback when there's
+//      genuinely no prior due in the bill's history (e.g. a brand new
+//      bill anchored to its very first payment month).
 function getBillCarryOver(template, todayIso = null) {
   if (!template || template.archived) return null;
   if (template.paymentStrategy !== 'split') return null;
@@ -14418,10 +14442,20 @@ function getBillCarryOver(template, todayIso = null) {
   if (amount <= 0) return null;
 
   const today = todayIso || new Date().toISOString().slice(0, 10);
+  const todayYyyymm = today.slice(0, 7);
 
-  // Cycle anchor: last paid dueDate, else createdAt (date portion only).
-  const lastPaid = _lastPaidDueDate(template.id);
-  const anchorIso = lastPaid || (template.createdAt || _nowIso()).slice(0, 10);
+  const lastPaid   = _lastPaidDueDate(template.id);
+  const prevDue    = _prevDueDateForTemplate(template, todayYyyymm, /* respectCreatedAt */ false);
+  const createdIso = (template.createdAt || _nowIso()).slice(0, 10);
+
+  let anchorIso;
+  if (lastPaid && lastPaid <= today) {
+    anchorIso = lastPaid;
+  } else if (prevDue && prevDue <= today) {
+    anchorIso = prevDue;
+  } else {
+    anchorIso = createdIso;
+  }
 
   const elapsed = Math.max(0, _periodsBetween(anchorIso, today, split.unit));
   const slot = Math.min(elapsed, split.count);
@@ -14435,7 +14469,7 @@ function getBillCarryOver(template, todayIso = null) {
     slot,                  // 0..splitInto.count
     totalSlots: split.count,
     cycleAnchorIso: anchorIso,
-    nextDueIso:    _nextDueDate(template.id),
+    nextDueIso:    _nextDueDate(template.id) || _nextDueDateForTemplate(template, todayYyyymm),
     unit:          split.unit,
   };
 }
@@ -18766,10 +18800,16 @@ materialiseMonth = async function(yyyymm, { force = false, persist = true } = {}
   const migrated = _migrateBillInstancesIfNeeded(yyyymm);
 
   const already = budgetSettings.materialisedMonths.includes(yyyymm);
-  if (already && !force && !migrated) return billInstances[yyyymm] || {};
+  // We DON'T early-return when already-materialised. The per-template loops
+  // below are already idempotent (skip keys that already exist), so running
+  // them on an already-materialised month is the right way to pick up newly-
+  // created bill or income templates that need instances. The previous early
+  // return caused brand-new bills to silently fail to appear after save.
+  // `force=true` still wipes and rebuilds (used by "Regenerate this month").
 
   const { year, month } = _parseYyyymm(yyyymm);
   const monthInstances  = (force ? {} : (billInstances[yyyymm] || {}));
+  const beforeBillKeys  = new Set(Object.keys(monthInstances));
 
   for (const tpl of bills) {
     if (tpl.archived) continue;
@@ -18790,10 +18830,12 @@ materialiseMonth = async function(yyyymm, { force = false, persist = true } = {}
       };
     }
   }
+  const billsChanged = force || (Object.keys(monthInstances).length !== beforeBillKeys.size);
 
   // Phase 4: materialise income too — same idempotent pattern
   if (!incomeEntries[yyyymm]) incomeEntries[yyyymm] = {};
   const monthIncomeEntries = incomeEntries[yyyymm];
+  const beforeIncomeKeys = new Set(Object.keys(monthIncomeEntries));
   for (const tpl of (incomeTemplates || [])) {
     if (tpl.archived) continue;
     const dates = getInstanceDatesInMonth(tpl, year, month);
@@ -18817,6 +18859,7 @@ materialiseMonth = async function(yyyymm, { force = false, persist = true } = {}
       };
     }
   }
+  const incomeChanged = force || (Object.keys(monthIncomeEntries).length !== beforeIncomeKeys.size);
 
   billInstances[yyyymm] = monthInstances;
   incomeEntries[yyyymm] = monthIncomeEntries;
@@ -18825,7 +18868,10 @@ materialiseMonth = async function(yyyymm, { force = false, persist = true } = {}
 
   if (!already) budgetSettings.materialisedMonths.push(yyyymm);
 
-  if (persist) {
+  // Skip persist when nothing changed — avoids redundant writes/sync churn
+  // on every renderBudget call (which happens often).
+  const anythingChanged = !already || billsChanged || incomeChanged || migrated;
+  if (persist && anythingChanged) {
     await saveBudgetLocal();
     if (typeof saveBudgetAccountsAndIncomeLocal === 'function') {
       await saveBudgetAccountsAndIncomeLocal();
