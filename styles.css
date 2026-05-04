@@ -2583,6 +2583,41 @@ body.note-open { overflow: hidden; touch-action: none; }
    elements (header, FAB) opt in to the offset if needed. */
 body.has-demo-banner { padding-top: var(--demo-banner-offset, 38px); }
 
+/* In demo mode, also pad each view header so titles always clear the
+   banner — defense in depth in case the body padding is overridden by
+   stacking context, transform, or any other unexpected layout change.
+   Stacks ON TOP of any existing margin/padding, so the title never reads
+   as if it's been "pushed in" by the banner. */
+body.has-demo-banner .view-header {
+  scroll-margin-top: calc(var(--demo-banner-offset, 38px) + 12px);
+}
+/* Notes view sits at body-level on mobile (outside #main) so it doesn't
+   inherit #main's clearance on desktop either. Give it explicit top
+   padding when the banner is on. The +12px gives breathing room above
+   the title so it never reads as if it's been crammed against the
+   banner — defense in depth across viewport sizes. */
+body.has-demo-banner #view-notes {
+  padding-top: calc(var(--demo-banner-offset, 38px) + 20px);
+}
+/* Also pad the header element itself in case the parent's padding-top
+   is overridden by a more-specific rule somewhere (e.g. responsive
+   fallback). Belt-and-braces. */
+body.has-demo-banner #view-notes .view-header,
+body.has-demo-banner #view-notes #notes-header {
+  margin-top: 8px;
+}
+/* Desktop: also bump #main's top padding so the rest of the views clear
+   the banner unambiguously, regardless of any sticky-element interaction
+   above. */
+@media (min-width: 900px) {
+  body.has-demo-banner #main {
+    padding-top: calc(28px + var(--demo-banner-offset, 38px));
+  }
+  body.has-demo-banner #view-notes {
+    padding-top: calc(28px + var(--demo-banner-offset, 38px));
+  }
+}
+
 /* On narrow screens, hide the descriptive sub-text — keep the action buttons */
 @media (max-width: 480px) {
   .demo-banner-sub { display: none; }
@@ -2676,11 +2711,47 @@ body.has-demo-banner { padding-top: var(--demo-banner-offset, 38px); }
   border-color: rgba(255,255,255,0.30);
 }
 
+/* Persona toggle button in the demo banner — same look as the Tour
+   button so the action group reads as a unit. Slightly more prominent
+   border because it changes app state (vs Tour which just shows tips). */
+.demo-banner-persona-btn {
+  background: rgba(91,141,238,0.12);
+  border: 1px solid rgba(91,141,238,0.35);
+  color: var(--accent2, #5b8dee);
+  border-radius: 7px;
+  padding: 6px 10px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+.demo-banner-persona-btn:hover {
+  background: rgba(91,141,238,0.20);
+  border-color: rgba(91,141,238,0.55);
+  color: var(--text);
+}
+
+/* The persona name span in the banner sub-text — coloured slightly so it
+   stands out from "nothing saved" */
+.demo-banner-persona {
+  color: var(--accent2, #5b8dee);
+  font-weight: 600;
+}
+
 /* On narrow screens, the Tour link's label hides — keep just the actions
    that matter most (Save, Exit). The Replay button stays accessible from
    refreshing the page if someone really wants the nudges back. */
 @media (max-width: 480px) {
   .demo-banner-tour { display: none; }
+  /* On very narrow screens the persona toggle still shows but compresses
+     the label into "Couple" / "Family" so it fits. */
+  .demo-banner-persona-btn {
+    padding: 5px 8px;
+    font-size: 10px;
+  }
 }
 
 /* Safe-to-spend modal: tappable rows ("Less: bills…", etc.) get a subtle
