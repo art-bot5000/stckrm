@@ -1,22 +1,22 @@
 # stckrm.com infrastructure
 # ─────────────────────────
-# Three hostnames served from one Fly machine. Caddy listens on :8080 because
-# Fly's edge proxy terminates TLS and forwards plaintext on that port — we
-# don't issue our own certs. The host of the original request comes in via
-# the Host header, which Caddy's @host matchers read.
+# Three hostnames served from one Fly machine. Caddy listens on :8080
+# because Fly's edge proxy terminates TLS and forwards plaintext on that
+# port — we don't issue our own certs. The host of the original request
+# arrives in the Host header, which Caddy's @host matchers read.
 #
 #   stckrm.com         → 301 redirect to www.stckrm.com (apex → www)
 #   www.stckrm.com     → marketing landing page (landing.html)
 #   app.stckrm.com     → PWA + backend API
 #
-# Anything that doesn't match a hostname (e.g. the bare *.fly.dev address,
-# health checks, or a typo) falls through to the catch-all, which serves
-# the landing page. This is forgiving and keeps health checks working.
-
-{
-    # Disable the on-demand HTTPS Caddy would normally try; Fly handles certs.
-    auto_https off
-}
+# Anything that doesn't match a hostname (the bare *.fly.dev address,
+# health checks, typos) falls through to a generic catch-all that
+# preserves the pre-domain behaviour. Useful safety net.
+#
+# Caddy on :8080 never tries to negotiate HTTPS itself — auto-TLS only
+# kicks in for site blocks declared with a hostname (e.g. `example.com {`).
+# A port-only block like `:8080 {` is plain HTTP by definition, so we
+# don't need a global `auto_https off` directive.
 
 :8080 {
     encode {
@@ -27,8 +27,8 @@
     }
 
     # ── 1. Apex redirect ────────────────────────────────────────────────
-    # stckrm.com → www.stckrm.com. 301 is permanent so browsers and search
-    # engines stop hitting the apex over time.
+    # stckrm.com → www.stckrm.com. 301 is permanent so browsers and
+    # search engines stop hitting the apex over time.
     @apex host stckrm.com
     handle @apex {
         redir https://www.stckrm.com{uri} permanent
@@ -95,14 +95,14 @@
         handle /send-reminder   { reverse_proxy localhost:8000 }
 
         # Static frontend — the PWA. Root (/) serves index.html directly,
-        # no /app prefix any more. The legacy /app path 301s to / so old
-        # bookmarks and PWA installs don't break.
+        # no /app prefix anymore. The legacy /app path 301s to / so old
+        # bookmarks and existing PWA installs don't break.
         handle {
             root * /app/public
 
-            # /app, /app/, /app?... → / (preserves query string for ?action=demo)
+            # /app and /app/ → / (preserves query string for ?action=demo)
             @legacyApp path /app /app/
-            redir @legacyApp /{query} permanent
+            redir @legacyApp / permanent
 
             file_server
 
@@ -129,12 +129,11 @@
     }
 
     # ── 4. Fallback — bare fly.dev hostname or anything else ────────────
-    # Keeps health checks and the original *.fly.dev address working. Same
-    # behaviour as the old single-host Caddyfile so nothing breaks during
-    # the migration.
+    # Same behaviour as the original single-host Caddyfile so health
+    # checks and direct fly.dev access keep working. This block is what
+    # ensures the deploy is safe even before DNS is set up — the
+    # fly.dev URL stays alive throughout the migration.
     handle {
-        # All backend routes still work on the fallback host so health
-        # checks and direct fly.dev access stay alive.
         handle /ping            { reverse_proxy localhost:8000 }
         handle /auth/*          { reverse_proxy localhost:8000 }
         handle /user/*          { reverse_proxy localhost:8000 }
