@@ -2,21 +2,18 @@
 # ─────────────────────────
 # Three hostnames served from one Fly machine. Caddy listens on :8080
 # because Fly's edge proxy terminates TLS and forwards plaintext on that
-# port — we don't issue our own certs. The host of the original request
-# arrives in the Host header, which Caddy's @host matchers read.
+# port — we don't issue our own certs.
 #
 #   stckrm.com         → 301 redirect to www.stckrm.com (apex → www)
 #   www.stckrm.com     → marketing landing page (landing.html)
 #   app.stckrm.com     → PWA + backend API
 #
-# Anything that doesn't match a hostname (the bare *.fly.dev address,
-# health checks, typos) falls through to a generic catch-all that
-# preserves the pre-domain behaviour. Useful safety net.
+# A bare *.fly.dev hostname (or anything else not matched) falls through
+# to a fallback block that preserves the pre-domain behaviour.
 #
-# Caddy on :8080 never tries to negotiate HTTPS itself — auto-TLS only
-# kicks in for site blocks declared with a hostname (e.g. `example.com {`).
-# A port-only block like `:8080 {` is plain HTTP by definition, so we
-# don't need a global `auto_https off` directive.
+# Style note: when handle blocks are nested inside other handle blocks,
+# Caddy requires the body to start on a NEW line (not inline with the
+# matcher). All API route handlers below follow that pattern.
 
 :8080 {
     encode {
@@ -27,16 +24,12 @@
     }
 
     # ── 1. Apex redirect ────────────────────────────────────────────────
-    # stckrm.com → www.stckrm.com. 301 is permanent so browsers and
-    # search engines stop hitting the apex over time.
     @apex host stckrm.com
     handle @apex {
         redir https://www.stckrm.com{uri} permanent
     }
 
     # ── 2. Marketing landing (www) ──────────────────────────────────────
-    # Just serves landing.html. No backend routes exposed — this hostname
-    # has no reason to talk to the auth/sync/share endpoints.
     @www host www.stckrm.com
     handle @www {
         root * /app/public
@@ -57,46 +50,105 @@
     }
 
     # ── 3. App hostname (PWA + backend API) ─────────────────────────────
-    # app.stckrm.com serves the PWA at root. The backend API routes
-    # (/auth, /sync, etc.) attach here too because the PWA calls them.
     @app host app.stckrm.com
     handle @app {
-        # Backend API — proxied to main.ts on :8000
-        handle /ping            { reverse_proxy localhost:8000 }
-        handle /auth/*          { reverse_proxy localhost:8000 }
-        handle /user/*          { reverse_proxy localhost:8000 }
-        handle /device/*        { reverse_proxy localhost:8000 }
-        handle /share/*         { reverse_proxy localhost:8000 }
-        handle /schedule/*      { reverse_proxy localhost:8000 }
-        handle /passkey/*       { reverse_proxy localhost:8000 }
-        handle /admin/*         { reverse_proxy localhost:8000 }
-        handle /household/*     { reverse_proxy localhost:8000 }
-        handle /items/*         { reverse_proxy localhost:8000 }
-        handle /key/*           { reverse_proxy localhost:8000 }
-        handle /data/*          { reverse_proxy localhost:8000 }
-        handle /recovery/*      { reverse_proxy localhost:8000 }
-        handle /email/*         { reverse_proxy localhost:8000 }
-        handle /invite/*        { reverse_proxy localhost:8000 }
-        handle /crypto/*        { reverse_proxy localhost:8000 }
-        handle /sync/*          { reverse_proxy localhost:8000 }
-        handle /presence*       { reverse_proxy localhost:8000 }
-        handle /reminder*       { reverse_proxy localhost:8000 }
-        handle /note/*          { reverse_proxy localhost:8000 }
-        handle /mfa/*           { reverse_proxy localhost:8000 }
-        handle /status          { reverse_proxy localhost:8000 }
-        handle /register        { reverse_proxy localhost:8000 }
-        handle /unregister      { reverse_proxy localhost:8000 }
-        handle /unsubscribe     { reverse_proxy localhost:8000 }
-        handle /check-now       { reverse_proxy localhost:8000 }
-        handle /send-now        { reverse_proxy localhost:8000 }
-        handle /debug-schedule  { reverse_proxy localhost:8000 }
-        handle /reset-schedule  { reverse_proxy localhost:8000 }
-        handle /set-schedule    { reverse_proxy localhost:8000 }
-        handle /send-reminder   { reverse_proxy localhost:8000 }
+        # Backend API — proxied to main.ts on :8000.
+        # Body on next line because nested handle blocks require it.
+        handle /ping {
+            reverse_proxy localhost:8000
+        }
+        handle /auth/* {
+            reverse_proxy localhost:8000
+        }
+        handle /user/* {
+            reverse_proxy localhost:8000
+        }
+        handle /device/* {
+            reverse_proxy localhost:8000
+        }
+        handle /share/* {
+            reverse_proxy localhost:8000
+        }
+        handle /schedule/* {
+            reverse_proxy localhost:8000
+        }
+        handle /passkey/* {
+            reverse_proxy localhost:8000
+        }
+        handle /admin/* {
+            reverse_proxy localhost:8000
+        }
+        handle /household/* {
+            reverse_proxy localhost:8000
+        }
+        handle /items/* {
+            reverse_proxy localhost:8000
+        }
+        handle /key/* {
+            reverse_proxy localhost:8000
+        }
+        handle /data/* {
+            reverse_proxy localhost:8000
+        }
+        handle /recovery/* {
+            reverse_proxy localhost:8000
+        }
+        handle /email/* {
+            reverse_proxy localhost:8000
+        }
+        handle /invite/* {
+            reverse_proxy localhost:8000
+        }
+        handle /crypto/* {
+            reverse_proxy localhost:8000
+        }
+        handle /sync/* {
+            reverse_proxy localhost:8000
+        }
+        handle /presence* {
+            reverse_proxy localhost:8000
+        }
+        handle /reminder* {
+            reverse_proxy localhost:8000
+        }
+        handle /note/* {
+            reverse_proxy localhost:8000
+        }
+        handle /mfa/* {
+            reverse_proxy localhost:8000
+        }
+        handle /status {
+            reverse_proxy localhost:8000
+        }
+        handle /register {
+            reverse_proxy localhost:8000
+        }
+        handle /unregister {
+            reverse_proxy localhost:8000
+        }
+        handle /unsubscribe {
+            reverse_proxy localhost:8000
+        }
+        handle /check-now {
+            reverse_proxy localhost:8000
+        }
+        handle /send-now {
+            reverse_proxy localhost:8000
+        }
+        handle /debug-schedule {
+            reverse_proxy localhost:8000
+        }
+        handle /reset-schedule {
+            reverse_proxy localhost:8000
+        }
+        handle /set-schedule {
+            reverse_proxy localhost:8000
+        }
+        handle /send-reminder {
+            reverse_proxy localhost:8000
+        }
 
-        # Static frontend — the PWA. Root (/) serves index.html directly,
-        # no /app prefix anymore. The legacy /app path 301s to / so old
-        # bookmarks and existing PWA installs don't break.
+        # Static frontend — the PWA at root.
         handle {
             root * /app/public
 
@@ -128,43 +180,103 @@
         }
     }
 
-    # ── 4. Fallback — bare fly.dev hostname or anything else ────────────
+    # ── 4. Fallback — fly.dev or any other host ─────────────────────────
     # Same behaviour as the original single-host Caddyfile so health
-    # checks and direct fly.dev access keep working. This block is what
-    # ensures the deploy is safe even before DNS is set up — the
-    # fly.dev URL stays alive throughout the migration.
+    # checks and direct fly.dev access keep working.
     handle {
-        handle /ping            { reverse_proxy localhost:8000 }
-        handle /auth/*          { reverse_proxy localhost:8000 }
-        handle /user/*          { reverse_proxy localhost:8000 }
-        handle /device/*        { reverse_proxy localhost:8000 }
-        handle /share/*         { reverse_proxy localhost:8000 }
-        handle /schedule/*      { reverse_proxy localhost:8000 }
-        handle /passkey/*       { reverse_proxy localhost:8000 }
-        handle /admin/*         { reverse_proxy localhost:8000 }
-        handle /household/*     { reverse_proxy localhost:8000 }
-        handle /items/*         { reverse_proxy localhost:8000 }
-        handle /key/*           { reverse_proxy localhost:8000 }
-        handle /data/*          { reverse_proxy localhost:8000 }
-        handle /recovery/*      { reverse_proxy localhost:8000 }
-        handle /email/*         { reverse_proxy localhost:8000 }
-        handle /invite/*        { reverse_proxy localhost:8000 }
-        handle /crypto/*        { reverse_proxy localhost:8000 }
-        handle /sync/*          { reverse_proxy localhost:8000 }
-        handle /presence*       { reverse_proxy localhost:8000 }
-        handle /reminder*       { reverse_proxy localhost:8000 }
-        handle /note/*          { reverse_proxy localhost:8000 }
-        handle /mfa/*           { reverse_proxy localhost:8000 }
-        handle /status          { reverse_proxy localhost:8000 }
-        handle /register        { reverse_proxy localhost:8000 }
-        handle /unregister      { reverse_proxy localhost:8000 }
-        handle /unsubscribe     { reverse_proxy localhost:8000 }
-        handle /check-now       { reverse_proxy localhost:8000 }
-        handle /send-now        { reverse_proxy localhost:8000 }
-        handle /debug-schedule  { reverse_proxy localhost:8000 }
-        handle /reset-schedule  { reverse_proxy localhost:8000 }
-        handle /set-schedule    { reverse_proxy localhost:8000 }
-        handle /send-reminder   { reverse_proxy localhost:8000 }
+        handle /ping {
+            reverse_proxy localhost:8000
+        }
+        handle /auth/* {
+            reverse_proxy localhost:8000
+        }
+        handle /user/* {
+            reverse_proxy localhost:8000
+        }
+        handle /device/* {
+            reverse_proxy localhost:8000
+        }
+        handle /share/* {
+            reverse_proxy localhost:8000
+        }
+        handle /schedule/* {
+            reverse_proxy localhost:8000
+        }
+        handle /passkey/* {
+            reverse_proxy localhost:8000
+        }
+        handle /admin/* {
+            reverse_proxy localhost:8000
+        }
+        handle /household/* {
+            reverse_proxy localhost:8000
+        }
+        handle /items/* {
+            reverse_proxy localhost:8000
+        }
+        handle /key/* {
+            reverse_proxy localhost:8000
+        }
+        handle /data/* {
+            reverse_proxy localhost:8000
+        }
+        handle /recovery/* {
+            reverse_proxy localhost:8000
+        }
+        handle /email/* {
+            reverse_proxy localhost:8000
+        }
+        handle /invite/* {
+            reverse_proxy localhost:8000
+        }
+        handle /crypto/* {
+            reverse_proxy localhost:8000
+        }
+        handle /sync/* {
+            reverse_proxy localhost:8000
+        }
+        handle /presence* {
+            reverse_proxy localhost:8000
+        }
+        handle /reminder* {
+            reverse_proxy localhost:8000
+        }
+        handle /note/* {
+            reverse_proxy localhost:8000
+        }
+        handle /mfa/* {
+            reverse_proxy localhost:8000
+        }
+        handle /status {
+            reverse_proxy localhost:8000
+        }
+        handle /register {
+            reverse_proxy localhost:8000
+        }
+        handle /unregister {
+            reverse_proxy localhost:8000
+        }
+        handle /unsubscribe {
+            reverse_proxy localhost:8000
+        }
+        handle /check-now {
+            reverse_proxy localhost:8000
+        }
+        handle /send-now {
+            reverse_proxy localhost:8000
+        }
+        handle /debug-schedule {
+            reverse_proxy localhost:8000
+        }
+        handle /reset-schedule {
+            reverse_proxy localhost:8000
+        }
+        handle /set-schedule {
+            reverse_proxy localhost:8000
+        }
+        handle /send-reminder {
+            reverse_proxy localhost:8000
+        }
 
         handle {
             root * /app/public
