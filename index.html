@@ -1759,12 +1759,18 @@
     </div>
   </div>
 
-  <!-- Sub-nav: Dashboard / Bills -->
-  <div id="budget-subnav" style="display:flex;gap:6px;background:rgba(26,29,39,0.7);border:1px solid var(--glass-border);border-radius:10px;padding:4px;margin-bottom:20px;width:fit-content">
-    <button class="budget-subnav-btn active" data-panel="dashboard" onclick="budgetSwitchPanel('dashboard')" style="padding:7px 14px;border-radius:7px;border:none;background:transparent;color:var(--text);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer">Dashboard</button>
-    <button class="budget-subnav-btn"        data-panel="bills"     onclick="budgetSwitchPanel('bills')"     style="padding:7px 14px;border-radius:7px;border:none;background:transparent;color:var(--muted);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer">Bills</button>
-    <button class="budget-subnav-btn"        data-panel="spend"     onclick="budgetSwitchPanel('spend')"     style="padding:7px 14px;border-radius:7px;border:none;background:transparent;color:var(--muted);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer">Spend</button>
-    <button class="budget-subnav-btn"        data-panel="accounts"  onclick="budgetSwitchPanel('accounts')"  style="padding:7px 14px;border-radius:7px;border:none;background:transparent;color:var(--muted);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer">Accounts</button>
+  <!-- Sub-nav: Dashboard / Bills / Spend / Accounts (tab pill cluster), then
+       a bare text link for Basic Mode — a read-only timeline view. The
+       link sits alongside the cluster but visually separated to signal
+       it's a different kind of action. -->
+  <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;flex-wrap:wrap">
+    <div id="budget-subnav" style="display:flex;gap:6px;background:rgba(26,29,39,0.7);border:1px solid var(--glass-border);border-radius:10px;padding:4px;width:fit-content">
+      <button class="budget-subnav-btn active" data-panel="dashboard" onclick="budgetSwitchPanel('dashboard')" style="padding:7px 14px;border-radius:7px;border:none;background:transparent;color:var(--text);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer">Dashboard</button>
+      <button class="budget-subnav-btn"        data-panel="bills"     onclick="budgetSwitchPanel('bills')"     style="padding:7px 14px;border-radius:7px;border:none;background:transparent;color:var(--muted);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer">Bills</button>
+      <button class="budget-subnav-btn"        data-panel="spend"     onclick="budgetSwitchPanel('spend')"     style="padding:7px 14px;border-radius:7px;border:none;background:transparent;color:var(--muted);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer">Spend</button>
+      <button class="budget-subnav-btn"        data-panel="accounts"  onclick="budgetSwitchPanel('accounts')"  style="padding:7px 14px;border-radius:7px;border:none;background:transparent;color:var(--muted);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer">Accounts</button>
+    </div>
+    <a href="#" class="budget-basic-link" data-panel="basic" onclick="event.preventDefault();budgetSwitchPanel('basic')" style="font-size:13px;color:var(--muted);text-decoration:none;border-bottom:1px dashed transparent;padding:2px 0;cursor:pointer">Basic Mode</a>
   </div>
 
   <!-- Backfill banner — shown when existing shares lack budget perms -->
@@ -2040,6 +2046,18 @@
     </div>
 
   </div><!-- /panel-accounts -->
+
+  <!-- ─── BASIC MODE PANEL ───
+       A read-only month timeline. No interactivity. Shows the starting
+       balance at the top, a chronological flow of payments-in / bills /
+       carry-over set-aside / discretionary spend, ending in Safe to Spend
+       at the bottom. Designed for at-a-glance comprehension by users who
+       don't want to engage with all the dashboard tooling. -->
+  <div id="budget-panel-basic" class="budget-panel" style="display:none">
+    <div id="budget-basic-content">
+      <!-- populated by renderBudgetBasicMode() -->
+    </div>
+  </div>
 
 </div><!-- /view-budget -->
 

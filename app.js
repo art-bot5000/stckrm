@@ -15521,12 +15521,19 @@ function budgetSwitchPanel(name) {
     btn.style.background = active ? 'var(--surface)' : 'transparent';
     btn.style.color      = active ? 'var(--text)'    : 'var(--muted)';
   });
+  // Basic Mode link active state — toggled separately because it's a text
+  // link, not a tab pill.
+  document.querySelectorAll('.budget-basic-link').forEach(el => {
+    el.classList.toggle('active', el.dataset.panel === name);
+  });
   document.getElementById('budget-panel-dashboard').style.display = (name === 'dashboard') ? 'block' : 'none';
   document.getElementById('budget-panel-bills').style.display     = (name === 'bills')     ? 'block' : 'none';
   const spendPanel = document.getElementById('budget-panel-spend');
   if (spendPanel) spendPanel.style.display = (name === 'spend') ? 'block' : 'none';
   const accountsPanel = document.getElementById('budget-panel-accounts');
   if (accountsPanel) accountsPanel.style.display = (name === 'accounts') ? 'block' : 'none';
+  const basicPanel = document.getElementById('budget-panel-basic');
+  if (basicPanel) basicPanel.style.display = (name === 'basic') ? 'block' : 'none';
   // Header action button — context-sensitive per panel
   const addBtn = document.getElementById('budget-add-bill-desktop');
   if (addBtn) {
@@ -15536,10 +15543,15 @@ function budgetSwitchPanel(name) {
     } else if (name === 'accounts') {
       addBtn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Account';
       addBtn.setAttribute('onclick', 'openAccountEditor()');
+    } else if (name === 'basic') {
+      // Read-only view — hide the action button entirely
+      addBtn.style.display = 'none';
     } else {
       addBtn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Bill';
       addBtn.setAttribute('onclick', 'openBillEditor()');
     }
+    // Re-show the button when leaving basic mode
+    if (name !== 'basic') addBtn.style.display = '';
   }
   // Update FAB so mobile users get the panel-specific action
   if (typeof updateFab === 'function' && _currentView === 'budget') updateFab('budget');
@@ -15547,6 +15559,7 @@ function budgetSwitchPanel(name) {
   else if (name === 'bills')     renderBudgetBills();
   else if (name === 'spend')     renderBudgetSpend();
   else if (name === 'accounts')  renderBudgetAccounts();
+  else if (name === 'basic')     renderBudgetBasicMode();
 }
 
 // ── Currency formatting ────────────────────────────────────────────────────
@@ -29456,3 +29469,281 @@ function _azApplyMatch(itemIdx) {
 function _azClearMatch(idx) {
   if (_azMatches[idx]) { _azMatches[idx]={..._azMatches[idx],existingItem:null,matchReason:null,confidence:null,decision:'add'}; _azRender(); }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BUDGET — Basic Mode
+//
+//  A read-only month timeline. Vertical flow:
+//    Account balance (start of month, or current for current month)
+//    ↓
+//    Income events by date (actuals where present, expected otherwise)
+//    Bills by date (lump-sum + payment-month split bills)
+//    Carried forward (this month's saving set-asides)
+//    Spend left (unspent budget)
+//    ↓
+//    Safe to spend
+//
+//  No interactivity — every figure mirrors what you'd see if you stepped
+//  through Dashboard / Bills / Spend / Accounts tabs and added it up.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function _basicSectionLabel(text) {
+  return `<div style="font-size:10px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:1px;text-transform:uppercase;margin:14px 0 8px 0">${text}</div>`;
+}
+
+// One row in the timeline. Date label on the left (or section label),
+// amount on the right. `direction` is 'in' (positive, accent2) or 'out'
+// (negative, danger). `subtle` for less important rows (set aside, etc.)
+function _basicTimelineRow(dateLabel, label, amount, direction, opts = {}) {
+  const subtle = opts.subtle === true;
+  const valueColor = direction === 'in'
+    ? 'var(--accent2)'
+    : (subtle ? 'var(--muted)' : 'var(--text)');
+  const sign = direction === 'in' ? '+' : '−';
+  const rowOpacity = subtle ? '0.85' : '1';
+  return `
+    <div style="display:flex;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid var(--border);opacity:${rowOpacity}">
+      <div style="font-family:var(--mono);font-size:11px;color:var(--muted);width:60px;flex-shrink:0">${dateLabel || ''}</div>
+      <div style="flex:1;min-width:0;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${label}</div>
+      <div style="font-family:var(--mono);font-size:14px;font-weight:600;color:${valueColor};flex-shrink:0">${sign}${_money(Math.abs(amount))}</div>
+    </div>`;
+}
+
+// Header / footer "balance" row — bigger, bolder.
+function _basicBalanceRow(label, amount, opts = {}) {
+  const isResult = opts.result === true;
+  const color = isResult
+    ? (amount < 0 ? 'var(--danger)' : 'var(--ok)')
+    : 'var(--text)';
+  const bg = isResult
+    ? 'background:linear-gradient(135deg,rgba(80,200,140,0.10),rgba(80,200,140,0.04));'
+    : 'background:linear-gradient(135deg,rgba(91,141,238,0.10),rgba(91,141,238,0.04));';
+  return `
+    <div style="${bg}border:1px solid var(--border);border-radius:10px;padding:14px 16px;display:flex;justify-content:space-between;align-items:baseline;gap:12px">
+      <div style="font-size:13px;font-weight:700;color:var(--text)">${label}</div>
+      <div style="font-family:var(--mono);font-size:20px;font-weight:700;color:${color}">${_money(amount)}</div>
+    </div>`;
+}
+
+function renderBudgetBasicMode() {
+  const host = document.getElementById('budget-basic-content');
+  if (!host) return;
+
+  const yyyymm = _budgetViewMonth || _yyyymm(new Date());
+  const todayMonth = _yyyymm(new Date());
+  const isPast    = yyyymm < todayMonth;
+  const isFuture  = yyyymm > todayMonth;
+  const todayIso  = (new Date()).toISOString().slice(0, 10);
+  const { year, month } = _parseYyyymm(yyyymm);
+  const monthLabel = new Date(year, month, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+  const safe = getSafeToSpend(yyyymm);
+  if (!safe || safe.mode === 'no-setup') {
+    host.innerHTML = `
+      <div style="padding:60px 20px;text-align:center;color:var(--muted)">
+        <div style="font-size:14px;margin-bottom:8px;color:var(--text);font-weight:600">Basic Mode unavailable</div>
+        <div style="font-size:13px">Set up a primary account to see your monthly timeline here.</div>
+      </div>`;
+    return;
+  }
+
+  // ── 1. Starting balance ──────────────────────────────────────────────────
+  // For current month: balance now (the dashboard's "Account balance now").
+  // For past: implied month-start balance (incomeReceived - billsPaid - spend
+  //   = end balance, so start = end + spend + bills - income… no, simpler:
+  //   we use the month's actual P&L instead of a balance line).
+  // For future: projected month-end balance from the cash-flow model.
+  let startBalance = null;
+  let startLabel   = '';
+  if (isPast) {
+    // Past month — show the actuals instead of starting balance up top
+    // (Pete's spec assumes "now" view; for past months we'll do a simpler
+    // P&L breakdown). We still draw a balance-ish header for symmetry.
+    const incomeReceived = safe.breakdown.incomeReceived || 0;
+    const billsPaid      = safe.breakdown.billsPaid      || 0;
+    const spend          = safe.breakdown.spend          || 0;
+    host.innerHTML = `
+      <div style="max-width:560px;margin:0 auto">
+        <div style="margin-bottom:6px;font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:1px;text-transform:uppercase">${monthLabel} — past month</div>
+        ${_basicBalanceRow('Income received', incomeReceived)}
+        ${_basicSectionLabel('Outflows')}
+        <div>
+          ${_basicTimelineRow('', 'Bills paid this month', -billsPaid, 'out')}
+          ${_basicTimelineRow('', 'Discretionary spend',   -spend,     'out')}
+        </div>
+        <div style="margin-top:14px">${_basicBalanceRow(safe.amount >= 0 ? 'Left over' : 'Overspent', safe.amount, { result: true })}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5">A simple summary of how the month landed. ${safe.amount >= 0 ? 'You stayed within your means.' : 'Outflows exceeded income.'}</div>
+      </div>`;
+    return;
+  }
+
+  if (isFuture) {
+    startBalance = safe.breakdown.endBalance;
+    startLabel   = 'Projected end-of-month balance';
+  } else {
+    startBalance = safe.breakdown.balanceNow;
+    startLabel   = 'Account balance now';
+  }
+
+  // ── 2. Gather timeline events ────────────────────────────────────────────
+  // Each event: { dateIso, label, amount, direction, dateLabel }
+
+  const events = [];
+
+  // Income events. The balance-at-top already reflects:
+  //   - For current month: actuals received so far (they're in the user's
+  //     bank balance). We must NOT add them again — only unpaid future
+  //     expected income gets a row.
+  //   - For future month: the balance-at-top is the projected end-of-month
+  //     balance, which already accounts for all of next month's income.
+  //     We could show events for transparency, but they'd already be in
+  //     the projected balance — confusing. Treat future like current and
+  //     show only the unpaid expected events (they're the projection's
+  //     basis), but don't add them above the balance.
+  // For SIMPLICITY and to keep the math sane, current month shows only
+  // unpaid future-dated income; future months show all expected income
+  // as informational (without re-adding to the running total).
+  const incomeEntriesThisMonth = (typeof getIncomeEntriesForMonth === 'function')
+    ? getIncomeEntriesForMonth(yyyymm)
+    : [];
+  for (const e of incomeEntriesThisMonth) {
+    if (e.skipped) continue;
+    const tpl = e.templateId ? (typeof getIncomeTemplateById === 'function' ? getIncomeTemplateById(e.templateId) : null) : null;
+    if (e.templateId && (!tpl || tpl.archived)) continue; // phantom — skip
+    const label = tpl?.name || e.notes || 'Income';
+    const dateIso = e.date;
+    const amount = (e.actualAmount ?? e.amount) || 0;
+    if (amount <= 0) continue;
+    // Skip already-received income (it's in balanceNow already, can't be
+    // added again). Skip past-dated unpaid income for the current month
+    // (didn't arrive — would be confusing to project).
+    if (e.paidAt) continue;
+    if (!isFuture && dateIso < todayIso) continue;
+    events.push({
+      dateIso, label, amount, direction: 'in',
+      dateLabel: _basicShortDate(dateIso),
+      kind: 'income',
+    });
+  }
+  // Unmaterialised template income for the rest of the month
+  const seenIncomeKeys = new Set(events.filter(e => e.kind === 'income').map(e => e.dateIso + '|' + e.label));
+  for (const tpl of (incomeTemplates || [])) {
+    if (tpl.archived) continue;
+    const dates = (typeof getInstanceDatesInMonth === 'function')
+      ? getInstanceDatesInMonth(tpl, year, month)
+      : [];
+    for (const d of dates) {
+      const k = d + '|' + tpl.name;
+      if (seenIncomeKeys.has(k)) continue;
+      if (!isFuture && d < todayIso) continue;  // past-dated, never received
+      events.push({
+        dateIso: d, label: tpl.name, amount: tpl.amount || 0,
+        direction: 'in', dateLabel: _basicShortDate(d), kind: 'income',
+      });
+    }
+  }
+
+  // Bill events — payment instances (lump + payment-month split). Saving
+  // instances are aggregated separately as "carried forward".
+  const billInsts = Object.values(getMonthInstances(yyyymm) || {});
+  for (const inst of billInsts) {
+    if (inst.skipped) continue;
+    if (inst.kind === 'saving') continue; // handled by carry-over line
+    if (inst.paidAt) continue; // already left the account, in balanceNow
+    const tpl = bills.find(b => b.id === inst.billId);
+    if (!tpl) continue;
+    const dateIso = inst.dueDate;
+    const amount  = (inst.actualAmount ?? inst.expectedAmount) || 0;
+    if (amount <= 0) continue;
+    events.push({
+      dateIso, label: tpl.name, amount,
+      direction: 'out',
+      dateLabel: _basicShortDate(dateIso),
+      kind: 'bill',
+    });
+  }
+  // Bill templates that should land on a date but aren't materialised yet
+  const materialisedKeys = new Set(billInsts.map(i => i.billId + '|' + i.dueDate));
+  for (const tpl of (bills || [])) {
+    if (tpl.archived) continue;
+    if (tpl.paymentStrategy === 'split') continue; // saving rows handled separately
+    const dates = (typeof getInstanceDatesInMonth === 'function')
+      ? getInstanceDatesInMonth(tpl, year, month)
+      : [];
+    for (const d of dates) {
+      const k = tpl.id + '|' + d;
+      if (materialisedKeys.has(k)) continue;
+      events.push({
+        dateIso: d, label: tpl.name, amount: tpl.amount || 0,
+        direction: 'out', dateLabel: _basicShortDate(d), kind: 'bill',
+      });
+    }
+  }
+
+  // Sort all dated events chronologically.
+  events.sort((a, b) => a.dateIso.localeCompare(b.dateIso));
+
+  // ── 3. Aggregated end-of-month deductions ────────────────────────────────
+  const carryOver = safe.breakdown.carryOver || 0;
+  const budget    = safe.breakdown.budgetRemaining || 0;
+  const carryCount = (typeof getTotalCarryOver === 'function')
+    ? (getTotalCarryOver().breakdown.length || 0)
+    : 0;
+
+  // Income / bill events split by direction (so we can render them in
+  // separate sections for clarity, but still sorted within each).
+  const incomeEvents = events.filter(e => e.direction === 'in');
+  const billEvents   = events.filter(e => e.direction === 'out');
+
+  // ── 4. Render ────────────────────────────────────────────────────────────
+  let html = `
+    <div style="max-width:560px;margin:0 auto">
+      <div style="margin-bottom:10px;font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:1px;text-transform:uppercase">${monthLabel}${isFuture ? ' — projected' : ''}</div>
+      ${_basicBalanceRow(startLabel, startBalance)}`;
+
+  if (incomeEvents.length) {
+    html += _basicSectionLabel('Money coming in');
+    html += '<div>' + incomeEvents.map(e => _basicTimelineRow(e.dateLabel, _escapeHtml(e.label), e.amount, 'in')).join('') + '</div>';
+  }
+
+  if (billEvents.length) {
+    html += _basicSectionLabel('Bills');
+    html += '<div>' + billEvents.map(e => _basicTimelineRow(e.dateLabel, _escapeHtml(e.label), -e.amount, 'out')).join('') + '</div>';
+  }
+
+  if (carryOver > 0) {
+    html += _basicSectionLabel('Set aside');
+    html += '<div>' + _basicTimelineRow('', `Carrying forward${carryCount ? ` (${carryCount} bill${carryCount === 1 ? '' : 's'})` : ''}`, -carryOver, 'out', { subtle: true }) + '</div>';
+  }
+
+  if (budget > 0) {
+    html += _basicSectionLabel('Discretionary');
+    html += '<div>' + _basicTimelineRow('', 'Spend left (budgets)', -budget, 'out', { subtle: true }) + '</div>';
+  }
+
+  html += `<div style="margin-top:18px">${_basicBalanceRow('Safe to spend', safe.amount, { result: true })}</div>`;
+
+  // Sub-text caption to set expectations
+  html += `<div style="font-size:11px;color:var(--muted);margin-top:12px;line-height:1.5">A read-only summary of where ${isFuture ? 'next month' : 'this month'} is heading. Tap Dashboard, Bills, or Spend above to make changes.</div>`;
+  html += '</div>';
+
+  host.innerHTML = html;
+}
+
+// Short date for the basic-mode timeline rows: "5 May".
+function _basicShortDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T12:00:00');
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+// Re-render basic mode whenever the budget view changes (month switcher,
+// data updates after navigation, etc.). Hook into renderBudget so it
+// stays in sync when the user is viewing the basic panel.
+const _phaseBasicRenderBudget = renderBudget;
+renderBudget = async function() {
+  await _phaseBasicRenderBudget.call(this);
+  if (_budgetActivePanel === 'basic' && typeof renderBudgetBasicMode === 'function') {
+    renderBudgetBasicMode();
+  }
+};

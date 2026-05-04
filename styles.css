@@ -2138,6 +2138,20 @@ body.note-open { overflow: hidden; touch-action: none; }
 
 .bill-action-btn svg { width: 16px; height: 16px; }
 
+/* Basic Mode bare text link — sits alongside the tab cluster but styled
+   as a plain underlined link to signal it's a different kind of action
+   (a read-only summary view). Hover bumps colour to text; active state
+   is denoted by the dashed underline going solid + accent. */
+.budget-basic-link:hover {
+  color: var(--text);
+  border-bottom-color: var(--muted);
+}
+.budget-basic-link.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  border-bottom-style: solid;
+}
+
 /* Variable-amount tag */
 .bill-tag {
   font-size: 9px; font-family: var(--mono); font-weight: 700;
