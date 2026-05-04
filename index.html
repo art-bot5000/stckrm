@@ -956,6 +956,42 @@
 </div>
 
 
+<!-- ═══════════════════════════════════════════════════════════════════════
+     MULTI-MONTH TIMELINE MODAL — shows the full saving cycle for one bill,
+     with per-month rows (saved / current / payment) and inline pay actions.
+     Opened by tapping a row in the Multi-month bills section.
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="multimonth-timeline-modal" style="z-index:300">
+  <div class="modal" style="max-width:520px">
+    <h2><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent2)"><use href="#i-piggy-bank"></use></svg> <span id="mmtl-bill-name">Bill</span></h2>
+    <p class="subtitle" id="mmtl-subtitle">—</p>
+
+    <!-- Status header — paid/total and progress bar -->
+    <div style="background:linear-gradient(135deg,rgba(91,141,238,0.10),rgba(91,141,238,0.04));border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:8px">
+        <div style="font-size:13px;font-weight:600;color:var(--text)" id="mmtl-status">— of — months saved</div>
+        <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--text)" id="mmtl-progress-amount">—</div>
+      </div>
+      <div style="height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden">
+        <div id="mmtl-progress-bar" style="height:100%;width:0%;background:var(--accent2);border-radius:3px;transition:width 0.2s"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:8px" id="mmtl-meta">
+        <span></span><span></span>
+      </div>
+    </div>
+
+    <!-- Timeline list — populated by openMultiMonthTimeline -->
+    <div id="mmtl-list" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;max-height:60vh;overflow-y:auto">
+    </div>
+
+    <div class="modal-footer" style="margin-top:14px;display:flex;gap:8px">
+      <button class="btn btn-ghost" id="mmtl-edit-btn" style="margin-right:auto"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit bill</button>
+      <button class="btn btn-ghost" onclick="closeModal('multimonth-timeline-modal')">Done</button>
+    </div>
+  </div>
+</div>
+
+
 <!-- ═══ COOKIE CONSENT BANNER (fixed overlay — kept for non-wizard contexts) ═══ -->
 <div id="cookie-consent-banner" style="display:none"></div>
 
@@ -1867,6 +1903,18 @@
         <span id="budget-bills-savingup-count" style="background:rgba(91,141,238,0.15);border:1px solid rgba(91,141,238,0.3);color:var(--accent2);font-size:10px;padding:1px 7px;border-radius:99px"></span>
       </div>
       <div id="budget-bills-savingup-list"></div>
+    </div>
+
+    <!-- Multi-month bills (split-strategy: quarterly, six-monthly, annual,
+         custom over 1 month). Lives at the bottom because these aren't
+         "due this month" in the traditional sense — they're saving runs
+         spanning multiple months. Tap a row to see the timeline. -->
+    <div id="budget-bills-multimonth-section" style="display:none;margin-bottom:24px">
+      <div style="font-size:11px;font-weight:700;color:var(--accent2);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:8px">
+        <span class="status-dot" style="display:inline-block;margin-right:6px;background:var(--accent2)"></span>Multi-month bills
+        <span id="budget-bills-multimonth-count" style="background:rgba(91,141,238,0.15);border:1px solid rgba(91,141,238,0.3);color:var(--accent2);font-size:10px;padding:1px 7px;border-radius:99px"></span>
+      </div>
+      <div id="budget-bills-multimonth-list"></div>
     </div>
 
     <!-- Templates not active this month (annual/quarterly bills falling outside this month) -->

@@ -15642,41 +15642,75 @@ function renderBudgetDashboard() {
 function renderBudgetBills() {
   const yyyymm    = _budgetViewMonth;
   const instances = getMonthInstances(yyyymm);
-  const all       = Object.values(instances);
-  const due       = all.filter(i => !i.skipped && !i.paidAt);
-  const paid      = all.filter(i => !i.skipped &&  i.paidAt);
-  const skipped   = all.filter(i =>  i.skipped);
+  const allRaw    = Object.values(instances);
+
+  // Phase 5c: split-strategy bills get their own section at the bottom.
+  // Their saving + payment instances are pulled out of the regular Due/
+  // Paid/Skipped lists so those stay focused on lump-sum bills only. The
+  // dedicated section + timeline modal is the canonical place to interact
+  // with split bills.
+  const isSplitBill = (billId) => {
+    const tpl = bills.find(b => b.id === billId);
+    return tpl && tpl.paymentStrategy === 'split';
+  };
+  const all     = allRaw.filter(i => !isSplitBill(i.billId));
+  const due     = all.filter(i => !i.skipped && !i.paidAt);
+  const paid    = all.filter(i => !i.skipped &&  i.paidAt);
+  const skipped = all.filter(i =>  i.skipped);
 
   // Sort: due by dueDate asc, paid by paidAt desc, skipped by dueDate asc
   due.sort((a, b)     => a.dueDate.localeCompare(b.dueDate));
   paid.sort((a, b)    => (b.paidAt || '').localeCompare(a.paidAt || ''));
   skipped.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 
-  // Templates not active in this month + not archived. Split bills with
-  // saving instances in this month appear in the Due/Paid/Skipped sections
-  // already (saving instances are real bill instances now), so we don't
-  // need to filter them out of "Other bills" — but we DO want to hide
-  // split bills that have an instance of any kind in this month, since
-  // they're already represented above.
+  // Multi-month bills: any non-archived split-strategy template with at
+  // least one instance somewhere in its current cycle, OR with a payment
+  // expected in the current view month, OR with the view month falling
+  // inside its cycle. We surface them in the new section regardless of
+  // whether THIS month happens to be a saving/payment month for the bill.
   const { year, month } = _parseYyyymm(yyyymm);
-  const billIdsWithInstanceThisMonth = new Set(all.map(i => i.billId));
+  const multiMonthTemplates = bills.filter(tpl => {
+    if (tpl.archived) return false;
+    if (tpl.paymentStrategy !== 'split') return false;
+    if (!tpl.splitInto || !tpl.splitInto.count) return false;
+    return true;
+  });
+
+  // "Other bills": non-archived templates not active this month that AREN'T
+  // split-strategy (those are in the multi-month section) and that don't
+  // have any instance in the current month.
+  const billIdsWithAnyInstanceThisMonth = new Set(allRaw.map(i => i.billId));
+  const splitBillIds = new Set(multiMonthTemplates.map(b => b.id));
   const inactiveTemplates = bills.filter(b =>
        !b.archived
+    && !splitBillIds.has(b.id)
     && !shouldBeDueInMonth(b, year, month)
-    && !billIdsWithInstanceThisMonth.has(b.id)
+    && !billIdsWithAnyInstanceThisMonth.has(b.id)
   );
   const archivedTemplates = bills.filter(b => b.archived);
 
-  // Populate sections
+  // Populate sections (lump-sum bills only)
   _renderBillSection('budget-bills-due',     due.map(i => _renderBillRow(i)),     due.length);
   _renderBillSection('budget-bills-paid',    paid.map(i => _renderBillRow(i)),    paid.length);
   _renderBillSection('budget-bills-skipped', skipped.map(i => _renderBillRow(i)), skipped.length);
 
-  // The "Saving up" separate section was removed in Phase 5b — saving
-  // instances are now real bill instances and appear in the regular
-  // Due/Paid/Skipped sections above. Hide the legacy section if present.
+  // Hide the legacy "Saving up" section if it's still in the DOM
   const savingSection = document.getElementById('budget-bills-savingup-section');
   if (savingSection) savingSection.style.display = 'none';
+
+  // Multi-month bills section
+  const mmSection = document.getElementById('budget-bills-multimonth-section');
+  const mmList    = document.getElementById('budget-bills-multimonth-list');
+  const mmCount   = document.getElementById('budget-bills-multimonth-count');
+  if (mmSection && mmList && mmCount) {
+    if (multiMonthTemplates.length) {
+      mmSection.style.display = '';
+      mmCount.textContent     = multiMonthTemplates.length;
+      mmList.innerHTML        = `<div class="bill-list">${multiMonthTemplates.map(_renderMultiMonthBillRow).join('')}</div>`;
+    } else {
+      mmSection.style.display = 'none';
+    }
+  }
 
   // "Other bills" — templates inactive this month
   const otherSection = document.getElementById('budget-bills-other-section');
@@ -15706,18 +15740,14 @@ function renderBudgetBills() {
     }
   }
 
-  // Summary — totals all instances (saving + payment) for the month.
+  // Summary — counts BOTH lump-sum instances and multi-month bills (one
+  // count per template, since the timeline encapsulates the cycle).
   const summary = document.getElementById('budget-bills-summary');
   if (summary) {
-    const expectedTotal = all.filter(i => !i.skipped)
+    const lumpTotal = all.filter(i => !i.skipped)
       .reduce((s, i) => s + ((i.actualAmount ?? i.expectedAmount) || 0), 0);
-    const savingCount = all.filter(i => i.kind === 'saving' && !i.skipped).length;
-    const savingTotal = all.filter(i => i.kind === 'saving' && !i.skipped)
-      .reduce((s, i) => s + ((i.actualAmount ?? i.expectedAmount) || 0), 0);
-    const savingNote = savingCount > 0
-      ? ` <span style="color:var(--accent2)">(incl. ${_money(savingTotal)} set aside)</span>`
-      : '';
-    summary.innerHTML = `${all.length} bill${all.length !== 1 ? 's' : ''} this month · expected total <strong style="color:var(--text)">${_money(expectedTotal)}</strong>${savingNote}`;
+    const totalCount = all.length + multiMonthTemplates.length;
+    summary.innerHTML = `${totalCount} bill${totalCount !== 1 ? 's' : ''} this month · expected total <strong style="color:var(--text)">${_money(lumpTotal)}</strong>`;
   }
 }
 
@@ -15850,6 +15880,68 @@ function _renderBillTemplateRow(tpl) {
       <div class="bill-amount">${_money(tpl.amount)}</div>
       <div class="bill-actions">
         <button class="bill-action-btn bill-action-edit" onclick="event.stopPropagation();openBillEditor('${tpl.id}')" title="Edit"><svg aria-hidden="true"><use href="#i-pencil"></use></svg></button>
+      </div>
+    </div>`;
+}
+
+// Multi-month bill row — for split-strategy bills shown in their own
+// section at the bottom of the Bills panel. Shows the bill name, total
+// amount, and a status line summarising the saving cycle (months saved /
+// total, payment date, months remaining). Tapping opens the timeline
+// modal where the user can interact with each month's instance.
+function _renderMultiMonthBillRow(tpl) {
+  const co = getBillCarryOver(tpl);
+  if (!co) return '';
+  const dueLabel = co.nextDueIso
+    ? new Date(co.nextDueIso + 'T12:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+    : null;
+
+  // Months remaining until next payment date. Computed from today.
+  let monthsLeftLabel = '';
+  if (co.nextDueIso) {
+    const today = new Date();
+    const next  = new Date(co.nextDueIso + 'T12:00:00');
+    const monthsDiff = (next.getFullYear() - today.getFullYear()) * 12
+                     + (next.getMonth()    - today.getMonth());
+    if (co.currentMonthIsPayment) {
+      monthsLeftLabel = 'pays this month';
+    } else if (monthsDiff <= 0) {
+      monthsLeftLabel = 'overdue';
+    } else if (monthsDiff === 1) {
+      monthsLeftLabel = 'pays next month';
+    } else {
+      monthsLeftLabel = `${monthsDiff} months left`;
+    }
+  }
+
+  // Status line: months saved · pays Date · monthsLeft
+  const parts = [`${co.slot}/${co.totalSlots} mo saved`];
+  if (co.currentMonthIsPayment) {
+    if (dueLabel) parts.push(`pays ${dueLabel} (this month)`);
+  } else {
+    if (dueLabel)        parts.push(`pays ${dueLabel}`);
+    if (monthsLeftLabel) parts.push(monthsLeftLabel);
+  }
+  const status = parts.join(' · ');
+
+  // Per-period figure shown subtly so the user knows the monthly amount
+  const subAmt = `<span style="font-size:11px;color:var(--muted);font-family:var(--mono);display:block;margin-top:2px">${_money(co.perPeriod)}/mo</span>`;
+
+  return `
+    <div class="bill-row" style="border-left:2px solid var(--accent2);cursor:pointer" onclick="openMultiMonthTimeline('${tpl.id}')">
+      <div class="bill-day" style="color:var(--accent2);border-color:rgba(91,141,238,0.4);background:rgba(91,141,238,0.08)">
+        <svg style="width:14px;height:14px" aria-hidden="true"><use href="#i-piggy-bank"></use></svg>
+      </div>
+      <div class="bill-info">
+        <div class="bill-name">${_escapeHtml(tpl.name)}</div>
+        <div class="bill-meta">${status}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="bill-amount">${_money(tpl.amount)}</div>
+        ${subAmt}
+      </div>
+      <div class="bill-actions">
+        <button class="bill-action-btn bill-action-edit" onclick="event.stopPropagation();openBillEditor('${tpl.id}')" title="Edit bill"><svg aria-hidden="true"><use href="#i-pencil"></use></svg></button>
       </div>
     </div>`;
 }
@@ -28027,6 +28119,227 @@ function openCarryOverBreakdown() {
     }).join('');
   }
   openModal('carryover-modal');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  MULTI-MONTH TIMELINE — opens a modal showing the full saving cycle for
+//  one split-strategy bill. Each month in the cycle gets a row showing the
+//  amount, state (saved/current/payment), and (for the current saving
+//  month) Pay/Skip action buttons. Tapping the Edit button in the footer
+//  opens the bill editor.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Currently-open timeline bill id (so action buttons inside the modal know
+// which bill to act on without re-deriving from event payload).
+let _multimonthTimelineBillId = null;
+
+// Build the list of months in the bill's current cycle. Returns an array
+// of { yyyymm, year, month, dueDate, instance, kind, label, status }
+// objects, ordered chronologically. The cycle runs from the month AFTER
+// the previous payment (or template creation, whichever is later) through
+// to the next payment month inclusive.
+function _buildMultiMonthTimelineRows(template) {
+  if (!template || template.paymentStrategy !== 'split') return [];
+  if (!template.splitInto || !template.splitInto.count) return [];
+
+  const today = new Date();
+  const todayYyyymm = _yyyymm(today);
+
+  // Cycle anchor: previous theoretical payment (ignoring createdAt cap so
+  // bills added mid-cycle still show the run from the actual cycle start).
+  const prevDue    = _prevDueDateForTemplate(template, todayYyyymm, /* respectCreatedAt */ false);
+  const lastPaid   = _lastPaidPaymentDueDate(template.id);
+  const cycleStartIso = (lastPaid && (!prevDue || lastPaid > prevDue))
+    ? lastPaid
+    : (prevDue || (template.createdAt || _nowIso()).slice(0, 10));
+  const cycleEndIso   = _nextDueDate(template.id) || _nextDueDateForTemplate(template, todayYyyymm);
+  if (!cycleEndIso) return [];
+
+  // Walk from the month containing the cycle start (or one after, depending
+  // on whether the cycle start is a payment date) to the cycle-end month.
+  // The first row we want is the month AFTER the prev payment — that's the
+  // first saving month. The last row is the payment-end month.
+  const startDate = new Date(cycleStartIso + 'T12:00:00');
+  const endDate   = new Date(cycleEndIso + 'T12:00:00');
+  // Begin at month following cycleStart UNLESS cycleStart is the start of
+  // the cycle (createdAt with no prev payment in calendar). In practice
+  // we always want the first saving month — which is the month after the
+  // payment month.
+  let cursorY = startDate.getFullYear();
+  let cursorM = startDate.getMonth() + 1;
+  if (cursorM > 11) { cursorM = 0; cursorY++; }
+  const endY = endDate.getFullYear();
+  const endM = endDate.getMonth();
+
+  const perPeriod = Math.round((template.amount / template.splitInto.count) * 100) / 100;
+  const rows = [];
+  let safety = 0;
+  while (safety++ < 36) {
+    const inPaymentMonth = (cursorY === endY && cursorM === endM);
+    const yyyymm = `${cursorY}-${String(cursorM + 1).padStart(2, '0')}`;
+    const dom    = _clampDayOfMonth(template.dayOfMonth || 1, cursorY, cursorM);
+    const dueDate = _isoDate(cursorY, cursorM, dom);
+    const instance = _getInstance(yyyymm, template.id, dueDate);
+    const monthLabel = new Date(cursorY, cursorM, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+    const isCurrent = (yyyymm === todayYyyymm);
+    let status, amount;
+    if (inPaymentMonth) {
+      status = instance?.paidAt ? 'paid' : 'payment';
+      amount = template.amount; // full amount on the payment month
+    } else if (instance?.skipped) {
+      status = 'skipped';
+      amount = perPeriod;
+    } else if (instance?.paidAt) {
+      status = 'saved';
+      amount = perPeriod;
+    } else {
+      status = 'unpaid';  // current saving month (or future, before materialise)
+      amount = perPeriod;
+    }
+    rows.push({
+      yyyymm, year: cursorY, month: cursorM, dueDate, instance,
+      isCurrent, inPaymentMonth, label: monthLabel, status, amount,
+    });
+
+    if (inPaymentMonth) break;
+    cursorM++;
+    if (cursorM > 11) { cursorM = 0; cursorY++; }
+  }
+  return rows;
+}
+
+// Open the timeline modal for a given bill id. Computes the cycle, renders
+// rows, populates the status header.
+function openMultiMonthTimeline(billId) {
+  const tpl = bills.find(b => b.id === billId);
+  if (!tpl) return;
+  _multimonthTimelineBillId = billId;
+  const co = getBillCarryOver(tpl);
+  const rows = _buildMultiMonthTimelineRows(tpl);
+
+  // Populate header
+  const nameEl     = document.getElementById('mmtl-bill-name');
+  const subEl      = document.getElementById('mmtl-subtitle');
+  const statusEl   = document.getElementById('mmtl-status');
+  const progAmtEl  = document.getElementById('mmtl-progress-amount');
+  const progBarEl  = document.getElementById('mmtl-progress-bar');
+  const metaEl     = document.getElementById('mmtl-meta');
+  const listEl     = document.getElementById('mmtl-list');
+  const editBtnEl  = document.getElementById('mmtl-edit-btn');
+  if (nameEl) nameEl.textContent = tpl.name;
+  if (subEl)  subEl.textContent  = `${_money(tpl.amount)} every ${_frequencyLabel(tpl).toLowerCase()}`;
+
+  if (co && statusEl) statusEl.textContent = `${co.slot} of ${co.totalSlots} months saved`;
+  if (co && progAmtEl) progAmtEl.textContent = `${_money(co.accrued)} / ${_money(co.target)}`;
+  if (co && progBarEl) {
+    const pct = Math.min(100, Math.round((co.accrued / co.target) * 100));
+    progBarEl.style.width = pct + '%';
+  }
+  if (co && metaEl) {
+    const dueWhen = co.nextDueIso
+      ? new Date(co.nextDueIso + 'T12:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+      : 'no upcoming payment';
+    metaEl.innerHTML = `<span>${_money(co.perPeriod)}/mo</span><span>pays ${dueWhen}</span>`;
+  }
+
+  // Wire Edit button — close timeline first, then open editor
+  if (editBtnEl) {
+    editBtnEl.onclick = () => {
+      closeModal('multimonth-timeline-modal');
+      openBillEditor(billId);
+    };
+  }
+
+  // Render rows
+  if (listEl) {
+    listEl.innerHTML = rows.map(r => _renderMultiMonthTimelineRow(r, tpl)).join('');
+  }
+
+  openModal('multimonth-timeline-modal');
+}
+
+// Render a single timeline row. `r` comes from _buildMultiMonthTimelineRows.
+function _renderMultiMonthTimelineRow(r, tpl) {
+  let statusBadge = '';
+  let actions = '';
+  let rowOpacity = '1';
+  let amountColor = 'var(--text)';
+  let icon = '';
+
+  if (r.status === 'saved') {
+    icon = `<svg style="width:14px;height:14px;color:var(--accent2)" aria-hidden="true"><use href="#i-check"></use></svg>`;
+    statusBadge = `<span style="color:var(--accent2);font-size:11px;font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px">Saved</span>`;
+    amountColor = 'var(--accent2)';
+    rowOpacity = '0.85';
+  } else if (r.status === 'skipped') {
+    statusBadge = `<span style="color:var(--muted);font-size:11px;font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px">Skipped</span>`;
+    rowOpacity = '0.55';
+  } else if (r.status === 'unpaid' && r.isCurrent) {
+    icon = `<svg style="width:14px;height:14px;color:var(--accent2)" aria-hidden="true"><use href="#i-piggy-bank"></use></svg>`;
+    statusBadge = `<span style="color:var(--accent2);font-size:11px;font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px">This month</span>`;
+    amountColor = 'var(--accent2)';
+    actions = `
+      <button class="bill-action-btn bill-action-paid" onclick="event.stopPropagation();handleMultiMonthTimelinePay('${r.yyyymm}','${r.dueDate}')" title="Set aside"><svg aria-hidden="true"><use href="#i-check"></use></svg></button>
+      <button class="bill-action-btn bill-action-skip" onclick="event.stopPropagation();handleMultiMonthTimelineSkip('${r.yyyymm}','${r.dueDate}')" title="Skip"><svg aria-hidden="true"><use href="#i-x"></use></svg></button>`;
+  } else if (r.status === 'unpaid') {
+    statusBadge = `<span style="color:var(--muted);font-size:11px;font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px">Upcoming</span>`;
+    rowOpacity = '0.7';
+  } else if (r.status === 'payment') {
+    icon = `<svg style="width:14px;height:14px;color:var(--accent)" aria-hidden="true"><use href="#i-banknote"></use></svg>`;
+    statusBadge = `<span style="color:var(--accent);font-size:11px;font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px">Payment month</span>`;
+    amountColor = 'var(--accent)';
+    if (r.isCurrent && !r.instance?.paidAt) {
+      actions = `
+        <button class="bill-action-btn bill-action-paid" onclick="event.stopPropagation();handleMultiMonthTimelinePay('${r.yyyymm}','${r.dueDate}')" title="Mark paid"><svg aria-hidden="true"><use href="#i-check"></use></svg></button>`;
+    }
+  } else if (r.status === 'paid') {
+    icon = `<svg style="width:14px;height:14px;color:var(--accent2)" aria-hidden="true"><use href="#i-check"></use></svg>`;
+    statusBadge = `<span style="color:var(--accent2);font-size:11px;font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px">Paid</span>`;
+    amountColor = 'var(--accent2)';
+    rowOpacity = '0.85';
+  }
+
+  return `
+    <div style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);opacity:${rowOpacity}">
+      <div style="width:24px;flex-shrink:0;display:flex;align-items:center;justify-content:center">${icon}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;color:var(--text);font-weight:500">${_escapeHtml(r.label)}</div>
+        <div style="margin-top:3px">${statusBadge}</div>
+      </div>
+      <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:${amountColor};flex-shrink:0">${_money(r.amount)}</div>
+      <div style="display:flex;gap:4px;flex-shrink:0">${actions}</div>
+    </div>`;
+}
+
+// Pay/skip action handlers for timeline rows. They mark the instance,
+// then re-render the timeline AND the budget so both views stay in sync.
+async function handleMultiMonthTimelinePay(yyyymm, dueDate) {
+  if (!_multimonthTimelineBillId) return;
+  const billId = _multimonthTimelineBillId;
+  const tpl = bills.find(b => b.id === billId);
+  if (!tpl) return;
+  // Make sure the month is materialised (so the saving instance exists to
+  // be marked paid). Idempotent.
+  if (typeof materialiseMonth === 'function') {
+    await materialiseMonth(yyyymm, { persist: true });
+  }
+  await markBillPaid(yyyymm, billId, { dueDate });
+  // Refresh both views
+  openMultiMonthTimeline(billId);
+  if (typeof renderBudget === 'function') await renderBudget();
+  toast(`${_money((tpl.amount / (tpl.splitInto?.count || 1)))} set aside for ${tpl.name}`);
+}
+
+async function handleMultiMonthTimelineSkip(yyyymm, dueDate) {
+  if (!_multimonthTimelineBillId) return;
+  const billId = _multimonthTimelineBillId;
+  if (typeof materialiseMonth === 'function') {
+    await materialiseMonth(yyyymm, { persist: true });
+  }
+  await skipBillInstance(yyyymm, billId, dueDate);
+  openMultiMonthTimeline(billId);
+  if (typeof renderBudget === 'function') await renderBudget();
 }
 
 // Wrap the existing dashboard render once more so the carry-over tile is
