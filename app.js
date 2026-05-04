@@ -409,12 +409,41 @@ async function _seedDemoData() {
     { id: 'demo_cat_grocery',  name: 'Groceries',     monthlyBudget: 450, weeklyBudget: null, budgetCycle: 'monthly', color: '#e8a838', archived: false, createdAt: iso(daysAgo(180)), updatedAt: now },
     { id: 'demo_cat_eatout',   name: 'Eating out',    monthlyBudget: 150, weeklyBudget: null, budgetCycle: 'monthly', color: '#e85d8e', archived: false, createdAt: iso(daysAgo(180)), updatedAt: now },
     { id: 'demo_cat_petrol',   name: 'Fuel',          monthlyBudget: 200, weeklyBudget: null, budgetCycle: 'monthly', color: '#5b8dee', archived: false, createdAt: iso(daysAgo(180)), updatedAt: now },
+    // Weekly budget — different cycle to show the variety in the Spend
+    // panel and so the dashboard's burn-rate tile has mixed cycles to work with.
+    { id: 'demo_cat_coffee',   name: 'Coffee & treats', monthlyBudget: null, weeklyBudget: 25, budgetCycle: 'weekly', color: '#a280e8', archived: false, createdAt: iso(daysAgo(120)), updatedAt: now },
+    // Archived category — shows the archive UI flow without cluttering the
+    // active set.
+    { id: 'demo_cat_old',      name: 'Old gym membership', monthlyBudget: 30, weeklyBudget: null, budgetCycle: 'monthly', color: '#888', archived: true, createdAt: iso(daysAgo(365)), updatedAt: iso(daysAgo(60)) },
   ];
 
+  // Bills — three lump-sum monthlies for the regular Due/Paid sections, a
+  // quarterly TV License (split-payment, mid-saving cycle so the carry-over
+  // tile and Multi-month bills section both have something to show), an
+  // annual Amazon Prime (also split, with several months saved already),
+  // and an archived bill so the editor's archive flow is discoverable.
+  // Anchor months are set RELATIVE to the current month so the demo always
+  // lands on a useful state regardless of when it's loaded.
+  const currentMonthIdx = today.getMonth();
+  // Quarterly bill anchored 1 month from now → next payment is next month,
+  // prev payment was 2 months ago. Saving months in current cycle: last
+  // month (will be backfilled-paid) and this month (current, unpaid).
+  // So 1 of 3 months saved, ~£14.96 in carry-over for this bill.
+  const tvAnchor = (currentMonthIdx + 1) % 12;
+  // Annual bill anchored 5 months from now → next payment in 5 months,
+  // prev payment was 7 months ago. 6 prior saving months get backfilled-paid,
+  // current month is unpaid. So 6 of 12 saved, ~£47.52 in carry-over.
+  const primeAnchor = (currentMonthIdx + 5) % 12;
   bills = [
-    { id: 'demo_bill_council', name: 'Council tax', amount: 165.00, variableAmount: false, frequency: { unit: 'month', interval: 1, anchorMonth: null }, dayOfMonth: 1,  categoryId: null, notes: '', archived: false, createdAt: iso(daysAgo(180)), updatedAt: now },
-    { id: 'demo_bill_broadband', name: 'Broadband', amount: 32.00, variableAmount: false, frequency: { unit: 'month', interval: 1, anchorMonth: null }, dayOfMonth: 15, categoryId: null, notes: '', archived: false, createdAt: iso(daysAgo(180)), updatedAt: now },
-    { id: 'demo_bill_gas', name: 'Gas & electric', amount: 95.00, variableAmount: true, frequency: { unit: 'month', interval: 1, anchorMonth: null }, dayOfMonth: 22, categoryId: null, notes: 'Variable — averages around £95', archived: false, createdAt: iso(daysAgo(180)), updatedAt: now },
+    { id: 'demo_bill_council', name: 'Council tax', amount: 165.00, variableAmount: false, frequency: { unit: 'month', interval: 1, anchorMonth: null }, dayOfMonth: 1,  categoryId: null, notes: '', accountId: 'demo_acc_main', archived: false, paymentStrategy: 'lump', splitInto: null, createdAt: iso(daysAgo(180)), updatedAt: now },
+    { id: 'demo_bill_broadband', name: 'Broadband', amount: 32.00, variableAmount: false, frequency: { unit: 'month', interval: 1, anchorMonth: null }, dayOfMonth: 15, categoryId: null, notes: '', accountId: 'demo_acc_main', archived: false, paymentStrategy: 'lump', splitInto: null, createdAt: iso(daysAgo(180)), updatedAt: now },
+    { id: 'demo_bill_gas', name: 'Gas & electric', amount: 95.00, variableAmount: true, frequency: { unit: 'month', interval: 1, anchorMonth: null }, dayOfMonth: 22, categoryId: null, notes: 'Variable — averages around £95', accountId: 'demo_acc_main', archived: false, paymentStrategy: 'lump', splitInto: null, createdAt: iso(daysAgo(180)), updatedAt: now },
+    // Quarterly split — TV License. £44.88 every 3 months, set aside £14.96/mo.
+    { id: 'demo_bill_tv', name: 'TV License', amount: 44.88, variableAmount: false, frequency: { unit: 'month', interval: 3, anchorMonth: tvAnchor }, dayOfMonth: 9, categoryId: null, notes: '', accountId: 'demo_acc_main', archived: false, paymentStrategy: 'split', splitInto: { unit: 'month', count: 3 }, createdAt: iso(daysAgo(120)), updatedAt: now },
+    // Annual split — Amazon Prime. £95.04/yr, set aside £7.92/mo.
+    { id: 'demo_bill_prime', name: 'Amazon Prime', amount: 95.04, variableAmount: false, frequency: { unit: 'year', interval: 1, anchorMonth: primeAnchor }, dayOfMonth: 1, categoryId: null, notes: '', accountId: 'demo_acc_main', archived: false, paymentStrategy: 'split', splitInto: { unit: 'month', count: 12 }, createdAt: iso(daysAgo(200)), updatedAt: now },
+    // Archived bill — completed gym subscription
+    { id: 'demo_bill_gym', name: 'PureGym (cancelled)', amount: 24.99, variableAmount: false, frequency: { unit: 'month', interval: 1, anchorMonth: null }, dayOfMonth: 5, categoryId: null, notes: 'Cancelled when contract ended', accountId: 'demo_acc_main', archived: true, paymentStrategy: 'lump', splitInto: null, createdAt: iso(daysAgo(450)), updatedAt: iso(daysAgo(30)) },
   ];
   billInstances = {};
 
@@ -438,6 +467,13 @@ async function _seedDemoData() {
     transactions[txYm][tx.id] = { ...tx, createdAt: iso(daysAgo(0)), updatedAt: now };
   }
 
+  // Add a coffee transaction or two against the weekly category so it
+  // shows progress against its weekly budget.
+  if (transactions[ym]) {
+    transactions[ym]['demo_tx_c1'] = { id: 'demo_tx_c1', date: ymd(daysAgo(1)), amount: 4.20, categoryId: 'demo_cat_coffee', description: 'Pret latte', accountId: 'demo_acc_main', createdAt: now, updatedAt: now };
+    transactions[ym]['demo_tx_c2'] = { id: 'demo_tx_c2', date: ymd(daysAgo(3)), amount: 3.85, categoryId: 'demo_cat_coffee', description: 'Costa flat white', accountId: 'demo_acc_main', createdAt: now, updatedAt: now };
+  }
+
   incomeTemplates = [
     {
       id: 'demo_inc_salary', name: 'Salary', amount: 3200, variableAmount: false,
@@ -445,8 +481,43 @@ async function _seedDemoData() {
       dayOfMonth: 25, accountId: 'demo_acc_main', notes: '',
       archived: false, createdAt: iso(daysAgo(365)), updatedAt: now,
     },
+    // Variable side income — freelance work, averaged from past actuals
+    {
+      id: 'demo_inc_freelance', name: 'Freelance', amount: 250, variableAmount: true,
+      frequency: { unit: 'month', interval: 1, anchorMonth: null },
+      dayOfMonth: 15, accountId: 'demo_acc_main', notes: 'Varies — averages used',
+      archived: false, createdAt: iso(daysAgo(180)), updatedAt: now,
+    },
   ];
+  // Pre-seed a couple of paid income entries in the previous month so the
+  // variable averaging has something to chew on, and the basic-mode "past
+  // month" view renders meaningfully. paidAt sits a day or two after the
+  // template date — matches what real entries look like.
   incomeEntries = {};
+  // Compute paidAt timestamps relative to the entry dates rather than
+  // hardcoded daysAgo (which depends on today's day-of-month). The +1 day
+  // offset just simulates "pay landed the next morning".
+  const _salaryEntryDate = `${prevYm}-25`;
+  const _freelanceEntryDate = `${prevYm}-15`;
+  const _isoFromYmd = (s) => new Date(s + 'T09:00:00Z').toISOString();
+  incomeEntries[prevYm] = {
+    [`incTpl_demo_inc_salary__${_salaryEntryDate}`]: {
+      id: `incTpl_demo_inc_salary__${_salaryEntryDate}`, date: _salaryEntryDate,
+      amount: 3200, actualAmount: 3200, source: 'template_instance',
+      templateId: 'demo_inc_salary', accountId: 'demo_acc_main', notes: '',
+      paidAt: _isoFromYmd(_salaryEntryDate),
+      createdAt: _isoFromYmd(_salaryEntryDate), createdBy: null,
+      updatedAt: _isoFromYmd(_salaryEntryDate),
+    },
+    [`incTpl_demo_inc_freelance__${_freelanceEntryDate}`]: {
+      id: `incTpl_demo_inc_freelance__${_freelanceEntryDate}`, date: _freelanceEntryDate,
+      amount: 250, actualAmount: 320, source: 'template_instance',
+      templateId: 'demo_inc_freelance', accountId: 'demo_acc_main', notes: '',
+      paidAt: _isoFromYmd(_freelanceEntryDate),
+      createdAt: _isoFromYmd(_freelanceEntryDate), createdBy: null,
+      updatedAt: _isoFromYmd(_freelanceEntryDate),
+    },
+  };
 
   budgetSettings = {
     ...((typeof budgetSettings === 'object' && budgetSettings) || {}),
@@ -471,6 +542,22 @@ async function _seedDemoData() {
   await dbPut('budgetAccounts',   'budgetAccounts',   budgetAccounts);
   await dbPut('incomeTemplates',  'incomeTemplates',  incomeTemplates);
   await dbPut('incomeEntries',    'incomeEntries',    incomeEntries);
+
+  // Backfill saving instances for the split-payment bills so the demo lands
+  // with visible carry-over progress in the Multi-month bills section and
+  // the dashboard's Carry-over tile. Without this the demo shows £0
+  // saved for both bills and the whole feature looks empty.
+  if (typeof _backfillSavingInstancesForBill === 'function') {
+    const tvBill    = bills.find(b => b.id === 'demo_bill_tv');
+    const primeBill = bills.find(b => b.id === 'demo_bill_prime');
+    if (tvBill)    await _backfillSavingInstancesForBill(tvBill);
+    if (primeBill) await _backfillSavingInstancesForBill(primeBill);
+  }
+  // Also materialise the current month so the user sees this month's bills
+  // and saving instances immediately when they open the Budget tab.
+  if (typeof materialiseMonth === 'function') {
+    await materialiseMonth(ym, { persist: true });
+  }
 
   // Pre-populate the default profile with all four arrays. Without this,
   // the first-run profiles init in init() would only capture items+settings,
@@ -550,7 +637,7 @@ const _DEMO_NUDGE_CONTENT = {
     placement: 'top',
   },
   groceries: {
-    text: "This list is in Stock Check mode — tap items to mark them as needed, then hit Start Shopping to filter to just those.",
+    text: "Multiple lists per store, drag-zone bulk actions, and a Quick List for typing items in fast — try the FAB. This list is in Stock Check mode; hit Start Shopping to filter to what's needed.",
     anchor: '#grocery-list-body',
     placement: 'top',
   },
@@ -560,7 +647,7 @@ const _DEMO_NUDGE_CONTENT = {
     placement: 'top',
   },
   budget: {
-    text: "Bills, transactions, accounts and net worth — all encrypted client-side. Your bank doesn't see anything.",
+    text: "Track recurring bills, see what's safe to spend, and split big bills (annual subscriptions, quarterly TV License) across months — see Multi-month bills at the bottom of Bills. Try Basic Mode in the subnav for a read-only timeline.",
     anchor: '#view-budget',
     placement: 'top',
   },
@@ -29701,14 +29788,30 @@ function renderBudgetBasicMode() {
       <div style="margin-bottom:10px;font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:1px;text-transform:uppercase">${monthLabel}${isFuture ? ' — projected' : ''}</div>
       ${_basicBalanceRow(startLabel, startBalance)}`;
 
+  // Subtotal row helper — shown beneath each event group so the user can
+  // see at a glance what the section adds up to without scanning + adding
+  // the dated rows themselves.
+  const subtotalRow = (label, total, direction) => {
+    const sign = direction === 'in' ? '+' : '−';
+    const color = direction === 'in' ? 'var(--accent2)' : 'var(--text)';
+    return `
+      <div style="display:flex;align-items:center;gap:14px;padding:10px 0;border-top:1px solid var(--border);margin-top:2px">
+        <div style="width:60px;flex-shrink:0"></div>
+        <div style="flex:1;min-width:0;font-size:11px;font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);font-weight:700">${label}</div>
+        <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:${color};flex-shrink:0">${sign}${_money(Math.abs(total))}</div>
+      </div>`;
+  };
+
   if (incomeEvents.length) {
+    const incomeTotal = incomeEvents.reduce((s, e) => s + e.amount, 0);
     html += _basicSectionLabel('Money coming in');
-    html += '<div>' + incomeEvents.map(e => _basicTimelineRow(e.dateLabel, _escapeHtml(e.label), e.amount, 'in')).join('') + '</div>';
+    html += '<div>' + incomeEvents.map(e => _basicTimelineRow(e.dateLabel, _escapeHtml(e.label), e.amount, 'in')).join('') + subtotalRow('Total coming in', incomeTotal, 'in') + '</div>';
   }
 
   if (billEvents.length) {
+    const billsTotal = billEvents.reduce((s, e) => s + e.amount, 0);
     html += _basicSectionLabel('Bills');
-    html += '<div>' + billEvents.map(e => _basicTimelineRow(e.dateLabel, _escapeHtml(e.label), -e.amount, 'out')).join('') + '</div>';
+    html += '<div>' + billEvents.map(e => _basicTimelineRow(e.dateLabel, _escapeHtml(e.label), -e.amount, 'out')).join('') + subtotalRow('Total bills', billsTotal, 'out') + '</div>';
   }
 
   if (carryOver > 0) {
