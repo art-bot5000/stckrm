@@ -14058,6 +14058,17 @@ async function loadBudget() {
       if (Object.keys(billInstances[yyyymm]).length === 0) delete billInstances[yyyymm];
     }
   }
+  // Run the per-month migration over every month we have on hand. This
+  // collapses legacy `__SAV__` keys to the uniform format and purges
+  // phantom instances from the pre-fix _setInstance bug. Cheap when nothing
+  // needs migrating.
+  if (typeof _migrateBillInstancesIfNeeded === 'function') {
+    let touched = false;
+    for (const yyyymm of Object.keys(billInstances)) {
+      if (_migrateBillInstancesIfNeeded(yyyymm)) touched = true;
+    }
+    if (touched) await saveBudgetLocal();
+  }
 }
 
 async function saveBudgetLocal() {
@@ -14201,7 +14212,9 @@ async function _backfillSavingInstancesForBill(template) {
       const dueDate = _isoDate(cursorY, cursorM, dom);
       const yyyymm = `${cursorY}-${String(cursorM + 1).padStart(2, '0')}`;
       if (!billInstances[yyyymm]) billInstances[yyyymm] = {};
-      const key = `${template.id}__SAV__${dueDate}`;
+      // Same uniform key format as payment instances. The `kind` field on
+      // the value distinguishes the instance type.
+      const key = `${template.id}__${dueDate}`;
       if (!billInstances[yyyymm][key]) {
         const perPeriod = Math.round((template.amount / template.splitInto.count) * 100) / 100;
         billInstances[yyyymm][key] = {
@@ -15072,41 +15085,50 @@ function _showBillsImportPreview(items, errors, filename) {
 // billId) signature is preserved for backwards compatibility — when there's
 // exactly one instance per bill per month (the common case), no caller change
 // is needed. When there's ambiguity, callers should pass dueDate explicitly.
-function _getInstance(yyyymm, billId, dueDate = null) {
-  const month = billInstances[yyyymm];
+// Find an instance by billId + dueDate. Looks at every key in the month
+// because keys may have multiple formats: legacy `${billId}`, current
+// `${billId}__${dueDate}`, or split-saving `${billId}__SAV__${dueDate}`.
+// Matching by the instance's own fields rather than the key format avoids
+// silent failures when key conventions change.
+function _findInstanceKey(month, billId, dueDate) {
   if (!month) return null;
+  // Fast path for the standard payment-instance key
   if (dueDate) {
-    return month[`${billId}__${dueDate}`] || null;
+    const standardKey = `${billId}__${dueDate}`;
+    if (month[standardKey]) return standardKey;
   }
-  // Backwards compat: try old-style first, then look for any keyed-by-date match
-  if (month[billId]) return month[billId];
-  // Find first instance matching billId in the new keyed format
+  // Legacy single-key format
+  if (month[billId]) return billId;
+  // Fall back to a scan — covers split-saving keys and any future variants.
   for (const key of Object.keys(month)) {
-    if (key.startsWith(`${billId}__`)) return month[key];
+    const inst = month[key];
+    if (!inst) continue;
+    if (inst.billId !== billId) continue;
+    if (dueDate && inst.dueDate !== dueDate) continue;
+    return key;
   }
   return null;
 }
 
+function _getInstance(yyyymm, billId, dueDate = null) {
+  const month = billInstances[yyyymm];
+  if (!month) return null;
+  const key = _findInstanceKey(month, billId, dueDate);
+  return key ? month[key] : null;
+}
+
 async function _setInstance(yyyymm, billId, patch, dueDate = null) {
   if (!billInstances[yyyymm]) billInstances[yyyymm] = {};
-  // Resolve the actual key. Prefer dueDate if provided.
-  let key;
-  if (dueDate) {
-    key = `${billId}__${dueDate}`;
-  } else if (billInstances[yyyymm][billId]) {
-    // Old-format key still around (pre-migration write) — keep using it
-    key = billId;
-  } else {
-    // New format — find by billId prefix
-    key = Object.keys(billInstances[yyyymm]).find(k => k.startsWith(`${billId}__`));
-    if (!key) {
-      // No instance found — caller probably wants to create one but we don't
-      // know the dueDate; bail with the legacy key
-      key = billId;
-    }
+  const month = billInstances[yyyymm];
+  // Resolve to an existing key so we update in place. If nothing exists,
+  // fall through to the legacy `billId` key (caller is creating fresh).
+  let key = _findInstanceKey(month, billId, dueDate);
+  if (!key) {
+    // No existing instance — create one. Prefer the keyed-by-date format.
+    key = dueDate ? `${billId}__${dueDate}` : billId;
   }
-  const existing = billInstances[yyyymm][key] || {};
-  billInstances[yyyymm][key] = {
+  const existing = month[key] || {};
+  month[key] = {
     ...existing,
     ...patch,
     billId,
@@ -15114,7 +15136,7 @@ async function _setInstance(yyyymm, billId, patch, dueDate = null) {
   };
   await saveBudgetLocal();
   _syncQueue?.enqueue();
-  return billInstances[yyyymm][key];
+  return month[key];
 }
 
 async function markBillPaid(yyyymm, billId, { actualAmount = null, dueDate = null } = {}) {
@@ -19004,16 +19026,46 @@ _frequencyLabel = function(tpl) {
 // Weekly/4-weekly templates can produce multiple instances per month, so we
 // migrate to keys of form `${billId}__${dueDate}`. Old keys are detected by
 // the absence of "__" and rewritten on first read.
+//
+// Phase 5b: also migrates legacy `__SAV__` saving keys to the uniform
+// `billId__dueDate` format. The instance keeps `kind: 'saving'` on the
+// value side, which is what the rest of the code now uses to distinguish
+// saving from payment instances. Also purges any phantom instances that
+// lack a dueDate or expectedAmount — these were created by a pre-fix bug
+// in _setInstance that wrote partial records when the key didn't match.
 function _migrateBillInstancesIfNeeded(yyyymm) {
   const month = billInstances[yyyymm];
   if (!month) return false;
   let migrated = false;
   for (const key of Object.keys(month)) {
-    if (key.includes('__')) continue; // already new format
     const inst = month[key];
-    if (!inst || !inst.billId || !inst.dueDate) continue;
-    const newKey = `${inst.billId}__${inst.dueDate}`;
-    if (newKey === key) continue;
+
+    // Purge phantom instances missing dueDate. These came from the pre-fix
+    // _setInstance bug that wrote partial records when the key lookup
+    // failed (the patch had paidAt etc. but no dueDate/expectedAmount).
+    // Every legitimate instance has a dueDate.
+    if (!inst || !inst.dueDate) {
+      if (inst && !inst.dueDate) {
+        delete month[key];
+        migrated = true;
+      }
+      continue;
+    }
+    if (!inst.billId) continue;
+
+    let newKey = null;
+    if (!key.includes('__')) {
+      // Legacy single-key format
+      newKey = `${inst.billId}__${inst.dueDate}`;
+    } else if (key.includes('__SAV__')) {
+      // Legacy saving key — collapse to uniform format. Make sure the
+      // value has the `kind: 'saving'` discriminator (older split-saving
+      // backfills already set this).
+      newKey = `${inst.billId}__${inst.dueDate}`;
+      if (inst.kind !== 'saving') inst.kind = 'saving';
+    }
+    if (!newKey || newKey === key) continue;
+
     if (month[newKey]) {
       // collision — keep the more-recently-updated one
       const existing = month[newKey];
@@ -19081,7 +19133,11 @@ materialiseMonth = async function(yyyymm, { force = false, persist = true } = {}
       if (!isPaymentMonth && _isSplitBillSavingMonth(tpl, year, month)) {
         const dom    = _clampDayOfMonth(tpl.dayOfMonth || 1, year, month);
         const dueDate = _isoDate(year, month, dom);
-        const savingKey = `${tpl.id}__SAV__${dueDate}`;
+        // Saving instances share the same key format as payment instances
+        // (`billId__dueDate`). They live in different calendar months than
+        // their bill's payment instance so there's no collision. The `kind`
+        // field on the value distinguishes saving from payment.
+        const savingKey = `${tpl.id}__${dueDate}`;
         const perPeriod = Math.round((tpl.amount / tpl.splitInto.count) * 100) / 100;
         if (force || !monthInstances[savingKey]) {
           monthInstances[savingKey] = {
