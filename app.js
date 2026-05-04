@@ -14161,6 +14161,79 @@ async function materialiseMonth(yyyymm, { force = false, persist = true } = {}) 
   return monthInstances;
 }
 
+// Backfill paid saving instances for a split bill's current cycle. For each
+// month strictly before the current calendar month within the active cycle
+// (between previous payment and next payment), creates a saving instance
+// marked `paidAt: nowIso`. Skips months that already have an instance for
+// this bill. Used when a user enables split mode — we credit them with the
+// money they've been setting aside on the bill's natural calendar.
+//
+// We deliberately DON'T auto-pay the current month — the user pays that
+// instance themselves so they have control over when in the month it's
+// recorded.
+async function _backfillSavingInstancesForBill(template) {
+  if (!template || template.paymentStrategy !== 'split') return 0;
+  if (!template.splitInto || !template.splitInto.count) return 0;
+  const today = new Date();
+  const todayY = today.getFullYear();
+  const todayM = today.getMonth();
+  const todayYyyymm = _yyyymm(today);
+
+  // Find the cycle's start: previous payment date or template createdAt,
+  // whichever is later. From there we walk forward month by month.
+  const prevDue = _prevDueDateForTemplate(template, todayYyyymm, /* respectCreatedAt */ false);
+  const createdIso = (template.createdAt || _nowIso()).slice(0, 10);
+  // If a real previous due exists, we anchor on it (split mode = "I save on
+  // bill's calendar"). Else fall back to createdAt.
+  const cycleStartIso = prevDue || createdIso;
+  const cycleStart    = new Date(cycleStartIso + 'T12:00:00');
+
+  let touched = 0;
+  // Walk from the month AFTER cycleStart, up to (but not including) today's month.
+  let cursorY = cycleStart.getFullYear();
+  let cursorM = cycleStart.getMonth() + 1;
+  if (cursorM > 11) { cursorM = 0; cursorY++; }
+  let safety = 0;
+  while (safety++ < 36) { // 3 years horizon
+    if (cursorY > todayY || (cursorY === todayY && cursorM >= todayM)) break;
+    if (_isSplitBillSavingMonth(template, cursorY, cursorM)) {
+      const dom = _clampDayOfMonth(template.dayOfMonth || 1, cursorY, cursorM);
+      const dueDate = _isoDate(cursorY, cursorM, dom);
+      const yyyymm = `${cursorY}-${String(cursorM + 1).padStart(2, '0')}`;
+      if (!billInstances[yyyymm]) billInstances[yyyymm] = {};
+      const key = `${template.id}__SAV__${dueDate}`;
+      if (!billInstances[yyyymm][key]) {
+        const perPeriod = Math.round((template.amount / template.splitInto.count) * 100) / 100;
+        billInstances[yyyymm][key] = {
+          billId:         template.id,
+          dueDate,
+          expectedAmount: perPeriod,
+          actualAmount:   perPeriod,
+          paidAt:         _nowIso(),     // backfilled as already paid
+          paidBy:         _kvEmailHash || null,
+          skipped:        false,
+          source:         'split-saving-backfill',
+          kind:           'saving',
+          updatedAt:      _nowIso(),
+        };
+        touched++;
+        // Track the month as materialised so we don't re-walk later.
+        if (!budgetSettings.materialisedMonths.includes(yyyymm)) {
+          budgetSettings.materialisedMonths.push(yyyymm);
+        }
+      }
+    }
+    cursorM++;
+    if (cursorM > 11) { cursorM = 0; cursorY++; }
+  }
+
+  if (touched > 0) {
+    await saveBudgetLocal();
+    _syncQueue?.enqueue();
+  }
+  return touched;
+}
+
 // ── Bill template CRUD ─────────────────────────────────────────────────────
 async function createBill(input) {
   const tpl = {
@@ -14296,6 +14369,31 @@ function _isSplitBillSavingForMonth(template, viewYyyymm) {
   return true;
 }
 
+// Stricter version of the above — returns true if (year, month) is a
+// saving month for the template based purely on the bill's calendar
+// (between previous and next payment dates), without the createdAt cap.
+// Used by materialiseMonth when deciding whether to generate a saving
+// instance, and by the backfill logic when seeding past saving months.
+function _isSplitBillSavingMonth(template, year, monthZeroIdx) {
+  if (!template || template.archived) return false;
+  if (template.paymentStrategy !== 'split') return false;
+  if (!template.splitInto || !template.splitInto.count) return false;
+  // Payment months don't get saving instances
+  if (shouldBeDueInMonth(template, year, monthZeroIdx)) return false;
+  // Must be within an active cycle: there's a previous payment date AND
+  // a next payment date bracketing this month. For a split bill anchored
+  // to its next payment with no prior cycle, the previous theoretical
+  // payment may predate the template's createdAt — that's fine for our
+  // purposes, the user is asserting they save on the bill's calendar.
+  const yyyymm = `${year}-${String(monthZeroIdx + 1).padStart(2, '0')}`;
+  const prev = _prevDueDateForTemplate(template, yyyymm, /* respectCreatedAt */ false);
+  const next = _nextDueDateForTemplate(template, yyyymm);
+  if (!next) return false;  // bill has no future — don't generate
+  // We need either a prev-due OR fallback to template creation as cycle start.
+  // Either way, the month must fall between cycle-start and next-due.
+  return true;
+}
+
 // For a split bill, given a *viewed* month, returns the cycle progress as
 // it stands at the END of that month (i.e. how much would be saved by the
 // end of the viewed month, assuming the user pays in the per-period amount
@@ -14420,19 +14518,19 @@ function _prevDueDateForTemplate(template, fromYyyymm, respectCreatedAt = true) 
 }
 
 // Returns { accrued, target, slot, totalSlots, perPeriod, cycleAnchorIso,
-// nextDueIso } for a split-strategy bill, or null if the bill isn't split or
-// doesn't have a usable splitInto.
+// nextDueIso, currentMonthIsPayment } for a split-strategy bill, or null
+// if the bill isn't split.
 //
-// Cycle anchor selection (used for the "how much should be saved by now"
-// math):
-//   1. The most recent ACTUAL paid due date — real money out always wins.
-//   2. Else the previous theoretical due date in the bill's calendar.
-//      Picking split mode is the user asserting "I save on this bill's
-//      natural cycle", so we credit them even if the theoretical due
-//      predates when the bill was added to the app.
-//   3. Else the template's createdAt — only used as a fallback when there's
-//      genuinely no prior due in the bill's history (e.g. a brand new
-//      bill anchored to its very first payment month).
+// New (Phase 5b) model: carry-over is derived from ACTUAL paid saving
+// instances within the current cycle. Each saving month creates a saving
+// instance the user marks paid; doing so adds its per-period amount to
+// carry-over. The payment-month instance is the existing full-amount bill.
+//
+// `currentMonthIsPayment`: true when the bill's payment-month instance
+// exists in the current calendar month and is unpaid. In that case the UI
+// should NOT include this bill in the carry-over total because the bill
+// itself appears in the regular bills list with the full amount, and the
+// previously-saved portion will be released by paying it.
 function getBillCarryOver(template, todayIso = null) {
   if (!template || template.archived) return null;
   if (template.paymentStrategy !== 'split') return null;
@@ -14443,44 +14541,104 @@ function getBillCarryOver(template, todayIso = null) {
 
   const today = todayIso || new Date().toISOString().slice(0, 10);
   const todayYyyymm = today.slice(0, 7);
+  const perPeriod = Math.round((amount / split.count) * 100) / 100;
 
-  const lastPaid   = _lastPaidDueDate(template.id);
-  const prevDue    = _prevDueDateForTemplate(template, todayYyyymm, /* respectCreatedAt */ false);
-  const createdIso = (template.createdAt || _nowIso()).slice(0, 10);
-
-  let anchorIso;
-  if (lastPaid && lastPaid <= today) {
-    anchorIso = lastPaid;
-  } else if (prevDue && prevDue <= today) {
-    anchorIso = prevDue;
+  // Find the cycle's start. Priority:
+  //   1. Most recent paid PAYMENT instance (real money out — wins).
+  //   2. Else previous theoretical payment in the bill's calendar (for bills
+  //      added mid-cycle, the user is asserting "I save on this calendar"
+  //      so we anchor on the last theoretical payment).
+  //   3. Else createdAt — fallback for brand-new bills with no prior cycle.
+  const lastPaidPayment = _lastPaidPaymentDueDate(template.id);
+  const prevTheoretical = _prevDueDateForTemplate(template, todayYyyymm, /* respectCreatedAt */ false);
+  const createdIso      = (template.createdAt || _nowIso()).slice(0, 10);
+  let cycleStartIso;
+  if (lastPaidPayment && lastPaidPayment <= today) {
+    cycleStartIso = lastPaidPayment;
+  } else if (prevTheoretical && prevTheoretical <= today) {
+    cycleStartIso = prevTheoretical;
   } else {
-    anchorIso = createdIso;
+    cycleStartIso = createdIso;
   }
 
-  const elapsed = Math.max(0, _periodsBetween(anchorIso, today, split.unit));
-  const slot = Math.min(elapsed, split.count);
-  const perPeriod = Math.round((amount / split.count) * 100) / 100;
-  const accrued = Math.round(perPeriod * slot * 100) / 100;
+  // Find the next-due payment instance — that's where the current cycle ends.
+  const nextDueIso = _nextDueDate(template.id)
+                  || _nextDueDateForTemplate(template, todayYyyymm);
+
+  // Sum paid SAVING instances strictly between cycleStartIso (exclusive)
+  // and nextDueIso (exclusive — the payment month doesn't count toward
+  // carry-over since paying that bill is what closes the cycle).
+  let accrued = 0;
+  let slot = 0;
+  for (const yyyymm of Object.keys(billInstances)) {
+    for (const key of Object.keys(billInstances[yyyymm])) {
+      const inst = billInstances[yyyymm][key];
+      if (inst.billId !== template.id) continue;
+      if (inst.kind !== 'saving') continue;
+      if (!inst.paidAt) continue;
+      if (inst.skipped) continue;
+      if (cycleStartIso && inst.dueDate <= cycleStartIso) continue;
+      if (nextDueIso && inst.dueDate >= nextDueIso) continue;
+      accrued += (inst.actualAmount ?? inst.expectedAmount) || 0;
+      slot++;
+    }
+  }
+  accrued = Math.round(accrued * 100) / 100;
+
+  // Is the bill due THIS calendar month and unpaid? If so, the bill itself
+  // covers the full amount in the bills list — we exclude this bill's
+  // carry-over from the dashboard total to avoid double-counting.
+  let currentMonthIsPayment = false;
+  if (nextDueIso && nextDueIso.slice(0, 7) === todayYyyymm) {
+    // Look up the actual instance for this payment date
+    const payInst = billInstances[todayYyyymm]?.[`${template.id}__${nextDueIso}`];
+    if (payInst && !payInst.paidAt && !payInst.skipped) {
+      currentMonthIsPayment = true;
+    }
+  }
 
   return {
     accrued,
     target: amount,
     perPeriod,
-    slot,                  // 0..splitInto.count
+    slot,                       // count of paid saving instances in current cycle
     totalSlots: split.count,
-    cycleAnchorIso: anchorIso,
-    nextDueIso:    _nextDueDate(template.id) || _nextDueDateForTemplate(template, todayYyyymm),
-    unit:          split.unit,
+    cycleAnchorIso: cycleStartIso,
+    nextDueIso,
+    unit:           split.unit,
+    currentMonthIsPayment,
   };
 }
 
+// Returns the dueDate of the most recent paid PAYMENT instance for this
+// bill. Used to anchor the start of the current saving cycle.
+function _lastPaidPaymentDueDate(billId) {
+  let latest = null;
+  for (const yyyymm of Object.keys(billInstances)) {
+    for (const key of Object.keys(billInstances[yyyymm])) {
+      const inst = billInstances[yyyymm][key];
+      if (inst.billId !== billId) continue;
+      // Only payment instances start a new cycle. Saving instances don't.
+      if (inst.kind === 'saving') continue;
+      if (!inst.paidAt) continue;
+      if (!latest || (inst.dueDate || '') > latest) latest = inst.dueDate || null;
+    }
+  }
+  return latest;
+}
+
 // Sum of all active split bills' accrued amounts. Used by the dashboard tile.
+// Bills currently in their payment month (where the bill itself is in the
+// regular bills list as the full amount) are EXCLUDED from the total — the
+// carry-over for those bills is conceptually "consumed" by the upcoming
+// full payment, so counting it in the dashboard total would double-count.
 function getTotalCarryOver() {
   let total = 0;
   const breakdown = [];
   for (const tpl of bills) {
     const co = getBillCarryOver(tpl);
     if (!co) continue;
+    if (co.currentMonthIsPayment) continue;
     total += co.accrued;
     breakdown.push({ template: tpl, ...co });
   }
@@ -14991,6 +15149,9 @@ function getLeftToPay(yyyymm) {
   for (const inst of Object.values(instances)) {
     if (inst.skipped) continue;
     if (inst.paidAt)   continue;
+    // Saving instances are paper-only — paying them doesn't move money,
+    // so they don't belong in the dashboard's "money still owed this month" tile.
+    if (inst.kind === 'saving') continue;
     total += (inst.actualAmount ?? inst.expectedAmount) || 0;
   }
   return Math.round(total * 100) / 100;
@@ -15002,6 +15163,7 @@ function getPaidSoFar(yyyymm) {
   for (const inst of Object.values(instances)) {
     if (inst.skipped) continue;
     if (!inst.paidAt) continue;
+    if (inst.kind === 'saving') continue;
     total += (inst.actualAmount ?? inst.expectedAmount) || 0;
   }
   return Math.round(total * 100) / 100;
@@ -15426,16 +15588,18 @@ function renderBudgetBills() {
   paid.sort((a, b)    => (b.paidAt || '').localeCompare(a.paidAt || ''));
   skipped.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 
-  // Templates not active in this month + not archived. Split bills currently
-  // saving up for a future due date get their own "Saving up" section, so
-  // exclude them from the generic "Other bills" list.
+  // Templates not active in this month + not archived. Split bills with
+  // saving instances in this month appear in the Due/Paid/Skipped sections
+  // already (saving instances are real bill instances now), so we don't
+  // need to filter them out of "Other bills" — but we DO want to hide
+  // split bills that have an instance of any kind in this month, since
+  // they're already represented above.
   const { year, month } = _parseYyyymm(yyyymm);
-  const savingUpTemplates = bills.filter(b => _isSplitBillSavingForMonth(b, yyyymm));
-  const savingUpIds = new Set(savingUpTemplates.map(b => b.id));
+  const billIdsWithInstanceThisMonth = new Set(all.map(i => i.billId));
   const inactiveTemplates = bills.filter(b =>
        !b.archived
     && !shouldBeDueInMonth(b, year, month)
-    && !savingUpIds.has(b.id)
+    && !billIdsWithInstanceThisMonth.has(b.id)
   );
   const archivedTemplates = bills.filter(b => b.archived);
 
@@ -15444,19 +15608,11 @@ function renderBudgetBills() {
   _renderBillSection('budget-bills-paid',    paid.map(i => _renderBillRow(i)),    paid.length);
   _renderBillSection('budget-bills-skipped', skipped.map(i => _renderBillRow(i)), skipped.length);
 
-  // "Saving up" — split bills accumulating for a future due date
+  // The "Saving up" separate section was removed in Phase 5b — saving
+  // instances are now real bill instances and appear in the regular
+  // Due/Paid/Skipped sections above. Hide the legacy section if present.
   const savingSection = document.getElementById('budget-bills-savingup-section');
-  const savingList    = document.getElementById('budget-bills-savingup-list');
-  const savingCount   = document.getElementById('budget-bills-savingup-count');
-  if (savingSection && savingList && savingCount) {
-    if (savingUpTemplates.length) {
-      savingSection.style.display = '';
-      savingCount.textContent     = savingUpTemplates.length;
-      savingList.innerHTML        = `<div class="bill-list">${savingUpTemplates.map(t => _renderSavingUpBillRow(t, yyyymm)).join('')}</div>`;
-    } else {
-      savingSection.style.display = 'none';
-    }
-  }
+  if (savingSection) savingSection.style.display = 'none';
 
   // "Other bills" — templates inactive this month
   const otherSection = document.getElementById('budget-bills-other-section');
@@ -15486,23 +15642,18 @@ function renderBudgetBills() {
     }
   }
 
-  // Summary — total includes both real instances and the per-period set-
-  // asides for split bills currently saving for a future due date.
+  // Summary — totals all instances (saving + payment) for the month.
   const summary = document.getElementById('budget-bills-summary');
   if (summary) {
-    let expectedTotal = all.filter(i => !i.skipped)
+    const expectedTotal = all.filter(i => !i.skipped)
       .reduce((s, i) => s + ((i.actualAmount ?? i.expectedAmount) || 0), 0);
-    let savingUpTotal = 0;
-    for (const tpl of savingUpTemplates) {
-      const progress = getBillCycleProgressForMonth(tpl, yyyymm);
-      if (progress) savingUpTotal += progress.perPeriod;
-    }
-    expectedTotal += savingUpTotal;
-    const totalCount = all.length + savingUpTemplates.length;
-    const savingNote = savingUpTotal > 0
-      ? ` <span style="color:var(--accent2)">(incl. ${_money(savingUpTotal)} set aside)</span>`
+    const savingCount = all.filter(i => i.kind === 'saving' && !i.skipped).length;
+    const savingTotal = all.filter(i => i.kind === 'saving' && !i.skipped)
+      .reduce((s, i) => s + ((i.actualAmount ?? i.expectedAmount) || 0), 0);
+    const savingNote = savingCount > 0
+      ? ` <span style="color:var(--accent2)">(incl. ${_money(savingTotal)} set aside)</span>`
       : '';
-    summary.innerHTML = `${totalCount} bill${totalCount !== 1 ? 's' : ''} this month · expected total <strong style="color:var(--text)">${_money(expectedTotal)}</strong>${savingNote}`;
+    summary.innerHTML = `${all.length} bill${all.length !== 1 ? 's' : ''} this month · expected total <strong style="color:var(--text)">${_money(expectedTotal)}</strong>${savingNote}`;
   }
 }
 
@@ -15527,6 +15678,9 @@ function _renderBillRow(inst, opts = {}) {
   const isSkipped = !!inst.skipped;
   const today     = new Date().toISOString().slice(0, 10);
   const isOverdue = !isPaid && !isSkipped && inst.dueDate < today;
+  // Phase 5b: saving instances are paper-only set-asides for split bills.
+  // Visually distinct (piggy-bank icon, accent2 colour, "Saving" tag).
+  const isSaving = inst.kind === 'saving';
 
   let stateClass = '';
   if (isPaid)         stateClass = 'is-paid';
@@ -15551,14 +15705,20 @@ function _renderBillRow(inst, opts = {}) {
     metaText = _relativeDay(inst.dueDate);
   }
 
-  // Phase 5: split-payment indicator. For unpaid instances of split bills,
-  // show "Slot N of M · saved £X" so the user sees their progress through
-  // the cycle at a glance.
+  // Saving-instance specific meta: show the next payment month so it's
+  // clear what we're saving for. Replace the standard splitMeta entirely.
   let splitMeta = '';
-  if (tpl && tpl.paymentStrategy === 'split' && !isPaid && !isSkipped) {
+  if (isSaving && tpl) {
     const co = getBillCarryOver(tpl);
-    if (co) {
-      splitMeta = ` · <span style="color:var(--accent2)">${co.slot}/${co.totalSlots} · ${_money(co.accrued)} saved</span>`;
+    if (co && co.nextDueIso) {
+      const dueWhen = new Date(co.nextDueIso + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+      splitMeta = ` · <span style="color:var(--accent2)">saving for ${dueWhen}</span>`;
+    }
+  } else if (tpl && tpl.paymentStrategy === 'split' && !isPaid && !isSkipped) {
+    // Payment-instance of a split bill — show how much is already set aside
+    const co = getBillCarryOver(tpl);
+    if (co && co.accrued > 0) {
+      splitMeta = ` · <span style="color:var(--accent2)">${_money(co.accrued)} already saved</span>`;
     }
   }
 
@@ -15570,19 +15730,29 @@ function _renderBillRow(inst, opts = {}) {
     actions = `<button class="bill-action-btn" onclick="event.stopPropagation();handleBillUnskip('${yyyymm}','${inst.billId}','${inst.dueDate}')" title="Unskip"><svg aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>`;
   } else {
     actions =
-      `<button class="bill-action-btn bill-action-paid" onclick="event.stopPropagation();handleBillPay('${yyyymm}','${inst.billId}','${inst.dueDate}')" title="Mark paid"><svg aria-hidden="true"><use href="#i-check"></use></svg></button>` +
+      `<button class="bill-action-btn bill-action-paid" onclick="event.stopPropagation();handleBillPay('${yyyymm}','${inst.billId}','${inst.dueDate}')" title="${isSaving ? 'Mark set aside' : 'Mark paid'}"><svg aria-hidden="true"><use href="#i-check"></use></svg></button>` +
       `<button class="bill-action-btn bill-action-skip" onclick="event.stopPropagation();handleBillSkip('${yyyymm}','${inst.billId}','${inst.dueDate}')" title="Skip this month"><svg aria-hidden="true"><use href="#i-x"></use></svg></button>` +
       `<button class="bill-action-btn bill-action-edit" onclick="event.stopPropagation();openBillEditor('${inst.billId}')" title="Edit bill"><svg aria-hidden="true"><use href="#i-pencil"></use></svg></button>`;
   }
 
+  // Saving instances: piggy-bank icon in place of the day, accent2-coloured
+  // amount, and a "SAVING" tag next to the name.
+  const dayCell = isSaving
+    ? `<div class="bill-day" style="color:var(--accent2);border-color:rgba(91,141,238,0.4);background:rgba(91,141,238,0.08)"><svg style="width:14px;height:14px" aria-hidden="true"><use href="#i-piggy-bank"></use></svg></div>`
+    : `<div class="bill-day">${day}</div>`;
+  const savingTag = isSaving
+    ? `<span class="bill-tag" style="background:rgba(91,141,238,0.15);color:var(--accent2);border-color:rgba(91,141,238,0.3);font-size:9px">SAVING</span>`
+    : '';
+  const amountStyle = isSaving ? 'color:var(--accent2)' : '';
+
   return `
     <div class="bill-row ${stateClass}" onclick="openBillEditor('${inst.billId}')">
-      <div class="bill-day">${day}</div>
+      ${dayCell}
       <div class="bill-info">
-        <div class="bill-name">${_escapeHtml(name)} ${variableTag}</div>
+        <div class="bill-name">${_escapeHtml(name)} ${variableTag}${savingTag}</div>
         <div class="bill-meta">${metaText}${splitMeta}</div>
       </div>
-      <div class="bill-amount ${tpl?.variableAmount && !isPaid ? 'is-variable' : ''}">${_money(amount)}</div>
+      <div class="bill-amount ${tpl?.variableAmount && !isPaid && !isSaving ? 'is-variable' : ''}" style="${amountStyle}">${_money(amount)}</div>
       <div class="bill-actions">${actions}</div>
     </div>`;
 }
@@ -15659,6 +15829,15 @@ async function handleBillPay(yyyymm, billId, dueDate = null) {
   const tpl = bills.find(b => b.id === billId);
   const inst = _getInstance(yyyymm, billId, dueDate);
   if (!tpl || !inst) return;
+  // Saving instances are paper-only set-asides — fixed amount, no prompt,
+  // distinct toast wording so the user understands it's a budget action,
+  // not a payment that left the account.
+  if (inst.kind === 'saving') {
+    await markBillPaid(yyyymm, billId, { dueDate: inst.dueDate });
+    await renderBudget();
+    toast(`${_money(inst.expectedAmount)} set aside for ${tpl.name}`);
+    return;
+  }
   // For variable bills, prompt for actual amount
   if (tpl.variableAmount) {
     _budgetMarkPaidContext = { yyyymm, billId, dueDate: inst.dueDate, expected: inst.expectedAmount };
@@ -17686,6 +17865,9 @@ function _eventsOnDay(account, dayIso) {
   const materialisedBillIds = new Set();
   for (const inst of Object.values(bi)) {
     if (inst.dueDate !== dayIso) continue;
+    // Phase 5b: saving instances are paper-only — they don't move money
+    // out of the account, so they should never be projection events.
+    if (inst.kind === 'saving') continue;
     materialisedBillIds.add(inst.billId);
     if (inst.skipped || inst.paidAt) continue; // already paid/skipped — not a future event
     const tpl = bills.find(b => b.id === inst.billId);
@@ -18826,8 +19008,41 @@ materialiseMonth = async function(yyyymm, { force = false, persist = true } = {}
         paidBy:         null,
         skipped:        false,
         source:         'manual',
+        kind:           'payment',  // explicit for split-bill clarity
         updatedAt:      _nowIso(),
       };
+    }
+
+    // Phase 5: split-strategy bills also get a "saving" instance for each
+    // saving month between their payment dates. Saving instances are paper-
+    // only — they don't move money out of the account. Marking one paid
+    // adds its per-period amount to the bill's carry-over.
+    if (tpl.paymentStrategy === 'split' && tpl.splitInto && tpl.splitInto.count) {
+      // Only create a saving instance if (a) this month isn't a payment
+      // month for the bill, and (b) the month falls within an active
+      // saving cycle (between two payments, or after the bill's first
+      // saving month if it's brand new).
+      const isPaymentMonth = dates.length > 0;
+      if (!isPaymentMonth && _isSplitBillSavingMonth(tpl, year, month)) {
+        const dom    = _clampDayOfMonth(tpl.dayOfMonth || 1, year, month);
+        const dueDate = _isoDate(year, month, dom);
+        const savingKey = `${tpl.id}__SAV__${dueDate}`;
+        const perPeriod = Math.round((tpl.amount / tpl.splitInto.count) * 100) / 100;
+        if (force || !monthInstances[savingKey]) {
+          monthInstances[savingKey] = {
+            billId:         tpl.id,
+            dueDate,
+            expectedAmount: perPeriod,
+            actualAmount:   null,
+            paidAt:         null,
+            paidBy:         null,
+            skipped:        false,
+            source:         'split-saving',
+            kind:           'saving',
+            updatedAt:      _nowIso(),
+          };
+        }
+      }
     }
   }
   const billsChanged = force || (Object.keys(monthInstances).length !== beforeBillKeys.size);
@@ -18947,6 +19162,9 @@ _eventsOnDay = function(account, dayIso) {
   for (const key of Object.keys(bi)) {
     const inst = bi[key];
     if (inst.dueDate !== dayIso) continue;
+    // Phase 5b: saving instances are paper-only — they don't move money
+    // out of the account, so they should never be projection events.
+    if (inst.kind === 'saving') continue;
     materialisedBillKeysOnDay.add(`${inst.billId}__${inst.dueDate}`);
     if (inst.skipped || inst.paidAt) continue;
     const tpl = bills.find(b => b.id === inst.billId);
@@ -19295,12 +19513,23 @@ saveBillFromEditor = async function() {
 
   const patch = { name, amount, variableAmount, dayOfMonth, notes, frequency, paymentStrategy, splitInto };
 
+  let savedBill;
   if (_budgetEditingBillId) {
-    await updateBill(_budgetEditingBillId, patch);
+    savedBill = await updateBill(_budgetEditingBillId, patch);
     toast('Bill updated');
   } else {
-    await createBill(patch);
+    savedBill = await createBill(patch);
     toast('Bill added');
+  }
+
+  // Phase 5: if the bill is split-strategy, backfill paid saving instances
+  // for past months in the current cycle. Idempotent (skips months that
+  // already have an instance). User stays in control of the current month.
+  if (savedBill && savedBill.paymentStrategy === 'split') {
+    const backfilled = await _backfillSavingInstancesForBill(savedBill);
+    if (backfilled > 0) {
+      toast(`${backfilled} prior saving month${backfilled === 1 ? '' : 's'} credited`);
+    }
   }
 
   await materialiseMonth(_budgetViewMonth, { persist: true });
