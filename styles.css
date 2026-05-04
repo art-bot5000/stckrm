@@ -2115,23 +2115,28 @@ body.note-open { overflow: hidden; touch-action: none; }
 .bill-row .bill-actions {
   display: flex; gap: 4px; flex-shrink: 0;
 }
-.bill-row .bill-action-btn {
+/* Action buttons used inside .bill-row AND inside the multi-month timeline
+   modal. Originally scoped to .bill-row, but unscoping lets the same
+   styling apply in the modal's per-month rows without duplicating CSS. */
+.bill-action-btn {
   width: 30px; height: 30px; border-radius: 6px;
   background: transparent; border: 1px solid transparent;
   color: var(--muted); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   transition: all 0.12s;
+  flex-shrink: 0;
+  padding: 0;
 }
-.bill-row .bill-action-btn:hover {
+.bill-action-btn:hover {
   background: rgba(255,255,255,0.06);
   border-color: var(--border);
   color: var(--text);
 }
-.bill-row .bill-action-btn.bill-action-paid:hover { color: var(--ok); }
-.bill-row .bill-action-btn.bill-action-skip:hover { color: var(--warn); }
-.bill-row .bill-action-btn.bill-action-edit:hover { color: var(--accent); }
+.bill-action-btn.bill-action-paid:hover { color: var(--ok); }
+.bill-action-btn.bill-action-skip:hover { color: var(--warn); }
+.bill-action-btn.bill-action-edit:hover { color: var(--accent); }
 
-.bill-row .bill-action-btn svg { width: 16px; height: 16px; }
+.bill-action-btn svg { width: 16px; height: 16px; }
 
 /* Variable-amount tag */
 .bill-tag {

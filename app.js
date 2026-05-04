@@ -15645,15 +15645,13 @@ function renderBudgetBills() {
   const allRaw    = Object.values(instances);
 
   // Phase 5c: split-strategy bills get their own section at the bottom.
-  // Their saving + payment instances are pulled out of the regular Due/
-  // Paid/Skipped lists so those stay focused on lump-sum bills only. The
-  // dedicated section + timeline modal is the canonical place to interact
-  // with split bills.
-  const isSplitBill = (billId) => {
-    const tpl = bills.find(b => b.id === billId);
-    return tpl && tpl.paymentStrategy === 'split';
-  };
-  const all     = allRaw.filter(i => !isSplitBill(i.billId));
+  // Their SAVING instances are pulled out of the regular Due/Paid/Skipped
+  // lists, but their PAYMENT-month instance still appears in the regular
+  // sections too (so the user sees the upcoming bill alongside their
+  // lump-sum bills). Once paid, the payment instance disappears from Due
+  // and stays in the multi-month timeline; the carry-over for that bill
+  // also resets.
+  const all     = allRaw.filter(i => i.kind !== 'saving');
   const due     = all.filter(i => !i.skipped && !i.paidAt);
   const paid    = all.filter(i => !i.skipped &&  i.paidAt);
   const skipped = all.filter(i =>  i.skipped);
@@ -15742,12 +15740,27 @@ function renderBudgetBills() {
 
   // Summary — counts BOTH lump-sum instances and multi-month bills (one
   // count per template, since the timeline encapsulates the cycle).
+  // Payment-month split bills appear in both Due and Multi-month sections
+  // for UX, but should only be counted ONCE in the total. Subtract those
+  // overlaps.
   const summary = document.getElementById('budget-bills-summary');
   if (summary) {
     const lumpTotal = all.filter(i => !i.skipped)
       .reduce((s, i) => s + ((i.actualAmount ?? i.expectedAmount) || 0), 0);
-    const totalCount = all.length + multiMonthTemplates.length;
-    summary.innerHTML = `${totalCount} bill${totalCount !== 1 ? 's' : ''} this month · expected total <strong style="color:var(--text)">${_money(lumpTotal)}</strong>`;
+    // How many of the multi-month templates also have an instance in `all`
+    // this month? Those are the duplicates to subtract.
+    const splitBillIdsInAll = new Set(
+      all.filter(i => splitBillIds.has(i.billId)).map(i => i.billId)
+    );
+    const totalCount = all.length + multiMonthTemplates.length - splitBillIdsInAll.size;
+    let carryNote = '';
+    if (typeof getTotalCarryOver === 'function') {
+      const co = getTotalCarryOver();
+      if (co && co.total > 0 && co.breakdown.length > 0) {
+        carryNote = ` <span style="color:var(--accent2)">(including ${_money(co.total)} carrying forward for ${co.breakdown.length} bill${co.breakdown.length === 1 ? '' : 's'})</span>`;
+      }
+    }
+    summary.innerHTML = `${totalCount} bill${totalCount !== 1 ? 's' : ''} this month · expected total <strong style="color:var(--text)">${_money(lumpTotal)}</strong>${carryNote}`;
   }
 }
 
@@ -28228,7 +28241,7 @@ function openMultiMonthTimeline(billId) {
   const listEl     = document.getElementById('mmtl-list');
   const editBtnEl  = document.getElementById('mmtl-edit-btn');
   if (nameEl) nameEl.textContent = tpl.name;
-  if (subEl)  subEl.textContent  = `${_money(tpl.amount)} every ${_frequencyLabel(tpl).toLowerCase()}`;
+  if (subEl)  subEl.textContent  = `${_money(tpl.amount)} ${_frequencyLabel(tpl).toLowerCase()}`;
 
   if (co && statusEl) statusEl.textContent = `${co.slot} of ${co.totalSlots} months saved`;
   if (co && progAmtEl) progAmtEl.textContent = `${_money(co.accrued)} / ${_money(co.target)}`;
