@@ -14234,6 +14234,42 @@ async function _backfillSavingInstancesForBill(template) {
   return touched;
 }
 
+// Auto-roll unpaid saving instances from past months into "paid" so that
+// when the user opens a new month, the previous month's saving (if not
+// manually paid) is automatically credited to carry-over. The user keeps
+// control during the current month — only strictly-past-month instances
+// are rolled.
+//
+// Called from renderBudget so it runs lazily on every dashboard view.
+// Cheap: skips instantly if there's nothing to roll.
+async function _autoRollPastSavingInstances() {
+  const today = new Date();
+  const todayMonthStart = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
+  let touched = 0;
+  for (const yyyymm of Object.keys(billInstances)) {
+    // Only sweep months strictly before the current month
+    if (yyyymm >= todayMonthStart.slice(0, 7)) continue;
+    for (const key of Object.keys(billInstances[yyyymm])) {
+      const inst = billInstances[yyyymm][key];
+      if (inst.kind !== 'saving') continue;
+      if (inst.paidAt) continue;
+      if (inst.skipped) continue;
+      // Mark as auto-rolled: paidAt set, source flagged so we can tell it
+      // apart from manually-paid in the future if needed.
+      inst.paidAt       = _nowIso();
+      inst.actualAmount = inst.actualAmount ?? inst.expectedAmount;
+      inst.source       = 'split-saving-autoroll';
+      inst.updatedAt    = _nowIso();
+      touched++;
+    }
+  }
+  if (touched > 0) {
+    await saveBudgetLocal();
+    _syncQueue?.enqueue();
+  }
+  return touched;
+}
+
 // ── Bill template CRUD ─────────────────────────────────────────────────────
 async function createBill(input) {
   const tpl = {
@@ -14632,6 +14668,8 @@ function _lastPaidPaymentDueDate(billId) {
 // regular bills list as the full amount) are EXCLUDED from the total — the
 // carry-over for those bills is conceptually "consumed" by the upcoming
 // full payment, so counting it in the dashboard total would double-count.
+// Bills with no accrued amount yet are excluded from the breakdown to keep
+// the modal focused on bills that actually have money set aside.
 function getTotalCarryOver() {
   let total = 0;
   const breakdown = [];
@@ -14640,7 +14678,7 @@ function getTotalCarryOver() {
     if (!co) continue;
     if (co.currentMonthIsPayment) continue;
     total += co.accrued;
-    breakdown.push({ template: tpl, ...co });
+    if (co.accrued > 0) breakdown.push({ template: tpl, ...co });
   }
   return { total: Math.round(total * 100) / 100, breakdown };
 }
@@ -15367,6 +15405,10 @@ async function renderBudget() {
   if (!_budgetViewMonth) _budgetViewMonth = _yyyymm(new Date());
   // Materialise on first view of any month (idempotent)
   await materialiseMonth(_budgetViewMonth, { persist: true });
+  // Auto-roll past-month unpaid saving instances into "paid" so carry-over
+  // self-heals across month boundaries even if the user hasn't opened the
+  // app for a while. Cheap when there's nothing to roll.
+  await _autoRollPastSavingInstances();
 
   _updateBudgetMonthLabel();
   _refreshBudgetEmptyState();
@@ -15677,10 +15719,12 @@ function _renderBillRow(inst, opts = {}) {
   const isPaid    = !!inst.paidAt;
   const isSkipped = !!inst.skipped;
   const today     = new Date().toISOString().slice(0, 10);
-  const isOverdue = !isPaid && !isSkipped && inst.dueDate < today;
   // Phase 5b: saving instances are paper-only set-asides for split bills.
   // Visually distinct (piggy-bank icon, accent2 colour, "Saving" tag).
   const isSaving = inst.kind === 'saving';
+  // Saving instances aren't "overdue" — the user has the whole month to
+  // mark them set aside, and unpaid ones auto-roll at month boundary.
+  const isOverdue = !isPaid && !isSkipped && !isSaving && inst.dueDate < today;
 
   let stateClass = '';
   if (isPaid)         stateClass = 'is-paid';
@@ -15696,9 +15740,16 @@ function _renderBillRow(inst, opts = {}) {
     metaText = _relativeDay(inst.dueDate);
   } else if (isPaid) {
     const paidWhen = new Date(inst.paidAt);
-    metaText = `Paid ${paidWhen.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
+    if (isSaving && (inst.source === 'split-saving-autoroll' || inst.source === 'split-saving-backfill')) {
+      metaText = `Set aside (auto)`;
+    } else {
+      metaText = `Paid ${paidWhen.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
+    }
   } else if (isSkipped) {
     metaText = 'Skipped';
+  } else if (isSaving) {
+    // Saving instances have all month to be paid; no overdue framing.
+    metaText = 'Set aside this month';
   } else if (isOverdue) {
     metaText = `${Math.abs(_daysFromToday(inst.dueDate))} days overdue`;
   } else {
@@ -15917,24 +15968,9 @@ function openBillEditor(billId = null) {
   const splitRadio = document.querySelector('input[name="bill-payment-strategy"][value="split"]');
   if (lumpRadio)  lumpRadio.checked  = (strategy === 'lump');
   if (splitRadio) splitRadio.checked = (strategy === 'split');
-  // Default the split-into fields. If the bill already has a splitInto use
-  // it, otherwise suggest one based on the frequency.
-  const suggested = tpl?.splitInto || _suggestSplitInto(freq) || { unit: 'month', count: 3 };
-  const countEl = document.getElementById('bill-split-count');
-  const unitEl  = document.getElementById('bill-split-unit');
-  if (countEl) {
-    countEl.value = String(suggested.count);
-    // If editing an existing bill that already has its own split values,
-    // mark as user-edited so frequency changes don't overwrite. For new
-    // bills, leave the flag clear so suggestions auto-update.
-    if (tpl?.splitInto) countEl.dataset.userEdited = '1';
-    else delete countEl.dataset.userEdited;
-  }
-  if (unitEl) {
-    unitEl.value = suggested.unit;
-    if (tpl?.splitInto) unitEl.dataset.userEdited = '1';
-    else delete unitEl.dataset.userEdited;
-  }
+  // Hidden inputs are now auto-populated by _refreshBillSplitVisibility from
+  // the bill's frequency. We don't need to seed them from the template since
+  // splitInto is always derived to match the cycle.
 
   billOnFreqPresetChange();
   _refreshBillVariableHint();
@@ -15975,19 +16011,23 @@ function billOnFreqPresetChange() {
 function _refreshBillSplitVisibility() {
   const preset    = document.getElementById('bill-frequency-preset')?.value;
   const customInt = parseInt(document.getElementById('bill-custom-interval')?.value, 10);
+  const customUnit = document.getElementById('bill-custom-unit')?.value || 'month';
   let freq;
   if (preset === 'monthly')           freq = { unit: 'month', interval: 1 };
   else if (preset === 'quarterly')    freq = { unit: 'month', interval: 3 };
   else if (preset === 'six_monthly')  freq = { unit: 'month', interval: 6 };
   else if (preset === 'annual')       freq = { unit: 'year',  interval: 1 };
-  else                                freq = { unit: 'month', interval: Math.max(1, customInt || 2) };
+  else if (preset === 'custom') {
+    if (customUnit === 'year')        freq = { unit: 'year',  interval: Math.max(1, customInt || 1) };
+    else                              freq = { unit: 'month', interval: Math.max(1, customInt || 2) };
+  } else                              freq = { unit: 'month', interval: Math.max(1, customInt || 2) };
 
   const section   = document.getElementById('bill-payment-strategy-section');
   const splitRow  = document.getElementById('bill-split-row');
   const canSplit  = _billCanSplit(freq);
   if (section)  section.style.display  = canSplit ? 'block' : 'none';
 
-  // If split is hidden, force lump and clear the row visibility.
+  // If split isn't applicable (monthly bills), force lump and bail.
   if (!canSplit) {
     const lumpRadio = document.querySelector('input[name="bill-payment-strategy"][value="lump"]');
     if (lumpRadio) lumpRadio.checked = true;
@@ -15998,15 +16038,30 @@ function _refreshBillSplitVisibility() {
   const splitRadio = document.querySelector('input[name="bill-payment-strategy"][value="split"]');
   if (splitRow) splitRow.style.display = splitRadio?.checked ? 'block' : 'none';
 
-  // When custom interval changes, refresh the suggested split count if user
-  // hasn't typed in their own value yet (heuristic: if it matches the prior
-  // suggestion, update it; otherwise leave alone).
-  const suggestion = _suggestSplitInto(freq);
+  // Auto-derive split from frequency. The user can no longer override —
+  // keeping the split locked to the cycle keeps the math consistent across
+  // all cycles, and means a quarterly bill always splits across exactly 3
+  // months, an annual across 12, and so on.
+  const auto = _suggestSplitInto(freq) || { unit: 'month', count: 1 };
   const countEl = document.getElementById('bill-split-count');
   const unitEl  = document.getElementById('bill-split-unit');
-  if (suggestion && countEl && unitEl && countEl.dataset.userEdited !== '1') {
-    countEl.value = String(suggestion.count);
-    unitEl.value  = suggestion.unit;
+  if (countEl) countEl.value = String(auto.count);
+  if (unitEl)  unitEl.value  = auto.unit;
+
+  // Populate the read-only info text. Computes the per-period amount from
+  // whatever's currently in the amount field.
+  const infoEl = document.getElementById('bill-split-info');
+  if (infoEl) {
+    const amt = parseFloat(document.getElementById('bill-amount')?.value);
+    const unitLabel = auto.unit === 'week'
+      ? (auto.count === 1 ? 'week' : 'weeks')
+      : (auto.count === 1 ? 'month' : 'months');
+    let perLine = '';
+    if (!isNaN(amt) && amt > 0) {
+      const per = Math.round((amt / auto.count) * 100) / 100;
+      perLine = `<div style="margin-top:4px;color:var(--text)"><strong>${_money(per)}</strong> per ${auto.unit} for ${auto.count} ${unitLabel}, then the full ${_money(amt)} comes out on the payment month.</div>`;
+    }
+    infoEl.innerHTML = `Splits automatically across <strong style="color:var(--text)">${auto.count} ${unitLabel}</strong> to match the bill's cycle.${perLine}`;
   }
 }
 
@@ -16018,12 +16073,11 @@ document.addEventListener('change', e => {
   if (e.target?.id === 'bill-variable') _refreshBillVariableHint();
   if (e.target?.name === 'bill-payment-strategy') _refreshBillSplitVisibility();
   if (e.target?.id === 'bill-custom-interval') _refreshBillSplitVisibility();
+  if (e.target?.id === 'bill-custom-unit')     _refreshBillSplitVisibility();
 });
-// Track manual edits to the split-count input so frequency changes don't
-// stomp on user-entered values.
+// Live-update the per-period figure as the user types in the amount field.
 document.addEventListener('input', e => {
-  if (e.target?.id === 'bill-split-count')  e.target.dataset.userEdited = '1';
-  if (e.target?.id === 'bill-split-unit')   e.target.dataset.userEdited = '1';
+  if (e.target?.id === 'bill-amount') _refreshBillSplitVisibility();
 });
 
 async function saveBillFromEditor() {
@@ -16047,17 +16101,18 @@ async function saveBillFromEditor() {
   else                                frequency = { unit: 'month', interval: Math.max(1, customInt || 2), anchorMonth };
 
   // Phase 5: payment strategy + split-into. Only relevant when the bill's
-  // cycle is longer than one month, otherwise force lump.
+  // Phase 5: payment strategy. splitInto is auto-derived from the frequency.
   let paymentStrategy = 'lump';
   let splitInto       = null;
   if (_billCanSplit(frequency)) {
     const stratEl = document.querySelector('input[name="bill-payment-strategy"]:checked');
     paymentStrategy = stratEl?.value === 'split' ? 'split' : 'lump';
     if (paymentStrategy === 'split') {
-      const splitCount = parseInt(document.getElementById('bill-split-count').value, 10);
-      const splitUnit  = document.getElementById('bill-split-unit').value === 'week' ? 'week' : 'month';
-      if (isNaN(splitCount) || splitCount < 1) { toast('Split count must be at least 1'); return; }
-      splitInto = { unit: splitUnit, count: Math.min(60, splitCount) };
+      splitInto = _suggestSplitInto(frequency);
+      if (!splitInto || splitInto.count < 1) {
+        toast('Cannot split this bill — frequency too short');
+        return;
+      }
     }
   }
 
@@ -19496,18 +19551,20 @@ saveBillFromEditor = async function() {
     if (dayOfMonth < 1 || dayOfMonth > 31) { toast('Day must be 1-31'); return; }
   }
 
-  // Phase 5: payment strategy + split-into. Only meaningful when the bill's
-  // cycle is longer than one month, otherwise force lump.
+  // Phase 5: payment strategy. splitInto is auto-derived from the frequency
+  // — quarterly → 3 months, six-monthly → 6, annual → 12, etc. The user
+  // doesn't pick the split count, which keeps the cycle math consistent.
   let paymentStrategy = 'lump';
   let splitInto       = null;
   if (typeof _billCanSplit === 'function' && _billCanSplit(frequency)) {
     const stratEl = document.querySelector('input[name="bill-payment-strategy"]:checked');
     paymentStrategy = stratEl?.value === 'split' ? 'split' : 'lump';
     if (paymentStrategy === 'split') {
-      const splitCount = parseInt(document.getElementById('bill-split-count').value, 10);
-      const splitUnit  = document.getElementById('bill-split-unit').value === 'week' ? 'week' : 'month';
-      if (isNaN(splitCount) || splitCount < 1) { toast('Split count must be at least 1'); return; }
-      splitInto = { unit: splitUnit, count: Math.min(60, splitCount) };
+      splitInto = _suggestSplitInto(frequency);
+      if (!splitInto || splitInto.count < 1) {
+        toast('Cannot split this bill — frequency too short');
+        return;
+      }
     }
   }
 
