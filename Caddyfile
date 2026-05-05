@@ -7,11 +7,24 @@
 #   www.stckrm.com       → 301 redirects to https://stckrm.com (apex canonical)
 #   app.stckrm.com       → serves the PWA (index.html)
 #                          + reverse-proxies API endpoints to Deno
-#   *.fly.dev / no host  → fallback for Fly edge health checks; serves
-#                          everything (legacy behaviour)
+#   *.fly.dev / no host  → fallback for Fly edge health checks; serves PWA
 #
-# TLS termination is handled by Fly's edge (force_https in fly.toml),
-# so all site blocks listen on :8080 over plain HTTP from the edge.
+# IMPORTANT — port binding:
+# TLS termination is handled by Fly's edge. Fly forwards plain HTTP traffic
+# to port 8080 inside the container. We therefore bind ALL named site
+# blocks explicitly to :8080 (e.g. `stckrm.com:8080`). If we used
+# `http://stckrm.com` instead, Caddy would listen on port 80 (which Fly
+# never forwards to), and every request would fall through to the catch-all
+# `:8080` block, breaking hostname routing entirely.
+
+# ── Global options ──
+# Disable auto-HTTPS — Fly's edge handles TLS, so Caddy serves only HTTP
+# internally. Without this, Caddy would attempt to acquire its own
+# certificates via ACME and add HTTP→HTTPS redirects, both of which we do
+# not want.
+{
+    auto_https off
+}
 
 # ── Common API reverse-proxy snippet ──
 # Reused on every hostname that needs to serve the API. Keep this list in
@@ -118,8 +131,6 @@
 }
 
 # ── Common static-file headers snippet ──
-# Used by all hostnames that serve content. The default file (root of /)
-# differs per site, so we keep that out of here.
 (static_assets) {
     @html path *.html
     header @html Cache-Control "no-cache, no-store, must-revalidate"
@@ -157,7 +168,7 @@
 # ═══════════════════════════════════════════════════════════
 # Permanent redirect so browsers and search engines treat the apex as
 # canonical. Path and query are preserved via {uri}.
-http://www.stckrm.com, https://www.stckrm.com {
+www.stckrm.com:8080 {
     redir https://stckrm.com{uri} permanent
 }
 
@@ -169,7 +180,7 @@ http://www.stckrm.com, https://www.stckrm.com {
 # users to app.stckrm.com — so this site purely hosts the marketing page.
 # API endpoints still proxy to Deno so the webhook (and any future
 # apex-hosted API) work.
-http://stckrm.com, https://stckrm.com {
+stckrm.com:8080 {
     import compression
     import api_routes
 
@@ -188,7 +199,7 @@ http://stckrm.com, https://stckrm.com {
 # ═══════════════════════════════════════════════════════════
 # Serves index.html as the default. This is the URL the PWA's
 # manifest.json declares as start_url, so installed apps live here.
-http://app.stckrm.com, https://app.stckrm.com {
+app.stckrm.com:8080 {
     import compression
     import api_routes
 
@@ -203,12 +214,12 @@ http://app.stckrm.com, https://app.stckrm.com {
 }
 
 # ═══════════════════════════════════════════════════════════
-# Fallback: Fly health checks and any other hostname
+# Fallback: Fly health checks, .fly.dev hostname, anything else
 # ═══════════════════════════════════════════════════════════
-# Fly's edge health checks come in without a Host header (or with a
-# different one). Serve index.html as the default so the .fly.dev URL
-# still works for debugging. This block also catches any hostname we
-# haven't explicitly configured above.
+# This catch-all matches port 8080 with no specific hostname. It catches
+# Fly's internal health checks (which come in without a Host header) and
+# anyone hitting stckrm.fly.dev directly. Serves the PWA so the .fly.dev
+# URL still works for debugging.
 :8080 {
     import compression
     import api_routes
