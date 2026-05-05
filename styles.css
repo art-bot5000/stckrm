@@ -1531,7 +1531,12 @@ body.note-open { overflow: hidden; touch-action: none; }
   color: #e85050;
 }
 
-/* ── Card action overlay (hover/long-press) ── */
+/* ── Card action overlay (hover/long-press) ──
+   Slides over the card from above the "X days left" line down to the
+   bottom edge. The tall area is intentional — gives the user plenty of
+   room to land their cursor without fighting against small buttons
+   underneath. The overlay's own buttons live INSIDE this area, so there's
+   no race-against-hover problem to worry about. */
 .card-action-overlay {
   position: absolute;
   left: 0;
@@ -1545,8 +1550,10 @@ body.note-open { overflow: hidden; touch-action: none; }
   border-radius: 0 0 11px 11px;
   padding: 12px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   justify-content: center;
+  gap: 8px;
   opacity: 0;
   transform: translateY(8px);
   pointer-events: none;
@@ -1565,7 +1572,8 @@ body.note-open { overflow: hidden; touch-action: none; }
   grid-auto-rows: 1fr;
   gap: 6px;
   width: 100%;
-  height: 100%;
+  /* let the grid take only as much room as it needs; the Tag button sits below */
+  flex: 1 1 auto;
   align-content: center;
 }
 .card-action-tile {
@@ -1606,10 +1614,46 @@ body.note-open { overflow: hidden; touch-action: none; }
   text-overflow: ellipsis;
 }
 
+/* Tag button — sits centered under the 6-tile grid inside the overlay.
+   Same look-and-feel as the tiles but narrower and self-centered, since
+   it's a single secondary action separate from the grid. */
+.card-action-tag-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  align-self: center;
+  padding: 6px 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  min-width: 100px;
+  flex-shrink: 0;
+}
+.card-action-tag-btn:hover {
+  background: rgba(232, 168, 56, 0.14);
+  border-color: rgba(232, 168, 56, 0.4);
+}
+.card-action-tag-btn:active { transform: scale(0.96); }
+.card-action-tag-btn .icon {
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
 /* On compact view, action tiles get tighter */
-.compact-view .card-action-overlay { padding: 8px; }
+.compact-view .card-action-overlay { padding: 8px; gap: 6px; }
 .compact-view .card-action-tile { font-size: 10px; padding: 5px 6px; gap: 5px; }
 .compact-view .card-action-tile .icon { width: 12px; height: 12px; }
+.compact-view .card-action-tag-btn { font-size: 10px; padding: 5px 14px; }
+.compact-view .card-action-tag-btn .icon { width: 12px; height: 12px; }
 
 /* ── Item actions modal (mobile long-press) ── */
 .item-actions-modal-inner { padding: 0; overflow: hidden; }

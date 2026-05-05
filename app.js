@@ -5626,7 +5626,6 @@ function cardHTML(item, threshold) {
   const lastBoughtAgo = lastLog?.date ? timeAgo(lastLog.date) : null;
   const expiry = getExpiryStatus(item);
   const stars = [1,2,3,4,5].map(n => `<span class="card-star${(item.rating||0)>=n?' on':''}" onclick="event.stopPropagation();rateItem('${item.id}',${n})" data-id="${item.id}" data-val="${n}" onmouseover="previewCardStars('${item.id}',${n})" onmouseout="resetCardStars('${item.id}')">★</span>`).join('');
-  const orderBtn = _cardOrderButton(item);
   // Compact stock indicator — projected unit count if we've got a stock count,
   // else fall back to the per-purchase descriptor.
   const projectedUnits = getProjectedUnitsLeft(item);
@@ -5685,11 +5684,7 @@ function cardHTML(item, threshold) {
         ${qtyText ? `<div class="card-qty">${qtyText}</div>` : ''}
         ${item.ordered ? `<div class="card-ordered"><svg class="icon" aria-hidden="true"><use href="#i-truck"></use></svg> Ordered</div>` : ''}
         ${expiry ? `<div class="card-expiry" style="color:${expiry.color};border-color:${expiry.color}55" title="${fmtDate(item.expiry)}">⏰ ${expiry.label}</div>` : ''}
-        <div class="card-action-btns" onclick="event.stopPropagation()">
-          <button class="card-tag-btn" onclick="event.stopPropagation();openCardTagPicker('${item.id}')" title="Add tag"><svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg> Tag</button>
-          ${decrementBtn}
-          ${orderBtn}
-        </div>
+        ${decrementBtn ? `<div class="card-action-btns" onclick="event.stopPropagation()">${decrementBtn}</div>` : ''}
       </div>
       ${cardActionOverlayHTML(item)}
     </div>
@@ -5733,6 +5728,10 @@ function cardActionOverlayHTML(item) {
           <span>${t.label}</span>
         </button>`).join('')}
     </div>
+    <button type="button" class="card-action-tag-btn" onclick="event.stopPropagation();_dismissCardActions('${id}');openCardTagPicker('${id}')">
+      <svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg>
+      <span>Tag</span>
+    </button>
   </div>`;
 }
 
@@ -5749,20 +5748,29 @@ function _getCardEl(id) {
   return document.querySelector(`.item-card[data-id="${id}"]`);
 }
 
-// Position the overlay so it covers everything from below the days-left bar
-// to the bottom of the card. Sets a CSS variable read by .card-action-overlay.
+// Position the overlay so it covers from just above the "X days left" text
+// (.card-hero) all the way to the bottom of the card. Sets a CSS variable
+// read by .card-action-overlay.
+//
+// Anchoring at card-hero gives a much taller hover area than the old
+// "below the bar" position, which means the user has plenty of room to
+// trigger hover without racing against any underlying buttons.
 function _positionCardOverlay(card) {
   if (!card) return;
-  const bar = card.querySelector('[data-card-bar]');
-  if (!bar) {
+  // Prefer card-hero (the "X days left" line). Fall back to data-card-bar
+  // for cards that don't have hero text yet (e.g. items with no stock data).
+  const hero = card.querySelector('.card-hero');
+  const anchor = hero || card.querySelector('[data-card-bar]');
+  if (!anchor) {
     card.style.setProperty('--card-overlay-top', '50%');
     return;
   }
-  // Distance from the top of .card-inner to the bottom of the bar
   const inner = card.querySelector('.card-inner');
-  const innerRect = inner.getBoundingClientRect();
-  const barRect   = bar.getBoundingClientRect();
-  const top = Math.max(0, (barRect.bottom - innerRect.top) + 8); // 8px breathing room
+  const innerRect  = inner.getBoundingClientRect();
+  const anchorRect = anchor.getBoundingClientRect();
+  // Position the overlay 6px ABOVE the anchor's top edge (rather than
+  // 8px below its bottom, which is what the old code did).
+  const top = Math.max(0, (anchorRect.top - innerRect.top) - 6);
   card.style.setProperty('--card-overlay-top', `${top}px`);
 }
 
