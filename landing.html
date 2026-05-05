@@ -683,6 +683,10 @@
       max-width: 1280px;
       margin: 0 auto;
       padding: 0 0 28px;
+      /* Clip anything that extends beyond the carousel bounds (defence in
+         depth — the track also clips, but if anything ever leaks out
+         this stops it before it reaches the page edge). */
+      overflow: hidden;
     }
     .hero-track {
       display: flex;
@@ -698,13 +702,27 @@
     .hero-slide {
       /* Each slide takes the full width of the track. flex-basis is 100%
          so the next slide is exactly one swipe away. min-width: 0 keeps
-         children from blowing the slide wider than the viewport. */
+         children from blowing the slide wider than the viewport.
+
+         IMPORTANT: override .hero's max-width:1200px and margin:0 auto.
+         The base .hero rule clamps width to 1200px which leaves an 80px
+         gap on wider viewports — and because flex packs items by their
+         clamped width, the next slide ends up visible inside the current
+         viewport. Forcing max-width:none lets the slide fill the track
+         and aligns slide boundaries with snap points. */
       flex: 0 0 100%;
       min-width: 0;
+      max-width: none;
       scroll-snap-align: start;
       scroll-snap-stop: always;
-      /* Reset margins from the un-carouseled .hero so slides line up cleanly */
       margin: 0;
+      /* Keep the inner content visually anchored to the original 1200px
+         envelope on wide viewports — pad the slide left/right so the
+         hero grid sits inside the same column even when the slide itself
+         is wider than 1200px. The padding collapses to the original 24px
+         on viewports up to ~1248px (24+1200+24). */
+      padding-left:  max(24px, calc((100% - 1200px) / 2));
+      padding-right: max(24px, calc((100% - 1200px) / 2));
     }
 
     /* Slide-specific eyebrow accent colours so each feature has its own
