@@ -668,7 +668,446 @@
     body.signed-in #header-register,
     body.signed-in #hero-register { display: none; }
 
-    /* Reduced motion */
+    /* ─────────── HERO CAROUSEL ───────────
+       Wraps the hero in a horizontally-snapped track of slides. Each slide
+       is a normal .hero so existing two-column layout, headline, CTA cluster
+       and visual styles all carry through unchanged.
+
+       Mechanics:
+       - Track is overflow-x with scroll-snap. Touch swipe works natively.
+       - Auto-advance every 5s; pauses on hover, touch, focus, hidden tab,
+         or prefers-reduced-motion.
+       - Dot indicators below show current slide and let users jump. */
+    .hero-carousel {
+      position: relative;
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 0 28px;
+    }
+    .hero-track {
+      display: flex;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scroll-snap-type: x mandatory;
+      scroll-behavior: smooth;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+      -webkit-overflow-scrolling: touch;
+    }
+    .hero-track::-webkit-scrollbar { display: none; }
+    .hero-slide {
+      /* Each slide takes the full width of the track. flex-basis is 100%
+         so the next slide is exactly one swipe away. min-width: 0 keeps
+         children from blowing the slide wider than the viewport. */
+      flex: 0 0 100%;
+      min-width: 0;
+      scroll-snap-align: start;
+      scroll-snap-stop: always;
+      /* Reset margins from the un-carouseled .hero so slides line up cleanly */
+      margin: 0;
+    }
+
+    /* Slide-specific eyebrow accent colours so each feature has its own
+       chromatic identity while sharing the same hero structure. */
+    .hero-slide-budget   .hero-eyebrow { color: #4cbb8a; background: rgba(76,187,138,0.08); border-color: rgba(76,187,138,0.22); }
+    .hero-slide-budget   .hero-eyebrow .dot { background: #4cbb8a; box-shadow: 0 0 8px #4cbb8a; }
+    .hero-slide-notes    .hero-eyebrow { color: #b48bee; background: rgba(180,139,238,0.08); border-color: rgba(180,139,238,0.22); }
+    .hero-slide-notes    .hero-eyebrow .dot { background: #b48bee; box-shadow: 0 0 8px #b48bee; }
+    .hero-slide-grocery  .hero-eyebrow { color: #5b8dee; background: rgba(91,141,238,0.08); border-color: rgba(91,141,238,0.22); }
+    .hero-slide-grocery  .hero-eyebrow .dot { background: #5b8dee; box-shadow: 0 0 8px #5b8dee; }
+    .hero-slide-encrypt  .hero-eyebrow { color: var(--ok); background: rgba(76,187,138,0.08); border-color: rgba(76,187,138,0.22); }
+    .hero-slide-encrypt  .hero-eyebrow .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+    .hero-slide-budget  h1 .accent { color: #4cbb8a; }
+    .hero-slide-notes   h1 .accent { color: #b48bee; }
+    .hero-slide-grocery h1 .accent { color: #5b8dee; }
+    .hero-slide-encrypt h1 .accent { color: var(--ok); }
+
+    /* Dot row */
+    .hero-dots {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 8px;
+      padding: 0 24px;
+    }
+    .hero-dot {
+      position: relative;
+      width: 32px;
+      height: 6px;
+      border-radius: 99px;
+      background: rgba(255,255,255,0.08);
+      border: none;
+      cursor: pointer;
+      padding: 0;
+      transition: background 0.2s, width 0.3s cubic-bezier(0.34,1.56,0.64,1);
+      overflow: hidden;
+    }
+    .hero-dot:hover { background: rgba(255,255,255,0.16); }
+    .hero-dot.active {
+      background: rgba(255,255,255,0.18);
+      width: 56px;
+    }
+    /* Progress fill — animates left-to-right over 5s while autoplay is
+       running. The CSS variable is toggled by JS to start/pause the bar. */
+    .hero-dot.active::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: var(--accent);
+      border-radius: inherit;
+      transform-origin: left;
+      transform: scaleX(var(--hero-progress, 0));
+      transition: transform 0.1s linear;
+    }
+    .hero-dot.active.animating::after {
+      animation: heroDotProgress var(--hero-dot-duration, 5s) linear forwards;
+    }
+    @keyframes heroDotProgress {
+      from { transform: scaleX(0); }
+      to   { transform: scaleX(1); }
+    }
+
+    /* Side arrows — desktop only, low-key affordance for non-touch users.
+       Hidden on small screens where swipe is the obvious gesture. */
+    .hero-arrow {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 44px; height: 44px;
+      display: none;
+      align-items: center; justify-content: center;
+      background: rgba(26,29,39,0.7);
+      border: 1px solid var(--glass-border);
+      border-radius: 50%;
+      color: var(--muted);
+      cursor: pointer;
+      z-index: 4;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      transition: color 0.15s, background 0.15s, transform 0.15s;
+    }
+    .hero-arrow:hover {
+      color: var(--text);
+      background: rgba(26,29,39,0.9);
+    }
+    .hero-arrow:active { transform: translateY(-50%) scale(0.95); }
+    .hero-arrow svg { width: 20px; height: 20px; }
+    .hero-arrow-prev { left: 8px; }
+    .hero-arrow-next { right: 8px; }
+    @media (hover: hover) and (min-width: 960px) {
+      .hero-arrow { display: inline-flex; }
+    }
+
+    /* ─────────── FEATURE-PREVIEW VISUALS ───────────
+       Reuses .hero-visual / .shelf-frame frame for consistency across
+       slides. Each slide swaps out the inner content. */
+
+    /* Generic preview frame replacing .shelf-list when the visual isn't
+       a list of stock items. Just gives padding + the same glass look. */
+    .preview-body {
+      position: relative;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* — Budget preview — */
+    .budget-hero-amount {
+      font-family: var(--mono);
+      font-size: 32px;
+      font-weight: 700;
+      color: #4cbb8a;
+      letter-spacing: -0.5px;
+      animation: itemIn 0.7s cubic-bezier(0.34,1.56,0.64,1) both;
+    }
+    .budget-hero-label {
+      font-size: 11px;
+      font-family: var(--mono);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 2px;
+      animation: itemIn 0.7s ease both;
+    }
+    .budget-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 12px;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--glass-border);
+      border-radius: 10px;
+      padding: 10px 14px;
+      opacity: 0;
+      animation: itemIn 0.6s cubic-bezier(0.34,1.56,0.64,1) forwards;
+    }
+    .budget-row:nth-child(2) { animation-delay: 0.18s; }
+    .budget-row:nth-child(3) { animation-delay: 0.30s; }
+    .budget-row:nth-child(4) { animation-delay: 0.42s; }
+    .budget-row:nth-child(5) { animation-delay: 0.54s; }
+    .budget-row:nth-child(6) { animation-delay: 0.66s; }
+    .budget-row-name { font-size: 13px; color: var(--text); font-weight: 500; }
+    .budget-row-meta { font-size: 11px; color: var(--muted); margin-top: 2px; font-family: var(--mono); letter-spacing: 0.5px; }
+    .budget-row-amount {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+      white-space: nowrap;
+    }
+    .budget-row.paid .budget-row-amount { color: #4cbb8a; }
+    .budget-row.paid .budget-row-name { color: var(--muted); text-decoration: line-through; text-decoration-color: rgba(120,128,160,0.4); }
+
+    /* — Notes preview — */
+    .notes-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .note-card {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--glass-border);
+      border-radius: 10px;
+      padding: 12px;
+      opacity: 0;
+      animation: itemIn 0.55s cubic-bezier(0.34,1.56,0.64,1) forwards;
+      position: relative;
+      min-height: 100px;
+    }
+    .note-card:nth-child(1) { animation-delay: 0.1s; background: rgba(232,168,56,0.05); border-color: rgba(232,168,56,0.18); }
+    .note-card:nth-child(2) { animation-delay: 0.22s; background: rgba(91,141,238,0.05); border-color: rgba(91,141,238,0.18); }
+    .note-card:nth-child(3) { animation-delay: 0.34s; background: rgba(180,139,238,0.05); border-color: rgba(180,139,238,0.18); }
+    .note-card:nth-child(4) { animation-delay: 0.46s; }
+    .note-locked .note-body { filter: blur(3px); user-select: none; pointer-events: none; }
+    .note-locked::after {
+      content: '';
+      position: absolute;
+      inset: 8px;
+      background:
+        radial-gradient(circle at center, rgba(20,24,38,0.6), rgba(20,24,38,0.85));
+      border-radius: 8px;
+    }
+    .note-locked .note-lock {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2;
+      color: var(--accent);
+    }
+    .note-locked .note-lock svg { width: 22px; height: 22px; }
+    .note-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .note-pin { color: var(--accent); }
+    .note-pin svg { width: 11px; height: 11px; }
+    .note-body {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .note-body .check-line {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      margin-top: 3px;
+    }
+    .note-check {
+      width: 12px;
+      height: 12px;
+      border: 1px solid var(--muted);
+      border-radius: 3px;
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .note-check.done {
+      background: var(--ok);
+      border-color: var(--ok);
+      color: #0f1117;
+    }
+    .note-check.done svg { width: 9px; height: 9px; }
+    .note-check + span.done { text-decoration: line-through; opacity: 0.55; }
+
+    /* — Grocery preview — */
+    .grocery-store-tab-row {
+      display: flex;
+      gap: 6px;
+      padding-bottom: 4px;
+      margin-bottom: 4px;
+      border-bottom: 1px solid var(--glass-border);
+    }
+    .grocery-store-tab {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      padding: 5px 10px;
+      border-radius: 6px;
+      color: var(--muted);
+      background: transparent;
+    }
+    .grocery-store-tab.active {
+      color: #5b8dee;
+      background: rgba(91,141,238,0.1);
+    }
+    .grocery-dept {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: #5b8dee;
+      font-weight: 700;
+      padding: 8px 0 4px;
+      opacity: 0;
+      animation: itemIn 0.5s ease forwards;
+    }
+    .grocery-dept:nth-of-type(1) { animation-delay: 0.1s; }
+    .grocery-dept:nth-of-type(2) { animation-delay: 0.4s; }
+    .grocery-line {
+      display: grid;
+      grid-template-columns: 16px 1fr auto;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 4px;
+      font-size: 12px;
+      color: var(--text);
+      border-bottom: 1px solid rgba(46,51,80,0.3);
+      opacity: 0;
+      animation: itemIn 0.45s cubic-bezier(0.34,1.56,0.64,1) forwards;
+    }
+    .grocery-line .gl-check {
+      width: 14px;
+      height: 14px;
+      border: 1.5px solid var(--muted);
+      border-radius: 4px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .grocery-line.checked .gl-check {
+      background: #5b8dee;
+      border-color: #5b8dee;
+      color: #0f1117;
+    }
+    .grocery-line.checked .gl-check svg { width: 10px; height: 10px; }
+    .grocery-line.checked .gl-name { text-decoration: line-through; color: var(--muted); }
+    .grocery-line .gl-qty {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.5px;
+    }
+    .grocery-lines > .grocery-line:nth-child(1) { animation-delay: 0.18s; }
+    .grocery-lines > .grocery-line:nth-child(2) { animation-delay: 0.26s; }
+    .grocery-lines > .grocery-line:nth-child(3) { animation-delay: 0.34s; }
+    .grocery-lines > .grocery-line:nth-child(4) { animation-delay: 0.48s; }
+    .grocery-lines > .grocery-line:nth-child(5) { animation-delay: 0.56s; }
+    .grocery-lines > .grocery-line:nth-child(6) { animation-delay: 0.64s; }
+
+    /* — Encryption preview — */
+    .encrypt-stage {
+      position: relative;
+      padding: 20px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      align-items: center;
+    }
+    .encrypt-row {
+      display: grid;
+      grid-template-columns: 1fr 24px 1fr;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+    }
+    .encrypt-side {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--glass-border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      min-height: 56px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 4px;
+    }
+    .encrypt-side-label {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .encrypt-side .plain {
+      font-size: 12px;
+      color: var(--text);
+      line-height: 1.35;
+    }
+    .encrypt-side .cipher {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--ok);
+      line-height: 1.3;
+      word-break: break-all;
+      letter-spacing: -0.2px;
+    }
+    .encrypt-arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .encrypt-arrow svg { width: 18px; height: 18px; }
+    .encrypt-bullets {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      width: 100%;
+      margin-top: 4px;
+    }
+    .encrypt-bullet {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--text);
+      padding: 8px 10px;
+      background: rgba(76,187,138,0.04);
+      border: 1px solid rgba(76,187,138,0.16);
+      border-radius: 8px;
+      opacity: 0;
+      animation: itemIn 0.55s ease forwards;
+    }
+    .encrypt-bullet:nth-child(1) { animation-delay: 0.3s; }
+    .encrypt-bullet:nth-child(2) { animation-delay: 0.42s; }
+    .encrypt-bullet:nth-child(3) { animation-delay: 0.54s; }
+    .encrypt-bullet svg {
+      width: 16px; height: 16px;
+      color: var(--ok);
+      flex-shrink: 0;
+    }
+    .encrypt-bullet strong { color: var(--text); font-weight: 600; }
+
+    @media (max-width: 960px) {
+      .hero-carousel { padding-bottom: 22px; }
+      .hero-arrow { display: none !important; }
+    }
+    @media (max-width: 560px) {
+      .hero-dots { padding: 0 18px; }
+    }
+
+
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
     }
@@ -698,6 +1137,13 @@
   <symbol id="i-cart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></symbol>
   <symbol id="i-trending" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></symbol>
   <symbol id="i-truck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></symbol>
+  <symbol id="i-notebook" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M16 2v20"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+  <symbol id="i-banknote" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-chevron-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></symbol>
+  <symbol id="i-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></symbol>
 </svg>
 
 <!-- ═══ HEADER ═══ -->
@@ -724,122 +1170,530 @@
 
 <main>
 
-  <!-- ═══ HERO ═══ -->
-  <section class="hero">
-    <div class="hero-copy">
-      <span class="hero-eyebrow">
-        <span class="dot"></span>
-        Household consumables, handled
-      </span>
+  <!-- ═══ HERO CAROUSEL ═══
+       Five slides showcase the major feature areas. Slide 1 (Stockroom) is
+       the original hero and remains the canonical entry point — it keeps
+       the welcome-back card and the original IDs the page-init JS reads.
+       Slides 2-5 are feature highlights (Budget, Notes, Groceries,
+       Encryption) and each carries the same Create account / Log in / Try
+       the demo cluster so users can act from any slide.
 
-      <h1>
-        Never run out.<br>
-        Never <span class="accent">over-buy.</span>
-      </h1>
+       Auto-advances every 5s; pauses on hover, touch, focus, or hidden
+       tab. Touch swipe is native via scroll-snap on the track. -->
+  <section class="hero-carousel" aria-roledescription="carousel" aria-label="Stockroom features">
+    <button type="button" class="hero-arrow hero-arrow-prev" aria-label="Previous slide" data-hero-prev>
+      <svg aria-hidden="true"><use href="#i-chevron-left"/></svg>
+    </button>
+    <button type="button" class="hero-arrow hero-arrow-next" aria-label="Next slide" data-hero-next>
+      <svg aria-hidden="true"><use href="#i-chevron-right"/></svg>
+    </button>
 
-      <p class="hero-sub">
-        Stockroom watches what you use, predicts when you'll run out, and turns it all into <strong>one shopping list, once a month</strong>. Less hassle, fewer deliveries, smarter spending.
-      </p>
+    <div class="hero-track" id="hero-track" role="group" aria-live="polite">
 
-      <!-- Welcome-back card (visible only when remembered email exists & not signed in) -->
-      <div id="welcome-back">
-        <span class="wb-icon"><svg aria-hidden="true"><use href="#i-key"/></svg></span>
-        <div class="wb-body">
-          <div class="wb-label">Welcome back</div>
-          <div class="wb-email" id="wb-email-text">—</div>
+      <!-- ─── SLIDE 1: Stockroom (original hero) ─── -->
+      <article class="hero hero-slide hero-slide-stockroom" aria-roledescription="slide" aria-label="Stockroom — slide 1 of 5">
+        <div class="hero-copy">
+          <span class="hero-eyebrow">
+            <span class="dot"></span>
+            Household consumables, handled
+          </span>
+
+          <h1>
+            Never run out.<br>
+            Never <span class="accent">over-buy.</span>
+          </h1>
+
+          <p class="hero-sub">
+            Stockroom watches what you use, predicts when you'll run out, and turns it all into <strong>one shopping list, once a month</strong>. Less hassle, fewer deliveries, smarter spending.
+          </p>
+
+          <!-- Welcome-back card (visible only when remembered email exists & not signed in).
+               Lives only on slide 1 — returning-user context belongs at the start. -->
+          <div id="welcome-back">
+            <span class="wb-icon"><svg aria-hidden="true"><use href="#i-key"/></svg></span>
+            <div class="wb-body">
+              <div class="wb-label">Welcome back</div>
+              <div class="wb-email" id="wb-email-text">—</div>
+            </div>
+            <div class="wb-actions">
+              <button class="btn btn-primary" type="button" onclick="goLogin()">
+                Sign in
+                <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
+              </button>
+              <button class="wb-not-you" type="button" onclick="forgetEmail()">Not you?</button>
+            </div>
+          </div>
+
+          <div class="hero-cta">
+            <a class="btn btn-primary btn-large" id="hero-signed-in-cta" href="https://app.stckrm.com">
+              <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
+              Open Stockroom
+            </a>
+            <button class="btn btn-primary btn-large" id="hero-register" type="button" onclick="goRegister()">
+              <svg aria-hidden="true"><use href="#i-plus"/></svg>
+              Create account
+            </button>
+            <button class="btn btn-ghost btn-large" id="hero-login" type="button" onclick="goLogin()">
+              <svg aria-hidden="true"><use href="#i-key"/></svg>
+              Log in
+            </button>
+          </div>
+
+          <span class="hero-trust">
+            <svg aria-hidden="true"><use href="#i-shield-check"/></svg>
+            End-to-end encrypted · Passkey sign-in · Free
+          </span>
+
+          <div class="hero-demo-wrap">
+            <a class="hero-demo" href="https://app.stckrm.com?action=demo">
+              <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
+              Try the demo
+            </a>
+            <span class="hero-demo-sub">No signup · sample data</span>
+          </div>
         </div>
-        <div class="wb-actions">
-          <button class="btn btn-primary" type="button" onclick="goLogin()">
-            Sign in
-            <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
-          </button>
-          <button class="wb-not-you" type="button" onclick="forgetEmail()">Not you?</button>
+
+        <!-- Animated stockroom preview -->
+        <div class="hero-visual" aria-hidden="true">
+          <div class="shelf-frame">
+            <div class="shelf-header">
+              <span><span class="live-dot"></span>YOUR STOCKROOM</span>
+              <span>5 ITEMS</span>
+            </div>
+            <div class="shelf-list">
+              <div class="shelf-item urgent">
+                <span class="item-icon">🧴</span>
+                <div>
+                  <div class="item-name">Washing-up liquid</div>
+                  <div class="item-bar"><div class="item-bar-fill" style="width:8%"></div></div>
+                </div>
+                <span class="item-days">3d</span>
+              </div>
+              <div class="shelf-item warn">
+                <span class="item-icon">🧻</span>
+                <div>
+                  <div class="item-name">Toilet roll</div>
+                  <div class="item-bar"><div class="item-bar-fill" style="width:24%"></div></div>
+                </div>
+                <span class="item-days">9d</span>
+              </div>
+              <div class="shelf-item warn">
+                <span class="item-icon">☕</span>
+                <div>
+                  <div class="item-name">Coffee beans</div>
+                  <div class="item-bar"><div class="item-bar-fill" style="width:32%"></div></div>
+                </div>
+                <span class="item-days">12d</span>
+              </div>
+              <div class="shelf-item ok">
+                <span class="item-icon">🧂</span>
+                <div>
+                  <div class="item-name">Sea salt</div>
+                  <div class="item-bar"><div class="item-bar-fill" style="width:64%"></div></div>
+                </div>
+                <span class="item-days">42d</span>
+              </div>
+              <div class="shelf-item ok">
+                <span class="item-icon">🍯</span>
+                <div>
+                  <div class="item-name">Honey</div>
+                  <div class="item-bar"><div class="item-bar-fill" style="width:78%"></div></div>
+                </div>
+                <span class="item-days">68d</span>
+              </div>
+            </div>
+            <div class="shelf-footer">
+              <span>Next delivery</span>
+              <span><strong>1st of the month</strong></span>
+            </div>
+          </div>
         </div>
-      </div>
+      </article>
 
-      <div class="hero-cta">
-        <a class="btn btn-primary btn-large" id="hero-signed-in-cta" href="https://app.stckrm.com">
-          <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
-          Open Stockroom
-        </a>
-        <button class="btn btn-primary btn-large" id="hero-register" type="button" onclick="goRegister()">
-          <svg aria-hidden="true"><use href="#i-plus"/></svg>
-          Create account
-        </button>
-        <button class="btn btn-ghost btn-large" id="hero-login" type="button" onclick="goLogin()">
-          <svg aria-hidden="true"><use href="#i-key"/></svg>
-          Log in
-        </button>
-      </div>
+      <!-- ─── SLIDE 2: Budget ─── -->
+      <article class="hero hero-slide hero-slide-budget" aria-roledescription="slide" aria-label="Budget — slide 2 of 5">
+        <div class="hero-copy">
+          <span class="hero-eyebrow">
+            <span class="dot"></span>
+            Budget tracking, built in
+          </span>
 
-      <span class="hero-trust">
-        <svg aria-hidden="true"><use href="#i-shield-check"/></svg>
-        End-to-end encrypted · Passkey sign-in · Free
-      </span>
+          <h1>
+            Know what's going<br>
+            <span class="accent">where</span>, every month.
+          </h1>
 
-      <div class="hero-demo-wrap">
-        <a class="hero-demo" href="https://app.stckrm.com?action=demo">
-          <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
-          Try the demo
-        </a>
-        <span class="hero-demo-sub">No signup · sample data</span>
-      </div>
+          <p class="hero-sub">
+            Track every bill, recurring subscription and one-off cost — pay or skip with one tap. Stockroom learns your rhythm and shows you exactly <strong>what's left to spend</strong> before payday.
+          </p>
+
+          <div class="hero-cta">
+            <button class="btn btn-primary btn-large" type="button" onclick="goRegister()">
+              <svg aria-hidden="true"><use href="#i-plus"/></svg>
+              Create account
+            </button>
+            <button class="btn btn-ghost btn-large" type="button" onclick="goLogin()">
+              <svg aria-hidden="true"><use href="#i-key"/></svg>
+              Log in
+            </button>
+          </div>
+
+          <span class="hero-trust">
+            <svg aria-hidden="true"><use href="#i-shield-check"/></svg>
+            Bills, subscriptions, ad-hoc spend · all encrypted
+          </span>
+
+          <div class="hero-demo-wrap">
+            <a class="hero-demo" href="https://app.stckrm.com?action=demo">
+              <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
+              Try the demo
+            </a>
+            <span class="hero-demo-sub">No signup · sample data</span>
+          </div>
+        </div>
+
+        <div class="hero-visual" aria-hidden="true">
+          <div class="shelf-frame">
+            <div class="shelf-header">
+              <span><span class="live-dot"></span>BUDGET — MAY</span>
+              <span>£712 LEFT</span>
+            </div>
+            <div class="preview-body">
+              <div>
+                <div class="budget-hero-label">Spent so far</div>
+                <div class="budget-hero-amount">£1,488 <span style="font-size:14px;color:var(--muted);font-weight:400">/ £2,200</span></div>
+              </div>
+              <div class="budget-row paid">
+                <div>
+                  <div class="budget-row-name">Rent</div>
+                  <div class="budget-row-meta">PAID · 1st</div>
+                </div>
+                <div class="budget-row-amount">£1,050</div>
+              </div>
+              <div class="budget-row paid">
+                <div>
+                  <div class="budget-row-name">Council tax</div>
+                  <div class="budget-row-meta">PAID · 5th</div>
+                </div>
+                <div class="budget-row-amount">£182</div>
+              </div>
+              <div class="budget-row">
+                <div>
+                  <div class="budget-row-name">Broadband</div>
+                  <div class="budget-row-meta">DUE · 12th</div>
+                </div>
+                <div class="budget-row-amount">£38</div>
+              </div>
+              <div class="budget-row">
+                <div>
+                  <div class="budget-row-name">Spotify family</div>
+                  <div class="budget-row-meta">DUE · 18th</div>
+                </div>
+                <div class="budget-row-amount">£17</div>
+              </div>
+              <div class="budget-row">
+                <div>
+                  <div class="budget-row-name">Mobile</div>
+                  <div class="budget-row-meta">DUE · 22nd</div>
+                </div>
+                <div class="budget-row-amount">£24</div>
+              </div>
+            </div>
+            <div class="shelf-footer">
+              <span>Next bill</span>
+              <span><strong style="color:#4cbb8a">Broadband · 7 days</strong></span>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- ─── SLIDE 3: Notes ─── -->
+      <article class="hero hero-slide hero-slide-notes" aria-roledescription="slide" aria-label="Notes — slide 3 of 5">
+        <div class="hero-copy">
+          <span class="hero-eyebrow">
+            <span class="dot"></span>
+            Encrypted notes
+          </span>
+
+          <h1>
+            Every household note,<br>
+            <span class="accent">locked away.</span>
+          </h1>
+
+          <p class="hero-sub">
+            Recipes, packing lists, meter readings, the boiler service code. Pin it, lock it with a passphrase, set a reminder. Everything lives in one place — and <strong>only you can read it</strong>.
+          </p>
+
+          <div class="hero-cta">
+            <button class="btn btn-primary btn-large" type="button" onclick="goRegister()">
+              <svg aria-hidden="true"><use href="#i-plus"/></svg>
+              Create account
+            </button>
+            <button class="btn btn-ghost btn-large" type="button" onclick="goLogin()">
+              <svg aria-hidden="true"><use href="#i-key"/></svg>
+              Log in
+            </button>
+          </div>
+
+          <span class="hero-trust">
+            <svg aria-hidden="true"><use href="#i-shield-check"/></svg>
+            Per-note passphrase or passkey lock
+          </span>
+
+          <div class="hero-demo-wrap">
+            <a class="hero-demo" href="https://app.stckrm.com?action=demo">
+              <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
+              Try the demo
+            </a>
+            <span class="hero-demo-sub">No signup · sample data</span>
+          </div>
+        </div>
+
+        <div class="hero-visual" aria-hidden="true">
+          <div class="shelf-frame">
+            <div class="shelf-header">
+              <span><span class="live-dot"></span>NOTES</span>
+              <span>12 NOTES · 3 LOCKED</span>
+            </div>
+            <div class="preview-body">
+              <div class="notes-grid">
+                <div class="note-card">
+                  <div class="note-title">
+                    <span class="note-pin"><svg aria-hidden="true"><use href="#i-pin"/></svg></span>
+                    Boiler service
+                  </div>
+                  <div class="note-body">
+                    Engineer · Aug 14<br>
+                    Code: <strong>4812</strong><br>
+                    Filter due in 3mo
+                  </div>
+                </div>
+                <div class="note-card note-locked">
+                  <span class="note-lock"><svg aria-hidden="true"><use href="#i-lock"/></svg></span>
+                  <div class="note-title">Spare keys</div>
+                  <div class="note-body">
+                    Hidden under planter<br>
+                    Spare with neighbour<br>
+                    Change locks 2027
+                  </div>
+                </div>
+                <div class="note-card">
+                  <div class="note-title">Sunday roast</div>
+                  <div class="note-body">
+                    <div class="check-line"><span class="note-check done"><svg aria-hidden="true"><use href="#i-check"/></svg></span><span class="done">Beef</span></div>
+                    <div class="check-line"><span class="note-check done"><svg aria-hidden="true"><use href="#i-check"/></svg></span><span class="done">Carrots</span></div>
+                    <div class="check-line"><span class="note-check"></span><span>Yorkshires</span></div>
+                  </div>
+                </div>
+                <div class="note-card">
+                  <div class="note-title">Meter reading</div>
+                  <div class="note-body">
+                    Gas <strong>04812</strong><br>
+                    Elec <strong>21984</strong><br>
+                    Read 1st of month
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="shelf-footer">
+              <span>Last edited</span>
+              <span><strong style="color:#b48bee">12 minutes ago</strong></span>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- ─── SLIDE 4: Groceries ─── -->
+      <article class="hero hero-slide hero-slide-grocery" aria-roledescription="slide" aria-label="Groceries — slide 4 of 5">
+        <div class="hero-copy">
+          <span class="hero-eyebrow">
+            <span class="dot"></span>
+            Smarter grocery lists
+          </span>
+
+          <h1>
+            One list per shop.<br>
+            Sorted by <span class="accent">aisle.</span>
+          </h1>
+
+          <p class="hero-sub">
+            Add items as you think of them — they auto-sort by department, by store. Share the list with your household and watch it tick off in real time. <strong>No more forgotten basics, no more duplicate buys.</strong>
+          </p>
+
+          <div class="hero-cta">
+            <button class="btn btn-primary btn-large" type="button" onclick="goRegister()">
+              <svg aria-hidden="true"><use href="#i-plus"/></svg>
+              Create account
+            </button>
+            <button class="btn btn-ghost btn-large" type="button" onclick="goLogin()">
+              <svg aria-hidden="true"><use href="#i-key"/></svg>
+              Log in
+            </button>
+          </div>
+
+          <span class="hero-trust">
+            <svg aria-hidden="true"><use href="#i-shield-check"/></svg>
+            Multi-store · Shared with household · Encrypted
+          </span>
+
+          <div class="hero-demo-wrap">
+            <a class="hero-demo" href="https://app.stckrm.com?action=demo">
+              <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
+              Try the demo
+            </a>
+            <span class="hero-demo-sub">No signup · sample data</span>
+          </div>
+        </div>
+
+        <div class="hero-visual" aria-hidden="true">
+          <div class="shelf-frame">
+            <div class="shelf-header">
+              <span><span class="live-dot"></span>SHOPPING LIST</span>
+              <span>14 ITEMS · 2 STORES</span>
+            </div>
+            <div class="preview-body">
+              <div class="grocery-store-tab-row">
+                <span class="grocery-store-tab active">Tesco</span>
+                <span class="grocery-store-tab">Aldi</span>
+                <span class="grocery-store-tab">Pharmacy</span>
+              </div>
+              <div class="grocery-dept">Produce</div>
+              <div class="grocery-lines">
+                <div class="grocery-line checked">
+                  <span class="gl-check"><svg aria-hidden="true"><use href="#i-check"/></svg></span>
+                  <span class="gl-name">Bananas</span>
+                  <span class="gl-qty">×6</span>
+                </div>
+                <div class="grocery-line">
+                  <span class="gl-check"></span>
+                  <span class="gl-name">Spinach</span>
+                  <span class="gl-qty">200g</span>
+                </div>
+                <div class="grocery-line">
+                  <span class="gl-check"></span>
+                  <span class="gl-name">Avocados</span>
+                  <span class="gl-qty">×3</span>
+                </div>
+              </div>
+              <div class="grocery-dept">Dairy</div>
+              <div class="grocery-lines">
+                <div class="grocery-line checked">
+                  <span class="gl-check"><svg aria-hidden="true"><use href="#i-check"/></svg></span>
+                  <span class="gl-name">Whole milk</span>
+                  <span class="gl-qty">2L</span>
+                </div>
+                <div class="grocery-line">
+                  <span class="gl-check"></span>
+                  <span class="gl-name">Greek yogurt</span>
+                  <span class="gl-qty">500g</span>
+                </div>
+                <div class="grocery-line">
+                  <span class="gl-check"></span>
+                  <span class="gl-name">Butter</span>
+                  <span class="gl-qty">250g</span>
+                </div>
+              </div>
+            </div>
+            <div class="shelf-footer">
+              <span>Shared with</span>
+              <span><strong style="color:#5b8dee">Sam · live</strong></span>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- ─── SLIDE 5: Encryption ─── -->
+      <article class="hero hero-slide hero-slide-encrypt" aria-roledescription="slide" aria-label="Encryption — slide 5 of 5">
+        <div class="hero-copy">
+          <span class="hero-eyebrow">
+            <span class="dot"></span>
+            End-to-end encrypted
+          </span>
+
+          <h1>
+            Your data leaves<br>
+            your device <span class="accent">unreadable.</span>
+          </h1>
+
+          <p class="hero-sub">
+            Everything is encrypted on your phone before it ever touches our servers. We literally cannot read your stock, bills, notes or shopping lists — and neither can anyone else. <strong>Sign in with a passkey</strong> and the only key is on your devices.
+          </p>
+
+          <div class="hero-cta">
+            <button class="btn btn-primary btn-large" type="button" onclick="goRegister()">
+              <svg aria-hidden="true"><use href="#i-plus"/></svg>
+              Create account
+            </button>
+            <button class="btn btn-ghost btn-large" type="button" onclick="goLogin()">
+              <svg aria-hidden="true"><use href="#i-key"/></svg>
+              Log in
+            </button>
+          </div>
+
+          <span class="hero-trust">
+            <svg aria-hidden="true"><use href="#i-shield-check"/></svg>
+            AES-GCM · Per-account keys · Open source
+          </span>
+
+          <div class="hero-demo-wrap">
+            <a class="hero-demo" href="https://app.stckrm.com?action=demo">
+              <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
+              Try the demo
+            </a>
+            <span class="hero-demo-sub">No signup · sample data</span>
+          </div>
+        </div>
+
+        <div class="hero-visual" aria-hidden="true">
+          <div class="shelf-frame">
+            <div class="shelf-header">
+              <span><span class="live-dot"></span>ZERO-KNOWLEDGE</span>
+              <span>AES-256-GCM</span>
+            </div>
+            <div class="encrypt-stage">
+              <div class="encrypt-row">
+                <div class="encrypt-side">
+                  <span class="encrypt-side-label">On your device</span>
+                  <span class="plain">Olive oil · 3 days left</span>
+                </div>
+                <span class="encrypt-arrow"><svg aria-hidden="true"><use href="#i-arrow-right"/></svg></span>
+                <div class="encrypt-side">
+                  <span class="encrypt-side-label">In transit · on server</span>
+                  <span class="cipher">f3:a1:9d:e2:84:c0:7b:55:11:ab:d9:6e</span>
+                </div>
+              </div>
+              <div class="encrypt-bullets">
+                <div class="encrypt-bullet">
+                  <svg aria-hidden="true"><use href="#i-shield-check"/></svg>
+                  <span>Encrypted <strong>before</strong> it leaves your device</span>
+                </div>
+                <div class="encrypt-bullet">
+                  <svg aria-hidden="true"><use href="#i-key"/></svg>
+                  <span>Sign in with <strong>passkey</strong> — no passwords to leak</span>
+                </div>
+                <div class="encrypt-bullet">
+                  <svg aria-hidden="true"><use href="#i-lock"/></svg>
+                  <span>Even Stockroom <strong>can't read</strong> your data</span>
+                </div>
+              </div>
+            </div>
+            <div class="shelf-footer">
+              <span>Your key</span>
+              <span><strong style="color:var(--ok)">Stays on your devices</strong></span>
+            </div>
+          </div>
+        </div>
+      </article>
+
     </div>
 
-    <!-- Animated stockroom preview -->
-    <div class="hero-visual" aria-hidden="true">
-      <div class="shelf-frame">
-        <div class="shelf-header">
-          <span><span class="live-dot"></span>YOUR STOCKROOM</span>
-          <span>5 ITEMS</span>
-        </div>
-        <div class="shelf-list">
-          <div class="shelf-item urgent">
-            <span class="item-icon">🧴</span>
-            <div>
-              <div class="item-name">Washing-up liquid</div>
-              <div class="item-bar"><div class="item-bar-fill" style="width:8%"></div></div>
-            </div>
-            <span class="item-days">3d</span>
-          </div>
-          <div class="shelf-item warn">
-            <span class="item-icon">🧻</span>
-            <div>
-              <div class="item-name">Toilet roll</div>
-              <div class="item-bar"><div class="item-bar-fill" style="width:24%"></div></div>
-            </div>
-            <span class="item-days">9d</span>
-          </div>
-          <div class="shelf-item warn">
-            <span class="item-icon">☕</span>
-            <div>
-              <div class="item-name">Coffee beans</div>
-              <div class="item-bar"><div class="item-bar-fill" style="width:32%"></div></div>
-            </div>
-            <span class="item-days">12d</span>
-          </div>
-          <div class="shelf-item ok">
-            <span class="item-icon">🧂</span>
-            <div>
-              <div class="item-name">Sea salt</div>
-              <div class="item-bar"><div class="item-bar-fill" style="width:64%"></div></div>
-            </div>
-            <span class="item-days">42d</span>
-          </div>
-          <div class="shelf-item ok">
-            <span class="item-icon">🍯</span>
-            <div>
-              <div class="item-name">Honey</div>
-              <div class="item-bar"><div class="item-bar-fill" style="width:78%"></div></div>
-            </div>
-            <span class="item-days">68d</span>
-          </div>
-        </div>
-        <div class="shelf-footer">
-          <span>Next delivery</span>
-          <span><strong>1st of the month</strong></span>
-        </div>
-      </div>
+    <!-- Dot indicators — clickable, animated progress fill on the active dot -->
+    <div class="hero-dots" role="tablist" aria-label="Slide navigation">
+      <button type="button" class="hero-dot active" data-slide="0" aria-label="Show Stockroom slide" aria-selected="true"></button>
+      <button type="button" class="hero-dot" data-slide="1" aria-label="Show Budget slide" aria-selected="false"></button>
+      <button type="button" class="hero-dot" data-slide="2" aria-label="Show Notes slide" aria-selected="false"></button>
+      <button type="button" class="hero-dot" data-slide="3" aria-label="Show Groceries slide" aria-selected="false"></button>
+      <button type="button" class="hero-dot" data-slide="4" aria-label="Show Encryption slide" aria-selected="false"></button>
     </div>
   </section>
 
@@ -1057,6 +1911,209 @@
     var wb = document.getElementById('welcome-back');
     if (wb) wb.classList.remove('visible');
   }
+
+  // ═══════════════════════════════════════════════════════════
+  //  HERO CAROUSEL — auto-advance + dot navigation + swipe
+  // ═══════════════════════════════════════════════════════════
+  // Five slides; advances every 5s; pauses on hover, touch, focus, and
+  // when the tab is hidden. Respects prefers-reduced-motion (no auto-play
+  // and no smooth scroll). Dots are clickable and show progress on the
+  // active dot via a CSS animation that's restarted on each advance.
+  (function initHeroCarousel() {
+    if (_isStandalone) return;
+
+    var track   = document.getElementById('hero-track');
+    var dotsRow = document.querySelector('.hero-dots');
+    if (!track || !dotsRow) return;
+
+    var dots   = Array.prototype.slice.call(dotsRow.querySelectorAll('.hero-dot'));
+    var slides = Array.prototype.slice.call(track.querySelectorAll('.hero-slide'));
+    var total  = slides.length;
+    if (total < 2) return; // no point auto-advancing a single slide
+
+    var prefersReducedMotion = false;
+    try {
+      prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch (e) {}
+
+    var ADVANCE_MS = 5000;
+    var current = 0;
+    var advanceTimer = null;
+    var paused = false;     // user-driven pause (hover, touch, focus)
+    var hidden = false;     // tab hidden — separate so it doesn't fight user pause
+
+    // Advance to a specific slide. `smooth=true` triggers the scroll-snap
+    // animation; we use false for instant-on-resize / instant-on-init.
+    function goTo(index, smooth) {
+      if (index < 0) index = total - 1;
+      if (index >= total) index = 0;
+      current = index;
+      var slide = slides[index];
+      if (!slide) return;
+      // scrollTo on the track lines up the requested slide. Using the
+      // slide's offsetLeft (relative to the track) is more reliable than
+      // index * width because it survives scrollbar / sub-pixel rounding.
+      try {
+        track.scrollTo({
+          left: slide.offsetLeft,
+          behavior: (smooth && !prefersReducedMotion) ? 'smooth' : 'auto'
+        });
+      } catch (e) {
+        // Older browsers — fall back to direct assignment
+        track.scrollLeft = slide.offsetLeft;
+      }
+      updateDots();
+    }
+
+    function next() { goTo(current + 1, true); }
+
+    function updateDots() {
+      for (var i = 0; i < dots.length; i++) {
+        var isActive = (i === current);
+        dots[i].classList.toggle('active', isActive);
+        dots[i].setAttribute('aria-selected', isActive ? 'true' : 'false');
+        // Toggling the `animating` class restarts the CSS keyframe so the
+        // progress bar fills cleanly from zero on each advance. We have
+        // to remove + force reflow + re-add to actually restart the
+        // animation; just toggling won't reset to 0 mid-animation.
+        if (isActive) {
+          dots[i].classList.remove('animating');
+          // Force reflow so the animation actually restarts
+          // eslint-disable-next-line no-unused-expressions
+          void dots[i].offsetWidth;
+          if (autoAdvanceAllowed()) {
+            dots[i].style.setProperty('--hero-dot-duration', (ADVANCE_MS / 1000) + 's');
+            dots[i].classList.add('animating');
+          }
+        } else {
+          dots[i].classList.remove('animating');
+        }
+      }
+    }
+
+    function autoAdvanceAllowed() {
+      return !paused && !hidden && !prefersReducedMotion;
+    }
+
+    function startTimer() {
+      stopTimer();
+      if (!autoAdvanceAllowed()) return;
+      advanceTimer = setTimeout(next, ADVANCE_MS);
+    }
+
+    function stopTimer() {
+      if (advanceTimer) {
+        clearTimeout(advanceTimer);
+        advanceTimer = null;
+      }
+    }
+
+    // Pause / resume helpers — kept separate so multiple sources can
+    // coexist without losing the autoplay state mid-resume.
+    function pauseAuto() {
+      paused = true;
+      stopTimer();
+      // Cancel the dot progress bar so it doesn't keep filling while paused
+      var activeDot = dots[current];
+      if (activeDot) activeDot.classList.remove('animating');
+    }
+    function resumeAuto() {
+      paused = false;
+      // Restart the dot progress bar from zero; matches the timer reset
+      updateDots();
+      startTimer();
+    }
+
+    // ── Wire up dot clicks ──
+    dots.forEach(function (dot, i) {
+      dot.addEventListener('click', function () {
+        // User picked a slide — restart the autoplay clock from this slide
+        goTo(i, true);
+        if (autoAdvanceAllowed()) startTimer();
+      });
+    });
+
+    // ── Wire up arrow buttons (desktop) ──
+    var prevBtn = document.querySelector('[data-hero-prev]');
+    var nextBtn = document.querySelector('[data-hero-next]');
+    if (prevBtn) prevBtn.addEventListener('click', function () { goTo(current - 1, true); if (autoAdvanceAllowed()) startTimer(); });
+    if (nextBtn) nextBtn.addEventListener('click', function () { goTo(current + 1, true); if (autoAdvanceAllowed()) startTimer(); });
+
+    // ── Pause on hover (desktop, hover-capable pointer only) ──
+    var hoverCapable = false;
+    try { hoverCapable = window.matchMedia('(hover: hover)').matches; } catch (e) {}
+    if (hoverCapable) {
+      track.addEventListener('mouseenter', pauseAuto);
+      track.addEventListener('mouseleave', resumeAuto);
+    }
+
+    // ── Pause while user is touching / dragging ──
+    track.addEventListener('touchstart', pauseAuto, { passive: true });
+    track.addEventListener('touchend',   function () {
+      // Give the snap animation a beat to settle, then sync `current` to
+      // wherever the user dragged to before resuming the timer.
+      setTimeout(function () { syncFromScroll(); resumeAuto(); }, 150);
+    }, { passive: true });
+    track.addEventListener('touchcancel', resumeAuto, { passive: true });
+
+    // ── Pause when any control inside is focused (keyboard tabbers) ──
+    track.addEventListener('focusin', pauseAuto);
+    track.addEventListener('focusout', function (e) {
+      // Only resume if focus left the carousel entirely
+      if (!track.contains(e.relatedTarget)) resumeAuto();
+    });
+
+    // ── Pause when tab is hidden (saves battery, prevents jump-on-resume) ──
+    document.addEventListener('visibilitychange', function () {
+      hidden = document.hidden;
+      if (hidden) {
+        stopTimer();
+        var activeDot = dots[current];
+        if (activeDot) activeDot.classList.remove('animating');
+      } else if (!paused) {
+        // Resync visually — the user may have scrolled in another tab,
+        // or the layout may have shifted while we were hidden.
+        syncFromScroll();
+        updateDots();
+        startTimer();
+      }
+    });
+
+    // Keep `current` in sync if the user swipes manually past a snap point
+    // (so the next auto-advance starts from the right place).
+    var scrollSyncTimer = null;
+    function syncFromScroll() {
+      // Find the slide whose left edge is closest to the track's scrollLeft
+      var sl = track.scrollLeft;
+      var bestIdx = 0;
+      var bestDiff = Infinity;
+      for (var i = 0; i < slides.length; i++) {
+        var diff = Math.abs(slides[i].offsetLeft - sl);
+        if (diff < bestDiff) { bestDiff = diff; bestIdx = i; }
+      }
+      if (bestIdx !== current) {
+        current = bestIdx;
+        updateDots();
+      }
+    }
+    track.addEventListener('scroll', function () {
+      // Debounce to once-per-frame-ish so we only react when the snap settles
+      if (scrollSyncTimer) clearTimeout(scrollSyncTimer);
+      scrollSyncTimer = setTimeout(syncFromScroll, 80);
+    }, { passive: true });
+
+    // On window resize, re-anchor the current slide so layout shifts
+    // don't leave the track parked between two slides.
+    var resizeTimer = null;
+    window.addEventListener('resize', function () {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () { goTo(current, false); }, 120);
+    });
+
+    // ── Start ──
+    goTo(0, false);
+    startTimer();
+  })();
 </script>
 
 </body>

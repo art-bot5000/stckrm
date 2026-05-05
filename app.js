@@ -5638,10 +5638,9 @@ function cardHTML(item, threshold) {
   } else {
     qtyText = '';
   }
-  // Quick "−1" button shown only when we have a meaningful count to decrement
-  const decrementBtn = (projectedUnits != null && projectedUnits >= 1)
-    ? `<button class="card-plus-btn card-plus-btn-decrement" onclick="event.stopPropagation();quickAdjustStock('${item.id}',-1)" title="Used one — decrement count">−1</button>`
-    : '';
+  // Note: the −1 / +1 quick buttons used to live here in the card footer,
+  // but they fought for clicks against the hover overlay. They now live
+  // in the bottom-right of the hover overlay itself, alongside Tag.
 
   return `
   <div class="item-card" style="border-left:3px solid ${color}" data-id="${item.id}"
@@ -5684,7 +5683,6 @@ function cardHTML(item, threshold) {
         ${qtyText ? `<div class="card-qty">${qtyText}</div>` : ''}
         ${item.ordered ? `<div class="card-ordered"><svg class="icon" aria-hidden="true"><use href="#i-truck"></use></svg> Ordered</div>` : ''}
         ${expiry ? `<div class="card-expiry" style="color:${expiry.color};border-color:${expiry.color}55" title="${fmtDate(item.expiry)}">⏰ ${expiry.label}</div>` : ''}
-        ${decrementBtn ? `<div class="card-action-btns" onclick="event.stopPropagation()">${decrementBtn}</div>` : ''}
       </div>
       ${cardActionOverlayHTML(item)}
     </div>
@@ -5707,7 +5705,13 @@ function _cardOrderButton(item) {
 // ── Card action overlay ───────────────────────────────────────
 // Hover (desktop) / long-press (mobile) reveals a blurred panel over the
 // bottom of the card with extra actions (count stock, timeline, history,
-// archive, edit). Visually anchors below the days-left bar.
+// archive, edit, tag). Visually anchors below the days-left bar.
+//
+// Layout: a 3x3 grid of equal-size tiles. The last row holds Tag,
+// optional −1 (when there's stock to decrement), and the smart order
+// button (+1 / Delivered / Start using). Keeping the same tile shape
+// for Tag means it reads as a peer action; +1/-1 keep their accent
+// colours so they're visually distinct as quick numeric actions.
 function cardActionOverlayHTML(item) {
   const id = item.id;
   const isArchived = !!item._archived;
@@ -5719,7 +5723,28 @@ function cardActionOverlayHTML(item) {
     { icon: 'i-archive',       label: isArchived ? 'Restore' : 'Archive',
       onclick: isArchived ? `restoreItem('${id}')` : `archiveItem('${id}')` },
     { icon: 'i-pencil',        label: 'Edit Details',  onclick: `openEditModal('${id}')` },
+    { icon: 'i-tag',           label: 'Tag',           onclick: `openCardTagPicker('${id}')` },
   ];
+
+  // Quick numeric actions for the bottom-right of the grid.
+  // −1 only renders when there's a meaningful count to decrement.
+  const projectedUnits = getProjectedUnitsLeft(item);
+  const decrementCell = (projectedUnits != null && projectedUnits >= 1)
+    ? `<button type="button" class="card-action-numeric card-action-decrement" onclick="event.stopPropagation();_dismissCardActions('${id}');quickAdjustStock('${id}',-1)" title="Used one — decrement count">−1</button>`
+    : `<span class="card-action-numeric-spacer" aria-hidden="true"></span>`;
+
+  // Smart "+1" — turns into "Delivered" or "Start using" depending on state.
+  const hasPending          = (item.logs || []).some(l => l.pendingDelivery);
+  const hasDeliveredNoStart = (item.logs || []).some(l => !l.pendingDelivery && l.deliveredDate) && !item.startedUsing;
+  let plusCell;
+  if (hasPending) {
+    plusCell = `<button type="button" class="card-action-numeric card-action-delivered" onclick="event.stopPropagation();_dismissCardActions('${id}');openOrderFlow('${id}','delivered')" title="Mark delivered"><svg class="icon" aria-hidden="true"><use href="#i-package-check"></use></svg></button>`;
+  } else if (hasDeliveredNoStart) {
+    plusCell = `<button type="button" class="card-action-numeric card-action-start" onclick="event.stopPropagation();_dismissCardActions('${id}');openOrderFlow('${id}','startusing')" title="Start using"><svg class="icon" aria-hidden="true"><use href="#i-play"></use></svg></button>`;
+  } else {
+    plusCell = `<button type="button" class="card-action-numeric card-action-plus" onclick="event.stopPropagation();_dismissCardActions('${id}');openOrderFlow('${id}','purchase')" title="Log purchase">+1</button>`;
+  }
+
   return `<div class="card-action-overlay" data-overlay onclick="event.stopPropagation()">
     <div class="card-action-grid">
       ${tiles.map(t => `
@@ -5727,11 +5752,9 @@ function cardActionOverlayHTML(item) {
           <svg class="icon" aria-hidden="true"><use href="#${t.icon}"></use></svg>
           <span>${t.label}</span>
         </button>`).join('')}
+      ${decrementCell}
+      ${plusCell}
     </div>
-    <button type="button" class="card-action-tag-btn" onclick="event.stopPropagation();_dismissCardActions('${id}');openCardTagPicker('${id}')">
-      <svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg>
-      <span>Tag</span>
-    </button>
   </div>`;
 }
 

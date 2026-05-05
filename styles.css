@@ -1566,13 +1566,16 @@ body.note-open { overflow: hidden; touch-action: none; }
   pointer-events: auto;
 }
 .item-card.actions-open .swipe-hint { display: none; }
+/* Grid is 3x3: 6 action tiles in rows 1-2, then row 3 holds Tag, optional
+   −1, and +1 (or its smart variants). All cells are the same size so
+   Tag reads as a peer to the other six; +1/−1 keep accent colours so
+   they're visually distinct as quick numeric actions. */
 .card-action-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   grid-auto-rows: 1fr;
   gap: 6px;
   width: 100%;
-  /* let the grid take only as much room as it needs; the Tag button sits below */
   flex: 1 1 auto;
   align-content: center;
 }
@@ -1614,46 +1617,66 @@ body.note-open { overflow: hidden; touch-action: none; }
   text-overflow: ellipsis;
 }
 
-/* Tag button — sits centered under the 6-tile grid inside the overlay.
-   Same look-and-feel as the tiles but narrower and self-centered, since
-   it's a single secondary action separate from the grid. */
-.card-action-tag-btn {
+/* Numeric quick-action buttons (Tag is row-3 col-1 as a normal tile;
+   col-2 is −1, col-3 is +1 / Delivered / Start using).
+   Smaller than tiles since they're single-glyph or icon-only, but they
+   still fill the grid cell so heights stay aligned with the tile rows. */
+.card-action-numeric {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  align-self: center;
-  padding: 6px 16px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 4px;
+  padding: 6px 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
   border-radius: 10px;
-  color: var(--text);
-  font-family: var(--sans);
-  font-size: 11px;
-  font-weight: 600;
+  border: 1px solid var(--accent);
+  background: rgba(232, 168, 56, 0.12);
+  color: var(--accent);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, transform 0.1s;
-  min-width: 100px;
-  flex-shrink: 0;
+  line-height: 1;
+  min-height: 0;
+  white-space: nowrap;
 }
-.card-action-tag-btn:hover {
-  background: rgba(232, 168, 56, 0.14);
-  border-color: rgba(232, 168, 56, 0.4);
+.card-action-numeric:hover { background: rgba(232, 168, 56, 0.22); }
+.card-action-numeric:active { transform: scale(0.94); }
+.card-action-numeric .icon { width: 14px; height: 14px; }
+
+.card-action-numeric.card-action-decrement {
+  border-color: rgba(120, 128, 160, 0.4);
+  background: rgba(120, 128, 160, 0.10);
+  color: var(--muted);
 }
-.card-action-tag-btn:active { transform: scale(0.96); }
-.card-action-tag-btn .icon {
-  width: 14px;
-  height: 14px;
-  color: var(--accent);
-  flex-shrink: 0;
+.card-action-numeric.card-action-decrement:hover {
+  background: rgba(232, 80, 80, 0.15);
+  border-color: rgba(232, 80, 80, 0.4);
+  color: #e85050;
 }
+.card-action-numeric.card-action-delivered {
+  border-color: rgba(76, 187, 138, 0.5);
+  background: rgba(76, 187, 138, 0.12);
+  color: var(--ok);
+}
+.card-action-numeric.card-action-delivered:hover { background: rgba(76, 187, 138, 0.22); }
+.card-action-numeric.card-action-start {
+  border-color: rgba(91, 141, 238, 0.5);
+  background: rgba(91, 141, 238, 0.12);
+  color: #5b8dee;
+}
+.card-action-numeric.card-action-start:hover { background: rgba(91, 141, 238, 0.22); }
+
+/* Empty cell placeholder when there's no −1 to show — keeps the grid
+   layout intact so +1 stays in the bottom-right corner. */
+.card-action-numeric-spacer { display: block; }
 
 /* On compact view, action tiles get tighter */
 .compact-view .card-action-overlay { padding: 8px; gap: 6px; }
 .compact-view .card-action-tile { font-size: 10px; padding: 5px 6px; gap: 5px; }
 .compact-view .card-action-tile .icon { width: 12px; height: 12px; }
-.compact-view .card-action-tag-btn { font-size: 10px; padding: 5px 14px; }
-.compact-view .card-action-tag-btn .icon { width: 12px; height: 12px; }
+.compact-view .card-action-numeric { font-size: 11px; padding: 5px 6px; }
+.compact-view .card-action-numeric .icon { width: 12px; height: 12px; }
 
 /* ── Item actions modal (mobile long-press) ── */
 .item-actions-modal-inner { padding: 0; overflow: hidden; }
