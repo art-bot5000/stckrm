@@ -1,309 +1,156 @@
-# stckrm.com infrastructure
-# ─────────────────────────
-# Three hostnames served from one Fly machine. Caddy listens on :8080
-# because Fly's edge proxy terminates TLS and forwards plaintext on that
-# port — we don't issue our own certs.
+# ═══════════════════════════════════════════════════════════
+#  STOCKROOM — Caddy reverse-proxy & static-file config
+# ═══════════════════════════════════════════════════════════
+# Hostname routing strategy:
+#   stckrm.com           → CANONICAL apex; serves landing page (marketing)
+#                          + reverse-proxies API endpoints to Deno
+#   www.stckrm.com       → 301 redirects to https://stckrm.com (apex canonical)
+#   app.stckrm.com       → serves the PWA (index.html)
+#                          + reverse-proxies API endpoints to Deno
+#   *.fly.dev / no host  → fallback for Fly edge health checks; serves
+#                          everything (legacy behaviour)
 #
-#   stckrm.com         → 301 redirect to www.stckrm.com (apex → www)
-#   www.stckrm.com     → marketing landing page (landing.html)
-#   app.stckrm.com     → PWA + backend API
-#
-# A bare *.fly.dev hostname (or anything else not matched) falls through
-# to a fallback block that preserves the pre-domain behaviour.
-#
-# Style note: when handle blocks are nested inside other handle blocks,
-# Caddy requires the body to start on a NEW line (not inline with the
-# matcher). All API route handlers below follow that pattern.
+# TLS termination is handled by Fly's edge (force_https in fly.toml),
+# so all site blocks listen on :8080 over plain HTTP from the edge.
 
-:8080 {
+# ── Common API reverse-proxy snippet ──
+# Reused on every hostname that needs to serve the API. Keep this list in
+# sync with main.ts route definitions. Catches both the existing API
+# routes and the new /webhook/stripe endpoint.
+(api_routes) {
+    handle /ping            { reverse_proxy localhost:8000 }
+    handle /webhook/stripe  { reverse_proxy localhost:8000 }
+    handle /auth/*          { reverse_proxy localhost:8000 }
+    handle /user/*          { reverse_proxy localhost:8000 }
+    handle /device/*        { reverse_proxy localhost:8000 }
+    handle /share/*         { reverse_proxy localhost:8000 }
+    handle /schedule/*      { reverse_proxy localhost:8000 }
+    handle /passkey/*       { reverse_proxy localhost:8000 }
+    handle /admin/*         { reverse_proxy localhost:8000 }
+    handle /household/*     { reverse_proxy localhost:8000 }
+    handle /items/*         { reverse_proxy localhost:8000 }
+    handle /key/*           { reverse_proxy localhost:8000 }
+    handle /data/*          { reverse_proxy localhost:8000 }
+    handle /recovery/*      { reverse_proxy localhost:8000 }
+    handle /email/*         { reverse_proxy localhost:8000 }
+    handle /invite/*        { reverse_proxy localhost:8000 }
+    handle /crypto/*        { reverse_proxy localhost:8000 }
+    handle /sync/*          { reverse_proxy localhost:8000 }
+    handle /presence*       { reverse_proxy localhost:8000 }
+    handle /reminder*       { reverse_proxy localhost:8000 }
+    handle /status          { reverse_proxy localhost:8000 }
+    handle /register        { reverse_proxy localhost:8000 }
+    handle /unregister      { reverse_proxy localhost:8000 }
+    handle /unsubscribe     { reverse_proxy localhost:8000 }
+    handle /check-now       { reverse_proxy localhost:8000 }
+    handle /send-now        { reverse_proxy localhost:8000 }
+    handle /debug-schedule  { reverse_proxy localhost:8000 }
+    handle /reset-schedule  { reverse_proxy localhost:8000 }
+    handle /set-schedule    { reverse_proxy localhost:8000 }
+    handle /send-reminder   { reverse_proxy localhost:8000 }
+    handle /debug-user      { reverse_proxy localhost:8000 }
+}
+
+# ── Common static-file + headers snippet ──
+# Used by all hostnames that serve content. The default file (index of /)
+# differs per site, so we keep that out of here.
+(static_assets) {
+    @html     path *.html
+    header    @html     Cache-Control "no-cache, no-store, must-revalidate"
+
+    @sw       path /sw.js
+    header    @sw       Cache-Control "no-cache, no-store, must-revalidate"
+
+    @manifest path /manifest.json
+    header    @manifest Cache-Control "public, max-age=3600"
+
+    @assets   path *.js *.css
+    header    @assets   Cache-Control "public, max-age=3600"
+
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options        "DENY"
+        Referrer-Policy        "strict-origin-when-cross-origin"
+        Permissions-Policy     "camera=*, microphone=()"
+        -Server
+    }
+}
+
+# ── Common encoding ──
+(compression) {
     encode {
         zstd
         br
         gzip
         minimum_length 256
     }
+}
 
-    # ── 1. Apex redirect ────────────────────────────────────────────────
-    @apex host stckrm.com
-    handle @apex {
-        redir https://www.stckrm.com{uri} permanent
-    }
+# ═══════════════════════════════════════════════════════════
+# Site: www.stckrm.com — 301 redirect to canonical apex
+# ═══════════════════════════════════════════════════════════
+# Permanent redirect so browsers and search engines treat the apex as
+# canonical. Path and query are preserved via {uri}.
+http://www.stckrm.com, https://www.stckrm.com {
+    redir https://stckrm.com{uri} permanent
+}
 
-    # ── 2. Marketing landing (www) ──────────────────────────────────────
-    @www host www.stckrm.com
-    handle @www {
-        root * /app/public
-        rewrite / /landing.html
+# ═══════════════════════════════════════════════════════════
+# Site: stckrm.com — canonical apex, serves landing page
+# ═══════════════════════════════════════════════════════════
+# Visitors hitting stckrm.com/ see landing.html. The landing page itself
+# has client-side logic that auto-redirects installed PWAs and signed-in
+# users to app.stckrm.com — so this site purely hosts the marketing page.
+# API endpoints still proxy to Deno so the webhook (and any future
+# apex-hosted API) work.
+http://stckrm.com, https://stckrm.com {
+    import compression
+    import api_routes
 
-        file_server
-
-        @html path *.html
-        header @html Cache-Control "no-cache, no-store, must-revalidate"
-
-        header {
-            X-Content-Type-Options "nosniff"
-            X-Frame-Options "DENY"
-            Referrer-Policy "strict-origin-when-cross-origin"
-            Permissions-Policy "camera=(), microphone=()"
-            -Server
-        }
-    }
-
-    # ── 3. App hostname (PWA + backend API) ─────────────────────────────
-    @app host app.stckrm.com
-    handle @app {
-        # Backend API — proxied to main.ts on :8000.
-        # Body on next line because nested handle blocks require it.
-        handle /ping {
-            reverse_proxy localhost:8000
-        }
-        handle /auth/* {
-            reverse_proxy localhost:8000
-        }
-        handle /user/* {
-            reverse_proxy localhost:8000
-        }
-        handle /device/* {
-            reverse_proxy localhost:8000
-        }
-        handle /share/* {
-            reverse_proxy localhost:8000
-        }
-        handle /schedule/* {
-            reverse_proxy localhost:8000
-        }
-        handle /passkey/* {
-            reverse_proxy localhost:8000
-        }
-        handle /admin/* {
-            reverse_proxy localhost:8000
-        }
-        handle /household/* {
-            reverse_proxy localhost:8000
-        }
-        handle /items/* {
-            reverse_proxy localhost:8000
-        }
-        handle /key/* {
-            reverse_proxy localhost:8000
-        }
-        handle /data/* {
-            reverse_proxy localhost:8000
-        }
-        handle /recovery/* {
-            reverse_proxy localhost:8000
-        }
-        handle /email/* {
-            reverse_proxy localhost:8000
-        }
-        handle /invite/* {
-            reverse_proxy localhost:8000
-        }
-        handle /crypto/* {
-            reverse_proxy localhost:8000
-        }
-        handle /sync/* {
-            reverse_proxy localhost:8000
-        }
-        handle /presence* {
-            reverse_proxy localhost:8000
-        }
-        handle /reminder* {
-            reverse_proxy localhost:8000
-        }
-        handle /note/* {
-            reverse_proxy localhost:8000
-        }
-        handle /mfa/* {
-            reverse_proxy localhost:8000
-        }
-        handle /status {
-            reverse_proxy localhost:8000
-        }
-        handle /register {
-            reverse_proxy localhost:8000
-        }
-        handle /unregister {
-            reverse_proxy localhost:8000
-        }
-        handle /unsubscribe {
-            reverse_proxy localhost:8000
-        }
-        handle /check-now {
-            reverse_proxy localhost:8000
-        }
-        handle /send-now {
-            reverse_proxy localhost:8000
-        }
-        handle /debug-schedule {
-            reverse_proxy localhost:8000
-        }
-        handle /reset-schedule {
-            reverse_proxy localhost:8000
-        }
-        handle /set-schedule {
-            reverse_proxy localhost:8000
-        }
-        handle /send-reminder {
-            reverse_proxy localhost:8000
-        }
-
-        # Static frontend — the PWA at root.
-        handle {
-            root * /app/public
-
-            # /app and /app/ → / (preserves query string for ?action=demo)
-            @legacyApp path /app /app/
-            redir @legacyApp / permanent
-
-            file_server
-
-            @html path *.html
-            header @html Cache-Control "no-cache, no-store, must-revalidate"
-
-            @sw path /sw.js
-            header @sw Cache-Control "no-cache, no-store, must-revalidate"
-
-            @manifest path /manifest.json
-            header @manifest Cache-Control "public, max-age=3600"
-
-            @assets path *.js *.css
-            header @assets Cache-Control "public, max-age=31536000, immutable"
-
-            header {
-                X-Content-Type-Options "nosniff"
-                X-Frame-Options "DENY"
-                Referrer-Policy "strict-origin-when-cross-origin"
-                Permissions-Policy "camera=*, microphone=()"
-                -Server
-            }
-        }
-    }
-
-    # ── 4. Fallback — fly.dev or any other host ─────────────────────────
-    # Same behaviour as the original single-host Caddyfile so health
-    # checks and direct fly.dev access keep working.
     handle {
-        handle /ping {
-            reverse_proxy localhost:8000
-        }
-        handle /auth/* {
-            reverse_proxy localhost:8000
-        }
-        handle /user/* {
-            reverse_proxy localhost:8000
-        }
-        handle /device/* {
-            reverse_proxy localhost:8000
-        }
-        handle /share/* {
-            reverse_proxy localhost:8000
-        }
-        handle /schedule/* {
-            reverse_proxy localhost:8000
-        }
-        handle /passkey/* {
-            reverse_proxy localhost:8000
-        }
-        handle /admin/* {
-            reverse_proxy localhost:8000
-        }
-        handle /household/* {
-            reverse_proxy localhost:8000
-        }
-        handle /items/* {
-            reverse_proxy localhost:8000
-        }
-        handle /key/* {
-            reverse_proxy localhost:8000
-        }
-        handle /data/* {
-            reverse_proxy localhost:8000
-        }
-        handle /recovery/* {
-            reverse_proxy localhost:8000
-        }
-        handle /email/* {
-            reverse_proxy localhost:8000
-        }
-        handle /invite/* {
-            reverse_proxy localhost:8000
-        }
-        handle /crypto/* {
-            reverse_proxy localhost:8000
-        }
-        handle /sync/* {
-            reverse_proxy localhost:8000
-        }
-        handle /presence* {
-            reverse_proxy localhost:8000
-        }
-        handle /reminder* {
-            reverse_proxy localhost:8000
-        }
-        handle /note/* {
-            reverse_proxy localhost:8000
-        }
-        handle /mfa/* {
-            reverse_proxy localhost:8000
-        }
-        handle /status {
-            reverse_proxy localhost:8000
-        }
-        handle /register {
-            reverse_proxy localhost:8000
-        }
-        handle /unregister {
-            reverse_proxy localhost:8000
-        }
-        handle /unsubscribe {
-            reverse_proxy localhost:8000
-        }
-        handle /check-now {
-            reverse_proxy localhost:8000
-        }
-        handle /send-now {
-            reverse_proxy localhost:8000
-        }
-        handle /debug-schedule {
-            reverse_proxy localhost:8000
-        }
-        handle /reset-schedule {
-            reverse_proxy localhost:8000
-        }
-        handle /set-schedule {
-            reverse_proxy localhost:8000
-        }
-        handle /send-reminder {
-            reverse_proxy localhost:8000
-        }
+        root * /app/public
+        # Default file served at / is landing.html (not index.html which is
+        # the PWA). All other static assets resolve normally.
+        try_files {path} /landing.html
+        file_server
+        import static_assets
+    }
+}
 
-        handle {
-            root * /app/public
-            rewrite / /landing.html
-            rewrite /app /index.html
+# ═══════════════════════════════════════════════════════════
+# Site: app.stckrm.com — the PWA itself
+# ═══════════════════════════════════════════════════════════
+# Serves index.html as the default. This is the URL the PWA's
+# manifest.json declares as start_url, so installed apps live here.
+http://app.stckrm.com, https://app.stckrm.com {
+    import compression
+    import api_routes
 
-            file_server
+    handle {
+        root * /app/public
+        # SPA fallback: any unmatched path resolves to index.html so client
+        # routing (?action=login etc.) works even on cold loads.
+        try_files {path} /index.html
+        file_server
+        import static_assets
+    }
+}
 
-            @html path *.html
-            header @html Cache-Control "no-cache, no-store, must-revalidate"
+# ═══════════════════════════════════════════════════════════
+# Fallback: Fly health checks and any other hostname
+# ═══════════════════════════════════════════════════════════
+# Fly's edge health checks come in without a Host header (or with a
+# different one). Serve index.html as the default so the .fly.dev URL
+# still works for debugging. This block also catches any hostname we
+# haven't explicitly configured above.
+:8080 {
+    import compression
+    import api_routes
 
-            @sw path /sw.js
-            header @sw Cache-Control "no-cache, no-store, must-revalidate"
-
-            @manifest path /manifest.json
-            header @manifest Cache-Control "public, max-age=3600"
-
-            @assets path *.js *.css
-            header @assets Cache-Control "public, max-age=31536000, immutable"
-
-            header {
-                X-Content-Type-Options "nosniff"
-                X-Frame-Options "DENY"
-                Referrer-Policy "strict-origin-when-cross-origin"
-                Permissions-Policy "camera=*, microphone=()"
-                -Server
-            }
-        }
+    handle {
+        root * /app/public
+        try_files {path} /index.html
+        file_server
+        import static_assets
     }
 }
