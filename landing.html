@@ -242,6 +242,50 @@
     }
     .hero-trust svg { width: 14px; height: 14px; color: var(--ok); }
 
+    /* "Try the demo" — a button styled like the ghost/secondary CTAs but
+       sat on its own line, centered under the trust strip, with a muted
+       subtitle underneath explaining what it does. The visual weight is
+       deliberately a notch below "Create account" — same size, similar
+       look, but secondary by virtue of being below the main CTA cluster
+       and the trust line. */
+    .hero-demo-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      margin-top: 22px;
+      width: 100%;
+      max-width: 360px;
+    }
+    .hero-demo {
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 8px;
+      padding: 14px 24px;
+      font-size: 15px;
+      font-weight: 600;
+      font-family: inherit;
+      color: var(--accent);
+      background: rgba(232,168,56,0.08);
+      border: 1px solid rgba(232,168,56,0.35);
+      border-radius: 10px;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .hero-demo:hover {
+      background: rgba(232,168,56,0.14);
+      border-color: rgba(232,168,56,0.55);
+      color: #f0b84a;
+    }
+    .hero-demo svg { width: 18px; height: 18px; }
+    .hero-demo-sub {
+      font-size: 12px;
+      color: var(--muted);
+      text-align: center;
+    }
+
     /* ─────────── HERO VISUAL — Animated stockroom shelf ─────────── */
     .hero-visual {
       position: relative;
@@ -569,6 +613,20 @@
       .steps { grid-template-columns: repeat(2, 1fr); }
       .step-arrow { display: none; }
       .eco-card { grid-template-columns: 1fr; padding: 32px 24px; }
+
+      /* On mobile, centre the trust line and demo block underneath the
+         CTA buttons. The buttons themselves stay left-aligned (they're a
+         flex row, looks cleaner that way). */
+      .hero-trust {
+        display: flex;
+        justify-content: center;
+        text-align: center;
+        width: 100%;
+      }
+      .hero-demo-wrap {
+        margin-left: auto;
+        margin-right: auto;
+      }
     }
 
     @media (max-width: 560px) {
@@ -718,6 +776,14 @@
         <svg aria-hidden="true"><use href="#i-shield-check"/></svg>
         End-to-end encrypted · Passkey sign-in · Free
       </span>
+
+      <div class="hero-demo-wrap">
+        <a class="hero-demo" href="https://app.stckrm.com?action=demo">
+          <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
+          Try the demo
+        </a>
+        <span class="hero-demo-sub">No signup · sample data</span>
+      </div>
     </div>
 
     <!-- Animated stockroom preview -->
