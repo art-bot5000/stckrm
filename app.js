@@ -5715,8 +5715,25 @@ function _cardOrderButton(item) {
 function cardActionOverlayHTML(item) {
   const id = item.id;
   const isArchived = !!item._archived;
+
+  // First tile is the smart primary action: Log Order normally, but when
+  // there's a pending purchase it switches to "Delivered", and when the
+  // delivery has arrived but use hasn't started, it becomes "Start using".
+  // This restores the multi-state behaviour that used to live in the
+  // dedicated +1 button so users always have one obvious "next step" tile.
+  const hasPending          = (item.logs || []).some(l => l.pendingDelivery);
+  const hasDeliveredNoStart = (item.logs || []).some(l => !l.pendingDelivery && l.deliveredDate) && !item.startedUsing;
+  let primaryTile;
+  if (hasPending) {
+    primaryTile = { icon: 'i-package-check', label: 'Delivered',  onclick: `openOrderFlow('${id}','delivered')` };
+  } else if (hasDeliveredNoStart) {
+    primaryTile = { icon: 'i-play',          label: 'Start using', onclick: `openOrderFlow('${id}','startusing')` };
+  } else {
+    primaryTile = { icon: 'i-shopping-cart', label: 'Log Order',   onclick: `openOrderFlow('${id}','purchase')` };
+  }
+
   const tiles = [
-    { icon: 'i-shopping-cart', label: 'Log Order',     onclick: `openOrderFlow('${id}','purchase')` },
+    primaryTile,
     { icon: 'i-hash',          label: 'Count Stock',   onclick: `openStockCountModal('${id}')` },
     { icon: 'i-bar-chart-2',   label: 'Order Timeline', onclick: `openAnalyticsModal('${id}')` },
     { icon: 'i-banknote',      label: 'Price History', onclick: `openPriceHistoryModal('${id}')` },
@@ -5728,22 +5745,15 @@ function cardActionOverlayHTML(item) {
 
   // Quick numeric actions for the bottom-right of the grid.
   // −1 only renders when there's a meaningful count to decrement.
+  // +1 is always a plain stock-bump; the smart Delivered/Start-using
+  // logic lives in the primary tile (top-left), which uses the full
+  // order-flow modal — +1 just nudges the count by one with no flow.
   const projectedUnits = getProjectedUnitsLeft(item);
   const decrementCell = (projectedUnits != null && projectedUnits >= 1)
     ? `<button type="button" class="card-action-numeric card-action-decrement" onclick="event.stopPropagation();_dismissCardActions('${id}');quickAdjustStock('${id}',-1)" title="Used one — decrement count">−1</button>`
     : `<span class="card-action-numeric-spacer" aria-hidden="true"></span>`;
 
-  // Smart "+1" — turns into "Delivered" or "Start using" depending on state.
-  const hasPending          = (item.logs || []).some(l => l.pendingDelivery);
-  const hasDeliveredNoStart = (item.logs || []).some(l => !l.pendingDelivery && l.deliveredDate) && !item.startedUsing;
-  let plusCell;
-  if (hasPending) {
-    plusCell = `<button type="button" class="card-action-numeric card-action-delivered" onclick="event.stopPropagation();_dismissCardActions('${id}');openOrderFlow('${id}','delivered')" title="Mark delivered"><svg class="icon" aria-hidden="true"><use href="#i-package-check"></use></svg></button>`;
-  } else if (hasDeliveredNoStart) {
-    plusCell = `<button type="button" class="card-action-numeric card-action-start" onclick="event.stopPropagation();_dismissCardActions('${id}');openOrderFlow('${id}','startusing')" title="Start using"><svg class="icon" aria-hidden="true"><use href="#i-play"></use></svg></button>`;
-  } else {
-    plusCell = `<button type="button" class="card-action-numeric card-action-plus" onclick="event.stopPropagation();_dismissCardActions('${id}');openOrderFlow('${id}','purchase')" title="Log purchase">+1</button>`;
-  }
+  const plusCell = `<button type="button" class="card-action-numeric card-action-plus" onclick="event.stopPropagation();_dismissCardActions('${id}');quickAdjustStock('${id}',1)" title="Add one to stock">+1</button>`;
 
   return `<div class="card-action-overlay" data-overlay onclick="event.stopPropagation()">
     <div class="card-action-grid">

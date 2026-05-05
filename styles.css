@@ -1654,18 +1654,6 @@ body.note-open { overflow: hidden; touch-action: none; }
   border-color: rgba(232, 80, 80, 0.4);
   color: #e85050;
 }
-.card-action-numeric.card-action-delivered {
-  border-color: rgba(76, 187, 138, 0.5);
-  background: rgba(76, 187, 138, 0.12);
-  color: var(--ok);
-}
-.card-action-numeric.card-action-delivered:hover { background: rgba(76, 187, 138, 0.22); }
-.card-action-numeric.card-action-start {
-  border-color: rgba(91, 141, 238, 0.5);
-  background: rgba(91, 141, 238, 0.12);
-  color: #5b8dee;
-}
-.card-action-numeric.card-action-start:hover { background: rgba(91, 141, 238, 0.22); }
 
 /* Empty cell placeholder when there's no −1 to show — keeps the grid
    layout intact so +1 stays in the bottom-right corner. */
