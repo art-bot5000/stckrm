@@ -140,6 +140,7 @@ const R2_DURABLE_PREFIXES = [
   'note_body',
   'schedule', 'last_sent', 'user_email', 'user_items',
   'deactivation', 'deactivation_reactivate',
+  'billing', 'billing_idx',
 ];
 
 const R2_CFG = {
@@ -960,6 +961,367 @@ async function _deleteAllUserData(kv: Deno.Kv, emailHash: string): Promise<void>
   await _clearUserDirty(emailHash);
 }
 
+// ═══════════════════════════════════════════════════════════
+//  STRIPE BILLING — Phase 1 (foundations only, no UI yet)
+// ═══════════════════════════════════════════════════════════
+// This module provides:
+//   • Stripe API helper (direct fetch — no SDK dependency)
+//   • KV schema helpers for billing:account:{emailHash}
+//   • Webhook signature verification (HMAC-SHA256 of t.payload)
+//   • Startup migration that grandfathers test accounts and grants
+//     a 90-day grace period to every other existing user (idempotent;
+//     marks itself complete via a KV flag so it only runs once).
+//
+// Phase 1 is intentionally invisible to end users: no UI changes, no
+// paywall enforcement, no checkout flow. Webhooks are received and
+// logged but business logic is stubbed. This phase exists to lay the
+// data model and prove the webhook pipe before we build on top of it.
+//
+// Future phases: trial-on-signup + Checkout (Phase 2), promo codes
+// (Phase 3), referrals + abuse detection (Phase 4), polish (Phase 5).
+const STRIPE_CFG = {
+  secretKey:      Deno.env.get('STRIPE_SECRET_KEY')      || '',
+  webhookSecret:  Deno.env.get('STRIPE_WEBHOOK_SECRET')  || '',
+  priceId:        Deno.env.get('STRIPE_PRICE_ID')        || '',
+  publishableKey: Deno.env.get('STRIPE_PUBLISHABLE_KEY') || '',
+};
+const stripeConfigured = () => !!(STRIPE_CFG.secretKey && STRIPE_CFG.webhookSecret);
+
+// Direct Stripe API call. We use form-encoded bodies (Stripe's native
+// format) rather than JSON because their API was designed for it and
+// nested params are easier to express. Returns parsed JSON or throws.
+async function stripeFetch(
+  path: string,
+  method: 'GET' | 'POST' | 'DELETE' = 'GET',
+  params?: Record<string, string | number | boolean | undefined>
+): Promise<any> {
+  if (!STRIPE_CFG.secretKey) throw new Error('STRIPE_SECRET_KEY not configured');
+  const headers: Record<string, string> = {
+    'Authorization': `Bearer ${STRIPE_CFG.secretKey}`,
+    'Stripe-Version': '2024-11-20.acacia',
+  };
+  let url = `https://api.stripe.com${path}`;
+  let body: string | undefined;
+  if (params && method !== 'GET') {
+    const enc = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) enc.set(k, String(v));
+    }
+    body = enc.toString();
+    headers['Content-Type'] = 'application/x-www-form-urlencoded';
+  } else if (params && method === 'GET') {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) qs.set(k, String(v));
+    }
+    url += '?' + qs.toString();
+  }
+  const r = await fetch(url, { method, headers, body });
+  const text = await r.text();
+  let parsed: any = null;
+  try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = { raw: text }; }
+  if (!r.ok) {
+    const msg = parsed?.error?.message || `Stripe API ${r.status}`;
+    const err: any = new Error(msg);
+    err.status = r.status;
+    err.code = parsed?.error?.code;
+    err.type = parsed?.error?.type;
+    throw err;
+  }
+  return parsed;
+}
+
+// ── Billing KV schema ─────────────────────────────────────
+// Single record per user account at ['billing', emailHash]. JSON-serialized
+// because Deno KV values are arbitrary; we keep it stringified for parity
+// with the rest of main.ts which uses string values throughout.
+//
+// Shape:
+//   {
+//     stripeCustomerId?: string,
+//     stripeSubscriptionId?: string,
+//     status: 'none' | 'trialing' | 'active' | 'past_due' | 'canceled' | 'free' | 'grandfathered',
+//     trialEndsAt?: number,        // unix seconds
+//     graceUntil?: number,         // unix seconds — applies only when status is 'none'
+//     currentPeriodEnd?: number,   // unix seconds
+//     cancelAtPeriodEnd?: boolean,
+//     cardOnFile: boolean,
+//     cardFingerprint?: string,    // for future abuse detection
+//     grandfathered: boolean,      // overrides everything; bypasses paywall
+//     updatedAt: number,           // unix seconds
+//     createdAt: number,           // unix seconds
+//   }
+type BillingStatus = 'none' | 'trialing' | 'active' | 'past_due' | 'canceled' | 'free' | 'grandfathered';
+interface BillingAccount {
+  stripeCustomerId?:     string;
+  stripeSubscriptionId?: string;
+  status:                BillingStatus;
+  trialEndsAt?:          number;
+  graceUntil?:           number;
+  currentPeriodEnd?:     number;
+  cancelAtPeriodEnd?:    boolean;
+  cardOnFile:            boolean;
+  cardFingerprint?:      string;
+  grandfathered:         boolean;
+  updatedAt:             number;
+  createdAt:             number;
+}
+
+async function getBillingAccount(emailHash: string): Promise<BillingAccount | null> {
+  const r = await kvGet(['billing', emailHash]);
+  if (!r.value) return null;
+  try { return JSON.parse(String(r.value)) as BillingAccount; } catch { return null; }
+}
+
+async function setBillingAccount(emailHash: string, acct: BillingAccount): Promise<void> {
+  acct.updatedAt = Math.floor(Date.now() / 1000);
+  await kvSet(['billing', emailHash], JSON.stringify(acct));
+  // Mark dirty so the next R2 snapshot includes the updated billing record
+  await markUserDirty(emailHash);
+}
+
+// Convenience: ensure a billing record exists for a user, creating a
+// minimal one if not. Returns the existing or newly-created record.
+async function ensureBillingAccount(emailHash: string): Promise<BillingAccount> {
+  const existing = await getBillingAccount(emailHash);
+  if (existing) return existing;
+  const now = Math.floor(Date.now() / 1000);
+  const fresh: BillingAccount = {
+    status:        'none',
+    cardOnFile:    false,
+    grandfathered: false,
+    createdAt:     now,
+    updatedAt:     now,
+  };
+  await setBillingAccount(emailHash, fresh);
+  return fresh;
+}
+
+// Lookup a Stripe customer ID -> emailHash. Used in webhook handlers
+// where we receive a Stripe event mentioning a customer and need to
+// find the local user. We maintain a reverse-index alongside the main
+// billing record for O(1) lookup.
+async function setStripeCustomerIndex(stripeCustomerId: string, emailHash: string): Promise<void> {
+  await kvSet(['billing_idx', 'stripe_customer', stripeCustomerId], emailHash);
+}
+async function lookupEmailHashByStripeCustomer(stripeCustomerId: string): Promise<string | null> {
+  const r = await kvGet(['billing_idx', 'stripe_customer', stripeCustomerId]);
+  return r.value ? String(r.value) : null;
+}
+
+// Create or fetch the Stripe customer for a user. Idempotent — if the
+// user already has a Stripe customer ID, we return it; otherwise we
+// create a new Stripe customer and persist the ID. The plaintext email
+// is sent to Stripe (Stripe needs it for receipts) but only if the
+// client supplied it at signup; otherwise we use a placeholder.
+async function ensureStripeCustomer(emailHash: string, plaintextEmail?: string): Promise<string | null> {
+  if (!stripeConfigured()) return null;
+  const acct = await ensureBillingAccount(emailHash);
+  if (acct.stripeCustomerId) return acct.stripeCustomerId;
+  try {
+    const params: Record<string, string> = {
+      'metadata[emailHash]': emailHash,
+      'metadata[source]':    'stockroom',
+    };
+    if (plaintextEmail) params.email = plaintextEmail;
+    const cust = await stripeFetch('/v1/customers', 'POST', params);
+    const stripeCustomerId = cust.id as string;
+    acct.stripeCustomerId = stripeCustomerId;
+    await setBillingAccount(emailHash, acct);
+    await setStripeCustomerIndex(stripeCustomerId, emailHash);
+    console.log(`Stripe customer created: ${stripeCustomerId} for emailHash=${emailHash}`);
+    return stripeCustomerId;
+  } catch (err) {
+    console.error(`ensureStripeCustomer failed for ${emailHash}:`, (err as Error).message);
+    return null;
+  }
+}
+
+// ── Webhook signature verification ────────────────────────
+// Stripe signs each webhook with HMAC-SHA256 of `${timestamp}.${payload}`
+// using the webhook signing secret. The signature header looks like:
+//   t=1700000000,v1=abc123...,v1=def456...
+// We accept if any v1 signature matches and the timestamp is within
+// 5 minutes (replay protection).
+async function verifyStripeSignature(payload: string, sigHeader: string | null): Promise<boolean> {
+  if (!sigHeader || !STRIPE_CFG.webhookSecret) return false;
+  const parts: Record<string, string[]> = {};
+  for (const seg of sigHeader.split(',')) {
+    const [k, v] = seg.split('=');
+    if (!k || !v) continue;
+    (parts[k.trim()] = parts[k.trim()] || []).push(v.trim());
+  }
+  const ts = parts.t?.[0];
+  const sigs = parts.v1 || [];
+  if (!ts || sigs.length === 0) return false;
+  // Replay guard: 5 minutes
+  const now = Math.floor(Date.now() / 1000);
+  const eventTime = parseInt(ts, 10);
+  if (Number.isNaN(eventTime) || Math.abs(now - eventTime) > 300) {
+    console.warn(`Stripe webhook outside replay window: ts=${ts} now=${now}`);
+    return false;
+  }
+  const signed = `${ts}.${payload}`;
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(STRIPE_CFG.webhookSecret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const macBuf = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signed));
+  const expected = _hex(macBuf);
+  // Constant-time compare
+  for (const s of sigs) {
+    if (s.length === expected.length) {
+      let diff = 0;
+      for (let i = 0; i < s.length; i++) diff |= s.charCodeAt(i) ^ expected.charCodeAt(i);
+      if (diff === 0) return true;
+    }
+  }
+  return false;
+}
+
+// ── Webhook event handlers (Phase 1: stubs that log + persist event ID) ──
+// We persist every processed event ID to make the handler idempotent —
+// Stripe retries, and out-of-order delivery means the same event.id
+// can arrive multiple times. We short-circuit on a match.
+async function _isEventProcessed(eventId: string): Promise<boolean> {
+  const r = await kvGet(['stripe_event', eventId]);
+  return !!r.value;
+}
+async function _markEventProcessed(eventId: string): Promise<void> {
+  // Keep for 30 days — Stripe retries for max 3 days, so this is comfortably safe
+  await kvSet(['stripe_event', eventId], '1', { expireIn: 30 * 24 * 60 * 60 * 1000 });
+}
+
+async function handleStripeEvent(event: any): Promise<void> {
+  const type: string = event.type;
+  const obj = event?.data?.object || {};
+  // Find the local user this event is about, if any. Most events have a
+  // `customer` field; payment_method.attached has it; subscription events
+  // have it; checkout sessions have it.
+  const stripeCustomerId: string | undefined = obj.customer || (typeof obj === 'object' && obj.object === 'customer' ? obj.id : undefined);
+  const emailHash = stripeCustomerId ? await lookupEmailHashByStripeCustomer(stripeCustomerId) : null;
+
+  // Phase 1: log everything, persist nothing beyond the event ID.
+  // Phase 2 onwards will fill in the per-type business logic.
+  console.log(`[stripe-webhook] ${type} customer=${stripeCustomerId || 'n/a'} emailHash=${emailHash || 'unknown'}`);
+
+  switch (type) {
+    case 'checkout.session.completed':
+    case 'customer.subscription.created':
+    case 'customer.subscription.updated':
+    case 'customer.subscription.deleted':
+    case 'customer.subscription.trial_will_end':
+    case 'invoice.payment_succeeded':
+    case 'invoice.payment_failed':
+    case 'payment_method.attached':
+      // Phase 2 will implement these. For now, just acknowledge.
+      break;
+    default:
+      console.log(`[stripe-webhook] unhandled event type: ${type}`);
+  }
+}
+
+// ── Startup migration: grandfather test accounts, grace existing users ──
+// Idempotent: marks itself complete via ['_billing_migration_v1', 'done'].
+// On next deploy, the marker is already present so this is a no-op.
+//
+// Test accounts (hard-coded by emailHash, computed via SHA-256(email.lower().trim())[:32]):
+//   pete@artbot5000.com   -> 9e3b241ca0c59deb3215330953f3c8a9
+//   pasmith984@gmail.com  -> 30efe663f9c51af805ab389a0b142d18
+//   qwertyblue@gmail.com  -> c2a0b0e84f7167844c0f3d89253f5de6
+//   test1@artbot5000.com  -> 5792455ffee52ae98982f962f154e831
+//   test2@artbot5000.com  -> 8f5d614b01b73396c5cf34d6d52ed031
+//
+// Note: test2@artbot5000.com may not exist yet (user mentioned "not yet
+// set up"). If absent, we still pre-create a billing record so when the
+// account is registered the grandfather flag is already in place.
+const GRANDFATHERED_TEST_HASHES = [
+  '9e3b241ca0c59deb3215330953f3c8a9', // Pete@artbot5000.com
+  '30efe663f9c51af805ab389a0b142d18', // pasmith984@gmail.com
+  'c2a0b0e84f7167844c0f3d89253f5de6', // qwertyblue@gmail.com
+  '5792455ffee52ae98982f962f154e831', // test1@artbot5000.com
+  '8f5d614b01b73396c5cf34d6d52ed031', // test2@artbot5000.com (may not exist)
+];
+const GRACE_PERIOD_DAYS = 90;
+
+async function runBillingMigration(): Promise<void> {
+  const marker = await kvGet(['_billing_migration_v1', 'done']);
+  if (marker.value) {
+    console.log('Billing migration v1: already complete, skipping');
+    return;
+  }
+  console.log('Billing migration v1: starting');
+  const now = Math.floor(Date.now() / 1000);
+  const graceUntil = now + (GRACE_PERIOD_DAYS * 24 * 60 * 60);
+  let grandfathered = 0;
+  let graced = 0;
+  let skipped = 0;
+
+  // 1. Grandfather the test accounts unconditionally (whether they exist or not).
+  //    If they don't exist yet, the billing record sits there waiting for them.
+  for (const emailHash of GRANDFATHERED_TEST_HASHES) {
+    const existing = await getBillingAccount(emailHash);
+    if (existing && existing.grandfathered) { skipped++; continue; }
+    const acct: BillingAccount = existing || {
+      status:        'grandfathered',
+      cardOnFile:    false,
+      grandfathered: true,
+      createdAt:     now,
+      updatedAt:     now,
+    };
+    acct.grandfathered = true;
+    acct.status = 'grandfathered';
+    await setBillingAccount(emailHash, acct);
+    grandfathered++;
+  }
+
+  // 2. Grant 90-day grace to every other existing user. We iterate
+  //    ['user', emailHash, 'verifier'] entries — each represents a
+  //    registered account.
+  try {
+    const iter = kv.list({ prefix: ['user'] });
+    const seen = new Set<string>();
+    for await (const entry of iter) {
+      // Keys look like ['user', emailHash, 'verifier'] or ['user', emailHash, 'created'] etc.
+      // We just want each unique emailHash once.
+      const key = entry.key as unknown as string[];
+      if (key.length < 3 || key[2] !== 'verifier') continue;
+      const emailHash = key[1];
+      if (seen.has(emailHash)) continue;
+      seen.add(emailHash);
+      if (GRANDFATHERED_TEST_HASHES.includes(emailHash)) continue; // already handled
+      const existing = await getBillingAccount(emailHash);
+      if (existing) { skipped++; continue; } // already has a billing record, don't overwrite
+      const acct: BillingAccount = {
+        status:        'none',
+        graceUntil,
+        cardOnFile:    false,
+        grandfathered: false,
+        createdAt:     now,
+        updatedAt:     now,
+      };
+      await setBillingAccount(emailHash, acct);
+      graced++;
+    }
+  } catch (err) {
+    console.error('Billing migration: error iterating users:', (err as Error).message);
+    // Don't mark complete — let it retry next startup
+    return;
+  }
+
+  await kvSet(['_billing_migration_v1', 'done'], new Date().toISOString());
+  console.log(`Billing migration v1: complete — grandfathered=${grandfathered}, graced=${graced}, skipped=${skipped}`);
+}
+
+// Kick off the migration in the background so it doesn't block startup.
+// If it fails, the marker stays unset and it'll retry next deploy.
+runBillingMigration().catch(err => {
+  console.error('Billing migration: unhandled error:', err);
+});
+
 // ── Request handler ───────────────────────────────────────
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') {
@@ -971,6 +1333,58 @@ Deno.serve(async (request) => {
   // ── Health / debug ────────────────────────────────────
   if (url.pathname === '/ping') {
     return json({ ok: true, ts: new Date().toISOString() }, corsHeaders);
+  }
+
+  // ── Stripe webhook ────────────────────────────────────
+  // Receives events from Stripe (subscription lifecycle, invoices,
+  // payment methods). Signature is HMAC-SHA256 verified against
+  // STRIPE_WEBHOOK_SECRET. Idempotent — same event.id arriving twice
+  // is processed once. Always returns 200 quickly to avoid Stripe
+  // marking the endpoint as failing; processing happens inline but
+  // is intentionally cheap in Phase 1.
+  if (url.pathname === '/webhook/stripe' && request.method === 'POST') {
+    if (!stripeConfigured()) {
+      console.error('[stripe-webhook] received event but Stripe not configured');
+      // Return 200 anyway — Stripe will keep retrying otherwise, and
+      // an unconfigured server can't do anything useful with retries.
+      return new Response('not configured', { status: 200 });
+    }
+    const sigHeader = request.headers.get('Stripe-Signature');
+    let payload: string;
+    try { payload = await request.text(); }
+    catch (err) {
+      console.error('[stripe-webhook] could not read body:', (err as Error).message);
+      return new Response('bad request', { status: 400 });
+    }
+    const valid = await verifyStripeSignature(payload, sigHeader);
+    if (!valid) {
+      console.warn('[stripe-webhook] signature verification failed');
+      return new Response('bad signature', { status: 400 });
+    }
+    let event: any;
+    try { event = JSON.parse(payload); }
+    catch {
+      return new Response('bad json', { status: 400 });
+    }
+    const eventId: string = event?.id || '';
+    if (!eventId) return new Response('missing event id', { status: 400 });
+
+    // Idempotency check — skip if we've already processed this event.id
+    if (await _isEventProcessed(eventId)) {
+      console.log(`[stripe-webhook] skipping duplicate ${event.type} ${eventId}`);
+      return new Response('ok', { status: 200 });
+    }
+
+    try {
+      await handleStripeEvent(event);
+      await _markEventProcessed(eventId);
+    } catch (err) {
+      // If our handler threw, do NOT mark as processed — Stripe will
+      // retry. Return 500 so Stripe knows to retry.
+      console.error(`[stripe-webhook] handler error for ${event.type} ${eventId}:`, (err as Error).message);
+      return new Response('handler error', { status: 500 });
+    }
+    return new Response('ok', { status: 200 });
   }
 
   // ── User: delete account (all data) ──────────────────
@@ -2618,6 +3032,99 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
   }
 
+  // ── Admin: billing — inspect a user's billing record ──
+  if (url.pathname === '/admin/billing/get' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      const emailHash = (body.emailHash || '').toString();
+      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);
+      if (!/^[a-f0-9]{16,128}$/i.test(emailHash)) return json({ error: 'emailHash must be hex' }, corsHeaders, 400);
+      const acct = await getBillingAccount(emailHash);
+      const stripeConfiguredFlag = stripeConfigured();
+      return json({ ok: true, account: acct, stripeConfigured: stripeConfiguredFlag }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Admin: billing — set or unset grandfathered flag ──
+  // Body: { adminToken, adminSecret, emailHash, grandfathered: true|false }
+  if (url.pathname === '/admin/billing/set-grandfather' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      const emailHash = (body.emailHash || '').toString();
+      const grandfathered = body.grandfathered === true;
+      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);
+      if (!/^[a-f0-9]{16,128}$/i.test(emailHash)) return json({ error: 'emailHash must be hex' }, corsHeaders, 400);
+      const acct = await ensureBillingAccount(emailHash);
+      acct.grandfathered = grandfathered;
+      // When grandfathering, set status accordingly. When un-grandfathering,
+      // fall back to whatever Stripe-driven status is appropriate (or 'none').
+      if (grandfathered) acct.status = 'grandfathered';
+      else if (acct.status === 'grandfathered') acct.status = 'none';
+      await setBillingAccount(emailHash, acct);
+      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `emailHash=${emailHash.slice(0,8)} grandfathered=${grandfathered}` });
+      return json({ ok: true, account: acct }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Admin: billing — extend or set graceUntil ──
+  // Body: { adminToken, adminSecret, emailHash, graceUntil: <unix-seconds | null> }
+  // Pass null/0 to clear the grace period.
+  if (url.pathname === '/admin/billing/set-grace' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      const emailHash = (body.emailHash || '').toString();
+      const graceUntilRaw = body.graceUntil;
+      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);
+      if (!/^[a-f0-9]{16,128}$/i.test(emailHash)) return json({ error: 'emailHash must be hex' }, corsHeaders, 400);
+      const acct = await ensureBillingAccount(emailHash);
+      if (graceUntilRaw === null || graceUntilRaw === 0 || graceUntilRaw === undefined) {
+        delete acct.graceUntil;
+      } else {
+        const ts = parseInt(String(graceUntilRaw), 10);
+        if (!Number.isFinite(ts) || ts < 0) return json({ error: 'graceUntil must be a positive unix seconds value or null' }, corsHeaders, 400);
+        acct.graceUntil = ts;
+      }
+      await setBillingAccount(emailHash, acct);
+      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `emailHash=${emailHash.slice(0,8)} graceUntil=${acct.graceUntil ?? 'cleared'}` });
+      return json({ ok: true, account: acct }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Admin: billing — re-run migration on demand ──
+  // Useful if the auto-startup migration failed. Idempotent — won't redo
+  // accounts that already have records, but will pick up newly-registered
+  // test accounts that need grandfathering.
+  if (url.pathname === '/admin/billing/run-migration' && request.method === 'POST') {
+    try {
+      const body = await request.json();
+      const _adminAuth = await verifyAdminRequest(body, request);
+      if (!_adminAuth.ok) {
+        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });
+        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
+      }
+      // Clear the marker so runBillingMigration() executes fully
+      try { await kvDel(['_billing_migration_v1', 'done']); } catch (_) {}
+      await runBillingMigration();
+      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
   // Client sends recovery code hash to identify slot,
   // gets back the encrypted DATA KEY for that slot.
   // On success: slot is invalidated, user must set new passphrase.
@@ -2715,6 +3222,29 @@ Deno.serve(async (request) => {
       await kvSet(['user', emailHash, 'crypto_version'], cryptoVersion);
       // Store plaintext email (hashed separately) so we can send migration emails
       if (email) await kvSet(['user', emailHash, 'email'], email);
+
+      // ── Billing: create or refresh the billing record ──
+      // For new signups, we initialise a 'none' status (no trial yet — Phase 2
+      // will add the 30-day trial-on-signup). For test accounts that were
+      // pre-grandfathered by the migration, we leave their record alone.
+      // We also kick off Stripe customer creation in the background so the
+      // ID is ready when the user later starts a checkout. Failures here
+      // do NOT block signup — the user can sign up even if Stripe is down,
+      // and ensureStripeCustomer is idempotent so it'll succeed on retry.
+      try {
+        const existingBilling = await getBillingAccount(emailHash);
+        if (!existingBilling) {
+          await ensureBillingAccount(emailHash);
+        }
+        // Fire-and-forget Stripe customer creation. Don't await — keeps
+        // signup fast and tolerant of Stripe outages.
+        ensureStripeCustomer(emailHash, email).catch(err => {
+          console.error(`Background Stripe customer creation failed for ${emailHash}:`, err.message);
+        });
+      } catch (err) {
+        console.error(`Billing record init failed for ${emailHash} (continuing anyway):`, (err as Error).message);
+      }
+
       return json({ ok: true, cryptoVersion }, corsHeaders);
     } catch(err) {
       return json({ error: err.message }, corsHeaders, 500);
