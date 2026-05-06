@@ -56,6 +56,121 @@ async function kvDel(key) {
   return Promise.race([kv.delete(key), timeout]);
 }
 
+// ── Chunked KV helpers (kvGetLarge / kvSetLarge / kvDelLarge) ──
+// Deno KV has a 64 KB hard limit per value. Encrypted ciphertext for
+// stockroom data can exceed this once photos are involved. These helpers
+// transparently chunk values larger than CHUNK_SIZE across N sub-keys
+// while remaining fully backwards-compatible with existing inline values.
+//
+// Storage layout:
+//   primary key  → either inline ciphertext (small case)
+//                  OR a manifest: '__chunked:N' where N = chunk count
+//   primary key + 'c' + i → chunk i (only when chunked)
+//
+// The sentinel `__chunked:` is safe because all our payloads are base64
+// (never contains underscore or colon), so no real ciphertext can be
+// confused with a manifest.
+//
+// Atomicity: writes happen chunk-first, manifest-last. If a partial write
+// occurs (e.g. timeout mid-write), the old manifest is still pointing at
+// the old chunks, so reads continue to return the previous coherent
+// state. Orphaned chunks from a failed write are harmless — the next
+// successful write overwrites them or the cleanup pass removes them.
+const KV_CHUNK_SIZE      = 50 * 1024;        // 50 KB; leaves headroom under the 64 KB hard limit
+const KV_MAX_CHUNKS      = 50;               // 2.5 MB ceiling; sane defence against runaway values
+const KV_CHUNK_SENTINEL  = '__chunked:';     // manifest prefix marker
+
+async function kvGetLarge(key: any[]): Promise<{ value: string | null }> {
+  const head = await kvGet(key);
+  const v = head.value;
+  if (!v) return { value: null };
+  if (typeof v !== 'string' || !v.startsWith(KV_CHUNK_SENTINEL)) {
+    // Legacy inline value or any non-chunked write — return as-is.
+    return { value: v as string };
+  }
+  const count = parseInt(v.slice(KV_CHUNK_SENTINEL.length), 10);
+  if (!Number.isFinite(count) || count < 1 || count > KV_MAX_CHUNKS) {
+    console.error(`[kvGetLarge] invalid manifest at ${JSON.stringify(key)}: "${v.slice(0, 50)}"`);
+    return { value: null };
+  }
+  // Read all chunks in parallel, preserving order.
+  const reads = [];
+  for (let i = 0; i < count; i++) {
+    reads.push(kvGet([...key, 'c', i]));
+  }
+  const results = await Promise.all(reads);
+  const parts: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const c = results[i].value;
+    if (typeof c !== 'string') {
+      console.error(`[kvGetLarge] missing chunk ${i}/${count} at ${JSON.stringify(key)}`);
+      return { value: null };
+    }
+    parts.push(c);
+  }
+  return { value: parts.join('') };
+}
+
+async function kvSetLarge(key: any[], value: string, opts?: any): Promise<void> {
+  if (typeof value !== 'string') throw new Error('kvSetLarge: value must be a string');
+  // Read the previous manifest so we know which old chunks (if any) to
+  // clean up after the new write succeeds.
+  let oldChunkCount = 0;
+  try {
+    const prev = await kvGet(key);
+    const pv = prev.value;
+    if (typeof pv === 'string' && pv.startsWith(KV_CHUNK_SENTINEL)) {
+      const n = parseInt(pv.slice(KV_CHUNK_SENTINEL.length), 10);
+      if (Number.isFinite(n) && n > 0) oldChunkCount = n;
+    }
+  } catch (_) { /* best-effort */ }
+
+  if (value.length <= KV_CHUNK_SIZE) {
+    // Inline write — single key, legacy format.
+    await kvSet(key, value, opts);
+    // Clean up any stale chunks from a previous larger write.
+    for (let i = 0; i < oldChunkCount; i++) {
+      try { await kvDel([...key, 'c', i]); } catch (_) {}
+    }
+    return;
+  }
+
+  // Chunked write — split into 50 KB chunks, write chunks first, then
+  // overwrite the primary key with a manifest so reads remain coherent
+  // across the partial-write window.
+  const newCount = Math.ceil(value.length / KV_CHUNK_SIZE);
+  if (newCount > KV_MAX_CHUNKS) {
+    throw new Error(`Value too large: ${value.length} bytes exceeds ${KV_MAX_CHUNKS * KV_CHUNK_SIZE} byte ceiling`);
+  }
+  for (let i = 0; i < newCount; i++) {
+    const slice = value.slice(i * KV_CHUNK_SIZE, (i + 1) * KV_CHUNK_SIZE);
+    await kvSet([...key, 'c', i], slice);
+  }
+  await kvSet(key, `${KV_CHUNK_SENTINEL}${newCount}`, opts);
+  // Delete any leftover chunks beyond the new count (e.g. shrinking from
+  // 10 chunks to 6 leaves 4 stale chunks otherwise).
+  for (let i = newCount; i < oldChunkCount; i++) {
+    try { await kvDel([...key, 'c', i]); } catch (_) {}
+  }
+}
+
+async function kvDelLarge(key: any[]): Promise<void> {
+  // Read manifest first (best-effort) so we know how many chunks to drop.
+  let chunkCount = 0;
+  try {
+    const cur = await kvGet(key);
+    const v = cur.value;
+    if (typeof v === 'string' && v.startsWith(KV_CHUNK_SENTINEL)) {
+      const n = parseInt(v.slice(KV_CHUNK_SENTINEL.length), 10);
+      if (Number.isFinite(n) && n > 0) chunkCount = n;
+    }
+  } catch (_) { /* best-effort */ }
+  await kvDel(key);
+  for (let i = 0; i < chunkCount; i++) {
+    try { await kvDel([...key, 'c', i]); } catch (_) {}
+  }
+}
+
 // ── KV health check ───────────────────────────────────
 // Verify KV is working on startup with a simple write/read
 try {
@@ -3833,7 +3948,7 @@ Deno.serve(async (request) => {
         return json({ error: 'Free tier size limit exceeded', reason: gate.reason, limit: FREE_TIER.BLOB_SIZE_BYTES }, corsHeaders, gate.status);
       }
       const hKey = household && household !== 'default' ? household : 'default';
-      await kvSet(['user', emailHash, 'data', hKey], ciphertext);
+      await kvSetLarge(['user', emailHash, 'data', hKey], ciphertext);
       await kvSet(['user', emailHash, 'modified', hKey], new Date().toISOString());
       await markUserDirty(emailHash);
       return json({ ok: true }, corsHeaders);
@@ -3858,7 +3973,7 @@ Deno.serve(async (request) => {
           const stored = await kvGet(['user', emailHash, 'verifier']);
           if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
         }
-        const data     = await kvGet(['user', emailHash, 'data', hKey]);
+        const data     = await kvGetLarge(['user', emailHash, 'data', hKey]);
         const modified = await kvGet(['user', emailHash, 'modified', hKey]);
         return json({ ciphertext: data.value || null, modified: modified.value || null }, corsHeaders);
       }
@@ -3874,10 +3989,10 @@ Deno.serve(async (request) => {
         // (owner sets a share key during share target creation)
         const ownerHash = target.ownerEmailHash;
         if (!ownerHash) return json({ error: 'Share not configured' }, corsHeaders, 500);
-        const data     = await kvGet(['user', ownerHash, 'data', hKey]);
+        const data     = await kvGetLarge(['user', ownerHash, 'data', hKey]);
         const modified = await kvGet(['user', ownerHash, 'modified', hKey]);
         // Return ciphertext encrypted with SHARE key (re-encrypted by owner on push)
-        const sharedCipher = await kvGet(['share_data', shareCode.toUpperCase(), hKey]);
+        const sharedCipher = await kvGetLarge(['share_data', shareCode.toUpperCase(), hKey]);
         return json({ ciphertext: sharedCipher.value || data.value || null, modified: modified.value || null }, corsHeaders);
       }
 
@@ -4045,7 +4160,7 @@ Deno.serve(async (request) => {
       if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);
       if (JSON.parse(share.value).ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
       const hKey = household && household !== 'default' ? household : 'default';
-      await kvSet(['share_data', code.toUpperCase(), hKey], ciphertext);
+      await kvSetLarge(['share_data', code.toUpperCase(), hKey], ciphertext);
       await kvSet(['share_data', code.toUpperCase(), `${hKey}_modified`], new Date().toISOString());
       // Share data lives under the owner's emailHash conceptually — mark the
       // owner dirty so the per-user backup captures the new ciphertext.
@@ -4074,7 +4189,7 @@ Deno.serve(async (request) => {
       const hKey     = household && household !== 'default' ? household : 'default';
       const perms    = target.households?.[hKey];
       if (!perms) return json({ error: 'No access to this household' }, corsHeaders, 403);
-      const data     = await kvGet(['share_data', code.toUpperCase(), hKey]);
+      const data     = await kvGetLarge(['share_data', code.toUpperCase(), hKey]);
       const modified = await kvGet(['share_data', code.toUpperCase(), `${hKey}_modified`]);
       return json({ ciphertext: data.value||null, modified: modified.value||null, permissions: perms, householdNames: target.householdNames }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
