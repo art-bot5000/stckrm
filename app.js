@@ -7876,13 +7876,13 @@ window.stockroomBilling = (function() {
   let _bannerDismissed = false;
 
   function _isAuthed() {
-    return !!(window._kvEmailHash && (window._kvVerifier || window._kvSessionToken));
+    return !!(_kvEmailHash && (_kvVerifier || _kvSessionToken));
   }
 
   function _authBody() {
-    return window._kvSessionToken && !window._kvVerifier
-      ? { emailHash: window._kvEmailHash, sessionToken: window._kvSessionToken }
-      : { emailHash: window._kvEmailHash, verifier: window._kvVerifier };
+    return _kvSessionToken && !_kvVerifier
+      ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken }
+      : { emailHash: _kvEmailHash, verifier: _kvVerifier };
   }
 
   async function refresh(force) {
@@ -7935,7 +7935,7 @@ window.stockroomBilling = (function() {
       case 'addItem': {
         // Allow add when below the visible cap, regardless of total existing
         // (the user may have items hidden — they can't add more on top).
-        const visible = (window.items || []).filter(i => !i._deletedAt).length;
+        const visible = (items || []).filter(i => !i._deletedAt).length;
         return visible < (m.itemCount || 0);
       }
       default: return true;
