@@ -474,20 +474,30 @@
     .logo { font-size: 12px; letter-spacing: 2px; }
     .logo span { display: none; } /* hide "/ HOUSEHOLD TRACKER" on small screens */
     #sync-label { display: none; } /* keep dot, hide text label */
-    .sync-pill { padding: 5px 7px; }
+    .sync-pill { padding: 5px 7px; margin-left: 2px; }
+    /* Show burger button on mobile (replaces the secondary nav links).
+       Shield button is hidden via the existing mobile rule below. */
+    #header-burger-btn { display: inline-flex !important; }
 
     /* ── MAIN LAYOUT ── */
     #main { padding: 16px 12px; }
 
-    /* ── TABS: 4×2 stacked grid on mobile (icon above label) ── */
+    /* ── TABS: 3×2 grid on mobile (icon above label) ──
+       Stockroom + Groceries + Notes on row 1, Reminders + Savings + Budget
+       on row 2. Report / Billing / Settings / Account & Security live
+       behind the burger menu now. */
     #tabs {
       width: 100%;
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(3, 1fr);
       flex-wrap: initial;
       gap: 4px;
       padding: 4px;
     }
+    /* Hide the now-burger-menu tabs at mobile breakpoint */
+    #tabs > .tab[onclick*="'report'"],
+    #tabs > .tab[onclick*="'billing'"],
+    #tabs > .tab[onclick*="'settings'"] { display: none; }
     .tab {
       flex: initial;
       flex-direction: column;
@@ -1239,15 +1249,13 @@
 /* ── Remove stale Account & Sync selector (section removed from HTML) ── */
 #settings-account-body, [onclick="toggleSettings('settings-account-body',this)"] { display:none !important; }
 
-/* ── Shield button: mobile-only link to Account & Security ── */
-#header-shield-btn { display: inline-flex; }
-
-@media (min-width: 900px) {
-  /* On desktop the sidebar has the 🛡️ Account & Security nav link — hide header button */
-  #header-shield-btn { display: none !important; }
-}
-
-/* On mobile, clicking sync-pill now routes to Account & Security via shield — keep pill tap for sync */
+/* ── Header shield button: deprecated ──
+   Originally a mobile-only shortcut to Account & Security. Now superseded
+   by the desktop sidebar link AND the mobile burger menu, so this is
+   hidden everywhere. Left in the DOM (rather than removed) for backwards
+   compatibility with any inline onclick references and so an old cached
+   service worker won't break the layout. */
+#header-shield-btn { display: none !important; }
 
 /* ── Lucide icon system ─────────────────────────────────────── */
 .icon { width: 16px; height: 16px; display: inline-block; vertical-align: middle; flex-shrink: 0; }
@@ -3006,3 +3014,61 @@ body.has-demo-banner #view-notes #notes-header {
 /* Promo result feedback styling */
 .billing-promo-result-ok    { color: var(--ok); }
 .billing-promo-result-error { color: var(--danger); }
+
+/* ═══════════════════════════════════════════════════════════
+   MOBILE MENU OVERLAY — burger menu surfaced from the header
+   ═══════════════════════════════════════════════════════════ */
+
+/* Centred sheet on mobile, similar to other modals. Width tightened so
+   it doesn't feel like a full-screen takeover for a 4-item menu. */
+.mobile-menu-modal {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  width: 92%;
+}
+
+/* List of menu items. Mirrors the desktop sidebar's app-nav-link styling
+   so the visual identity is consistent across viewports. */
+.mobile-menu-list {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 2px;
+}
+.mobile-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  transition: background-color 0.15s ease;
+}
+.mobile-menu-item:hover,
+.mobile-menu-item:active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.mobile-menu-item .icon-tab {
+  width: 20px;
+  height: 20px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.mobile-menu-item:hover .icon-tab,
+.mobile-menu-item:active .icon-tab { color: var(--accent); }
+
+/* Burger button refines on hover/active for a tactile feel */
+#header-burger-btn:hover,
+#header-burger-btn:active {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}

@@ -8448,6 +8448,26 @@ function dismissBillingBanner()    { return stockroomBilling.dismissBanner(); }
 function copyReferralCode()        { return stockroomBilling.copyReferralCode(); }
 function shareReferralLink()       { return stockroomBilling.shareReferralLink(); }
 
+// ── Mobile menu (burger) ──
+// On mobile we hide the secondary nav items (Report/Billing/Settings/
+// Account & Security) from the tab bar to keep the row uncluttered, and
+// surface them via this overlay menu opened from the header burger button.
+function openMobileMenu() {
+  if (typeof openModal === 'function') openModal('mobile-menu-modal');
+  else { const el = document.getElementById('mobile-menu-modal'); if (el) el.classList.add('open'); }
+}
+function navFromMobileMenu(name) {
+  closeModal('mobile-menu-modal');
+  // Slight delay so the closing animation doesn't conflict with the
+  // potentially heavy view re-render.
+  setTimeout(() => { try { navTo(name); } catch (_) {} }, 60);
+}
+// Tap-outside-to-close — since the inner .modal stops propagation, an
+// onclick at the backdrop level only fires for backdrop taps.
+function closeMobileMenuOnOverlay(e) {
+  if (e && e.target && e.target.id === 'mobile-menu-modal') closeModal('mobile-menu-modal');
+}
+
 // Promo code field handlers
 function onBillingPromoInput() {
   const el = document.getElementById('billing-promo-result');

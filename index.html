@@ -1492,6 +1492,14 @@
     </div>
     <button class="btn btn-ghost btn-sm" onclick="openQuickAdd()" title="Quick add multiple items"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg></button>
     <button class="btn btn-primary btn-sm" onclick="openAddModal()">+ Add Item</button>
+    <!-- Burger menu (mobile only, hidden via CSS on desktop) — opens an
+         overlay containing the secondary nav items: Report, Billing,
+         Settings, Account & Security. -->
+    <button id="header-burger-btn" type="button" onclick="openMobileMenu()" aria-label="Open menu"
+      title="Menu"
+      style="display:none;background:none;border:none;cursor:pointer;padding:6px;align-items:center;justify-content:center;color:var(--text);border-radius:8px">
+      <svg class="icon icon-lg" aria-hidden="true"><use href="#i-menu"></use></svg>
+    </button>
   </div>
 </div>
 
@@ -1512,6 +1520,40 @@
 <div id="incomplete-banner" style="display:none;background:rgba(232,168,56,0.12);border-bottom:1px solid rgba(232,168,56,0.3);padding:10px 20px;align-items:center;justify-content:space-between;gap:12px;font-size:13px;cursor:pointer" onclick="scrollToIncomplete()">
   <span><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg> <strong id="incomplete-banner-text">Items need setting up</strong> — tap to complete them</span>
   <button class="btn btn-sm" style="background:rgba(232,168,56,0.2);border:1px solid rgba(232,168,56,0.4);color:var(--accent);font-size:12px" onclick="event.stopPropagation();scrollToIncomplete()">View →</button>
+</div>
+
+<!-- ═══ MOBILE MENU OVERLAY (mobile only) ═══ -->
+<!-- Opened by the burger button in the header. Uses the standard modal
+     overlay system (modal-backdrop class) so closeModal('mobile-menu-modal')
+     and the existing escape-to-close behaviour work without extra wiring. -->
+<div class="modal-backdrop" id="mobile-menu-modal" onclick="closeMobileMenuOnOverlay(event)">
+  <div class="modal mobile-menu-modal" style="max-width:340px;padding:0;overflow:hidden" onclick="event.stopPropagation()">
+    <div style="padding:14px 16px 8px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)">
+      <div style="font-size:11px;letter-spacing:2px;font-weight:700;color:var(--muted)">MENU</div>
+      <button class="btn-icon" onclick="closeModal('mobile-menu-modal')" aria-label="Close menu"
+        style="background:none;border:none;color:var(--muted);padding:4px;cursor:pointer">
+        <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+      </button>
+    </div>
+    <nav class="mobile-menu-list">
+      <button class="mobile-menu-item" onclick="navFromMobileMenu('report')">
+        <svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg>
+        <span>Report</span>
+      </button>
+      <button class="mobile-menu-item" onclick="navFromMobileMenu('billing')">
+        <svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg>
+        <span>Billing</span>
+      </button>
+      <button class="mobile-menu-item" onclick="navFromMobileMenu('settings')">
+        <svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg>
+        <span>Settings</span>
+      </button>
+      <button class="mobile-menu-item" onclick="navFromMobileMenu('account-security')">
+        <svg class="icon icon-tab" aria-hidden="true"><use href="#i-shield"></use></svg>
+        <span>Account &amp; Security</span>
+      </button>
+    </nav>
+  </div>
 </div>
 
 <!-- ═══ APP SIDEBAR (desktop only) ═══ -->
