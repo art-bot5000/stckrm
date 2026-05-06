@@ -1815,7 +1815,7 @@ interface ReferralSignupRecord {
   qualifiedAt?:    number;
   creditedAt?:     number;
   status:          'pending' | 'converted' | 'qualified' | 'rejected';
-  rejectionReason?: 'card_dup' | 'email_dup' | 'lifetime_cap' | 'self_referral' | 'churned' | 'manual';
+  rejectionReason?: 'card_dup' | 'email_dup' | 'lifetime_cap' | 'self_referral' | 'churned' | 'manual' | 'referrer_ineligible';
 }
 
 async function getReferralCodeForUser(emailHash: string): Promise<ReferralCodeRecord | null> {
@@ -1855,6 +1855,41 @@ async function getReferrerByCode(code: string): Promise<string | null> {
   if (!code) return null;
   const r = await kvGet(['referral', 'lookup', code.toUpperCase()]);
   return r.value ? String(r.value) : null;
+}
+
+// ── Referrer eligibility ──
+// Determines whether a user is allowed to refer friends. The rule is
+// 'they must have skin in the game' — either grandfathered, or have a
+// card on file with an active/past-due/cancelling-but-still-paid sub.
+// Trial users (never paid) cannot refer; this prevents abuse where
+// someone chains trial accounts together to issue free months.
+//
+// Importantly, a user who is currently in a referrer-rewarded extension
+// (i.e. trialEndsAt is in the future because they qualified a friend)
+// IS eligible — because they have card on file from a previous paid
+// state. The cardOnFile flag is the deciding factor.
+function isReferrerEligible(acct: BillingAccount | null): boolean {
+  if (!acct) return false;
+  if (acct.grandfathered) return true;
+  // Must have a card on file. This rules out original-trial users
+  // who never added payment.
+  if (!acct.cardOnFile) return false;
+  // Status must indicate they paid us at some point (and aren't fully
+  // lapsed). 'free' means they cancelled and the period ended without
+  // any active subscription — not eligible until they re-subscribe.
+  switch (acct.status) {
+    case 'active':
+    case 'past_due':
+    case 'trialing':   // mid-extension reward, came from active state (cardOnFile gate above guarantees this)
+      return true;
+    case 'canceled': {
+      // Cancelled but still within paid period? Eligible until period ends.
+      const now = Math.floor(Date.now() / 1000);
+      return !!acct.currentPeriodEnd && acct.currentPeriodEnd > now;
+    }
+    default:
+      return false;
+  }
 }
 
 async function getReferralSignup(refereeHash: string): Promise<ReferralSignupRecord | null> {
@@ -1992,6 +2027,16 @@ async function recordReferralSignup(refereeHash: string, code: string, refereeEm
   const referrerHash = await getReferrerByCode(code);
   if (!referrerHash) return { ok: false, reason: 'invalid_code' };
   if (referrerHash === refereeHash) return { ok: false, reason: 'self_referral' };
+  // Eligibility check — the referrer must be a paid/grandfathered user.
+  // Trial users cannot refer (prevents trial-account chaining abuse).
+  // We deliberately don't reject the signup itself — the referee still
+  // gets the standard 30-day trial. We just don't record the referral
+  // so no credit can ever be issued to an ineligible referrer.
+  const referrerAcct = await getBillingAccount(referrerHash);
+  if (!isReferrerEligible(referrerAcct)) {
+    console.log(`[referral] dropping signup for ineligible referrer ${referrerHash.slice(0,8)} (status=${referrerAcct?.status || 'none'} cardOnFile=${!!referrerAcct?.cardOnFile})`);
+    return { ok: false, reason: 'referrer_ineligible' };
+  }
   // Don't overwrite an existing record (prevents fraud via re-running signup)
   const existing = await getReferralSignup(refereeHash);
   if (existing) return { ok: false, reason: 'already_recorded' };
@@ -2012,11 +2057,18 @@ async function recordReferralSignup(refereeHash: string, code: string, refereeEm
 
 // Run abuse checks at qualification. Returns null if clean, or a rejection
 // reason string. We check: card fingerprint vs referrer, normalized email
-// vs referrer, lifetime cap.
+// vs referrer, lifetime cap, AND ongoing referrer eligibility.
 async function _checkReferralAbuse(refereeHash: string, referrerHash: string): Promise<string | null> {
+  // 0. Referrer must still be eligible at qualification time. They might
+  // have been eligible when the referee signed up but cancelled before
+  // the referee qualified — in which case we don't issue them credit.
+  const referrerAcctEarly = await getBillingAccount(referrerHash);
+  if (!isReferrerEligible(referrerAcctEarly)) {
+    return 'referrer_ineligible';
+  }
   // 1. Card fingerprint dedup
   const refereeAcct  = await getBillingAccount(refereeHash);
-  const referrerAcct = await getBillingAccount(referrerHash);
+  const referrerAcct = referrerAcctEarly;
   if (refereeAcct?.cardFingerprint && referrerAcct?.cardFingerprint
       && refereeAcct.cardFingerprint === referrerAcct.cardFingerprint) {
     return 'card_dup';
@@ -2370,6 +2422,17 @@ Deno.serve(async (request) => {
       const plaintextEmail = emailRow.value ? String(emailRow.value) : undefined;
       const record = await ensureReferralCode(emailHash, plaintextEmail);
       const cap = REFERRAL_LIFETIME_CAP_MONTHS;
+      // Determine current eligibility — drives whether the UI shows the
+      // share controls or a 'upgrade to start referring' message.
+      const myAcct = await getBillingAccount(emailHash);
+      const eligible = isReferrerEligible(myAcct);
+      let ineligibleReason: string | null = null;
+      if (!eligible) {
+        if (!myAcct)                         ineligibleReason = 'no_billing_account';
+        else if (!myAcct.cardOnFile)         ineligibleReason = 'no_card_on_file';
+        else if (myAcct.status === 'free')   ineligibleReason = 'free_tier';
+        else                                 ineligibleReason = 'not_active';
+      }
       return json({
         ok:                    true,
         code:                  record.code,
@@ -2380,6 +2443,8 @@ Deno.serve(async (request) => {
         lifetimeCreditsMonths: record.lifetimeCreditsMonths,
         lifetimeCapMonths:     cap,
         capReached:            record.lifetimeCreditsMonths >= cap,
+        eligible,
+        ineligibleReason,
         rewards: {
           referrerExtensionDays: REFERRER_EXTENSION_DAYS,
           refereeDiscountPercent: REFEREE_DISCOUNT_PERCENT,

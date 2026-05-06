@@ -8098,6 +8098,21 @@ window.stockroomBilling = (function() {
     return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
   }
 
+  // Human-friendly explanation of why the user can't share their code yet.
+  // Mirrors the server-side ineligibleReason values from /referral/code.
+  function _ineligibleReasonText(reason) {
+    switch (reason) {
+      case 'no_card_on_file':
+        return "You're on the free trial. Add a payment method and start your subscription to begin referring friends.";
+      case 'free_tier':
+        return "Your subscription has lapsed. Re-subscribe to start referring friends again.";
+      case 'not_active':
+        return "Your subscription isn't currently active. Open the billing portal to update your card.";
+      default:
+        return "Referrals are available once you have an active paid plan. Trial users can't refer friends — this prevents abuse where new accounts could chain free months.";
+    }
+  }
+
   // ── Stripe Checkout / Portal flows ──
   async function openCheckout(promoCode) {
     if (!_isAuthed()) { toast && toast('Please sign in first'); return; }
@@ -8278,15 +8293,28 @@ window.stockroomBilling = (function() {
       </div>`;
     }).join('');
     dest.innerHTML = `
-      <div class="acc-sec-row acc-sec-row-block">
+      ${!s.eligible ? `
+        <div class="acc-sec-row acc-sec-row-block" style="background:color-mix(in srgb,var(--accent) 6%,var(--bg));border-radius:8px;padding:14px;margin-bottom:10px">
+          <div class="acc-sec-label" style="width:100%">
+            <div class="acc-sec-h" style="display:flex;align-items:center;gap:8px">
+              <svg class="icon icon-sm" aria-hidden="true" style="color:var(--accent)"><use href="#i-lock"></use></svg>
+              Referrals require an active paid plan
+            </div>
+            <div class="acc-sec-p">${_ineligibleReasonText(s.ineligibleReason)}</div>
+          </div>
+          <div style="width:100%;margin-top:12px">
+            <button class="btn btn-primary" onclick="openBillingCheckout()">Upgrade to start referring</button>
+          </div>
+        </div>` : ''}
+      <div class="acc-sec-row acc-sec-row-block" style="${!s.eligible ? 'opacity:0.55;pointer-events:none;filter:grayscale(0.3)' : ''}">
         <div class="acc-sec-label" style="width:100%">
           <div class="acc-sec-h">Your code</div>
           <div class="acc-sec-p">Share this code with friends. When they sign up and complete their second paid month, you both get rewarded.</div>
         </div>
         <div style="width:100%;display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap">
           <code style="font-family:var(--mono);font-size:18px;font-weight:700;padding:8px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;letter-spacing:1px">${_escapeHtml(s.code)}</code>
-          <button class="btn btn-ghost btn-sm" onclick="copyReferralCode()">Copy code</button>
-          <button class="btn btn-primary btn-sm" onclick="shareReferralLink()">Share link</button>
+          <button class="btn btn-ghost btn-sm" ${!s.eligible ? 'disabled' : ''} onclick="copyReferralCode()">Copy code</button>
+          <button class="btn btn-primary btn-sm" ${!s.eligible ? 'disabled' : ''} onclick="shareReferralLink()">Share link</button>
         </div>
         <div style="width:100%;margin-top:14px;font-size:12px;color:var(--muted)">
           You give: <strong style="color:var(--text)">${s.rewards.refereeDiscountPercent}% off ${s.rewards.refereeDiscountMonths} months</strong>
@@ -8335,12 +8363,14 @@ window.stockroomBilling = (function() {
 
   async function copyReferralCode() {
     if (!_referralState) return;
+    if (!_referralState.eligible) { toast && toast('Upgrade to start referring friends'); return; }
     try { await navigator.clipboard.writeText(_referralState.code); toast && toast('Code copied'); }
     catch (_) { toast && toast('Could not copy — long-press to select'); }
   }
 
   async function shareReferralLink() {
     if (!_referralState) return;
+    if (!_referralState.eligible) { toast && toast('Upgrade to start referring friends'); return; }
     const url   = `https://app.stckrm.com/?ref=${encodeURIComponent(_referralState.code)}`;
     const text  = `Join me on STOCKROOM — never run out of household essentials again. Use my code ${_referralState.code} for ${_referralState.rewards.refereeDiscountPercent}% off your first ${_referralState.rewards.refereeDiscountMonths} paid months: ${url}`;
     if (navigator.share) {
