@@ -5136,10 +5136,7 @@ async function checkCloudAhead() {
     if (_shareState) {
       remoteModified = await proxyGetModifiedTime();
     } else if (kvConnected) {
-      const res = await fetchKV(`${WORKER_URL}/data/modified`, {
-        method: "POST", headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({emailHash: _kvEmailHash, verifier: _kvVerifier, household: activeProfile})
-      });
+      const res = await postKV(`${WORKER_URL}/data/modified`, {emailHash: _kvEmailHash, verifier: _kvVerifier, household: activeProfile});
       if (res.ok) remoteModified = (await res.json()).modifiedTime;
     } else if (false && false) { // dropbox disabled in KV build
       const res = await fetch('https://api.dropboxapi.com/2/files/get_metadata', {
@@ -10395,10 +10392,7 @@ async function _doClearAll() {
   // Delete all share targets from backend first
   for (const target of (_shareTargets || [])) {
     try {
-      await fetchKV(`${WORKER_URL}/share/delete`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code: target.code }),
-      });
+      await postKV(`${WORKER_URL}/share/delete`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code: target.code });
     } catch(e) { console.warn('clearAll: could not delete share', target.code, e.message); }
   }
   _shareTargets = [];
@@ -10972,6 +10966,17 @@ async function fetchKV(url, opts = {}) {
   }
 }
 
+// postKV — convenience wrapper for fetchKV with POST + JSON body. The KV API
+// is uniformly POST + JSON, so almost every fetchKV call site uses this exact
+// shape. This is purely a typing convenience — same behaviour, fewer characters.
+async function postKV(url, body) {
+  return fetchKV(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 
 // ── WebAuthn PRF constants ─────────────────────────────────────────────────
 // Fixed salt evaluated by the secure enclave to derive a deterministic key.
@@ -11044,10 +11049,7 @@ let _recoverySessionToken = ''; // set when passkey is used as first factor
 // Send OTP email for recovery — shared by code-path and passkey-path
 async function _recoverySendOtp(emailHash) {
   try {
-    await fetchKV(`${WORKER_URL}/recovery/request`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: _recoveryEmail }),
-    });
+    await postKV(`${WORKER_URL}/recovery/request`, { email: _recoveryEmail });
   } catch(e) { console.warn('_recoverySendOtp:', e.message); }
   document.getElementById('recovery-step-otp').style.display = '';
   setTimeout(() => document.getElementById('recovery-otp-input')?.focus(), 100);
@@ -11343,19 +11345,13 @@ async function ensureEcdhKeypair(emailHash) {
       privateKey = kp.privateKey;
       // Upload public key
       const pubJwk = await crypto.subtle.exportKey('jwk', kp.publicKey);
-      await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/store`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailHash, publicKeyJwk: pubJwk }),
-      });
+      await postKV(`${WORKER_URL}/user/ecdh-pubkey/store`, { emailHash, publicKeyJwk: pubJwk });
       console.log('ECDH keypair generated and public key uploaded');
       return;
     }
 
     // Private key exists locally — check server has our public key
-    const check = await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/get`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash }),
-    });
+    const check = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash });
     if (!check.ok) needsUpload = true;
 
     if (needsUpload) {
@@ -11364,10 +11360,7 @@ async function ensureEcdhKeypair(emailHash) {
       const kp = await generateEcdhKeypair();
       await storeEcdhPrivateKey(emailHash, kp.privateKey);
       const pubJwk = await crypto.subtle.exportKey('jwk', kp.publicKey);
-      await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/store`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailHash, publicKeyJwk: pubJwk }),
-      });
+      await postKV(`${WORKER_URL}/user/ecdh-pubkey/store`, { emailHash, publicKeyJwk: pubJwk });
       console.log('ECDH public key re-uploaded');
     }
   } catch(e) {
@@ -11466,10 +11459,7 @@ async function sendEmailVerificationOtp(email, emailHash) {
   const btn   = document.getElementById('email-verify-resend-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Sending…'; }
   try {
-    const res = await fetchKV(`${WORKER_URL}/email/verify/send`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, email }),
-    });
+    const res = await postKV(`${WORKER_URL}/email/verify/send`, { emailHash, email });
     const data = await res.json();
     if (res.status === 429) {
       if (okEl) { okEl.textContent = 'Code already sent — check your email.'; okEl.style.display = 'block'; }
@@ -11510,10 +11500,7 @@ async function submitEmailVerification() {
   const btn = document.querySelector('#wizard-step-1f .btn-primary');
   if (btn) { btn.textContent = '⏳ Verifying…'; btn.disabled = true; }
   try {
-    const res = await fetchKV(`${WORKER_URL}/email/verify/check`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _emailVerifyEmailHash, otp }),
-    });
+    const res = await postKV(`${WORKER_URL}/email/verify/check`, { emailHash: _emailVerifyEmailHash, otp });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Verification failed');
     // Verified — continue to next step
@@ -11792,10 +11779,7 @@ async function kvRegister() {
     // Include referral code if one was captured at app load (from ?ref=) or
     // typed into the optional field on the signup form.
     const referralCode = (window._pendingReferralCode || document.getElementById('kv-ref')?.value || '').trim().toUpperCase();
-    const res = await fetchKV(`${WORKER_URL}/user/register`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, verifier, email, ...(referralCode ? { referralCode } : {}) }),
-    });
+    const res = await postKV(`${WORKER_URL}/user/register`, { emailHash, verifier, email, ...(referralCode ? { referralCode } : {}) });
     const data = await res.json();
     if (res.status === 409) { showDuplicateAccountScreen(email); return; }
     if (!res.ok) throw new Error(data.error || 'Registration failed');
@@ -11823,13 +11807,10 @@ async function kvRegister() {
       recoveryEnvelopes  = await buildRecoveryEnvelopes(recoveryCodes, dataKey, emailHash);
     }
 
-    const storeRes = await fetchKV(`${WORKER_URL}/key/store`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const storeRes = await postKV(`${WORKER_URL}/key/store`, {
         emailHash, verifier, salt: saltB64, passphraseEnvelope, recoveryEnvelopes,
         ...(useV2 ? { kdfSalt } : {}),
-      }),
-    });
+      });
     if (!storeRes.ok) throw new Error('Could not store key envelopes — try again');
 
     _kvKey = dataKey;
@@ -11870,10 +11851,7 @@ async function kvLogin() {
   try {
     const emailHash = await kvHashEmail(email);
     const verifier  = await kvMakeVerifier(passphrase, emailHash);
-    const res = await fetchKV(`${WORKER_URL}/user/verify`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, verifier }),
-    });
+    const res = await postKV(`${WORKER_URL}/user/verify`, { emailHash, verifier });
     const data = await res.json();
     if (res.status === 404) throw new Error('Account not found for ' + email + ' — check your email address, or create a new account');
     if (res.status === 429) throw new Error(_handleLoginRateLimit(res, data) || data.error);
@@ -11882,10 +11860,7 @@ async function kvLogin() {
 
     // Fetch key envelope — response carries cryptoVersion, kdfSalt, migrationDue
     let dataKey;
-    const keyRes  = await fetchKV(`${WORKER_URL}/key/get`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, verifier }),
-    });
+    const keyRes  = await postKV(`${WORKER_URL}/key/get`, { emailHash, verifier });
     const keyData = await keyRes.json();
 
     if (keyRes.ok && !keyData.legacy && keyData.envelope) {
@@ -11973,10 +11948,7 @@ async function kvLoginWithPasskey() {
     const emailHash = await kvHashEmail(email);
 
     // Get challenge
-    const beginRes = await fetchKV(`${WORKER_URL}/passkey/auth/begin`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash }),
-    });
+    const beginRes = await postKV(`${WORKER_URL}/passkey/auth/begin`, { emailHash });
     const beginData = await beginRes.json();
     if (beginRes.status === 404) throw new Error('No passkeys found for this account — use passphrase below or register a passkey first');
     if (!beginRes.ok) throw new Error(beginData.error || 'Could not start sign-in');
@@ -12010,10 +11982,7 @@ async function kvLoginWithPasskey() {
     console.log('[passkey] PRF available at login:', !!loginPrf);
 
     // Finish auth on server
-    const finishRes = await fetchKV(`${WORKER_URL}/passkey/auth/finish`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, credentialId: credId, clientDataJSON, authenticatorData, signature }),
-    });
+    const finishRes = await postKV(`${WORKER_URL}/passkey/auth/finish`, { emailHash, credentialId: credId, clientDataJSON, authenticatorData, signature });
     const finishData = await finishRes.json();
     if (!finishRes.ok) throw new Error(finishData.error || 'Sign-in failed');
 
@@ -12021,10 +11990,7 @@ async function kvLoginWithPasskey() {
     let dataKey = null;
 
     // ── Fetch the PRF envelope from server then attempt to unwrap ───────
-    const envelopeRes = await fetchKV(`${WORKER_URL}/key/passkey-prf-get`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, sessionToken, credentialId: credId }),
-    }).catch(() => null);
+    const envelopeRes = await postKV(`${WORKER_URL}/key/passkey-prf-get`, { emailHash, sessionToken, credentialId: credId }).catch(() => null);
 
     if (envelopeRes && envelopeRes.ok) {
       const envelopeData = await envelopeRes.json();
@@ -12123,10 +12089,7 @@ async function reauthWithPassphrase() {
   if (!pass) { errEl.textContent = 'Enter your passphrase'; errEl.style.display = 'block'; return; }
   try {
     const verifier = await kvMakeVerifier(pass, _kvEmailHash);
-    const res = await fetchKV(`${WORKER_URL}/user/verify`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash, verifier }),
-    });
+    const res = await postKV(`${WORKER_URL}/user/verify`, { emailHash: _kvEmailHash, verifier });
     if (res.status === 429) {
       const d = await res.json().catch(() => ({}));
       errEl.textContent = _handleLoginRateLimit(res, d) || 'Too many attempts — please wait';
@@ -12139,10 +12102,7 @@ async function reauthWithPassphrase() {
     // (e.g. _doAddPasskeyToAccount needs _kvKey to store a passkey-wrapped copy)
     if (!_kvKey) {
       try {
-        const keyRes  = await fetchKV(`${WORKER_URL}/key/get`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ emailHash: _kvEmailHash, verifier }),
-        });
+        const keyRes  = await postKV(`${WORKER_URL}/key/get`, { emailHash: _kvEmailHash, verifier });
         const keyData = await keyRes.json();
         if (keyRes.ok && keyData.envelope) {
           if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
@@ -12186,10 +12146,7 @@ async function reauthWithPasskey() {
   const errEl = document.getElementById('reauth-error');
   if (!passkeySupported()) { errEl.textContent = 'Passkeys not supported'; errEl.style.display = 'block'; return; }
   try {
-    const beginRes = await fetchKV(`${WORKER_URL}/passkey/auth/begin`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash }),
-    });
+    const beginRes = await postKV(`${WORKER_URL}/passkey/auth/begin`, { emailHash: _kvEmailHash });
     const beginData = await beginRes.json();
     if (!beginRes.ok) throw new Error(beginData.error || 'Could not start verification');
     const assertion = await navigator.credentials.get({
@@ -12209,10 +12166,7 @@ async function reauthWithPasskey() {
     const clientDataJSON  = uint8ToB64url(new Uint8Array(assertion.response.clientDataJSON));
     const authenticatorData = uint8ToB64url(new Uint8Array(assertion.response.authenticatorData));
     const signature       = uint8ToB64url(new Uint8Array(assertion.response.signature));
-    const finishRes = await fetchKV(`${WORKER_URL}/passkey/auth/finish`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash, credentialId: credId, clientDataJSON, authenticatorData, signature }),
-    });
+    const finishRes = await postKV(`${WORKER_URL}/passkey/auth/finish`, { emailHash: _kvEmailHash, credentialId: credId, clientDataJSON, authenticatorData, signature });
     if (!finishRes.ok) { const d = await finishRes.json().catch(()=>({})); throw new Error(d.error || 'Verification failed'); }
     errEl.style.display = 'none';
     document.getElementById('reauth-modal').style.display = 'none';
@@ -12504,10 +12458,7 @@ async function recoveryWithPasskey() {
   if(errEl) errEl.style.display = 'none';
   try {
     const emailHash = _recoveryEmailHash || await kvHashEmail(_recoveryEmail);
-    const beginRes = await fetchKV(`${WORKER_URL}/passkey/auth/begin`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash }),
-    });
+    const beginRes = await postKV(`${WORKER_URL}/passkey/auth/begin`, { emailHash });
     const beginData = await beginRes.json();
     if (!beginRes.ok) throw new Error(beginData.error || 'Could not start passkey verification');
     const assertion = await navigator.credentials.get({
@@ -12525,10 +12476,7 @@ async function recoveryWithPasskey() {
     const clientDataJSON   = uint8ToB64url(new Uint8Array(assertion.response.clientDataJSON));
     const authenticatorData = uint8ToB64url(new Uint8Array(assertion.response.authenticatorData));
     const signature        = uint8ToB64url(new Uint8Array(assertion.response.signature));
-    const finishRes = await fetchKV(`${WORKER_URL}/passkey/auth/finish`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, credentialId: credId, clientDataJSON, authenticatorData, signature }),
-    });
+    const finishRes = await postKV(`${WORKER_URL}/passkey/auth/finish`, { emailHash, credentialId: credId, clientDataJSON, authenticatorData, signature });
     const finishData = await finishRes.json();
     if (!finishRes.ok) throw new Error(finishData.error || 'Passkey verification failed');
     // Passkey verified — store session token for OTP step, then send email code
@@ -12552,10 +12500,7 @@ async function recoveryStepCode() {
   try {
     const emailHash = await kvHashEmail(_recoveryEmail);
     const codeHash  = await hashRecoveryCode(code, emailHash);
-    const res = await fetchKV(`${WORKER_URL}/key/recover`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, codeHash }),
-    });
+    const res = await postKV(`${WORKER_URL}/key/recover`, { emailHash, codeHash });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Invalid recovery code');
     const wrapKey = await deriveRecoveryWrapKey(code, emailHash);
@@ -12564,10 +12509,7 @@ async function recoveryStepCode() {
     _recoveryToken     = data.recoveryToken;
     _recoveryDataKey   = dataKey;
     // Send email OTP as second factor
-    const otpRes = await fetchKV(`${WORKER_URL}/recovery/request`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: _recoveryEmail }),
-    });
+    const otpRes = await postKV(`${WORKER_URL}/recovery/request`, { email: _recoveryEmail });
     if (!otpRes.ok) {
       const otpData = await otpRes.json().catch(()=>({}));
       throw new Error(otpData.error || 'Could not send email verification');
@@ -12591,10 +12533,7 @@ async function recoveryStepOtp() {
   if (!otp || otp.length !== 6) { if(errEl){errEl.textContent='Enter the 6-digit code from your email';errEl.style.display='block';} return; }
   if (btn) { btn.textContent = '⏳ Verifying…'; btn.disabled = true; }
   try {
-    const res = await fetchKV(`${WORKER_URL}/recovery/verify`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: _recoveryEmail, otp }),
-    });
+    const res = await postKV(`${WORKER_URL}/recovery/verify`, { email: _recoveryEmail, otp });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Invalid code');
     if(errEl) errEl.style.display = 'none';
@@ -12610,10 +12549,7 @@ async function recoveryStepOtp() {
 
 async function recoveryResendOtp() {
   try {
-    await fetchKV(`${WORKER_URL}/recovery/request`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: _recoveryEmail }),
-    });
+    await postKV(`${WORKER_URL}/recovery/request`, { email: _recoveryEmail });
     toast('Verification code resent');
   } catch(e) { toast('Could not resend — try again'); }
 }
@@ -12644,19 +12580,13 @@ async function completeRecovery() {
     const { wrapKey, saltB64 } = await derivePassphraseWrapKey(newPass, _recoveryEmailHash, null);
     const newVerifier          = await kvMakeVerifier(newPass, _recoveryEmailHash);
     const newEnvelope          = await wrapDataKey(_recoveryDataKey, wrapKey);
-    const res = await fetchKV(`${WORKER_URL}/recovery/reset`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _recoveryEmailHash, recoveryToken: _recoveryToken, newVerifier, newSalt: saltB64, newEnvelope }),
-    });
+    const res = await postKV(`${WORKER_URL}/recovery/reset`, { emailHash: _recoveryEmailHash, recoveryToken: _recoveryToken, newVerifier, newSalt: saltB64, newEnvelope });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Reset failed');
     await kvStoreSession(_recoveryEmail, _recoveryEmailHash, newVerifier, _recoveryDataKey);
     const newCodes     = generateRecoveryCodes(10);
     const newEnvelopes = await buildRecoveryEnvelopes(newCodes, _recoveryDataKey, _recoveryEmailHash);
-    await fetchKV(`${WORKER_URL}/key/update-recovery`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _recoveryEmailHash, verifier: newVerifier, recoveryEnvelopes: newEnvelopes }),
-    });
+    await postKV(`${WORKER_URL}/key/update-recovery`, { emailHash: _recoveryEmailHash, verifier: newVerifier, recoveryEnvelopes: newEnvelopes });
     _recoveryEmail = _recoveryEmailHash = _recoveryToken = '';
     _recoveryDataKey = null;
     if(errEl) errEl.style.display = 'none';
@@ -12778,10 +12708,7 @@ async function dismissDecryptErrorAndReauth() {
       const authBody = _kvSessionToken && !_kvVerifier
         ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken }
         : { emailHash: _kvEmailHash, verifier };
-      const keyRes  = await fetchKV(`${WORKER_URL}/key/get`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(authBody),
-      });
+      const keyRes  = await postKV(`${WORKER_URL}/key/get`, authBody);
       const keyData = await keyRes.json();
       if (keyRes.status === 401) { toast('Incorrect passphrase — try again'); showDecryptErrorBanner(); return; }
       if (keyRes.ok && !keyData.legacy && keyData.envelope) {
@@ -12852,10 +12779,7 @@ async function runCryptoMigration(email, emailHash, verifier, passphrase, v1Data
 
     // 1. Pull current (v1) ciphertext from server
     setStatus('Fetching your data…', 10);
-    const pullRes = await fetchKV(`${WORKER_URL}/data/pull`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, verifier }),
-    });
+    const pullRes = await postKV(`${WORKER_URL}/data/pull`, { emailHash, verifier });
     if (!pullRes.ok) throw new Error('Could not fetch data for migration');
     const { ciphertext: v1Ciphertext } = await pullRes.json();
 
@@ -12886,9 +12810,7 @@ async function runCryptoMigration(email, emailHash, verifier, passphrase, v1Data
 
     // 6. Push to server — atomically archives v1 and writes v2
     setStatus('Saving to server…', 85);
-    const migrateRes = await fetchKV(`${WORKER_URL}/crypto/migrate`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const migrateRes = await postKV(`${WORKER_URL}/crypto/migrate`, {
         emailHash,
         verifier,
         newVerifier,
@@ -12897,8 +12819,7 @@ async function runCryptoMigration(email, emailHash, verifier, passphrase, v1Data
         newKdfSalt:           kdfSalt,
         newRecoveryEnvelopes: recoveryEnvelopes,
         ciphertext:           v2Ciphertext,
-      }),
-    });
+      });
     if (!migrateRes.ok) {
       const d = await migrateRes.json().catch(() => ({}));
       throw new Error(d.error || 'Migration failed — your data is unchanged');
@@ -12985,19 +12906,13 @@ async function showMobileDiag() {
   // Server checks if we have credentials
   if (_kvEmailHash && _kvVerifier) {
     try {
-      const r = await fetchKV(`${WORKER_URL}/key/get`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailHash: _kvEmailHash, verifier: _kvVerifier }),
-      });
+      const r = await postKV(`${WORKER_URL}/key/get`, { emailHash: _kvEmailHash, verifier: _kvVerifier });
       const d = await r.json();
       lines.push(`key/get: ${r.status} cv=${d.cryptoVersion||'?'} env=${!!d.envelope} kdf=${!!d.kdfSalt} mig=${d.migrationDue}`);
     } catch(e) { lines.push(`key/get error: ${e.message}`); }
 
     try {
-      const r = await fetchKV(`${WORKER_URL}/data/pull`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailHash: _kvEmailHash, verifier: _kvVerifier }),
-      });
+      const r = await postKV(`${WORKER_URL}/data/pull`, { emailHash: _kvEmailHash, verifier: _kvVerifier });
       const d = await r.json();
       lines.push(`data/pull: ${r.status} ct=${d.ciphertext ? d.ciphertext.length+'ch' : 'none'}`);
     } catch(e) { lines.push(`data/pull error: ${e.message}`); }
@@ -13058,10 +12973,7 @@ function showForgotPassphrase() {
 // Returns the CryptoKey if found, null if not yet stored.
 async function _fetchPasskeyWrappedKey(emailHash, sessionToken, credentialId) {
   try {
-    const res  = await fetchKV(`${WORKER_URL}/key/passkey-unwrap`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, sessionToken, credentialId }),
-    });
+    const res  = await postKV(`${WORKER_URL}/key/passkey-unwrap`, { emailHash, sessionToken, credentialId });
     if (!res.ok) return null; // 404 = not stored yet, other errors = skip
     const { rawKeyB64 } = await res.json();
     if (!rawKeyB64) return null;
@@ -13093,10 +13005,7 @@ async function _getKeyViaPassphrase(emailHash, sessionToken, credentialId, errEl
 
   try {
     // Fetch the passphrase-wrapped envelope
-    const keyRes  = await fetchKV(`${WORKER_URL}/key/get`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, sessionToken }),
-    });
+    const keyRes  = await postKV(`${WORKER_URL}/key/get`, { emailHash, sessionToken });
     const keyData = await keyRes.json();
     if (keyRes.status === 401) {
       if (errEl) { errEl.textContent = 'Incorrect passphrase — try again'; errEl.style.display = 'block'; }
@@ -13136,10 +13045,7 @@ async function _getKeyViaPassphrase(emailHash, sessionToken, credentialId, errEl
       // Store device key in BOTH IDB and localStorage so clearing one doesn't break passkey login
       await dbPut('settings', `passkey_device_key_${credentialId}`, deviceKeyB64);
       try { localStorage.setItem(`stockroom_passkey_dk_${credentialId}`, deviceKeyB64); } catch(e) {}
-      await fetchKV(`${WORKER_URL}/key/passkey-prf-store`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailHash, sessionToken, credentialId, prfEnvelope: deviceEnv, deviceBound: true }),
-      });
+      await postKV(`${WORKER_URL}/key/passkey-prf-store`, { emailHash, sessionToken, credentialId, prfEnvelope: deviceEnv, deviceBound: true });
       // Cache session key
       await lsSetEncrypted('stockroom_kv_session_key', {
         keyData: rawKeyB64, emailHash, expiry: Date.now() + 24 * 60 * 60 * 1000,
@@ -13192,10 +13098,7 @@ async function kvRestorePasskeySession(session) {
   const { email, emailHash, sessionToken } = session;
   // Verify session is still valid on backend
   try {
-    const res = await fetchKV(`${WORKER_URL}/passkey/verify-session`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, sessionToken }),
-    });
+    const res = await postKV(`${WORKER_URL}/passkey/verify-session`, { emailHash, sessionToken });
     if (!res.ok) return false;
   } catch(e) {
     // Network error — try to restore from cached key
@@ -13245,10 +13148,7 @@ async function _doAddPasskeyToAccount() {
   const finalDeviceName = (deviceName || suggestedName).trim().slice(0, 50) || suggestedName;
 
   try {
-    const beginRes = await fetchKV(`${WORKER_URL}/passkey/register/begin`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash, email: _kvEmail }),
-    });
+    const beginRes = await postKV(`${WORKER_URL}/passkey/register/begin`, { emailHash: _kvEmailHash, email: _kvEmail });
     const beginData = await beginRes.json();
     if (!beginRes.ok) throw new Error(beginData.error || 'Could not start setup');
 
@@ -13288,15 +13188,12 @@ async function _doAddPasskeyToAccount() {
     console.log('[passkey] PRF supported at registration:', !!prfOutput);
 
     const verifierToSend = _kvSessionToken ? undefined : _kvVerifier;
-    const finishRes = await fetchKV(`${WORKER_URL}/passkey/register/finish`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const finishRes = await postKV(`${WORKER_URL}/passkey/register/finish`, {
         emailHash: _kvEmailHash, email: _kvEmail,
         credentialId: credId, publicKey, clientDataJSON, attestationObject,
         deviceName: finalDeviceName,
         ...(verifierToSend ? { verifier: verifierToSend } : {}),
-      }),
-    });
+      });
     const finishData = await finishRes.json();
     if (!finishRes.ok) throw new Error(finishData.error || 'Setup failed');
 
@@ -13327,15 +13224,12 @@ async function _doAddPasskeyToAccount() {
       const prfWrapKey = await prfBytesToWrapKey(prfOutput);
       const prfEnvelope = await wrapKeyWithPrf(_kvKey, prfWrapKey);
       // Store PRF envelope on server (server stores ciphertext only — never the raw key)
-      const storeRes = await fetchKV(`${WORKER_URL}/key/passkey-prf-store`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const storeRes = await postKV(`${WORKER_URL}/key/passkey-prf-store`, {
           emailHash:    _kvEmailHash,
           sessionToken: finishData.sessionToken,
           credentialId: credId,
           prfEnvelope,  // data key wrapped with PRF-derived AES-KW — server cannot unwrap
-        }),
-      });
+        });
       if (!storeRes.ok) {
         const e = await storeRes.json().catch(() => ({}));
         throw new Error('Could not store PRF envelope: ' + (e.error || storeRes.status));
@@ -13351,16 +13245,13 @@ async function _doAddPasskeyToAccount() {
       const deviceKeyB64 = btoa(String.fromCharCode(...deviceKeyRaw));
       await dbPut('settings', `passkey_device_key_${credId}`, deviceKeyB64);
       // Store envelope on server (useless without the device key — fallback is device-bound)
-      const storeRes = await fetchKV(`${WORKER_URL}/key/passkey-prf-store`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const storeRes = await postKV(`${WORKER_URL}/key/passkey-prf-store`, {
           emailHash:    _kvEmailHash,
           sessionToken: finishData.sessionToken,
           credentialId: credId,
           prfEnvelope:  deviceEnvelope,
           deviceBound:  true, // flag: envelope is device-bound, not PRF-based
-        }),
-      });
+        });
       if (!storeRes.ok) {
         const e = await storeRes.json().catch(() => ({}));
         throw new Error('Could not store device envelope: ' + (e.error || storeRes.status));
@@ -13395,10 +13286,7 @@ async function _doGenerateNewRecoveryCodes() {
     const body = _kvSessionToken
       ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken, recoveryEnvelopes: newEnvelopes }
       : { emailHash: _kvEmailHash, verifier: _kvVerifier, recoveryEnvelopes: newEnvelopes };
-    const res = await fetchKV(`${WORKER_URL}/key/update-recovery`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    const res = await postKV(`${WORKER_URL}/key/update-recovery`, body);
     if (!res.ok) throw new Error('Could not update recovery codes');
     // Show new codes
     showProtectDataScreen(newCodes);
@@ -13471,10 +13359,7 @@ async function loadPasskeys() {
     const body = _kvSessionToken
       ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken }
       : { emailHash: _kvEmailHash, verifier: _kvVerifier };
-    const res  = await fetchKV(`${WORKER_URL}/passkey/list`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    const res  = await postKV(`${WORKER_URL}/passkey/list`, body);
     if (!res.ok) {
       if (res.status === 400 || res.status === 404) {
         container.innerHTML = '<p style="font-size:12px;color:var(--muted)">No passkeys registered on this account yet.</p>';
@@ -13921,10 +13806,7 @@ async function trustThisDeviceWith(email, emailHash, verifier, key) {
     } catch(e) {}
     // Register on backend
     const name = getDeviceName();
-    fetchKV(`${WORKER_URL}/device/register`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, verifier, deviceId, name, addedAt: new Date().toISOString() }),
-    }).catch(() => {});
+    postKV(`${WORKER_URL}/device/register`, { emailHash, verifier, deviceId, name, addedAt: new Date().toISOString() }).catch(() => {});
     toast('This device is now trusted ✓');
     loadTrustedDevices();
   } catch(e) {
@@ -13944,10 +13826,7 @@ async function loadTrustedDevices() {
   if (!list) return;
 
   try {
-    const res  = await fetchKV(`${WORKER_URL}/device/list`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash, ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier } }),
-    });
+    const res  = await postKV(`${WORKER_URL}/device/list`, { emailHash: _kvEmailHash, ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier } });
     const data = await res.json();
     const devices = data.devices || [];
     const myDeviceId = getOrCreateDeviceId();
@@ -13980,10 +13859,7 @@ async function loadTrustedDevices() {
 async function removeTrustedDevice(deviceId) {
   if (!confirm('Remove this device? It will need to sign in with a passphrase or passkey next time.')) return;
   try {
-    await fetchKV(`${WORKER_URL}/device/remove`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash, ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }, deviceId }),
-    });
+    await postKV(`${WORKER_URL}/device/remove`, { emailHash: _kvEmailHash, ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }, deviceId });
     // If removing this device, clear local trust data too
     if (deviceId === getOrCreateDeviceId()) {
       await removeWrappedKey(deviceId);
@@ -13999,10 +13875,7 @@ async function clearAllTrustedDevices() {
   const list = document.getElementById('trusted-devices-list');
   if (list) list.querySelectorAll('[data-device-id]').forEach(el => {});
   try {
-    const res = await fetchKV(`${WORKER_URL}/device/clear-all`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash, ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier } }),
-    });
+    const res = await postKV(`${WORKER_URL}/device/clear-all`, { emailHash: _kvEmailHash, ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier } });
     if (!res.ok) throw new Error('Could not clear devices');
     // Clear local trust data for this device too
     const myDeviceId = getOrCreateDeviceId();
@@ -14247,10 +14120,7 @@ async function kvEnsureKey() {
       const credentialId = storedCreds[_kvEmailHash];
       if (credentialId) {
         // Try PRF envelope from server
-        const envRes = await fetchKV(`${WORKER_URL}/key/passkey-prf-get`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ emailHash: _kvEmailHash, sessionToken: _kvSessionToken, credentialId }),
-        }).catch(() => null);
+        const envRes = await postKV(`${WORKER_URL}/key/passkey-prf-get`, { emailHash: _kvEmailHash, sessionToken: _kvSessionToken, credentialId }).catch(() => null);
         if (envRes && envRes.ok) {
           const { prfEnvelope, deviceBound } = await envRes.json();
           if (deviceBound) {
@@ -14281,10 +14151,7 @@ async function kvEnsureKey() {
     const verifier = await kvMakeVerifier(passphrase, _kvEmailHash);
 
     let dataKey;
-    const keyRes  = await fetchKV(`${WORKER_URL}/key/get`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash, verifier }),
-    });
+    const keyRes  = await postKV(`${WORKER_URL}/key/get`, { emailHash: _kvEmailHash, verifier });
     const keyData = await keyRes.json();
 
     if (keyRes.status === 401) { toast('Incorrect passphrase'); return false; }
@@ -14428,15 +14295,12 @@ async function kvPush() {
   });
   _keyFingerprint(_kvKey).then(fp => console.log('[key] kvPush: encrypting with key fingerprint:', fp));
   const ciphertext = await kvEncrypt(_kvKey, payload);
-  const res = await fetchKV(`${WORKER_URL}/data/push`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+  const res = await postKV(`${WORKER_URL}/data/push`, {
       emailHash:    _kvEmailHash,
       ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
       household:    activeProfile === 'default' ? null : activeProfile,
       ciphertext,
-    }),
-  });
+    });
   if (!res.ok) {
     // 402 = free-tier blob size exceeded → surface upgrade toast and bail
     if (res.status === 402 && window.stockroomBilling) {
@@ -14468,10 +14332,7 @@ async function kvPull() {
   // A user with both a personal account AND a share must pull from the share, not their own data.
   if (_shareState) {
     if (!_shareKey) { console.warn('kvPull (share): no share key in memory'); return null; }
-    const res = await fetchKV(`${WORKER_URL}/share/data/pull`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ guestEmailHash: _kvEmailHash, guestVerifier: _kvVerifier, guestSessionToken: _kvSessionToken, code: _shareState.code, household: activeProfile }),
-    });
+    const res = await postKV(`${WORKER_URL}/share/data/pull`, { guestEmailHash: _kvEmailHash, guestVerifier: _kvVerifier, guestSessionToken: _kvSessionToken, code: _shareState.code, household: activeProfile });
     if (!res.ok) {
       // Share has been deleted or guest removed — auto-clear local share state
       if (res.status === 404 || res.status === 403) {
@@ -14504,14 +14365,11 @@ async function kvPull() {
   }
 
   // Owner pull — from data/pull using own key
-  const res = await fetchKV(`${WORKER_URL}/data/pull`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+  const res = await postKV(`${WORKER_URL}/data/pull`, {
       emailHash: _kvEmailHash,
       ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
       household: activeProfile,
-    }),
-  });
+    });
   if (!res.ok) return null;
   const { ciphertext } = await res.json();
   if (!ciphertext) return null;
@@ -14812,10 +14670,7 @@ async function _doDeleteAccount() {
   if (!confirm(`Delete your account?\n\nThis permanently removes all your data, households, reminders and share targets from the server. This cannot be undone.\n\nYour local data on this device will also be cleared.`)) return;
   if (!confirm('Are you absolutely sure? This cannot be undone.')) return;
   try {
-    const res = await fetchKV(`${WORKER_URL}/user/delete`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash, verifier: _kvVerifier }),
-    });
+    const res = await postKV(`${WORKER_URL}/user/delete`, { emailHash: _kvEmailHash, verifier: _kvVerifier });
     if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || 'Delete failed'); }
     // Clear all local state
     const deviceId = getOrCreateDeviceId();
@@ -14922,20 +14777,14 @@ async function kvChangePassphrase(oldPass, newPass) {
     const newKey    = await kvDeriveKey(_kvEmail, newPass);
     const newVerifier = await kvMakeVerifier(newPass, _kvEmailHash);
     // Pull current ciphertext
-    const res = await fetchKV(`${WORKER_URL}/data/pull`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash, verifier: _kvVerifier, household: activeProfile }),
-    });
+    const res = await postKV(`${WORKER_URL}/data/pull`, { emailHash: _kvEmailHash, verifier: _kvVerifier, household: activeProfile });
     if (!res.ok) throw new Error('Could not fetch current data');
     const { ciphertext } = await res.json();
     if (ciphertext) {
       const plain      = await kvDecrypt(oldKey, ciphertext);
       const newCipher  = await kvEncrypt(newKey, plain);
       // Push re-encrypted data with new verifier
-      await fetchKV(`${WORKER_URL}/data/push`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailHash: _kvEmailHash, verifier: newVerifier, household: activeProfile, ciphertext: newCipher }),
-      });
+      await postKV(`${WORKER_URL}/data/push`, { emailHash: _kvEmailHash, verifier: newVerifier, household: activeProfile, ciphertext: newCipher });
     }
     // Update session
     _kvKey      = newKey;
@@ -25379,10 +25228,7 @@ async function proxyWriteDrive(payload) {
 async function proxyGetModifiedTime() {
   if (!_shareState?.code || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return null;
   try {
-    const res = await fetchKV(`${WORKER_URL}/share/data/modified`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ guestEmailHash: _kvEmailHash, guestVerifier: _kvVerifier, guestSessionToken: _kvSessionToken, code: _shareState.code, household: activeProfile }),
-    });
+    const res = await postKV(`${WORKER_URL}/share/data/modified`, { guestEmailHash: _kvEmailHash, guestVerifier: _kvVerifier, guestSessionToken: _kvSessionToken, code: _shareState.code, household: activeProfile });
     if (!res.ok) return null;
     return (await res.json()).modifiedTime || null;
   } catch(e) { return null; }
@@ -25406,10 +25252,7 @@ function handleShareTargetBtn() {
 async function loadShareTargets() {
   if (!WORKER_URL || !isOwner() || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
   try {
-    const res  = await fetchKV(`${WORKER_URL}/share/list`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken }),
-    });
+    const res  = await postKV(`${WORKER_URL}/share/list`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken });
     const data = await res.json();
     _shareTargets = data.targets || [];
     renderShareTargetsList();
@@ -25621,10 +25464,7 @@ async function saveShareTarget() {
   try {
     if (code) {
       // Update existing — re-use existing share key
-      const res = await fetchKV(`${WORKER_URL}/share/update`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code, name, type: _shareTargetType, colour, households: _shareTargetPerms }),
-      });
+      const res = await postKV(`${WORKER_URL}/share/update`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code, name, type: _shareTargetType, colour, households: _shareTargetPerms });
       if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || 'Update failed'); }
       await pushSharedData(code);
 
@@ -25648,10 +25488,7 @@ async function saveShareTarget() {
 
       // 1. Hash guest email → fetch their ECDH public key
       const guestEmailHash = await kvHashEmail(guestEmail);
-      const pubRes = await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/get`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailHash: guestEmailHash }),
-      });
+      const pubRes = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: guestEmailHash });
       if (pubRes.status === 404) throw new Error(`${guestEmail} doesn't have a STOCKROOM account yet — they need to sign up first`);
       if (!pubRes.ok) throw new Error('Could not fetch their encryption key — try again');
       const { publicKeyJwk: guestPubKeyJwk } = await pubRes.json();
@@ -25668,17 +25505,12 @@ async function saveShareTarget() {
       const wrappedKey = await ecdhWrapShareKey(ownerPrivKey, guestPubKeyJwk, shareKey);
 
       // 5. Export our own public key JWK to send alongside (guest needs it to unwrap)
-      const ownerPubRes = await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/get`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailHash: _kvEmailHash }),
-      });
+      const ownerPubRes = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: _kvEmailHash });
       if (!ownerPubRes.ok) throw new Error('Could not fetch your encryption key — try again');
       const { publicKeyJwk: ownerPubKeyJwk } = await ownerPubRes.json();
 
       // 6. Create share on server
-      const res = await fetchKV(`${WORKER_URL}/share/create`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const res = await postKV(`${WORKER_URL}/share/create`, {
           ownerEmailHash: _kvEmailHash,
           ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
           name, type: _shareTargetType, colour, ownerName,
@@ -25686,23 +25518,19 @@ async function saveShareTarget() {
           householdNames: Object.fromEntries(
             Object.entries(profiles).map(([k,p]) => [k, p.name||(k==='default'?'Home':k)])
           ),
-        }),
-      });
+        });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed');
 
       // 7. Store ECDH-wrapped key on server for the guest
-      const ecdhStoreRes = await fetchKV(`${WORKER_URL}/share/ecdh-key/store`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const ecdhStoreRes = await postKV(`${WORKER_URL}/share/ecdh-key/store`, {
           ownerEmailHash: _kvEmailHash,
           ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
           code: data.code,
           guestEmailHash,
           wrappedKey,
           ownerPublicKeyJwk: ownerPubKeyJwk,
-        }),
-      });
+        });
       if (!ecdhStoreRes.ok) throw new Error('Could not store encrypted share key — try again');
 
       // 8. Cache share key locally and back it up (for owner cross-device recovery)
@@ -25768,10 +25596,7 @@ async function recoverShareKeyWithOldKey(code, dataKey) {
 
   // 2. Fetch server backup and decrypt with the provided (old) key
   try {
-    const res = await fetchKV(`${WORKER_URL}/share/key/get`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, code }),
-    });
+    const res = await postKV(`${WORKER_URL}/share/key/get`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, code });
     if (!res.ok) return null;
     const { encryptedShareKey } = await res.json();
     if (!encryptedShareKey) return null;
@@ -25788,10 +25613,7 @@ async function backupShareKey(code, shareKey) {
   if (!_kvKey || !_kvEmailHash || !_kvVerifier) return;
   const raw        = await crypto.subtle.exportKey('raw', shareKey);
   const ciphertext = await kvEncrypt(_kvKey, btoa(String.fromCharCode(...new Uint8Array(raw))));
-  await fetchKV(`${WORKER_URL}/share/key/store`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, code, encryptedShareKey: ciphertext }),
-  });
+  await postKV(`${WORKER_URL}/share/key/store`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, code, encryptedShareKey: ciphertext });
 }
 
 // Recover share key from server — decrypts with owner's data key.
@@ -25799,10 +25621,7 @@ async function backupShareKey(code, shareKey) {
 async function recoverShareKey(code) {
   if (!_kvKey || !_kvEmailHash || !_kvVerifier) return null;
   try {
-    const res = await fetchKV(`${WORKER_URL}/share/key/get`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, code }),
-    });
+    const res = await postKV(`${WORKER_URL}/share/key/get`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, code });
     if (!res.ok) return null;
     const { encryptedShareKey } = await res.json();
     if (!encryptedShareKey) return null;
@@ -25893,10 +25712,7 @@ async function pushSharedData(code, shareKey) {
       });
       const ciphertext  = await encryptWithShareKey(sk, payload);
       const authFields  = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
-      await fetchKV(`${WORKER_URL}/share/data/push`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ownerEmailHash: _kvEmailHash, ...authFields, code, household: hKey, ciphertext }),
-      });
+      await postKV(`${WORKER_URL}/share/data/push`, { ownerEmailHash: _kvEmailHash, ...authFields, code, household: hKey, ciphertext });
     } catch(e) { console.warn('pushSharedData failed for', hKey, e.message); }
   }
 }
@@ -25917,20 +25733,14 @@ async function _fulfilPendingRewraps(code) {
   if (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
   const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
   try {
-    const res = await fetchKV(`${WORKER_URL}/share/ecdh-key/pending-rewraps`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ownerEmailHash: _kvEmailHash, ...authFields, code }),
-    });
+    const res = await postKV(`${WORKER_URL}/share/ecdh-key/pending-rewraps`, { ownerEmailHash: _kvEmailHash, ...authFields, code });
     if (!res.ok) return;
     const { requests } = await res.json();
     if (!requests?.length) return;
 
     const ownerPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
     if (!ownerPrivKey) return;
-    const ownerPubRes = await fetchKV(`${WORKER_URL}/user/ecdh-pubkey/get`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash }),
-    });
+    const ownerPubRes = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: _kvEmailHash });
     if (!ownerPubRes.ok) return;
     const { publicKeyJwk: ownerPubKeyJwk } = await ownerPubRes.json();
 
@@ -25952,13 +25762,10 @@ async function _fulfilPendingRewraps(code) {
       if (!req.guestEmailHash || !req.guestPublicKeyJwk) continue;
       try {
         const wrappedKey = await ecdhWrapShareKey(ownerPrivKey, req.guestPublicKeyJwk, sk);
-        await fetchKV(`${WORKER_URL}/share/ecdh-key/store`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        await postKV(`${WORKER_URL}/share/ecdh-key/store`, {
             ownerEmailHash: _kvEmailHash, ...authFields, code,
             guestEmailHash: req.guestEmailHash, wrappedKey, ownerPublicKeyJwk: ownerPubKeyJwk,
-          }),
-        });
+          });
         console.log('[share] rewrapped key for guest:', req.guestEmailHash);
       } catch(e) { console.warn('[share] rewrap failed for', req.guestEmailHash, e.message); }
     }
@@ -26043,10 +25850,7 @@ window.clearBrokenShare = async function(code) {
   if (!code) { console.error('Usage: clearBrokenShare("CODE")'); return; }
   if (!confirm(`Delete share target ${code}? The guest will lose access. You'll need to send them a new link.`)) return;
   try {
-    const res = await fetchKV(`${WORKER_URL}/share/delete`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code }),
-    });
+    const res = await postKV(`${WORKER_URL}/share/delete`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code });
     if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Delete failed'); }
     // Remove from local share keys
     try {
@@ -26066,10 +25870,7 @@ async function refreshShareLink(code) {
   const target = _shareTargets.find(t => t.code === code);
   if (!target) return;
   try {
-    const res = await fetchKV(`${WORKER_URL}/share/refresh`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code }),
-    });
+    const res = await postKV(`${WORKER_URL}/share/refresh`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code });
     if (!res.ok) throw new Error('Could not refresh');
     const baseLink = `${location.origin}${location.pathname}?join=${code}`;
     await navigator.clipboard.writeText(baseLink).catch(()=>{});
@@ -26081,10 +25882,7 @@ async function refreshShareLink(code) {
 async function deleteShareTarget(code) {
   if (!confirm('Remove this person\'s access? They will no longer be able to sync your data.')) return;
   try {
-    const res = await fetchKV(`${WORKER_URL}/share/delete`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code }),
-    });
+    const res = await postKV(`${WORKER_URL}/share/delete`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code });
     if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || 'Could not delete'); }
     // Remove local share key
     try {
@@ -26108,10 +25906,7 @@ async function _doClearAllShares() {
   let failed = 0;
   for (const target of (_shareTargets || [])) {
     try {
-      const res = await fetchKV(`${WORKER_URL}/share/delete`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code: target.code }),
-      });
+      const res = await postKV(`${WORKER_URL}/share/delete`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code: target.code });
       if (!res.ok) failed++;
     } catch(e) { failed++; }
   }
@@ -26126,14 +25921,11 @@ async function _sendShareEmail(guestEmail, { code, name, type, households, isUpd
   if (!guestEmail || !WORKER_URL) return;
   try {
     const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
-    await fetchKV(`${WORKER_URL}/share/send-email`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    await postKV(`${WORKER_URL}/share/send-email`, {
         ownerEmailHash: _kvEmailHash, ...authFields,
         guestEmail, code, name, type, households, isUpdate, inviteLink,
         ownerName: settings.email?.split('@')[0] || 'Your household',
-      }),
-    });
+      });
   } catch(e) { console.warn('share email failed:', e.message); }
 }
 
@@ -27052,10 +26844,7 @@ async function addIncomingItem(payload, openEdit) {
 async function handleShareJoinLink(code) {
   updateSyncPill('syncing');
   try {
-    const probe = await fetchKV(`${WORKER_URL}/share/join`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code }),
-    });
+    const probe = await postKV(`${WORKER_URL}/share/join`, { code });
     const probeData = await probe.json();
     if (probe.status === 410) { toast('This invite link has expired — ask the owner for a new one'); updateSyncPill('error'); return; }
     if (!probe.ok && !probeData.requiresAuth) throw new Error(probeData.error || 'Invalid link');
@@ -27106,7 +26895,7 @@ async function shareGateSignIn() {
   try {
     const emailHash = await kvHashEmail(email);
     const verifier  = await kvMakeVerifier(pass, emailHash);
-    const res = await fetchKV(`${WORKER_URL}/user/verify`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ emailHash, verifier }) });
+    const res = await postKV(`${WORKER_URL}/user/verify`, { emailHash, verifier });
     const d = await res.json();
     if (res.status === 404) throw new Error('Account not found — use Create new account');
     if (!res.ok) throw new Error(d.error || 'Sign-in failed');
@@ -27128,7 +26917,7 @@ async function shareGateRegister() {
   try {
     const emailHash = await kvHashEmail(email);
     const verifier  = await kvMakeVerifier(pass, emailHash);
-    const res = await fetchKV(`${WORKER_URL}/user/register`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ emailHash, verifier, email }) });
+    const res = await postKV(`${WORKER_URL}/user/register`, { emailHash, verifier, email });
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || 'Registration failed');
     const kdfSalt = generateKdfSalt();
@@ -27138,7 +26927,7 @@ async function shareGateRegister() {
     const saltB64 = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
     const recoveryCodes = generateRecoveryCodes(10);
     const recoveryEnvelopes = await buildRecoveryEnvelopesV2(recoveryCodes, dataKey, emailHash);
-    const storeRes = await fetchKV(`${WORKER_URL}/key/store`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ emailHash, verifier, salt: saltB64, passphraseEnvelope, recoveryEnvelopes, kdfSalt }) });
+    const storeRes = await postKV(`${WORKER_URL}/key/store`, { emailHash, verifier, salt: saltB64, passphraseEnvelope, recoveryEnvelopes, kdfSalt });
     if (!storeRes.ok) throw new Error('Could not store key envelopes — try again');
     _kvKey = dataKey;
     await kvStoreSession(email, emailHash, verifier, dataKey);
@@ -27153,39 +26942,30 @@ async function completePendingJoin() {
   if (!_pendingJoinCode) return;
   const code = _pendingJoinCode;
   try {
-    const res  = await fetchKV(`${WORKER_URL}/share/join`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const res  = await postKV(`${WORKER_URL}/share/join`, {
         code,
         guestEmailHash:    _kvEmailHash,
         ...(_kvSessionToken ? { guestSessionToken: _kvSessionToken } : { guestVerifier: _kvVerifier }),
-      }),
-    });
+      });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Invalid invite link — it may have expired');
     // Server returned 200 but with ok:false — means it needs auth (shouldn't happen here but guard it)
     if (data.requiresAuth) throw new Error('Authentication required — please sign in first');
 
-    const ecdhRes = await fetchKV(`${WORKER_URL}/share/ecdh-key/get`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const ecdhRes = await postKV(`${WORKER_URL}/share/ecdh-key/get`, {
         guestEmailHash: _kvEmailHash,
         ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
         code,
-      }),
-    });
+      });
 
     // If no wrapped key exists yet, request the owner to re-wrap on their next sync
     if (ecdhRes.status === 404) {
       // Store a pending-rewrap request on the server so owner's app picks it up
-      await fetchKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      await postKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, {
           guestEmailHash: _kvEmailHash,
           ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
           code,
-        }),
-      }).catch(() => {}); // non-blocking
+        }).catch(() => {}); // non-blocking
       throw new Error('Your invite is being set up — ask the owner to open STOCKROOM, then tap this link again');
     }
 
@@ -27620,10 +27400,7 @@ async function emptyNotesTrash() {
   for (const id of trashIds) {
     const n = notes.find(x => x.id === id);
     if (n?.locked) {
-      await fetchKV(`${WORKER_URL}/note/body/delete`, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ emailHash:_kvEmailHash, ..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier}, noteId:id }),
-      }).catch(()=>{});
+      await postKV(`${WORKER_URL}/note/body/delete`, { emailHash:_kvEmailHash, ..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier}, noteId:id }).catch(()=>{});
     }
   }
   notes = notes.filter(n => !n.deletedAt);
@@ -27640,10 +27417,7 @@ async function secureLockNote(noteId) {
   if (!state) return;
   if (!await kvEnsureKey()) return;
   const ciphertext = await kvEncrypt(_kvKey, state.body);
-  const res = await fetchKV(`${WORKER_URL}/note/body/push`, {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ emailHash:_kvEmailHash, ..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier}, noteId, ciphertext }),
-  });
+  const res = await postKV(`${WORKER_URL}/note/body/push`, { emailHash:_kvEmailHash, ..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier}, noteId, ciphertext });
   if (res.status === 402 && window.stockroomBilling) {
     try { await stockroomBilling.handleApiError(res); } catch (_) {}
     return;
@@ -27870,13 +27644,10 @@ async function unlockCurrentNote() {
 async function _sendNoteOtp() {
   const errEl = document.getElementById('note-lock-error');
   try {
-    const res = await fetchKV(`${WORKER_URL}/note/otp/send`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const res = await postKV(`${WORKER_URL}/note/otp/send`, {
         emailHash: _kvEmailHash,
         ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
-      }),
-    });
+      });
     if (!res.ok) { const d = await res.json(); errEl.textContent = d.error || 'Could not send code'; return; }
     // Show OTP input
     document.getElementById('note-unlock-btn').style.display = 'none';
@@ -27895,10 +27666,7 @@ async function verifyNoteOtp() {
   const errEl = document.getElementById('note-otp-error');
   if (!otp || otp.length !== 6) { errEl.textContent = 'Enter the 6-digit code'; return; }
   try {
-    const res = await fetchKV(`${WORKER_URL}/note/otp/verify`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash, otp }),
-    });
+    const res = await postKV(`${WORKER_URL}/note/otp/verify`, { emailHash: _kvEmailHash, otp });
     const d = await res.json();
     if (!res.ok) { errEl.textContent = d.error || 'Incorrect code'; return; }
     // OTP verified — fetch the body
@@ -27928,14 +27696,11 @@ async function _fetchAndUnlockNote(n) {
       errEl.textContent = 'Not signed in — please refresh and try again';
       return;
     }
-    const res = await fetchKV(`${WORKER_URL}/note/body/pull`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const res = await postKV(`${WORKER_URL}/note/body/pull`, {
         emailHash: _kvEmailHash,
         ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
         noteId: n.id,
-      }),
-    });
+      });
     const data = await _readJsonSafe(res);
     if (!res.ok) {
       if (res.status === 404) {
@@ -28005,14 +27770,11 @@ async function _removeNoteSecurity(noteId) {
   n.updatedAt = new Date().toISOString();
   _noteUnlocked.delete(noteId);
   // Best-effort delete the (probably non-existent) server body so storage is clean
-  await fetchKV(`${WORKER_URL}/note/body/delete`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+  await postKV(`${WORKER_URL}/note/body/delete`, {
       emailHash: _kvEmailHash,
       ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
       noteId,
-    }),
-  }).catch(() => {});
+    }).catch(() => {});
   await saveNotes();
   await _syncNoteIfConnected();
   // Reload editor to show empty editable body
@@ -28052,14 +27814,11 @@ async function toggleNoteLock() {
     n.locked = false;
     _noteUnlocked.delete(n.id);
     // Delete the server-side body
-    await fetchKV(`${WORKER_URL}/note/body/delete`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    await postKV(`${WORKER_URL}/note/body/delete`, {
         emailHash: _kvEmailHash,
         ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
         noteId: n.id,
-      }),
-    }).catch(() => {});
+      }).catch(() => {});
     toast('Note is no longer secured');
   } else {
     // Locking — push body to server and strip from local
@@ -28092,14 +27851,11 @@ async function toggleNoteLock() {
     }
     let res, errText = '';
     try {
-      res = await fetchKV(`${WORKER_URL}/note/body/push`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      res = await postKV(`${WORKER_URL}/note/body/push`, {
           emailHash: _kvEmailHash,
           ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
           noteId: n.id, ciphertext,
-        }),
-      });
+        });
     } catch (e) {
       toast('Could not reach server: ' + (e.message || 'network error'));
       console.error('[note lock] fetch error:', e);
@@ -28428,10 +28184,7 @@ async function deleteCurrentNote() {
     if (!confirm(`Permanently delete "${n.title}"? This cannot be undone.`)) return;
     notes = notes.filter(x => x.id !== n.id);
     if (n.locked) {
-      await fetchKV(`${WORKER_URL}/note/body/delete`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailHash: _kvEmailHash, ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }, noteId: n.id }),
-      }).catch(() => {});
+      await postKV(`${WORKER_URL}/note/body/delete`, { emailHash: _kvEmailHash, ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }, noteId: n.id }).catch(() => {});
     }
   } else {
     if (!confirm(`Move "${n.title}" to trash?\n\nYou can restore it within 30 days from the Trash filter.`)) return;
@@ -28513,14 +28266,11 @@ async function _autoSaveNote() {
       state.body = body; // body is already innerHTML
       if (!await kvEnsureKey()) return;
       const ciphertext = await kvEncrypt(_kvKey, body);
-      await fetchKV(`${WORKER_URL}/note/body/push`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      await postKV(`${WORKER_URL}/note/body/push`, {
           emailHash: _kvEmailHash,
           ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
           noteId: n.id, ciphertext,
-        }),
-      }).then(async (res) => {
+        }).then(async (res) => {
         if (res && res.status === 402 && window.stockroomBilling) {
           try { await stockroomBilling.handleApiError(res); } catch (_) {}
         }
@@ -28820,10 +28570,7 @@ async function _mfaSendEmailOtp() {
   if (errEl)     errEl.textContent = '';
   if (sendingEl) { sendingEl.textContent = 'Sending code…'; sendingEl.style.display = 'block'; }
   try {
-    const res = await fetchKV(`${WORKER_URL}/mfa/otp/send`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ emailHash:_kvEmailHash, email: _kvEmail || settings.email || '', ..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier} }),
-    });
+    const res = await postKV(`${WORKER_URL}/mfa/otp/send`, { emailHash:_kvEmailHash, email: _kvEmail || settings.email || '', ..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier} });
     const d = await res.json();
     if (!res.ok) {
       if (errEl) errEl.textContent = d.error || 'Could not send verification code';
@@ -28852,10 +28599,7 @@ async function mfaVerifySubmit() {
   if (!code || code.length < 6) { if(errEl) errEl.textContent='Enter your 6-digit code'; return; }
 
   if (method === 'email') {
-    const res = await fetchKV(`${WORKER_URL}/mfa/otp/verify`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ emailHash:_kvEmailHash, otp:code }),
-    });
+    const res = await postKV(`${WORKER_URL}/mfa/otp/verify`, { emailHash:_kvEmailHash, otp:code });
     const d = await res.json();
     if (!res.ok) { if(errEl) errEl.textContent = d.error || 'Incorrect code'; return; }
   } else {
@@ -29124,11 +28868,8 @@ async function mfaSetupConfirm() {
       // Stage 1: send the test code
       if (btn) { btn.disabled = true; btn.textContent = '⏳ Sending…'; }
       try {
-        const res = await fetchKV(`${WORKER_URL}/mfa/otp/send`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ emailHash: _kvEmailHash, email: _kvEmail || settings.email || '',
-            ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier } }),
-        });
+        const res = await postKV(`${WORKER_URL}/mfa/otp/send`, { emailHash: _kvEmailHash, email: _kvEmail || settings.email || '',
+            ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier } });
         const d = await res.json();
         if (!res.ok) {
           if (errEl) errEl.textContent = d.error || 'Could not send code — check your email address';
@@ -29155,10 +28896,7 @@ async function mfaSetupConfirm() {
     if (!code || code.length < 6) { if (errEl) errEl.textContent = 'Enter the 6-digit code from your email'; return; }
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Verifying…'; }
     try {
-      const res = await fetchKV(`${WORKER_URL}/mfa/otp/verify`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailHash: _kvEmailHash, otp: code }),
-      });
+      const res = await postKV(`${WORKER_URL}/mfa/otp/verify`, { emailHash: _kvEmailHash, otp: code });
       const d = await res.json();
       if (!res.ok) {
         if (errEl) errEl.textContent = d.error || 'Incorrect code — request a new one';
@@ -29430,13 +29168,10 @@ function openDeactivateAccount() {
 async function confirmDeactivateAccount() {
   closeModal('deactivate-account-modal');
   try {
-    const res = await fetchKV(`${WORKER_URL}/user/deactivate`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const res = await postKV(`${WORKER_URL}/user/deactivate`, {
         emailHash: _kvEmailHash,
         ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
-      }),
-    });
+      });
     if (!res.ok) {
       const d = await res.json();
       toast('Could not deactivate: ' + (d.error || 'Unknown error'));
@@ -29494,10 +29229,7 @@ async function deleteAccountFinal() {
   if (!pass) { if (errEl) errEl.textContent = 'Enter your passphrase'; return; }
   try {
     const verifier = await kvMakeVerifier(pass, _kvEmailHash);
-    const res = await fetchKV(`${WORKER_URL}/user/delete-confirm-send`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash: _kvEmailHash, verifier }),
-    });
+    const res = await postKV(`${WORKER_URL}/user/delete-confirm-send`, { emailHash: _kvEmailHash, verifier });
     if (!res.ok) {
       const d = await res.json();
       if (errEl) errEl.textContent = d.error || 'Incorrect passphrase';
@@ -29513,10 +29245,7 @@ async function deleteAccountFinal() {
 // Called when user lands on app after clicking "Delete Account" in email
 async function handleDeleteAccountConfirmation(token) {
   try {
-    const res = await fetchKV(`${WORKER_URL}/user/delete-execute`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    });
+    const res = await postKV(`${WORKER_URL}/user/delete-execute`, { token });
     if (res.ok) {
       // Clear all local data
       try { localStorage.clear(); } catch(e) {}
@@ -29550,10 +29279,7 @@ async function handleDeleteAccountConfirmation(token) {
 
 async function handleReactivation(token) {
   try {
-    const res = await fetchKV(`${WORKER_URL}/user/reactivate`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    });
+    const res = await postKV(`${WORKER_URL}/user/reactivate`, { token });
     if (res.ok) {
       toast('Your account has been reactivated! Please sign in.');
     } else {

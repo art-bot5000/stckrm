@@ -195,6 +195,44 @@ function json(data, headers = {}, status = 200) {
   });
 }
 
+// ── Auth helpers ──────────────────────────────────────────
+// verifyUserAuth — accepts BOTH passphrase verifier AND passkey sessionToken.
+// Returns true on success, false on missing/invalid credentials.
+// This is the canonical dual-auth check. Endpoints that previously inlined
+// their own verifier/sessionToken validation should call this instead — that
+// way new endpoints can't accidentally forget to accept passkey sessions
+// (the recurring "passkey auth gap" bug class).
+async function verifyUserAuth(emailHash: string, verifier?: string, sessionToken?: string): Promise<boolean> {
+  if (!emailHash) return false;
+  if (sessionToken) {
+    const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+    return !!session.value;
+  }
+  if (verifier) {
+    const stored = await kvGet(['user', emailHash, 'verifier']);
+    return !!stored.value && stored.value === verifier;
+  }
+  return false;
+}
+
+// requireUserAuth — verifies and returns null on success, or a Response (401/400)
+// on failure. Use as: `const fail = await requireUserAuth(...); if (fail) return fail;`
+async function requireUserAuth(
+  emailHash: string,
+  verifier?: string,
+  sessionToken?: string,
+): Promise<Response | null> {
+  if (!emailHash || (!verifier && !sessionToken)) {
+    return json({ error: 'Missing fields' }, corsHeaders, 400);
+  }
+  const ok = await verifyUserAuth(emailHash, verifier, sessionToken);
+  if (!ok) {
+    // Distinguish session expiry from bad credentials so the UI can prompt re-login
+    return json({ error: sessionToken ? 'Session expired' : 'Unauthorised' }, corsHeaders, 401);
+  }
+  return null;
+}
+
 // ── Crypto helpers ────────────────────────────────────────
 // Key derivation: PBKDF2(email + ':' + passphrase) → AES-GCM key
 // The derived key never leaves the client — server only stores ciphertext.
@@ -2180,14 +2218,8 @@ Deno.serve(async (request) => {
   if (url.pathname === '/billing/status' && request.method === 'POST') {
     try {
       const { emailHash, verifier, sessionToken } = await request.json();
-      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      if (sessionToken) {
-        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
-        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
-      } else {
-        const stored = await kvGet(['user', emailHash, 'verifier']);
-        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
-      }
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
       const status = await getBillingStatusForUser(emailHash);
       return json(status, corsHeaders);
     } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
@@ -2200,14 +2232,8 @@ Deno.serve(async (request) => {
   if (url.pathname === '/billing/checkout' && request.method === 'POST') {
     try {
       const { emailHash, verifier, sessionToken, promoCode } = await request.json();
-      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      if (sessionToken) {
-        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
-        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
-      } else {
-        const stored = await kvGet(['user', emailHash, 'verifier']);
-        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
-      }
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
       if (!stripeConfigured() || !STRIPE_CFG.priceId) {
         return json({ error: 'Billing not configured' }, corsHeaders, 503);
       }
@@ -2289,14 +2315,8 @@ Deno.serve(async (request) => {
   if (url.pathname === '/billing/portal' && request.method === 'POST') {
     try {
       const { emailHash, verifier, sessionToken } = await request.json();
-      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      if (sessionToken) {
-        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
-        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
-      } else {
-        const stored = await kvGet(['user', emailHash, 'verifier']);
-        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
-      }
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
       if (!stripeConfigured()) return json({ error: 'Billing not configured' }, corsHeaders, 503);
       const acct = await getBillingAccount(emailHash);
       if (!acct?.stripeCustomerId) return json({ error: 'No billing customer found' }, corsHeaders, 404);
@@ -2320,14 +2340,9 @@ Deno.serve(async (request) => {
   if (url.pathname === '/billing/apply-promo' && request.method === 'POST') {
     try {
       const { emailHash, verifier, sessionToken, code } = await request.json();
-      if (!emailHash || (!verifier && !sessionToken) || !code) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      if (sessionToken) {
-        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
-        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
-      } else {
-        const stored = await kvGet(['user', emailHash, 'verifier']);
-        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
-      }
+      if (!code) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
       if (!stripeConfigured()) return json({ error: 'Billing not configured' }, corsHeaders, 503);
       const lookup = await stripeFetch(`/v1/promotion_codes`, 'GET', { code, active: 'true', limit: 1 });
       const pc = lookup?.data?.[0];
@@ -2353,14 +2368,8 @@ Deno.serve(async (request) => {
   if (url.pathname === '/billing/cancel' && request.method === 'POST') {
     try {
       const { emailHash, verifier, sessionToken } = await request.json();
-      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      if (sessionToken) {
-        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
-        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
-      } else {
-        const stored = await kvGet(['user', emailHash, 'verifier']);
-        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
-      }
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
       if (!stripeConfigured()) return json({ error: 'Billing not configured' }, corsHeaders, 503);
       const acct = await getBillingAccount(emailHash);
       if (!acct?.stripeSubscriptionId) return json({ error: 'No active subscription' }, corsHeaders, 404);
@@ -2381,14 +2390,8 @@ Deno.serve(async (request) => {
   if (url.pathname === '/billing/resume' && request.method === 'POST') {
     try {
       const { emailHash, verifier, sessionToken } = await request.json();
-      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      if (sessionToken) {
-        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
-        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
-      } else {
-        const stored = await kvGet(['user', emailHash, 'verifier']);
-        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
-      }
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
       if (!stripeConfigured()) return json({ error: 'Billing not configured' }, corsHeaders, 503);
       const acct = await getBillingAccount(emailHash);
       if (!acct?.stripeSubscriptionId) return json({ error: 'No subscription' }, corsHeaders, 404);
@@ -2410,14 +2413,8 @@ Deno.serve(async (request) => {
   if (url.pathname === '/referral/code' && request.method === 'POST') {
     try {
       const { emailHash, verifier, sessionToken } = await request.json();
-      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      if (sessionToken) {
-        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
-        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
-      } else {
-        const stored = await kvGet(['user', emailHash, 'verifier']);
-        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
-      }
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
       const emailRow = await kvGet(['user', emailHash, 'email']);
       const plaintextEmail = emailRow.value ? String(emailRow.value) : undefined;
       const record = await ensureReferralCode(emailHash, plaintextEmail);
@@ -2465,14 +2462,8 @@ Deno.serve(async (request) => {
   if (url.pathname === '/referral/list' && request.method === 'POST') {
     try {
       const { emailHash, verifier, sessionToken } = await request.json();
-      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      if (sessionToken) {
-        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
-        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
-      } else {
-        const stored = await kvGet(['user', emailHash, 'verifier']);
-        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
-      }
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
       // Walk all referral:signup:* entries and collect those where
       // referrerHash matches. This is O(N) over all signups but N is small
       // and we don't need a reverse index for this rare-ish query.
@@ -2593,20 +2584,6 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
-  // ── Helper: verify a user request with passphrase verifier OR passkey session token ──
-  async function _verifyUserRequest(emailHash: string, verifier?: string, sessionToken?: string): Promise<boolean> {
-    if (!emailHash) return false;
-    if (sessionToken) {
-      const session = await kvGet(['passkey_session', emailHash, sessionToken]);
-      return !!session.value;
-    }
-    if (verifier) {
-      const stored = await kvGet(['user', emailHash, 'verifier']);
-      return !!stored.value && stored.value === verifier;
-    }
-    return false;
-  }
-
   // ── User: list snapshots that contain my data ─────────────
   // Returns metadata only — no encrypted data here. The user can then call
   // /user/snapshot/extract with a specific snapshotKey to download their own
@@ -2615,7 +2592,7 @@ Deno.serve(async (request) => {
     try {
       const { emailHash, verifier, sessionToken } = await request.json();
       if (!emailHash) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      if (!await _verifyUserRequest(emailHash, verifier, sessionToken)) {
+      if (!await verifyUserAuth(emailHash, verifier, sessionToken)) {
         return json({ error: 'Unauthorised' }, corsHeaders, 401);
       }
       if (!r2Configured()) {
@@ -2643,7 +2620,7 @@ Deno.serve(async (request) => {
     try {
       const { emailHash, verifier, sessionToken, snapshotKey } = await request.json();
       if (!emailHash || !snapshotKey) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      if (!await _verifyUserRequest(emailHash, verifier, sessionToken)) {
+      if (!await verifyUserAuth(emailHash, verifier, sessionToken)) {
         return json({ error: 'Unauthorised' }, corsHeaders, 401);
       }
       if (typeof snapshotKey !== 'string' || snapshotKey.length > 200) {
