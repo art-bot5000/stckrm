@@ -1,0 +1,65 @@
+name: Deploy to Fly.io (Staging)
+
+# Triggered on pushes to the `staging` branch, OR manually from the Actions tab.
+# Production deploy.yml is untouched and continues to deploy `main` to stckrm.
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+jobs:
+  preflight:
+    name: Pre-flight checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required files exist
+        run: |
+          REQUIRED=(
+            app.js scanner.js styles.css
+            index.html landing.html
+            sw.js manifest.json admin.html
+            main.ts deno.json start.sh Caddyfile
+            fly.staging.toml
+          )
+          MISSING=()
+          for f in "${REQUIRED[@]}"; do
+            if [ ! -f "$f" ]; then
+              MISSING+=("$f")
+            fi
+          done
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "❌ Missing required files: ${MISSING[*]}"
+            exit 1
+          fi
+          echo "✅ All required files present"
+
+      - name: Check JS syntax
+        run: |
+          node --check app.js   && echo "✅ app.js syntax OK"
+          node --check scanner.js && echo "✅ scanner.js syntax OK"
+
+  deploy:
+    name: Deploy to staging
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy to Fly.io (staging)
+        run: flyctl deploy --config fly.staging.toml --remote-only --strategy rolling --ha=false --no-cache
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        # Same --no-cache rationale as production: avoid Depot's remote
+        # builder reusing cached minify-step output, which silently breaks
+        # frontend file changes.
+
+      - name: Verify deployment health
+        if: always()
+        run: |
+          sleep 5
+          flyctl status --app stckrm-staging
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
