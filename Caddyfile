@@ -62,6 +62,9 @@
     handle /webhook/stripe {
         reverse_proxy localhost:8000
     }
+    handle /billing/* {
+        reverse_proxy localhost:8000
+    }
     handle /auth/* {
         reverse_proxy localhost:8000
     }
