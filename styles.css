@@ -3030,59 +3030,148 @@ body.has-demo-banner #view-notes #notes-header {
 .billing-promo-result-error { color: var(--danger); }
 
 /* ═══════════════════════════════════════════════════════════
-   MOBILE MENU OVERLAY — burger menu surfaced from the header
-   ═══════════════════════════════════════════════════════════ */
-
-/* Centred sheet on mobile, similar to other modals. Width tightened so
-   it doesn't feel like a full-screen takeover for a 4-item menu. */
-.mobile-menu-modal {
+   MOBILE MENU DROPDOWN — burger menu anchored top-right
+   ═══════════════════════════════════════════════════════════
+   The menu is a fixed-position dropdown rendering on top of the rest of
+   the app (no full-screen backdrop / no blur for now). Tap-outside-to-
+   close is wired up in JS by attaching a one-shot document listener
+   when the menu opens. */
+.mobile-menu-dropdown {
+  display: none;
+  position: fixed;
+  top: 56px;        /* Just below the app header — header is ~50px tall plus padding */
+  right: 12px;
+  min-width: 240px;
+  max-width: 320px;
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
-  width: 92%;
+  border-radius: 12px;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.35);
+  padding: 6px;
+  z-index: 950;     /* Above modals' default 200–500 but below toasts (~1200) */
+  flex-direction: column;
+  gap: 2px;
+  /* Subtle entry animation — slide down + fade in */
+  transform: translateY(-6px) scale(0.98);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.16s cubic-bezier(0.34,1.56,0.64,1),
+              opacity   0.12s ease-out;
+}
+.mobile-menu-dropdown.open {
+  display: flex;
+  transform: translateY(0) scale(1);
+  opacity: 1;
+  pointer-events: auto;
 }
 
-/* List of menu items. Mirrors the desktop sidebar's app-nav-link styling
-   so the visual identity is consistent across viewports. */
-.mobile-menu-list {
-  display: flex;
-  flex-direction: column;
-  padding: 8px;
-  gap: 2px;
-}
 .mobile-menu-item {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 14px;
+  padding: 11px 12px;
   background: transparent;
   border: none;
-  border-radius: 10px;
+  border-radius: 8px;
   font-family: var(--sans);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--text);
   text-align: left;
   cursor: pointer;
   width: 100%;
-  transition: background-color 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
-.mobile-menu-item:hover,
-.mobile-menu-item:active {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+.mobile-menu-item:hover {
+  background: rgba(232,168,56,0.07);
+  color: var(--text);
 }
 .mobile-menu-item .icon-tab {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   color: var(--muted);
   flex-shrink: 0;
+  transition: color 0.15s ease;
 }
-.mobile-menu-item:hover .icon-tab,
-.mobile-menu-item:active .icon-tab { color: var(--accent); }
+.mobile-menu-item:hover .icon-tab { color: var(--accent); }
+
+/* Active state — matches the .tab.active highlight on the main tab bar:
+   amber background, dark text + dark icon. */
+.mobile-menu-item.active {
+  background: var(--accent);
+  color: #111;
+  font-weight: 700;
+}
+.mobile-menu-item.active .icon-tab { color: #111; }
+
+/* Section divider + label inside the dropdown (used by the temporary
+   tab-style picker). */
+.mobile-menu-section-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 8px;
+}
+.mobile-menu-section-label {
+  font-size: 10px;
+  font-family: var(--mono);
+  letter-spacing: 1.5px;
+  color: var(--muted);
+  padding: 6px 14px 2px;
+  text-transform: uppercase;
+}
 
 /* Burger button refines on hover/active for a tactile feel */
 #header-burger-btn:hover,
 #header-burger-btn:active {
   background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   MOBILE TAB-BAR LAYOUT VARIANTS (TEMPORARY)
+   ═══════════════════════════════════════════════════════════
+   Three styles toggled via body class (set by setTabStyle in app.js).
+   Default (no class) is the current stacked-icon-above-label layout.
+   These ONLY apply at the mobile breakpoint (≤600px) where the 3×2
+   grid lives — at medium widths the row layout takes over.
+   Once the winning style is chosen, the picker UI + the unused
+   variants will be removed and the chosen one folded into the base
+   mobile rules. */
+@media (max-width: 600px) {
+  /* ── Style A: Icons LEFT of label, current size ── */
+  body.tabs-style-A #tabs > .tab {
+    flex-direction: row;
+    gap: 8px;
+    padding: 10px 6px;
+    font-size: 12px;
+  }
+  body.tabs-style-A #tabs > .tab .icon-tab {
+    width: 18px;
+    height: 18px;
+  }
+
+  /* ── Style B: Icons LEFT of label, BIGGER ── */
+  body.tabs-style-B #tabs > .tab {
+    flex-direction: row;
+    gap: 10px;
+    padding: 14px 6px;
+    font-size: 14px;
+    font-weight: 700;
+  }
+  body.tabs-style-B #tabs > .tab .icon-tab {
+    width: 22px;
+    height: 22px;
+  }
+
+  /* ── Style C: Stacked (current), but BIGGER icons + text ── */
+  body.tabs-style-C #tabs > .tab {
+    /* flex-direction stays as 'column' from the base mobile rule */
+    padding: 12px 4px;
+    font-size: 13px;
+    font-weight: 700;
+    gap: 6px;
+  }
+  body.tabs-style-C #tabs > .tab .icon-tab {
+    width: 24px;
+    height: 24px;
+  }
 }

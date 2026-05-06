@@ -8452,20 +8452,91 @@ function shareReferralLink()       { return stockroomBilling.shareReferralLink()
 // On mobile we hide the secondary nav items (Report/Billing/Settings/
 // Account & Security) from the tab bar to keep the row uncluttered, and
 // surface them via this overlay menu opened from the header burger button.
+// ── Mobile menu (burger dropdown) ──
+// Toggles a top-right anchored dropdown rather than a centered modal —
+// no full-screen backdrop, just the menu rendered on top of everything.
+// Tap-outside-to-close is handled via a one-shot document listener.
 function openMobileMenu() {
-  if (typeof openModal === 'function') openModal('mobile-menu-modal');
-  else { const el = document.getElementById('mobile-menu-modal'); if (el) el.classList.add('open'); }
+  const el = document.getElementById('mobile-menu-dropdown');
+  if (!el) return;
+  // Sync the active highlight with the current view BEFORE showing,
+  // so there's no flash of the wrong state.
+  _syncMobileMenuActive();
+  _syncMobileMenuTabStyle();
+  el.classList.add('open');
+  el.setAttribute('aria-hidden', 'false');
+  // Defer attaching the outside-click listener by one event-loop tick
+  // so the click that opened the menu doesn't immediately close it.
+  setTimeout(() => {
+    document.addEventListener('click', _mobileMenuOutsideClick, true);
+    document.addEventListener('keydown', _mobileMenuKeyDown);
+  }, 0);
+}
+function closeMobileMenu() {
+  const el = document.getElementById('mobile-menu-dropdown');
+  if (!el) return;
+  el.classList.remove('open');
+  el.setAttribute('aria-hidden', 'true');
+  document.removeEventListener('click', _mobileMenuOutsideClick, true);
+  document.removeEventListener('keydown', _mobileMenuKeyDown);
+}
+function _mobileMenuOutsideClick(e) {
+  const el     = document.getElementById('mobile-menu-dropdown');
+  const burger = document.getElementById('header-burger-btn');
+  if (!el) return;
+  // If the click is inside the menu OR on the burger button itself, don't close.
+  if (el.contains(e.target) || (burger && burger.contains(e.target))) return;
+  closeMobileMenu();
+}
+function _mobileMenuKeyDown(e) {
+  if (e.key === 'Escape') closeMobileMenu();
+}
+// Sync the .active highlight on whichever menu item matches the current view.
+function _syncMobileMenuActive() {
+  const el = document.getElementById('mobile-menu-dropdown');
+  if (!el) return;
+  const cur = (typeof _currentViewName === 'string') ? _currentViewName : '';
+  el.querySelectorAll('.mobile-menu-item[data-view]').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-view') === cur);
+  });
 }
 function navFromMobileMenu(name) {
-  closeModal('mobile-menu-modal');
-  // Slight delay so the closing animation doesn't conflict with the
-  // potentially heavy view re-render.
+  closeMobileMenu();
+  // Slight delay so the close transition doesn't fight a heavy view render.
   setTimeout(() => { try { navTo(name); } catch (_) {} }, 60);
 }
-// Tap-outside-to-close — since the inner .modal stops propagation, an
-// onclick at the backdrop level only fires for backdrop taps.
-function closeMobileMenuOnOverlay(e) {
-  if (e && e.target && e.target.id === 'mobile-menu-modal') closeModal('mobile-menu-modal');
+// Stub kept for backwards-compat with any cached HTML/onclicks.
+function closeMobileMenuOnOverlay(e) { closeMobileMenu(); }
+
+// ── Tab style picker (TEMPORARY — for choosing the new mobile tab layout) ──
+// Stores the choice in localStorage so it persists between reloads. Three
+// styles applied via body class: tabs-style-A / tabs-style-B / tabs-style-C.
+// Default is current behaviour (no class set = stacked, original size).
+function setTabStyle(style) {
+  if (!['A','B','C'].includes(style)) return;
+  document.body.classList.remove('tabs-style-A','tabs-style-B','tabs-style-C');
+  document.body.classList.add('tabs-style-' + style);
+  try { localStorage.setItem('tabs_style_choice', style); } catch (_) {}
+  _syncMobileMenuTabStyle();
+}
+// Apply persisted choice on every page load. Called from DOMContentLoaded.
+function _applyPersistedTabStyle() {
+  let choice = null;
+  try { choice = localStorage.getItem('tabs_style_choice'); } catch (_) {}
+  if (choice && ['A','B','C'].includes(choice)) {
+    document.body.classList.add('tabs-style-' + choice);
+  }
+}
+function _syncMobileMenuTabStyle() {
+  const el = document.getElementById('mobile-menu-dropdown');
+  if (!el) return;
+  let cur = '';
+  if (document.body.classList.contains('tabs-style-A')) cur = 'A';
+  else if (document.body.classList.contains('tabs-style-B')) cur = 'B';
+  else if (document.body.classList.contains('tabs-style-C')) cur = 'C';
+  el.querySelectorAll('.mobile-menu-item-tabstyle').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-tab-style') === cur);
+  });
 }
 
 // Promo code field handlers
@@ -15557,6 +15628,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initialise the billing module — handles return-from-Stripe URLs,
   // sets up periodic status refresh, and binds focus/visibility hooks.
   try { window.stockroomBilling && stockroomBilling.init(); } catch (_) {}
+  // Apply any persisted mobile-tabs style choice (A/B/C) so the layout
+  // is correct from first paint, no flash.
+  try { _applyPersistedTabStyle(); } catch (_) {}
 });
 
 // Predictive button ripple — gives physical depth feedback on tap

@@ -1522,39 +1522,48 @@
   <button class="btn btn-sm" style="background:rgba(232,168,56,0.2);border:1px solid rgba(232,168,56,0.4);color:var(--accent);font-size:12px" onclick="event.stopPropagation();scrollToIncomplete()">View →</button>
 </div>
 
-<!-- ═══ MOBILE MENU OVERLAY (mobile only) ═══ -->
-<!-- Opened by the burger button in the header. Uses the standard modal
-     overlay system (modal-backdrop class) so closeModal('mobile-menu-modal')
-     and the existing escape-to-close behaviour work without extra wiring. -->
-<div class="modal-backdrop" id="mobile-menu-modal" onclick="closeMobileMenuOnOverlay(event)">
-  <div class="modal mobile-menu-modal" style="max-width:340px;padding:0;overflow:hidden" onclick="event.stopPropagation()">
-    <div style="padding:14px 16px 8px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)">
-      <div style="font-size:11px;letter-spacing:2px;font-weight:700;color:var(--muted)">MENU</div>
-      <button class="btn-icon" onclick="closeModal('mobile-menu-modal')" aria-label="Close menu"
-        style="background:none;border:none;color:var(--muted);padding:4px;cursor:pointer">
-        <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
-      </button>
-    </div>
-    <nav class="mobile-menu-list">
-      <button class="mobile-menu-item" onclick="navFromMobileMenu('report')">
-        <svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg>
-        <span>Report</span>
-      </button>
-      <button class="mobile-menu-item" onclick="navFromMobileMenu('billing')">
-        <svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg>
-        <span>Billing</span>
-      </button>
-      <button class="mobile-menu-item" onclick="navFromMobileMenu('settings')">
-        <svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg>
-        <span>Settings</span>
-      </button>
-      <button class="mobile-menu-item" onclick="navFromMobileMenu('account-security')">
-        <svg class="icon icon-tab" aria-hidden="true"><use href="#i-shield"></use></svg>
-        <span>Account &amp; Security</span>
-      </button>
-    </nav>
-  </div>
-</div>
+<!-- ═══ MOBILE MENU DROPDOWN (mobile + medium) ═══ -->
+<!-- Toggled by the burger button in the header. Anchored top-right under
+     the header rather than centered as a modal — feels more like a
+     standard app dropdown. Tap-outside-to-close is wired up in JS by
+     attaching a one-shot document listener when the menu opens. -->
+<nav id="mobile-menu-dropdown" class="mobile-menu-dropdown" aria-hidden="true">
+  <button class="mobile-menu-item" data-view="report" onclick="navFromMobileMenu('report')">
+    <svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg>
+    <span>Report</span>
+  </button>
+  <button class="mobile-menu-item" data-view="billing" onclick="navFromMobileMenu('billing')">
+    <svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg>
+    <span>Billing</span>
+  </button>
+  <button class="mobile-menu-item" data-view="settings" onclick="navFromMobileMenu('settings')">
+    <svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg>
+    <span>Settings</span>
+  </button>
+  <button class="mobile-menu-item" data-view="account-security" onclick="navFromMobileMenu('account-security')">
+    <svg class="icon icon-tab" aria-hidden="true"><use href="#i-shield"></use></svg>
+    <span>Account &amp; Security</span>
+  </button>
+
+  <!-- ── Temporary: tab style picker (mobile only) ──
+       Lets us A/B/C the three tab-bar layouts side-by-side in the live app.
+       Once a winning layout is chosen, the picker section + the inactive
+       tab-style CSS variants will be removed from the codebase. -->
+  <div class="mobile-menu-section-divider" data-tab-style-picker></div>
+  <div class="mobile-menu-section-label" data-tab-style-picker>TAB STYLE (TEMPORARY)</div>
+  <button class="mobile-menu-item mobile-menu-item-tabstyle" data-tab-style="A" onclick="setTabStyle('A')">
+    <svg class="icon icon-tab" aria-hidden="true"><use href="#i-layout-grid"></use></svg>
+    <span>A · Icons left</span>
+  </button>
+  <button class="mobile-menu-item mobile-menu-item-tabstyle" data-tab-style="B" onclick="setTabStyle('B')">
+    <svg class="icon icon-tab" aria-hidden="true"><use href="#i-layout-grid"></use></svg>
+    <span>B · Icons left, larger</span>
+  </button>
+  <button class="mobile-menu-item mobile-menu-item-tabstyle" data-tab-style="C" onclick="setTabStyle('C')">
+    <svg class="icon icon-tab" aria-hidden="true"><use href="#i-layout-grid"></use></svg>
+    <span>C · Stacked, larger</span>
+  </button>
+</nav>
 
 <!-- ═══ APP SIDEBAR (desktop only) ═══ -->
 <nav id="app-nav">
