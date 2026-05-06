@@ -4526,6 +4526,17 @@ function openAnalyticsModal(id) {
 let cameraStream = null;
 
 function openCameraModal() {
+  // Free-tier photo gate — prompt to upgrade rather than open the camera.
+  try {
+    if (window.stockroomBilling && stockroomBilling.isFree() && !stockroomBilling.featureAllowed('photos')) {
+      if (typeof toastAction === 'function') {
+        toastAction('Item photos require a paid plan', { label: 'Upgrade', onClick: () => navTo('billing') });
+      } else {
+        toast('Item photos require a paid plan — open Billing to upgrade');
+      }
+      return;
+    }
+  } catch (_) {}
   openModal('camera-modal');
   const video = document.getElementById('camera-video');
   navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
@@ -5546,7 +5557,37 @@ function renderGrid() {
     }
   });
 
-  grid.innerHTML = filtered.map(item => cardHTML(item, threshold)).join('');
+  // ── Free-tier item cap ──
+  // When the user is on the free plan, only show the first N items
+  // (after their existing sort) and surface a banner showing how many
+  // are hidden. Items remain in KV — they reappear on upgrade.
+  let freeTierBadge = '';
+  try {
+    if (window.stockroomBilling && stockroomBilling.isFree()) {
+      const status = stockroomBilling.getStatus();
+      const cap    = status?.limits?.itemCount ?? 5;
+      // Total non-deleted, non-archived, non-quickAdded items in this household —
+      // matches the filter logic for headline visibility.
+      const totalReal = items.filter(i => !i._deletedAt && !i.quickAdded && !i._archived).length;
+      if (filtered.length > cap) {
+        const hidden = filtered.length - cap;
+        filtered = filtered.slice(0, cap);
+        freeTierBadge = `<div style="margin:10px 14px;padding:10px 14px;border-radius:10px;background:color-mix(in srgb, var(--accent) 8%, var(--bg));border:1px solid color-mix(in srgb, var(--accent) 25%, transparent);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <svg class="icon icon-sm" aria-hidden="true" style="color:var(--accent)"><use href="#i-sparkles"></use></svg>
+          <span style="font-size:13px;flex:1">Showing ${cap} of ${totalReal} items — ${hidden} hidden on the free plan.</span>
+          <button class="btn btn-primary btn-sm" onclick="navTo('billing')">Upgrade</button>
+        </div>`;
+      } else if (totalReal > 0) {
+        // Under cap but on free tier — show the count so users see the limit
+        freeTierBadge = `<div style="margin:10px 14px;padding:8px 14px;border-radius:10px;background:color-mix(in srgb, var(--muted) 6%, transparent);display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-info"></use></svg>
+          <span>Free plan: ${totalReal} of ${cap} items used</span>
+        </div>`;
+      }
+    }
+  } catch (_) {}
+
+  grid.innerHTML = freeTierBadge + filtered.map(item => cardHTML(item, threshold)).join('');
 
   // Render Recently Deleted section after the main grid
   renderItemsRecycleBin();
@@ -5638,9 +5679,10 @@ function cardHTML(item, threshold) {
   } else {
     qtyText = '';
   }
-  // Note: the −1 / +1 quick buttons used to live here in the card footer,
-  // but they fought for clicks against the hover overlay. They now live
-  // in the bottom-right of the hover overlay itself, alongside Tag.
+  // Quick "−1" button shown only when we have a meaningful count to decrement
+  const decrementBtn = (projectedUnits != null && projectedUnits >= 1)
+    ? `<button class="card-plus-btn card-plus-btn-decrement" onclick="event.stopPropagation();quickAdjustStock('${item.id}',-1)" title="Used one — decrement count">−1</button>`
+    : '';
 
   return `
   <div class="item-card" style="border-left:3px solid ${color}" data-id="${item.id}"
@@ -5683,6 +5725,7 @@ function cardHTML(item, threshold) {
         ${qtyText ? `<div class="card-qty">${qtyText}</div>` : ''}
         ${item.ordered ? `<div class="card-ordered"><svg class="icon" aria-hidden="true"><use href="#i-truck"></use></svg> Ordered</div>` : ''}
         ${expiry ? `<div class="card-expiry" style="color:${expiry.color};border-color:${expiry.color}55" title="${fmtDate(item.expiry)}">⏰ ${expiry.label}</div>` : ''}
+        ${decrementBtn ? `<div class="card-action-btns" onclick="event.stopPropagation()">${decrementBtn}</div>` : ''}
       </div>
       ${cardActionOverlayHTML(item)}
     </div>
@@ -5705,56 +5748,19 @@ function _cardOrderButton(item) {
 // ── Card action overlay ───────────────────────────────────────
 // Hover (desktop) / long-press (mobile) reveals a blurred panel over the
 // bottom of the card with extra actions (count stock, timeline, history,
-// archive, edit, tag). Visually anchors below the days-left bar.
-//
-// Layout: a 3x3 grid of equal-size tiles. The last row holds Tag,
-// optional −1 (when there's stock to decrement), and the smart order
-// button (+1 / Delivered / Start using). Keeping the same tile shape
-// for Tag means it reads as a peer action; +1/-1 keep their accent
-// colours so they're visually distinct as quick numeric actions.
+// archive, edit). Visually anchors below the days-left bar.
 function cardActionOverlayHTML(item) {
   const id = item.id;
   const isArchived = !!item._archived;
-
-  // First tile is the smart primary action: Log Order normally, but when
-  // there's a pending purchase it switches to "Delivered", and when the
-  // delivery has arrived but use hasn't started, it becomes "Start using".
-  // This restores the multi-state behaviour that used to live in the
-  // dedicated +1 button so users always have one obvious "next step" tile.
-  const hasPending          = (item.logs || []).some(l => l.pendingDelivery);
-  const hasDeliveredNoStart = (item.logs || []).some(l => !l.pendingDelivery && l.deliveredDate) && !item.startedUsing;
-  let primaryTile;
-  if (hasPending) {
-    primaryTile = { icon: 'i-package-check', label: 'Delivered',  onclick: `openOrderFlow('${id}','delivered')` };
-  } else if (hasDeliveredNoStart) {
-    primaryTile = { icon: 'i-play',          label: 'Start using', onclick: `openOrderFlow('${id}','startusing')` };
-  } else {
-    primaryTile = { icon: 'i-shopping-cart', label: 'Log Order',   onclick: `openOrderFlow('${id}','purchase')` };
-  }
-
   const tiles = [
-    primaryTile,
+    { icon: 'i-shopping-cart', label: 'Log Order',     onclick: `openOrderFlow('${id}','purchase')` },
     { icon: 'i-hash',          label: 'Count Stock',   onclick: `openStockCountModal('${id}')` },
     { icon: 'i-bar-chart-2',   label: 'Order Timeline', onclick: `openAnalyticsModal('${id}')` },
     { icon: 'i-banknote',      label: 'Price History', onclick: `openPriceHistoryModal('${id}')` },
     { icon: 'i-archive',       label: isArchived ? 'Restore' : 'Archive',
       onclick: isArchived ? `restoreItem('${id}')` : `archiveItem('${id}')` },
     { icon: 'i-pencil',        label: 'Edit Details',  onclick: `openEditModal('${id}')` },
-    { icon: 'i-tag',           label: 'Tag',           onclick: `openCardTagPicker('${id}')` },
   ];
-
-  // Quick numeric actions for the bottom-right of the grid.
-  // −1 only renders when there's a meaningful count to decrement.
-  // +1 is always a plain stock-bump; the smart Delivered/Start-using
-  // logic lives in the primary tile (top-left), which uses the full
-  // order-flow modal — +1 just nudges the count by one with no flow.
-  const projectedUnits = getProjectedUnitsLeft(item);
-  const decrementCell = (projectedUnits != null && projectedUnits >= 1)
-    ? `<button type="button" class="card-action-numeric card-action-decrement" onclick="event.stopPropagation();_dismissCardActions('${id}');quickAdjustStock('${id}',-1)" title="Used one — decrement count">−1</button>`
-    : `<span class="card-action-numeric-spacer" aria-hidden="true"></span>`;
-
-  const plusCell = `<button type="button" class="card-action-numeric card-action-plus" onclick="event.stopPropagation();_dismissCardActions('${id}');quickAdjustStock('${id}',1)" title="Add one to stock">+1</button>`;
-
   return `<div class="card-action-overlay" data-overlay onclick="event.stopPropagation()">
     <div class="card-action-grid">
       ${tiles.map(t => `
@@ -5762,9 +5768,11 @@ function cardActionOverlayHTML(item) {
           <svg class="icon" aria-hidden="true"><use href="#${t.icon}"></use></svg>
           <span>${t.label}</span>
         </button>`).join('')}
-      ${decrementCell}
-      ${plusCell}
     </div>
+    <button type="button" class="card-action-tag-btn" onclick="event.stopPropagation();_dismissCardActions('${id}');openCardTagPicker('${id}')">
+      <svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg>
+      <span>Tag</span>
+    </button>
   </div>`;
 }
 
@@ -6492,6 +6500,17 @@ async function fetchProductImage() {
 }
 
 async function fetchProductImage() {
+  // Free-tier photo gate
+  try {
+    if (window.stockroomBilling && stockroomBilling.isFree() && !stockroomBilling.featureAllowed('photos')) {
+      if (typeof toastAction === 'function') {
+        toastAction('Item photos require a paid plan', { label: 'Upgrade', onClick: () => navTo('billing') });
+      } else {
+        toast('Item photos require a paid plan');
+      }
+      return;
+    }
+  } catch (_) {}
   const name = document.getElementById('f-name').value.trim();
   const url  = document.getElementById('f-url').value.trim();
   if (!name && !url) { alert('Enter a product name first.'); return; }
@@ -7828,11 +7847,494 @@ function toggleShoppingTick(id, labelEl) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════
+//  BILLING / SUBSCRIPTION (Phase 2)
+// ═══════════════════════════════════════════════════════════
+// Self-contained module managing subscription status, the Billing tab UI,
+// trial banner, free-tier gating helpers, and Stripe Checkout/Portal
+// redirects. Designed to be safe to call before sign-in (returns
+// neutral defaults) and to fail open if the server is unreachable
+// (treats user as paid so we don't block them on a network blip).
+//
+// Public surface:
+//   stockroomBilling.refresh()           — fetch /billing/status, repaint UI
+//   stockroomBilling.isPaid()            — sync read of cached status
+//   stockroomBilling.featureAllowed(f)   — gate helper for client-side checks
+//   stockroomBilling.handleApiError(r)   — common 402-handler for API responses
+//   stockroomBilling.openCheckout(promo) — start Stripe Checkout flow
+//   stockroomBilling.openPortal()        — open Stripe Customer Portal
+
+window.stockroomBilling = (function() {
+  // Cached status payload (last fetched from /billing/status). When null,
+  // we treat the user as paid (fail open) so e.g. a network error during
+  // /billing/status doesn't lock the UI for grandfathered users.
+  let _cached = null;
+  let _lastFetch = 0;
+  const STATUS_TTL_MS = 60 * 1000; // 1 minute
+
+  // Banner dismissal — per-session (resets on reload)
+  let _bannerDismissed = false;
+
+  function _isAuthed() {
+    return !!(window._kvEmailHash && (window._kvVerifier || window._kvSessionToken));
+  }
+
+  function _authBody() {
+    return window._kvSessionToken && !window._kvVerifier
+      ? { emailHash: window._kvEmailHash, sessionToken: window._kvSessionToken }
+      : { emailHash: window._kvEmailHash, verifier: window._kvVerifier };
+  }
+
+  async function refresh(force) {
+    if (!_isAuthed()) {
+      _cached = null;
+      return null;
+    }
+    const now = Date.now();
+    if (!force && _cached && (now - _lastFetch) < STATUS_TTL_MS) return _cached;
+    try {
+      const r = await fetch(`${WORKER_URL}/billing/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(_authBody()),
+      });
+      if (!r.ok) {
+        // 401 means session expired — let other parts of the app handle it.
+        // For other errors, fail open: keep the existing cache (or null).
+        return _cached;
+      }
+      _cached = await r.json();
+      _lastFetch = now;
+      _renderBanner();
+      // If the Billing view is open, repaint it
+      if (_currentViewName === 'billing') _renderBillingPage();
+      return _cached;
+    } catch (err) {
+      console.warn('[billing] /billing/status fetch failed:', err.message);
+      return _cached; // fail open
+    }
+  }
+
+  // Sync read of cached status. Safe to call from anywhere.
+  function getStatus() { return _cached; }
+  function isPaid()   { return !_cached || _cached.status !== 'free'; }
+  function isTrial()  { return _cached && _cached.status === 'trial'; }
+  function isFree()   { return !!_cached && _cached.status === 'free'; }
+
+  // Server enforces the real check. This is for *UX* — show locked UI,
+  // hide buttons, etc. Fail-open semantics: if status is unknown, allow.
+  function featureAllowed(feature) {
+    if (!_cached) return true;
+    if (_cached.status !== 'free') return true;
+    const m = _cached.limits || {};
+    switch (feature) {
+      case 'photos':  return !!m.photosAllowed;
+      case 'grocery': return !!m.groceryAllowed;
+      case 'notes':   return !!m.notesAllowed;
+      case 'emails':  return !!m.emailsAllowed;
+      case 'addItem': {
+        // Allow add when below the visible cap, regardless of total existing
+        // (the user may have items hidden — they can't add more on top).
+        const visible = (window.items || []).filter(i => !i._deletedAt).length;
+        return visible < (m.itemCount || 0);
+      }
+      default: return true;
+    }
+  }
+
+  // Inspect a fetch Response for a 402 Payment Required error and surface
+  // it as a toast that links to the Billing tab. Returns true if it
+  // handled the response (caller should then bail out).
+  async function handleApiError(response) {
+    if (!response || response.status !== 402) return false;
+    let reason = 'upgrade_required';
+    try {
+      const body = await response.clone().json();
+      reason = body.reason || reason;
+    } catch (_) {}
+    const messages = {
+      photos_require_upgrade:        'Photos require a paid plan',
+      grocery_requires_upgrade:      'Grocery mode requires a paid plan',
+      notes_require_upgrade:         'Notes require a paid plan',
+      email_reminders_require_upgrade:'Email reminders require a paid plan',
+      free_tier_size_exceeded:       'Free plan limit reached — upgrade for unlimited items',
+    };
+    const msg = messages[reason] || 'This feature requires a paid plan';
+    if (typeof toastAction === 'function') {
+      toastAction(msg, { label: 'Upgrade', onClick: () => navTo('billing') });
+    } else if (typeof toast === 'function') {
+      toast(msg + ' — open Billing to upgrade');
+    }
+    // Refresh status to make sure local cache matches reality
+    refresh(true);
+    return true;
+  }
+
+  // Build a human-readable trial countdown string.
+  function _trialBannerText() {
+    if (!_cached) return null;
+    const s = _cached;
+    if (s.status === 'trial' && typeof s.trialDaysLeft === 'number') {
+      if (s.trialDaysLeft <= 0)  return { urgent: true,  text: 'Your free trial has ended — upgrade to keep grocery, notes and photos.' };
+      if (s.trialDaysLeft === 1) return { urgent: true,  text: '1 day left of your free trial.' };
+      if (s.trialDaysLeft <= 7)  return { urgent: false, text: `${s.trialDaysLeft} days left of your free trial.` };
+      return null; // don't nag during early trial
+    }
+    if (s.rawStatus === 'past_due') {
+      return { urgent: true, text: 'Payment failed — please update your card to keep your subscription active.' };
+    }
+    if (s.status === 'free' && s.hasStripeSubscription === false && s.trialEndsAt) {
+      return { urgent: true, text: 'Your trial has ended. Upgrade to restore full access.' };
+    }
+    if (s.cancelAtPeriodEnd && s.currentPeriodEnd) {
+      const days = Math.max(0, Math.ceil((s.currentPeriodEnd - Math.floor(Date.now()/1000)) / 86400));
+      return { urgent: false, text: `Subscription cancels in ${days} day${days===1?'':'s'}.` };
+    }
+    return null;
+  }
+
+  function _renderBanner() {
+    const bn = document.getElementById('billing-banner');
+    if (!bn) return;
+    if (_bannerDismissed) { bn.style.display = 'none'; return; }
+    const info = _trialBannerText();
+    if (!info) { bn.style.display = 'none'; return; }
+    document.getElementById('billing-banner-text').textContent = info.text;
+    bn.classList.toggle('urgent', !!info.urgent);
+    bn.style.display = '';
+  }
+
+  function dismissBanner() {
+    _bannerDismissed = true;
+    const bn = document.getElementById('billing-banner');
+    if (bn) bn.style.display = 'none';
+  }
+
+  // ── Billing page rendering ──
+  function _renderBillingPage() {
+    const card  = document.getElementById('billing-status-card');
+    const acts  = document.getElementById('billing-plan-actions');
+    if (!card || !acts) return;
+    const s     = _cached;
+    const planName = document.getElementById('billing-plan-name');
+    const sub      = document.getElementById('billing-plan-subtitle');
+    const features = document.getElementById('billing-features-list');
+    const promoSec = document.getElementById('billing-promo-section');
+    const acctSec  = document.getElementById('billing-account-section');
+
+    if (!s) {
+      planName.textContent  = 'Loading…';
+      sub.textContent       = '';
+      acts.innerHTML        = '';
+      if (features) features.innerHTML = '';
+      if (promoSec) promoSec.style.display = 'none';
+      if (acctSec)  acctSec.style.display  = 'none';
+      return;
+    }
+
+    // Plan name + subtitle + badge
+    let badge, badgeClass, name, subtitle, ctas;
+    if (s.grandfathered) {
+      badgeClass = 'paid'; badge = 'Pro'; name = 'STOCKROOM Pro'; subtitle = 'Thanks for being an early supporter — your account has full access.'; ctas = [];
+    } else if (s.status === 'paid' && s.rawStatus === 'active') {
+      badgeClass = 'paid'; badge = 'Pro'; name = 'STOCKROOM Pro';
+      subtitle = s.cancelAtPeriodEnd && s.currentPeriodEnd
+        ? `Cancels on ${new Date(s.currentPeriodEnd*1000).toLocaleDateString()}`
+        : (s.currentPeriodEnd ? `Renews ${new Date(s.currentPeriodEnd*1000).toLocaleDateString()}` : 'Active');
+      ctas = s.cancelAtPeriodEnd
+        ? [{label:'Resume subscription', primary:true, fn:'resumeSubscription'}]
+        : [{label:'Manage subscription', primary:false, fn:'openBillingPortal'}];
+    } else if (s.rawStatus === 'past_due') {
+      badgeClass = 'past_due'; badge = 'Action needed'; name = 'Payment failed';
+      subtitle = 'Update your payment method to keep your subscription active.';
+      ctas = [{label:'Update payment method', primary:true, fn:'openBillingPortal'}];
+    } else if (s.status === 'trial') {
+      badgeClass = 'trial'; badge = 'Free trial'; name = 'STOCKROOM Pro (trial)';
+      const days = s.trialDaysLeft ?? 0;
+      subtitle = days > 0 ? `${days} day${days===1?'':'s'} left of your free trial. No payment required yet.` : 'Trial ending now.';
+      ctas = [{label:'Upgrade now', primary:true, fn:'openBillingCheckout'}];
+    } else { // free
+      badgeClass = 'free'; badge = 'Free'; name = 'STOCKROOM Free';
+      subtitle = 'Limited to 5 items. Upgrade to Pro for unlimited items, photos, grocery mode, notes and email reminders.';
+      ctas = [{label:'Upgrade to Pro', primary:true, fn:'openBillingCheckout'}];
+    }
+
+    planName.innerHTML = `<span class="billing-plan-badge ${badgeClass}">${_escapeHtml(badge)}</span><br>${_escapeHtml(name)}`;
+    sub.textContent    = subtitle;
+
+    acts.innerHTML = '';
+    ctas.forEach(c => {
+      const btn = document.createElement('button');
+      btn.className = c.primary ? 'btn btn-primary' : 'btn btn-ghost';
+      btn.textContent = c.label;
+      btn.onclick = () => window[c.fn] && window[c.fn]();
+      acts.appendChild(btn);
+    });
+
+    // Features list
+    if (features) {
+      const isPaidNow = s.status !== 'free';
+      const list = [
+        { feat:'Unlimited items',          on: isPaidNow, desc: isPaidNow ? null : 'Free plan: 5 items maximum' },
+        { feat:'Item photos',              on: !!s.limits.photosAllowed },
+        { feat:'Grocery mode',             on: !!s.limits.groceryAllowed },
+        { feat:'Notes mode',               on: !!s.limits.notesAllowed },
+        { feat:'Email reminders',          on: !!s.limits.emailsAllowed },
+        { feat:'Household sharing',        on: true },
+      ];
+      features.innerHTML = list.map(it => `
+        <div class="billing-feature ${it.on ? '' : 'locked'}">
+          <svg class="icon" aria-hidden="true"><use href="#${it.on ? 'i-circle-check' : 'i-lock'}"></use></svg>
+          <div>${_escapeHtml(it.feat)}${it.desc ? `<small>${_escapeHtml(it.desc)}</small>` : ''}</div>
+        </div>`).join('');
+    }
+
+    // Promo + account sections visibility
+    if (promoSec) promoSec.style.display = (s.status === 'free' || s.status === 'trial') && s.pricing.configured ? '' : 'none';
+    if (acctSec)  acctSec.style.display  = s.hasStripeCustomer && s.hasStripeSubscription ? '' : 'none';
+  }
+
+  function _escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+  }
+
+  // ── Stripe Checkout / Portal flows ──
+  async function openCheckout(promoCode) {
+    if (!_isAuthed()) { toast && toast('Please sign in first'); return; }
+    const status = _cached || await refresh(true);
+    if (!status?.pricing?.configured) { toast && toast('Billing is not configured yet — please try again later'); return; }
+    try {
+      const body = _authBody();
+      if (promoCode) body.promoCode = promoCode;
+      const r = await fetch(`${WORKER_URL}/billing/checkout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.url) {
+        toast && toast(data.error || 'Could not start checkout');
+        return;
+      }
+      window.location.href = data.url;
+    } catch (err) {
+      toast && toast('Network error — please try again');
+    }
+  }
+
+  async function openPortal() {
+    if (!_isAuthed()) return;
+    try {
+      const r = await fetch(`${WORKER_URL}/billing/portal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(_authBody()),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.url) { toast && toast(data.error || 'Could not open billing portal'); return; }
+      window.location.href = data.url;
+    } catch (err) {
+      toast && toast('Network error — please try again');
+    }
+  }
+
+  async function cancelSubscription() {
+    if (!_isAuthed()) return;
+    if (!confirm('Cancel your subscription? You will keep access until the end of the current billing period, then drop to the free plan.')) return;
+    try {
+      const r = await fetch(`${WORKER_URL}/billing/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(_authBody()),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(()=>({}));
+        toast && toast(data.error || 'Could not cancel subscription');
+        return;
+      }
+      toast && toast('Cancellation scheduled — you will keep access until period end');
+      refresh(true);
+    } catch (_) { toast && toast('Network error'); }
+  }
+
+  async function resumeSubscription() {
+    if (!_isAuthed()) return;
+    try {
+      const r = await fetch(`${WORKER_URL}/billing/resume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(_authBody()),
+      });
+      if (!r.ok) { toast && toast('Could not resume subscription'); return; }
+      toast && toast('Subscription resumed');
+      refresh(true);
+    } catch (_) {}
+  }
+
+  async function validatePromo(code) {
+    if (!code || !_isAuthed()) return null;
+    try {
+      const r = await fetch(`${WORKER_URL}/billing/apply-promo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ..._authBody(), code: code.trim().toUpperCase() }),
+      });
+      return await r.json();
+    } catch (_) { return null; }
+  }
+
+  // ── Return-from-Stripe handling ──
+  // After checkout/portal, Stripe redirects back to our app with a query
+  // param. We refresh status and show a toast.
+  function _handleReturnFromStripe() {
+    const params = new URLSearchParams(window.location.search);
+    const billing = params.get('billing');
+    if (!billing) return;
+    // Strip the param so reloads don't repeat the message
+    params.delete('billing');
+    params.delete('session_id');
+    const newQs = params.toString();
+    history.replaceState({}, '', window.location.pathname + (newQs ? '?'+newQs : ''));
+    // Refresh status — webhook may take a few seconds to land, so retry
+    setTimeout(() => refresh(true), 500);
+    setTimeout(() => refresh(true), 3000);
+    setTimeout(() => refresh(true), 8000);
+    if (billing === 'success') {
+      toast && toast('✓ Subscription active — thanks!');
+    } else if (billing === 'cancel') {
+      toast && toast('Checkout cancelled');
+    }
+  }
+
+  // ── Init ──
+  // Defer until DOM ready and initial sign-in completes.
+  function init() {
+    _handleReturnFromStripe();
+    // Initial fetch (will no-op if not signed in yet; signin flow re-calls)
+    setTimeout(() => refresh(false), 1000);
+    // Refresh hourly while the app is open
+    setInterval(() => refresh(true), 60 * 60 * 1000);
+    // Refresh when window regains focus (catches webhook updates)
+    window.addEventListener('focus', () => refresh(false));
+  }
+
+  return {
+    init,
+    refresh,
+    getStatus,
+    isPaid, isTrial, isFree,
+    featureAllowed,
+    handleApiError,
+    openCheckout,
+    openPortal,
+    cancelSubscription,
+    resumeSubscription,
+    validatePromo,
+    dismissBanner,
+    _renderBillingPage,
+  };
+})();
+
+// Top-level helpers exposed for inline onclick handlers
+function openBillingCheckout(code) { return stockroomBilling.openCheckout(code); }
+function openBillingPortal()       { return stockroomBilling.openPortal(); }
+function cancelSubscription()      { return stockroomBilling.cancelSubscription(); }
+function resumeSubscription()      { return stockroomBilling.resumeSubscription(); }
+function dismissBillingBanner()    { return stockroomBilling.dismissBanner(); }
+
+// Promo code field handlers
+function onBillingPromoInput() {
+  const el = document.getElementById('billing-promo-result');
+  if (el) el.innerHTML = '';
+}
+async function validateBillingPromo() {
+  const input  = document.getElementById('billing-promo-input');
+  const result = document.getElementById('billing-promo-result');
+  if (!input || !result) return;
+  const code = (input.value || '').trim().toUpperCase();
+  if (!code) { result.innerHTML = ''; return; }
+  result.innerHTML = '<span style="color:var(--muted)">Checking…</span>';
+  const res = await stockroomBilling.validatePromo(code);
+  if (!res) { result.innerHTML = '<span class="billing-promo-result-error">Could not check code</span>'; return; }
+  if (!res.valid) { result.innerHTML = '<span class="billing-promo-result-error">Code not found or expired</span>'; return; }
+  let desc = '';
+  if (res.percentOff)        desc = `${res.percentOff}% off`;
+  else if (res.amountOff && res.currency) desc = `${(res.amountOff/100).toFixed(2)} ${res.currency.toUpperCase()} off`;
+  else                        desc = 'Discount applied';
+  if (res.duration === 'repeating' && res.durationInMonths) desc += ` for ${res.durationInMonths} month${res.durationInMonths===1?'':'s'}`;
+  if (res.duration === 'forever') desc += ' (forever)';
+  if (res.duration === 'once')    desc += ' (first invoice)';
+  result.innerHTML = `<span class="billing-promo-result-ok">✓ ${desc} — code will apply at checkout</span>
+    <div style="margin-top:8px"><button class="btn btn-primary btn-sm" onclick="openBillingCheckout('${code.replace(/'/g,'\\\'')}')">Apply &amp; checkout</button></div>`;
+}
+
+function _renderBillingLockscreen(which) {
+  const viewId = which === 'grocery' ? 'view-grocery' : 'view-notes';
+  const view   = document.getElementById(viewId);
+  if (!view) return;
+  // Hide all of view's existing children — we'll show our lockscreen
+  // overlay instead. We keep them in the DOM so they're ready to come
+  // back if/when the user upgrades.
+  Array.from(view.children).forEach(c => {
+    if (c.classList.contains('billing-lockscreen-overlay')) return;
+    c.dataset._billingHidden = '1';
+    c.style.display = 'none';
+  });
+  // Make / refresh the overlay
+  let overlay = view.querySelector('.billing-lockscreen-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'billing-lockscreen-overlay';
+    view.appendChild(overlay);
+  }
+  const labels = {
+    grocery: { title: 'Grocery mode is part of Pro',
+               body:  'Build named lists per store, share them with people in your household, and check items off as you go. Currently in your free plan.' },
+    notes:   { title: 'Secure notes are part of Pro',
+               body:  'End-to-end-encrypted notes for keeping rolling shopping notes, recipes, or reminders. Currently in your free plan.' },
+  };
+  const l = labels[which] || labels.grocery;
+  overlay.innerHTML = `
+    <div class="billing-lockscreen">
+      <svg class="lock-icon icon" aria-hidden="true"><use href="#i-lock"></use></svg>
+      <h3>${l.title}</h3>
+      <p>${l.body}</p>
+      <div class="billing-lockscreen-cta" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
+        <button class="btn btn-primary" onclick="navTo('billing')">See plans</button>
+        <button class="btn btn-ghost" onclick="openBillingCheckout()">Upgrade now</button>
+      </div>
+    </div>`;
+}
+
+// When the user upgrades and free-tier content needs to come back, restore
+// any view children we'd hidden. Called from refresh-after-checkout flows.
+function _restoreFromBillingLockscreens() {
+  document.querySelectorAll('[data-_billing-hidden]').forEach(el => {
+    el.style.display = '';
+    delete el.dataset._billingHidden;
+  });
+  document.querySelectorAll('.billing-lockscreen-overlay').forEach(el => el.remove());
+}
+
 function showView(name, btn) {
   _currentViewName = name;
+  // Restore any previously-hidden view content from billing lockscreens
+  // before swapping to the new view (cheap; idempotent if nothing hidden).
+  try { _restoreFromBillingLockscreens(); } catch (_) {}
   const sectionMap = { grocery:'groceries', reminders:'reminders', savings:'savings', report:'report', stock:'stockroom', shopping:'stockroom', budget:'budget' };
   const section    = sectionMap[name];
   if (section && !canView(section)) { showLockBanner(section); return; }
+  // Billing gate: when on free tier, render grocery/notes as locked screens
+  // rather than blocking navigation entirely. The user can still SEE the
+  // tab and understand what's there — they're just shown an upgrade CTA
+  // instead of the live functionality.
+  let billingLocked = false;
+  try {
+    if (window.stockroomBilling) {
+      if (name === 'grocery' && !stockroomBilling.featureAllowed('grocery')) billingLocked = 'grocery';
+      else if (name === 'notes' && !stockroomBilling.featureAllowed('notes')) billingLocked = 'notes';
+    }
+  } catch (_) {}
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   const targetView = document.getElementById('view-'+name);
@@ -7846,10 +8348,19 @@ function showView(name, btn) {
   if (name === 'reminders') renderReminders();
   if (name === 'shopping')  renderShoppingList();
   if (name === 'savings')   renderSavingsView();
-  if (name === 'grocery')   renderGrocery();
+  if (name === 'grocery')   { if (billingLocked === 'grocery') _renderBillingLockscreen('grocery'); else renderGrocery(); }
   if (name === 'budget')    renderBudget();
-  if (name === 'notes')     { renderNotes(); setTimeout(_maybeShowMfaPrompt, 600); }
+  if (name === 'notes')     { if (billingLocked === 'notes') _renderBillingLockscreen('notes'); else { renderNotes(); setTimeout(_maybeShowMfaPrompt, 600); } }
   if (name === 'account-security') renderAccountSecurity();
+  if (name === 'billing') {
+    // Refresh status (force) and re-render the page. _renderBillingPage()
+    // is called both immediately (with cached data) and when the fresh
+    // status arrives, so the page never looks empty.
+    try {
+      stockroomBilling._renderBillingPage();
+      stockroomBilling.refresh(true);
+    } catch (_) {}
+  }
   if (name === 'stock') {
     updateStockShoppingHeader('stock');
     setStockOnlyUI(true);
@@ -8165,6 +8676,22 @@ let _wizImageUrl = null;
 let _wizReminders = []; // [{id, name, interval, unit}]
 
 function openAddModal() {
+  // Free-tier add-item gate — block if already at the visible cap.
+  // The server can't enforce this because items live inside the encrypted
+  // blob, so the client is the gatekeeper. Server's blob-size cap kicks
+  // in if a determined user bypasses this somehow.
+  try {
+    if (window.stockroomBilling && stockroomBilling.isFree() && !stockroomBilling.featureAllowed('addItem')) {
+      const status = stockroomBilling.getStatus();
+      const cap = status?.limits?.itemCount ?? 5;
+      if (typeof toastAction === 'function') {
+        toastAction(`Free plan: ${cap}-item limit reached`, { label: 'Upgrade', onClick: () => navTo('billing') });
+      } else {
+        toast(`Free plan: ${cap}-item limit reached — open Billing to upgrade`);
+      }
+      return;
+    }
+  } catch (_) {}
   _wizStep = 1;
   _wizRating = 0;
   _wizImageUrl = null;
@@ -13731,6 +14258,11 @@ async function kvPush() {
     }),
   });
   if (!res.ok) {
+    // 402 = free-tier blob size exceeded → surface upgrade toast and bail
+    if (res.status === 402 && window.stockroomBilling) {
+      try { await stockroomBilling.handleApiError(res); } catch (_) {}
+      throw new Error('Free tier size limit — upgrade to Pro');
+    }
     const d = await res.json().catch(() => ({}));
     const msg = d.error || 'Push failed';
     if (msg.includes('not found') || res.status === 401) {
@@ -14318,6 +14850,11 @@ async function syncAll() {
 
 // ── Unified UI update for both providers ────────────────
 function updateSyncUI() {
+  // ── Billing: refresh status whenever sync state changes ──
+  // This is called on sign-in, sign-out, share-state changes, etc.
+  // It's a convenient single hook for keeping billing status fresh.
+  // The refresh is debounced via the cache TTL inside the module.
+  try { window.stockroomBilling && stockroomBilling.refresh(false); } catch (_) {}
   const pill  = document.getElementById('sync-pill');
   const label = document.getElementById('sync-label');
   if (!pill || !label) return;
@@ -14779,6 +15316,10 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.addEventListener('pointerenter', prewarm, {passive:true});
     btn.addEventListener('pointerdown',  prewarm, {passive:true});
   });
+
+  // Initialise the billing module — handles return-from-Stripe URLs,
+  // sets up periodic status refresh, and binds focus/visibility hooks.
+  try { window.stockroomBilling && stockroomBilling.init(); } catch (_) {}
 });
 
 // Predictive button ripple — gives physical depth feedback on tap
@@ -26945,6 +27486,10 @@ async function secureLockNote(noteId) {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ emailHash:_kvEmailHash, ..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier}, noteId, ciphertext }),
   });
+  if (res.status === 402 && window.stockroomBilling) {
+    try { await stockroomBilling.handleApiError(res); } catch (_) {}
+    return;
+  }
   if (res.ok) {
     _noteUnlocked.delete(noteId);
     clearTimeout(state.inactivityTimer);
@@ -27402,6 +27947,10 @@ async function toggleNoteLock() {
       console.error('[note lock] fetch error:', e);
       return;
     }
+    if (res.status === 402 && window.stockroomBilling) {
+      try { await stockroomBilling.handleApiError(res); } catch (_) {}
+      return;
+    }
     if (!res.ok) {
       // Try to parse a JSON error body so the user sees the real reason
       try {
@@ -27813,6 +28362,10 @@ async function _autoSaveNote() {
           ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
           noteId: n.id, ciphertext,
         }),
+      }).then(async (res) => {
+        if (res && res.status === 402 && window.stockroomBilling) {
+          try { await stockroomBilling.handleApiError(res); } catch (_) {}
+        }
       }).catch(() => {});
     }
   } else {

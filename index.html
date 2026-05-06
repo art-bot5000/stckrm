@@ -1524,12 +1524,22 @@
       <span class="sync-label-nav">Syncing…</span>
     </div>
     <button class="app-nav-link" data-view="account-security" onclick="navTo('account-security')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shield"></use></svg> <span>Account &amp; Security</span></button>
+    <button class="app-nav-link" data-view="billing" onclick="navTo('billing')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg> <span>Billing</span></button>
     <button class="app-nav-link" data-view="settings" onclick="navTo('settings')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg> <span>Settings</span></button>
   </div>
 </nav>
 
 <!-- ═══ MAIN ═══ -->
 <div id="main">
+  <!-- Trial / billing status banner — shown when ≤7 days of trial left, or past_due, or grace ending -->
+  <div id="billing-banner" class="billing-banner" style="display:none" role="status">
+    <div class="billing-banner-inner">
+      <svg class="icon icon-sm" aria-hidden="true" id="billing-banner-icon"><use href="#i-sparkles"></use></svg>
+      <span id="billing-banner-text"></span>
+      <button class="btn btn-primary btn-sm" id="billing-banner-action" onclick="navTo('billing')">Upgrade</button>
+      <button class="billing-banner-close" onclick="dismissBillingBanner()" aria-label="Dismiss"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
+    </div>
+  </div>
   <div id="tabs-sticky-wrap">
   <div id="tabs">
     <button class="tab active" onclick="showView('stock',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-package"></use></svg> <span>Stockroom</span></button>
@@ -1539,6 +1549,7 @@
     <button class="tab" onclick="showView('savings',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-piggy-bank"></use></svg> <span>Savings</span></button>
     <button class="tab" onclick="showView('report',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> <span>Report</span></button>
     <button class="tab" onclick="showView('budget',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
+    <button class="tab" onclick="showView('billing',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg> <span>Billing</span></button>
     <button class="tab" onclick="showView('settings',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg> <span>Settings</span></button>
   </div>
 
@@ -2278,6 +2289,71 @@
     </div>
   </div>
 
+
+  <!-- BILLING VIEW ─────────────────────────────────────── -->
+  <div class="view" id="view-billing">
+    <h2 class="view-header" style="font-size:18px;font-weight:700"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-credit-card"></use></svg> Billing</h2>
+
+    <!-- Status card — shows current plan / trial countdown / past_due warning -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-sparkles"></use></svg> Your plan</div>
+      <div class="acc-sec-card" id="billing-status-card">
+        <div class="acc-sec-row acc-sec-row-block">
+          <div class="acc-sec-label" style="width:100%">
+            <div class="acc-sec-h" id="billing-plan-name">Loading…</div>
+            <div class="acc-sec-p" id="billing-plan-subtitle"></div>
+          </div>
+          <div id="billing-plan-actions" style="width:100%;margin-top:14px;display:flex;flex-direction:column;gap:10px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Free-tier limits / what you get on Pro -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-zap"></use></svg> What's included</div>
+      <div class="acc-sec-card">
+        <div class="acc-sec-row acc-sec-row-block">
+          <div class="acc-sec-label" style="width:100%">
+            <div class="billing-features" id="billing-features-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Promo code input — only visible when on free tier or trial -->
+    <div class="acc-sec-section" id="billing-promo-section" style="margin-bottom:20px;display:none">
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-tag"></use></svg> Promo code</div>
+      <div class="acc-sec-card">
+        <div class="acc-sec-row acc-sec-row-block">
+          <div class="acc-sec-label" style="width:100%">
+            <div class="acc-sec-h">Have a code?</div>
+            <div class="acc-sec-p">Enter a discount code to apply at checkout.</div>
+          </div>
+          <div style="width:100%;display:flex;gap:8px;margin-top:12px">
+            <input type="text" id="billing-promo-input" placeholder="e.g. WELCOME50"
+              style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-family:var(--mono);font-size:13px;letter-spacing:1px;text-transform:uppercase;outline:none"
+              maxlength="40" oninput="onBillingPromoInput()">
+            <button class="btn btn-ghost btn-sm" id="billing-promo-check" onclick="validateBillingPromo()">Check</button>
+          </div>
+          <div id="billing-promo-result" style="width:100%;margin-top:8px;font-size:12px;font-family:var(--sans)"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Account-level billing meta — only visible when there's a Stripe customer -->
+    <div class="acc-sec-section" id="billing-account-section" style="margin-bottom:20px;display:none">
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-info"></use></svg> Account</div>
+      <div class="acc-sec-card">
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Manage subscription</div>
+            <div class="acc-sec-p">Update payment method, view invoices, or cancel.</div>
+          </div>
+          <button class="btn btn-ghost acc-sec-btn" id="billing-portal-btn" onclick="openBillingPortal()">Open portal →</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div class="view" id="view-settings">
     <h2 class="view-header" style="font-size:18px;font-weight:700"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-settings"></use></svg> Settings</h2>
