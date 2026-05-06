@@ -461,6 +461,28 @@
   .sns-section-title { font-size:11px; font-family:var(--mono); letter-spacing:1.5px; text-transform:uppercase; color:var(--muted); margin:20px 0 10px; padding-bottom:8px; border-bottom:1px solid var(--border); }
   .sns-empty { text-align:center; padding:60px 20px; color:var(--muted); }
 
+  /* ─────────────────────────────────────────────────────────
+     MEDIUM + MOBILE — applies to anything below the desktop
+     sidebar breakpoint (900px). At these widths the secondary
+     nav items (Report / Billing / Settings / Account & Security)
+     live behind the burger menu in the header, leaving only the
+     six primary tabs (Stockroom / Groceries / Notes / Reminders /
+     Savings / Budget) on the tab bar.
+     ───────────────────────────────────────────────────────── */
+  @media (max-width: 899px) {
+    /* Burger button visible — replaces the desktop sidebar's
+       Account & Security / Billing / Settings / Report links. */
+    #header-burger-btn { display: inline-flex !important; }
+
+    /* Hide the now-burger-menu tabs at this breakpoint and below.
+       This applies to BOTH the medium range (601–899px, where the
+       tab bar would otherwise overflow horizontally) AND the mobile
+       range (≤600px, where the 3×2 grid expects exactly 6 tabs). */
+    #tabs > .tab[onclick*="'report'"],
+    #tabs > .tab[onclick*="'billing'"],
+    #tabs > .tab[onclick*="'settings'"] { display: none; }
+  }
+
   @media (max-width: 600px) {
 
     /* ── BASE FONT ── */
@@ -475,17 +497,13 @@
     .logo span { display: none; } /* hide "/ HOUSEHOLD TRACKER" on small screens */
     #sync-label { display: none; } /* keep dot, hide text label */
     .sync-pill { padding: 5px 7px; margin-left: 2px; }
-    /* Show burger button on mobile (replaces the secondary nav links).
-       Shield button is hidden via the existing mobile rule below. */
-    #header-burger-btn { display: inline-flex !important; }
 
     /* ── MAIN LAYOUT ── */
     #main { padding: 16px 12px; }
 
     /* ── TABS: 3×2 grid on mobile (icon above label) ──
        Stockroom + Groceries + Notes on row 1, Reminders + Savings + Budget
-       on row 2. Report / Billing / Settings / Account & Security live
-       behind the burger menu now. */
+       on row 2. Burger-menu items are hidden by the wider 899px rule. */
     #tabs {
       width: 100%;
       display: grid;
@@ -494,10 +512,6 @@
       gap: 4px;
       padding: 4px;
     }
-    /* Hide the now-burger-menu tabs at mobile breakpoint */
-    #tabs > .tab[onclick*="'report'"],
-    #tabs > .tab[onclick*="'billing'"],
-    #tabs > .tab[onclick*="'settings'"] { display: none; }
     .tab {
       flex: initial;
       flex-direction: column;
