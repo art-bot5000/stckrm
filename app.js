@@ -8206,9 +8206,178 @@ window.stockroomBilling = (function() {
     }
   }
 
-  // ── Init ──
+  // ── Referral ──
+  // Cached referral state. Refreshed on demand by fetchReferralState().
+  let _referralState = null;
+  let _referralLastFetch = 0;
+  const REFERRAL_TTL_MS = 5 * 60 * 1000;
+
+  async function fetchReferralState(force) {
+    if (!_isAuthed()) return null;
+    const now = Date.now();
+    if (!force && _referralState && (now - _referralLastFetch) < REFERRAL_TTL_MS) return _referralState;
+    try {
+      const [codeRes, listRes] = await Promise.all([
+        fetch(`${WORKER_URL}/referral/code`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(_authBody()),
+        }),
+        fetch(`${WORKER_URL}/referral/list`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(_authBody()),
+        }),
+      ]);
+      if (!codeRes.ok) return null;
+      const codeData = await codeRes.json();
+      const listData = listRes.ok ? await listRes.json() : { referrals: [] };
+      _referralState = { ...codeData, referrals: listData.referrals || [] };
+      _referralLastFetch = now;
+      // Repaint the billing page if it's open (referral section lives there)
+      if (_currentViewName === 'billing') _renderReferralSection();
+      return _referralState;
+    } catch (err) {
+      console.warn('[referral] fetch failed:', err.message);
+      return null;
+    }
+  }
+
+  function getReferralState() { return _referralState; }
+
+  function _renderReferralSection() {
+    const sec = document.getElementById('billing-referral-section');
+    if (!sec) return;
+    if (!_referralState) {
+      sec.style.display = '';
+      const dest = document.getElementById('billing-referral-card');
+      if (dest) dest.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:13px">Loading…</div>';
+      return;
+    }
+    sec.style.display = '';
+    const s = _referralState;
+    const dest = document.getElementById('billing-referral-card');
+    if (!dest) return;
+    const shareUrl = `https://app.stckrm.com/?ref=${encodeURIComponent(s.code)}`;
+    const capPct = Math.min(100, Math.round((s.lifetimeCreditsMonths / s.lifetimeCapMonths) * 100));
+    const refList = (s.referrals || []).map(r => {
+      const statusLabel = ({
+        pending:   'Signed up',
+        converted: '1st payment ✓',
+        qualified: 'Qualified — 30 days credited',
+        rejected:  `Rejected (${(r.rejectionReason || 'unknown').replace(/_/g,' ')})`,
+      })[r.status] || r.status;
+      const statusColor = ({
+        pending: 'var(--muted)', converted: 'var(--accent)',
+        qualified: 'var(--ok)',  rejected:  'var(--danger)',
+      })[r.status] || 'var(--muted)';
+      const date = new Date((r.signedUpAt || 0) * 1000).toLocaleDateString();
+      return `<div style="padding:8px 0;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;font-size:12px">
+        <div><span style="font-family:var(--mono);color:var(--muted)">${_escapeHtml(r.refereeRef)}…</span> · <span style="color:var(--muted)">${date}</span></div>
+        <div style="color:${statusColor};font-weight:500">${statusLabel}</div>
+      </div>`;
+    }).join('');
+    dest.innerHTML = `
+      <div class="acc-sec-row acc-sec-row-block">
+        <div class="acc-sec-label" style="width:100%">
+          <div class="acc-sec-h">Your code</div>
+          <div class="acc-sec-p">Share this code with friends. When they sign up and complete their second paid month, you both get rewarded.</div>
+        </div>
+        <div style="width:100%;display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap">
+          <code style="font-family:var(--mono);font-size:18px;font-weight:700;padding:8px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;letter-spacing:1px">${_escapeHtml(s.code)}</code>
+          <button class="btn btn-ghost btn-sm" onclick="copyReferralCode()">Copy code</button>
+          <button class="btn btn-primary btn-sm" onclick="shareReferralLink()">Share link</button>
+        </div>
+        <div style="width:100%;margin-top:14px;font-size:12px;color:var(--muted)">
+          You give: <strong style="color:var(--text)">${s.rewards.refereeDiscountPercent}% off ${s.rewards.refereeDiscountMonths} months</strong>
+          &nbsp;•&nbsp; You get: <strong style="color:var(--text)">${s.rewards.referrerExtensionDays} days free per qualified referral</strong>
+        </div>
+      </div>
+      <div class="acc-sec-row acc-sec-row-block" style="border-top:1px solid var(--border);margin-top:12px;padding-top:14px">
+        <div class="acc-sec-label" style="width:100%">
+          <div class="acc-sec-h" style="display:flex;justify-content:space-between;align-items:center">
+            <span>Your stats</span>
+            ${s.capReached ? '<span class="billing-plan-badge past_due" style="margin:0">Cap reached</span>' : ''}
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px">
+            <div style="padding:10px;background:var(--bg);border-radius:8px">
+              <div style="font-size:20px;font-weight:700;color:var(--text)">${s.signupCount}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px">Signed up</div>
+            </div>
+            <div style="padding:10px;background:var(--bg);border-radius:8px">
+              <div style="font-size:20px;font-weight:700;color:var(--text)">${s.qualifiedCount}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px">Qualified</div>
+            </div>
+            <div style="padding:10px;background:var(--bg);border-radius:8px">
+              <div style="font-size:20px;font-weight:700;color:var(--ok)">${s.lifetimeCreditsMonths}<span style="font-size:13px;color:var(--muted);font-weight:400">/${s.lifetimeCapMonths}</span></div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px">Months earned</div>
+            </div>
+          </div>
+          ${s.capReached ? `
+            <div style="margin-top:10px;padding:8px 12px;background:color-mix(in srgb,var(--danger) 8%,var(--bg));border-left:3px solid var(--danger);border-radius:4px;font-size:12px;color:var(--text)">
+              You've reached the lifetime cap of ${s.lifetimeCapMonths} months earned. Future referrals will still count for stats but won't add more free time.
+            </div>` : ''}
+        </div>
+      </div>
+      ${refList ? `
+        <div class="acc-sec-row acc-sec-row-block" style="border-top:1px solid var(--border);margin-top:12px;padding-top:14px">
+          <div class="acc-sec-label" style="width:100%">
+            <div class="acc-sec-h">Referrals</div>
+            <div style="margin-top:6px">${refList}</div>
+          </div>
+        </div>` : `
+        <div class="acc-sec-row acc-sec-row-block" style="border-top:1px solid var(--border);margin-top:12px;padding-top:14px">
+          <div class="acc-sec-label" style="width:100%">
+            <div class="acc-sec-p" style="font-style:italic">No referrals yet — share your code to get started!</div>
+          </div>
+        </div>`}`;
+  }
+
+  async function copyReferralCode() {
+    if (!_referralState) return;
+    try { await navigator.clipboard.writeText(_referralState.code); toast && toast('Code copied'); }
+    catch (_) { toast && toast('Could not copy — long-press to select'); }
+  }
+
+  async function shareReferralLink() {
+    if (!_referralState) return;
+    const url   = `https://app.stckrm.com/?ref=${encodeURIComponent(_referralState.code)}`;
+    const text  = `Join me on STOCKROOM — never run out of household essentials again. Use my code ${_referralState.code} for ${_referralState.rewards.refereeDiscountPercent}% off your first ${_referralState.rewards.refereeDiscountMonths} paid months: ${url}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'STOCKROOM', text, url }); return; }
+      catch (_) { /* user cancelled or share failed — fall through to clipboard */ }
+    }
+    try { await navigator.clipboard.writeText(text); toast && toast('Share link copied'); }
+    catch (_) { toast && toast('Could not copy — long-press to select'); }
+  }
+
+  // Capture ?ref= from the URL on first load and stash for the signup form.
+  function _captureRefFromUrl() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const ref = params.get('ref');
+      if (ref) {
+        window._pendingReferralCode = ref.toUpperCase();
+        // Strip ?ref= so reloads don't keep it; preserve other params.
+        params.delete('ref');
+        const qs = params.toString();
+        history.replaceState({}, '', window.location.pathname + (qs ? '?'+qs : ''));
+        // Pre-fill the signup form's referral input if/when it appears.
+        const tryFill = () => {
+          const input = document.getElementById('kv-ref');
+          if (input && !input.value) input.value = window._pendingReferralCode;
+        };
+        tryFill();
+        setTimeout(tryFill, 500);
+        setTimeout(tryFill, 2000);
+      }
+    } catch (_) {}
+  }
+
+
   // Defer until DOM ready and initial sign-in completes.
   function init() {
+    _captureRefFromUrl();
     _handleReturnFromStripe();
     // Initial fetch (will no-op if not signed in yet; signin flow re-calls)
     setTimeout(() => refresh(false), 1000);
@@ -8231,7 +8400,12 @@ window.stockroomBilling = (function() {
     resumeSubscription,
     validatePromo,
     dismissBanner,
+    fetchReferralState,
+    getReferralState,
+    copyReferralCode,
+    shareReferralLink,
     _renderBillingPage,
+    _renderReferralSection,
   };
 })();
 
@@ -8241,6 +8415,8 @@ function openBillingPortal()       { return stockroomBilling.openPortal(); }
 function cancelSubscription()      { return stockroomBilling.cancelSubscription(); }
 function resumeSubscription()      { return stockroomBilling.resumeSubscription(); }
 function dismissBillingBanner()    { return stockroomBilling.dismissBanner(); }
+function copyReferralCode()        { return stockroomBilling.copyReferralCode(); }
+function shareReferralLink()       { return stockroomBilling.shareReferralLink(); }
 
 // Promo code field handlers
 function onBillingPromoInput() {
@@ -8359,6 +8535,10 @@ function showView(name, btn) {
     try {
       stockroomBilling._renderBillingPage();
       stockroomBilling.refresh(true);
+      // Fetch referral state in parallel — populates the section below
+      // the plan card.
+      stockroomBilling._renderReferralSection();
+      stockroomBilling.fetchReferralState(false);
     } catch (_) {}
   }
   if (name === 'stock') {
@@ -11606,13 +11786,20 @@ async function kvRegister() {
     const useV2     = true;
 
     // Register — send plaintext email so server can send migration notifications
+    // Include referral code if one was captured at app load (from ?ref=) or
+    // typed into the optional field on the signup form.
+    const referralCode = (window._pendingReferralCode || document.getElementById('kv-ref')?.value || '').trim().toUpperCase();
     const res = await fetchKV(`${WORKER_URL}/user/register`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emailHash, verifier, email }),
+      body: JSON.stringify({ emailHash, verifier, email, ...(referralCode ? { referralCode } : {}) }),
     });
     const data = await res.json();
     if (res.status === 409) { showDuplicateAccountScreen(email); return; }
     if (!res.ok) throw new Error(data.error || 'Registration failed');
+    // If referral was applied, surface a friendly toast after sign-in completes
+    if (data.referralApplied) {
+      window._referralAppliedAtSignup = true;
+    }
 
     let dataKey, passphraseEnvelope, saltB64, kdfSalt, recoveryCodes, recoveryEnvelopes;
 

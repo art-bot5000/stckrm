@@ -1029,6 +1029,19 @@
             </div>
           </div>
           <p style="font-size:11px;color:var(--muted);margin-bottom:16px;line-height:1.5"><svg class="icon" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> Store this safely — required to recover your account.</p>
+
+          <!-- Optional referral code field. Auto-filled from ?ref= URL param. -->
+          <details id="kv-ref-wrap" style="margin-bottom:16px">
+            <summary style="font-size:13px;color:var(--muted);cursor:pointer;user-select:none">Have a referral code? (optional)</summary>
+            <div class="form-group" style="margin-top:10px">
+              <div class="fl-field">
+                <input id="kv-ref" type="text" placeholder=" " autocomplete="off" maxlength="20" style="text-transform:uppercase;letter-spacing:1px;font-family:var(--mono)">
+                <label for="kv-ref">Referral code</label>
+              </div>
+              <p style="font-size:11px;color:var(--muted);margin-top:4px">Get 50% off your first 3 paid months when you use a friend's code.</p>
+            </div>
+          </details>
+
           <button class="btn btn-primary btn-xl full" style="margin-bottom:10px" onclick="kvRegister()">Create account →</button>
         </div>
 
@@ -2351,6 +2364,15 @@
           </div>
           <button class="btn btn-ghost acc-sec-btn" id="billing-portal-btn" onclick="openBillingPortal()">Open portal →</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Refer a friend ─ tell-a-friend section. Always visible to authed users. -->
+    <div class="acc-sec-section" id="billing-referral-section" style="margin-bottom:20px;display:none">
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-share"></use></svg> Refer a friend</div>
+      <div class="acc-sec-card" id="billing-referral-card">
+        <!-- Filled by stockroomBilling._renderReferralSection() -->
+        <div style="padding:20px;color:var(--muted);font-size:13px">Loading…</div>
       </div>
     </div>
   </div>
