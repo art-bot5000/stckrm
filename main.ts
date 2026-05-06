@@ -1195,33 +1195,308 @@ async function _markEventProcessed(eventId: string): Promise<void> {
   await kvSet(['stripe_event', eventId], '1', { expireIn: 30 * 24 * 60 * 60 * 1000 });
 }
 
+// ── Effective status — single source of truth ────────────
+// All paywall enforcement (server) and gating (client via /billing/status)
+// derives from this. Everything else is just plumbing into it.
+//
+// Three buckets:
+//   'paid'  — full access (active sub, past_due retry grace, grandfathered, or in graceUntil window)
+//   'trial' — 30-day no-card trial that hasn't expired
+//   'free'  — limits apply (5 items visible, no photos, no grocery, no notes, no emails)
+//
+// Note that 'cancelled' (subscription cancelled but currentPeriodEnd not yet
+// reached) is treated as 'paid' until the period ends — the user paid for
+// the month, they keep using it.
+type EffectiveStatus = 'paid' | 'trial' | 'free';
+function computeEffectiveStatus(acct: BillingAccount | null): EffectiveStatus {
+  if (!acct) return 'free';
+  if (acct.grandfathered) return 'paid';
+  const now = Math.floor(Date.now() / 1000);
+  // Active or in retry window — treat as paid
+  if (acct.status === 'active') return 'paid';
+  if (acct.status === 'past_due') return 'paid'; // brief retry grace
+  // Cancelled but period hasn't ended — keep paid until period end
+  if (acct.status === 'canceled' && acct.currentPeriodEnd && acct.currentPeriodEnd > now) {
+    return 'paid';
+  }
+  // Trialing (Stripe-side trial)
+  if (acct.status === 'trialing' && acct.trialEndsAt && acct.trialEndsAt > now) {
+    return 'trial';
+  }
+  // Local trial (hybrid model — no Stripe sub, just a trialEndsAt)
+  if (!acct.stripeSubscriptionId && acct.trialEndsAt && acct.trialEndsAt > now) {
+    return 'trial';
+  }
+  // Legacy grace period (90-day grant for users who existed before billing launched)
+  if (acct.graceUntil && acct.graceUntil > now) return 'paid';
+  return 'free';
+}
+
+// Free-tier limits — the constants the entire enforcement layer references.
+const FREE_TIER = {
+  ITEM_COUNT_LIMIT: 5,
+  // Blob size limit for free tier. The encrypted blob includes all items,
+  // their metadata, household/list structures, etc. A typical text-only
+  // 5-item household sits around 5–15KB. We allow generous headroom but
+  // block photo uploads (which push blobs into hundreds of KB).
+  // Paid users have a higher implicit limit (Deno KV value max is 64KB
+  // per key, and the existing R2 fallback handles bigger blobs).
+  BLOB_SIZE_BYTES: 50 * 1024, // 50 KB
+} as const;
+
+// Compose the status payload returned to the client by /billing/status.
+// The client uses this to drive UI gating and trial countdown banners.
+async function getBillingStatusForUser(emailHash: string): Promise<{
+  status:           EffectiveStatus;
+  rawStatus:        BillingStatus;
+  grandfathered:    boolean;
+  trialEndsAt?:     number;
+  graceUntil?:      number;
+  trialDaysLeft?:   number;
+  cardOnFile:       boolean;
+  cancelAtPeriodEnd:boolean;
+  currentPeriodEnd?:number;
+  hasStripeCustomer:boolean;
+  hasStripeSubscription:boolean;
+  limits: {
+    itemCount: number;
+    blobBytes: number;
+    photosAllowed: boolean;
+    groceryAllowed: boolean;
+    notesAllowed: boolean;
+    emailsAllowed: boolean;
+  };
+  pricing: {
+    configured: boolean;
+    priceId?: string;
+    publishableKey?: string;
+  };
+}> {
+  const acct = await getBillingAccount(emailHash);
+  const eff  = computeEffectiveStatus(acct);
+  const now  = Math.floor(Date.now() / 1000);
+
+  let trialDaysLeft: number | undefined;
+  if (eff === 'trial' && acct?.trialEndsAt) {
+    trialDaysLeft = Math.max(0, Math.ceil((acct.trialEndsAt - now) / 86400));
+  }
+
+  const isPaid = eff !== 'free';
+  return {
+    status:                eff,
+    rawStatus:             acct?.status ?? 'none',
+    grandfathered:         !!acct?.grandfathered,
+    trialEndsAt:           acct?.trialEndsAt,
+    graceUntil:            acct?.graceUntil,
+    trialDaysLeft,
+    cardOnFile:            !!acct?.cardOnFile,
+    cancelAtPeriodEnd:     !!acct?.cancelAtPeriodEnd,
+    currentPeriodEnd:      acct?.currentPeriodEnd,
+    hasStripeCustomer:     !!acct?.stripeCustomerId,
+    hasStripeSubscription: !!acct?.stripeSubscriptionId,
+    limits: {
+      itemCount:      isPaid ? Number.POSITIVE_INFINITY : FREE_TIER.ITEM_COUNT_LIMIT,
+      blobBytes:      isPaid ? Number.POSITIVE_INFINITY : FREE_TIER.BLOB_SIZE_BYTES,
+      photosAllowed:  isPaid,
+      groceryAllowed: isPaid,
+      notesAllowed:   isPaid,
+      emailsAllowed:  isPaid,
+    },
+    pricing: {
+      configured:     stripeConfigured() && !!STRIPE_CFG.priceId,
+      priceId:        STRIPE_CFG.priceId || undefined,
+      publishableKey: STRIPE_CFG.publishableKey || undefined,
+    },
+  };
+}
+
+// Convenience wrapper for server-side gating: 'is this user allowed to
+// write this kind of thing?'. Returns {ok: true} when allowed, or
+// {ok: false, status, reason} when blocked — caller can return that as a
+// 402 Payment Required response. status and reason are populated on both
+// branches (with default values when ok) to keep TS narrowing simple at
+// call sites.
+async function gateFeature(
+  emailHash: string,
+  feature: 'photos' | 'grocery' | 'notes' | 'emails' | 'blobsize',
+  payloadBytes?: number
+): Promise<{ ok: boolean; status: number; reason: string }> {
+  const status = await getBillingStatusForUser(emailHash);
+  if (status.status !== 'free') return { ok: true, status: 200, reason: 'ok' };
+  switch (feature) {
+    case 'photos':
+      return { ok: false, status: 402, reason: 'photos_require_upgrade' };
+    case 'grocery':
+      return { ok: false, status: 402, reason: 'grocery_requires_upgrade' };
+    case 'notes':
+      return { ok: false, status: 402, reason: 'notes_require_upgrade' };
+    case 'emails':
+      return { ok: false, status: 402, reason: 'email_reminders_require_upgrade' };
+    case 'blobsize':
+      if (payloadBytes !== undefined && payloadBytes > FREE_TIER.BLOB_SIZE_BYTES) {
+        return { ok: false, status: 402, reason: 'free_tier_size_exceeded' };
+      }
+      return { ok: true, status: 200, reason: 'ok' };
+  }
+  return { ok: true, status: 200, reason: 'ok' };
+}
+
 async function handleStripeEvent(event: any): Promise<void> {
   const type: string = event.type;
   const obj = event?.data?.object || {};
-  // Find the local user this event is about, if any. Most events have a
-  // `customer` field; payment_method.attached has it; subscription events
-  // have it; checkout sessions have it.
-  const stripeCustomerId: string | undefined = obj.customer || (typeof obj === 'object' && obj.object === 'customer' ? obj.id : undefined);
-  const emailHash = stripeCustomerId ? await lookupEmailHashByStripeCustomer(stripeCustomerId) : null;
+  // Find the local user this event is about. Most events have a `customer`
+  // field; payment_method.attached has it; subscription events have it.
+  // checkout.session.completed has both `customer` and `client_reference_id`
+  // (we stash emailHash in client_reference_id when creating the session).
+  const stripeCustomerId: string | undefined =
+    obj.customer || (typeof obj === 'object' && obj.object === 'customer' ? obj.id : undefined);
+  let emailHash: string | null = null;
+  // Prefer client_reference_id when present (more reliable for first checkout
+  // before we've indexed the customer). Falls through to customer-id lookup.
+  if (typeof obj.client_reference_id === 'string' && /^[a-f0-9]{16,128}$/i.test(obj.client_reference_id)) {
+    emailHash = obj.client_reference_id;
+    // Backfill the index if missing
+    if (stripeCustomerId) {
+      const indexed = await lookupEmailHashByStripeCustomer(stripeCustomerId);
+      if (!indexed) await setStripeCustomerIndex(stripeCustomerId, emailHash);
+    }
+  } else if (stripeCustomerId) {
+    emailHash = await lookupEmailHashByStripeCustomer(stripeCustomerId);
+  }
 
-  // Phase 1: log everything, persist nothing beyond the event ID.
-  // Phase 2 onwards will fill in the per-type business logic.
   console.log(`[stripe-webhook] ${type} customer=${stripeCustomerId || 'n/a'} emailHash=${emailHash || 'unknown'}`);
+
+  // If we can't resolve a local user, log and exit. Sometimes happens for
+  // synthetic test events (Stripe dashboard's "Send test webhook" uses
+  // hardcoded fake customer IDs not in our system). Returning successfully
+  // (no throw) so we still mark the event processed and don't retry.
+  if (!emailHash) return;
 
   switch (type) {
     case 'checkout.session.completed':
+      await _handleCheckoutCompleted(emailHash, obj);
+      break;
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
+      await _handleSubscriptionUpsert(emailHash, obj);
+      break;
     case 'customer.subscription.deleted':
+      await _handleSubscriptionDeleted(emailHash, obj);
+      break;
     case 'customer.subscription.trial_will_end':
+      await _handleTrialWillEnd(emailHash, obj);
+      break;
     case 'invoice.payment_succeeded':
+      await _handleInvoicePaid(emailHash, obj);
+      break;
     case 'invoice.payment_failed':
+      await _handleInvoiceFailed(emailHash, obj);
+      break;
     case 'payment_method.attached':
-      // Phase 2 will implement these. For now, just acknowledge.
+      await _handlePaymentMethodAttached(emailHash, obj);
       break;
     default:
       console.log(`[stripe-webhook] unhandled event type: ${type}`);
   }
+}
+
+// When checkout completes, Stripe creates the subscription server-side and
+// will send us a `customer.subscription.created` event right after this.
+// So this handler is mostly defensive — we record any session-level data
+// (e.g. payment_intent succeeded) but the subscription handler does the
+// real status update.
+async function _handleCheckoutCompleted(emailHash: string, session: any): Promise<void> {
+  const acct = await ensureBillingAccount(emailHash);
+  if (session.subscription && !acct.stripeSubscriptionId) {
+    acct.stripeSubscriptionId = session.subscription;
+  }
+  if (session.customer && !acct.stripeCustomerId) {
+    acct.stripeCustomerId = session.customer;
+    await setStripeCustomerIndex(session.customer, emailHash);
+  }
+  await setBillingAccount(emailHash, acct);
+}
+
+// Map a Stripe subscription object onto our local billing record. This is
+// the heart of staying in sync: we treat Stripe's status as authoritative
+// and just mirror it. The one local-only state we preserve is
+// `grandfathered` (it's an admin-set flag that overrides Stripe entirely).
+async function _handleSubscriptionUpsert(emailHash: string, sub: any): Promise<void> {
+  const acct = await ensureBillingAccount(emailHash);
+  // Don't let Stripe events overwrite a grandfathered account. Should never
+  // happen in practice (grandfathered users don't have Stripe subs) but
+  // defensive coding here is cheap.
+  if (acct.grandfathered) {
+    console.log(`[stripe-webhook] ignoring subscription update for grandfathered ${emailHash}`);
+    return;
+  }
+  acct.stripeSubscriptionId = sub.id;
+  // Stripe statuses: trialing, active, past_due, canceled, unpaid, incomplete, incomplete_expired
+  // Map onto our schema:
+  switch (sub.status) {
+    case 'trialing':           acct.status = 'trialing'; break;
+    case 'active':             acct.status = 'active'; break;
+    case 'past_due':           acct.status = 'past_due'; break;
+    case 'unpaid':             acct.status = 'past_due'; break;
+    case 'canceled':           acct.status = 'canceled'; break;
+    case 'incomplete':         acct.status = 'past_due'; break;
+    case 'incomplete_expired': acct.status = 'canceled'; break;
+    default:                   acct.status = 'free';
+  }
+  acct.cancelAtPeriodEnd = !!sub.cancel_at_period_end;
+  if (typeof sub.trial_end === 'number') acct.trialEndsAt = sub.trial_end;
+  if (typeof sub.current_period_end === 'number') acct.currentPeriodEnd = sub.current_period_end;
+  // Default payment method tells us whether a card is on file
+  if (sub.default_payment_method) acct.cardOnFile = true;
+  await setBillingAccount(emailHash, acct);
+  console.log(`[stripe-webhook] sub ${sub.id} status=${sub.status} -> local status=${acct.status}`);
+}
+
+async function _handleSubscriptionDeleted(emailHash: string, sub: any): Promise<void> {
+  const acct = await ensureBillingAccount(emailHash);
+  if (acct.grandfathered) return;
+  acct.status = 'canceled';
+  acct.cancelAtPeriodEnd = false;
+  // Keep stripeSubscriptionId for historical reference; the user might
+  // resubscribe and we'll create a new one on the next checkout.
+  await setBillingAccount(emailHash, acct);
+}
+
+// Stripe sends this 3 days before a Stripe-side trial ends. We use it as
+// a hook to email the user. For the hybrid model (local trial), this
+// event will not fire — we handle that separately via a daily cron. For
+// users who have moved to a Stripe trial (added card), this fires.
+async function _handleTrialWillEnd(emailHash: string, sub: any): Promise<void> {
+  // Phase 2: just log. Email in a future polish pass.
+  console.log(`[stripe-webhook] trial_will_end for ${emailHash}, ends at ${sub.trial_end}`);
+}
+
+// Successful payment. Sync any subscription changes (period rolled forward,
+// status flipped from past_due to active, etc.).
+async function _handleInvoicePaid(emailHash: string, invoice: any): Promise<void> {
+  if (!invoice.subscription) return;
+  // Re-fetch the subscription to get the latest status.
+  try {
+    const sub = await stripeFetch(`/v1/subscriptions/${invoice.subscription}`, 'GET');
+    await _handleSubscriptionUpsert(emailHash, sub);
+  } catch (err) {
+    console.error(`[stripe-webhook] failed to fetch subscription ${invoice.subscription}:`, (err as Error).message);
+  }
+}
+
+async function _handleInvoiceFailed(emailHash: string, invoice: any): Promise<void> {
+  const acct = await ensureBillingAccount(emailHash);
+  if (acct.grandfathered) return;
+  acct.status = 'past_due';
+  await setBillingAccount(emailHash, acct);
+  console.log(`[stripe-webhook] invoice.payment_failed for ${emailHash}, marked past_due`);
+}
+
+async function _handlePaymentMethodAttached(emailHash: string, pm: any): Promise<void> {
+  const acct = await ensureBillingAccount(emailHash);
+  acct.cardOnFile = true;
+  if (pm?.card?.fingerprint) acct.cardFingerprint = pm.card.fingerprint;
+  await setBillingAccount(emailHash, acct);
 }
 
 // ── Startup migration: grandfather test accounts, grace existing users ──
@@ -1333,6 +1608,211 @@ Deno.serve(async (request) => {
   // ── Health / debug ────────────────────────────────────
   if (url.pathname === '/ping') {
     return json({ ok: true, ts: new Date().toISOString() }, corsHeaders);
+  }
+
+  // ── Billing: status — what UI gates / banners to show ──
+  // Auth: verifier OR sessionToken (passkey). Same dual-auth pattern as
+  // /data/push and friends.
+  if (url.pathname === '/billing/status' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      const status = await getBillingStatusForUser(emailHash);
+      return json(status, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Billing: checkout — create a Stripe Checkout Session ──
+  // Returns a URL the client redirects to. Uses Stripe's hosted checkout
+  // page so we never touch card details (PCI scope = SAQ-A, the easiest
+  // tier).
+  if (url.pathname === '/billing/checkout' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, promoCode } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      if (!stripeConfigured() || !STRIPE_CFG.priceId) {
+        return json({ error: 'Billing not configured' }, corsHeaders, 503);
+      }
+      // Ensure the user has a Stripe customer
+      const customerId = await ensureStripeCustomer(emailHash);
+      if (!customerId) return json({ error: 'Could not create Stripe customer' }, corsHeaders, 502);
+
+      // Build the success/cancel URLs. APP_URL points at the PWA hostname.
+      const appUrl = (Deno.env.get('APP_URL') || 'https://app.stckrm.com').replace(/\/$/, '');
+      const successUrl = `${appUrl}/?billing=success&session_id={CHECKOUT_SESSION_ID}`;
+      const cancelUrl  = `${appUrl}/?billing=cancel`;
+
+      const params: Record<string, string | number | boolean> = {
+        'mode':                          'subscription',
+        'customer':                      customerId,
+        'client_reference_id':           emailHash, // for idempotent webhook lookup
+        'line_items[0][price]':          STRIPE_CFG.priceId,
+        'line_items[0][quantity]':       1,
+        'success_url':                   successUrl,
+        'cancel_url':                    cancelUrl,
+        'allow_promotion_codes':         true,
+        // We do NOT set subscription_data[trial_period_days] here — the
+        // hybrid trial model means by the time a user clicks Upgrade,
+        // their local trial may have run out. If they're upgrading early
+        // we don't want a second 30-day trial on top. If they want a
+        // trial extension as a promo, that's what promo codes are for.
+      };
+      if (promoCode && typeof promoCode === 'string') {
+        // Look up the promotion code to get its ID. allow_promotion_codes
+        // also allows users to enter codes on the Stripe-hosted page itself.
+        try {
+          const lookup = await stripeFetch(`/v1/promotion_codes`, 'GET', { code: promoCode, active: 'true', limit: 1 });
+          const pc = lookup?.data?.[0];
+          if (pc?.id) {
+            params['discounts[0][promotion_code]'] = pc.id;
+            // Can't have both allow_promotion_codes and a fixed discount
+            delete params['allow_promotion_codes'];
+          }
+        } catch (err) {
+          console.warn(`[billing/checkout] promo lookup failed: ${(err as Error).message}`);
+        }
+      }
+
+      const session = await stripeFetch('/v1/checkout/sessions', 'POST', params);
+      return json({ url: session.url, sessionId: session.id }, corsHeaders);
+    } catch(err) {
+      const msg = (err as Error).message;
+      console.error(`[billing/checkout] error:`, msg);
+      return json({ error: msg }, corsHeaders, 500);
+    }
+  }
+
+  // ── Billing: portal — Stripe Customer Portal session ──
+  // For users who already have a sub: manage card, view invoices, cancel.
+  if (url.pathname === '/billing/portal' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      if (!stripeConfigured()) return json({ error: 'Billing not configured' }, corsHeaders, 503);
+      const acct = await getBillingAccount(emailHash);
+      if (!acct?.stripeCustomerId) return json({ error: 'No billing customer found' }, corsHeaders, 404);
+      const appUrl = (Deno.env.get('APP_URL') || 'https://app.stckrm.com').replace(/\/$/, '');
+      const params: Record<string, string> = {
+        customer:   acct.stripeCustomerId,
+        return_url: `${appUrl}/?billing=portal-return`,
+      };
+      const portal = await stripeFetch('/v1/billing_portal/sessions', 'POST', params);
+      return json({ url: portal.url }, corsHeaders);
+    } catch(err) {
+      console.error(`[billing/portal] error:`, (err as Error).message);
+      return json({ error: (err as Error).message }, corsHeaders, 500);
+    }
+  }
+
+  // ── Billing: apply-promo — validate a promotion code ──
+  // Used by the UI to validate before checkout (so we can show "valid:
+  // 50% off for 3 months" or similar). The code is not actually attached
+  // to anything here — it's passed through to /billing/checkout.
+  if (url.pathname === '/billing/apply-promo' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, code } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken) || !code) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      if (!stripeConfigured()) return json({ error: 'Billing not configured' }, corsHeaders, 503);
+      const lookup = await stripeFetch(`/v1/promotion_codes`, 'GET', { code, active: 'true', limit: 1 });
+      const pc = lookup?.data?.[0];
+      if (!pc) return json({ valid: false, reason: 'not_found' }, corsHeaders);
+      const coupon = pc.coupon || {};
+      return json({
+        valid:       true,
+        code:        pc.code,
+        percentOff:  coupon.percent_off ?? null,
+        amountOff:   coupon.amount_off ?? null,
+        currency:    coupon.currency ?? null,
+        duration:    coupon.duration ?? null,           // 'forever', 'once', 'repeating'
+        durationInMonths: coupon.duration_in_months ?? null,
+      }, corsHeaders);
+    } catch(err) {
+      return json({ error: (err as Error).message }, corsHeaders, 500);
+    }
+  }
+
+  // ── Billing: cancel — cancel subscription at period end ──
+  // Sets cancel_at_period_end=true so the user keeps access until the
+  // period they paid for runs out, then drops to free tier.
+  if (url.pathname === '/billing/cancel' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      if (!stripeConfigured()) return json({ error: 'Billing not configured' }, corsHeaders, 503);
+      const acct = await getBillingAccount(emailHash);
+      if (!acct?.stripeSubscriptionId) return json({ error: 'No active subscription' }, corsHeaders, 404);
+      const updated = await stripeFetch(`/v1/subscriptions/${acct.stripeSubscriptionId}`, 'POST', {
+        cancel_at_period_end: 'true',
+      });
+      // Mirror locally — the webhook will also do this but UI should reflect
+      // immediately
+      acct.cancelAtPeriodEnd = true;
+      await setBillingAccount(emailHash, acct);
+      return json({ ok: true, currentPeriodEnd: updated.current_period_end }, corsHeaders);
+    } catch(err) {
+      return json({ error: (err as Error).message }, corsHeaders, 500);
+    }
+  }
+
+  // ── Billing: resume — undo cancel-at-period-end ──
+  if (url.pathname === '/billing/resume' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      if (!stripeConfigured()) return json({ error: 'Billing not configured' }, corsHeaders, 503);
+      const acct = await getBillingAccount(emailHash);
+      if (!acct?.stripeSubscriptionId) return json({ error: 'No subscription' }, corsHeaders, 404);
+      await stripeFetch(`/v1/subscriptions/${acct.stripeSubscriptionId}`, 'POST', {
+        cancel_at_period_end: 'false',
+      });
+      acct.cancelAtPeriodEnd = false;
+      await setBillingAccount(emailHash, acct);
+      return json({ ok: true }, corsHeaders);
+    } catch(err) {
+      return json({ error: (err as Error).message }, corsHeaders, 500);
+    }
   }
 
   // ── Stripe webhook ────────────────────────────────────
@@ -3224,20 +3704,32 @@ Deno.serve(async (request) => {
       if (email) await kvSet(['user', emailHash, 'email'], email);
 
       // ── Billing: create or refresh the billing record ──
-      // For new signups, we initialise a 'none' status (no trial yet — Phase 2
-      // will add the 30-day trial-on-signup). For test accounts that were
-      // pre-grandfathered by the migration, we leave their record alone.
-      // We also kick off Stripe customer creation in the background so the
-      // ID is ready when the user later starts a checkout. Failures here
-      // do NOT block signup — the user can sign up even if Stripe is down,
-      // and ensureStripeCustomer is idempotent so it'll succeed on retry.
+      // For new signups, we initialise a 30-day local trial (hybrid model
+      // per spec: track trial in our KV, do NOT create a Stripe sub yet —
+      // saves Stripe API calls and avoids 'trial expired with no card'
+      // edge cases. We DO pre-create the Stripe customer in the background
+      // so it's ready when the user later starts checkout).
+      // For test accounts that were pre-grandfathered by the Phase 1
+      // migration, we leave their record alone.
       try {
         const existingBilling = await getBillingAccount(emailHash);
         if (!existingBilling) {
-          await ensureBillingAccount(emailHash);
+          // Brand-new account → start 30-day trial
+          const nowSec = Math.floor(Date.now() / 1000);
+          const trialDays = 30;
+          await setBillingAccount(emailHash, {
+            status:        'trialing',
+            trialEndsAt:   nowSec + (trialDays * 86400),
+            cardOnFile:    false,
+            grandfathered: false,
+            createdAt:     nowSec,
+            updatedAt:     nowSec,
+          });
         }
+        // else: existing record (e.g. grandfathered test account or graced
+        // legacy user) — don't overwrite
         // Fire-and-forget Stripe customer creation. Don't await — keeps
-        // signup fast and tolerant of Stripe outages.
+        // signup fast and tolerant of Stripe outages. Idempotent.
         ensureStripeCustomer(emailHash, email).catch(err => {
           console.error(`Background Stripe customer creation failed for ${emailHash}:`, err.message);
         });
@@ -3328,6 +3820,17 @@ Deno.serve(async (request) => {
         const stored = await kvGet(['user', emailHash, 'verifier']);
         if (!stored.value) return json({ error: 'User not found — register first' }, corsHeaders, 401);
         if (stored.value !== verifier) return json({ error: 'Unauthorised — verifier mismatch' }, corsHeaders, 401);
+      }
+      // ── Free-tier blob size gate ──
+      // The blob is encrypted client-side, so we can't enforce per-feature
+      // limits server-side (item count, photo presence). What we CAN do is
+      // enforce a total size cap, which catches photo uploads (which blow
+      // up blob size) and prevents abuse. Client should already be hiding
+      // over-limit items, but this is a defence-in-depth check.
+      const blobBytes = typeof ciphertext === 'string' ? ciphertext.length : 0;
+      const gate = await gateFeature(emailHash, 'blobsize', blobBytes);
+      if (!gate.ok) {
+        return json({ error: 'Free tier size limit exceeded', reason: gate.reason, limit: FREE_TIER.BLOB_SIZE_BYTES }, corsHeaders, gate.status);
       }
       const hKey = household && household !== 'default' ? household : 'default';
       await kvSet(['user', emailHash, 'data', hKey], ciphertext);
@@ -3705,6 +4208,18 @@ Deno.serve(async (request) => {
       if (!email || !startDate) return json({ error: 'Missing email or startDate' }, corsHeaders, 400);
       const sfx     = household && household !== 'default' ? `:${household}` : '';
       const ehash   = emailHash || await hashEmail(email);
+      // ── Free-tier email gate ──
+      // Per spec, emails for free-tier users are 'silently dropped'. We
+      // return ok=true but skip persisting the schedule. The next time the
+      // user upgrades and re-saves, the schedule will be re-created. We
+      // also delete any pre-existing schedule so we don't keep emailing a
+      // free-tier user from a stale schedule.
+      const gate = await gateFeature(ehash, 'emails');
+      if (!gate.ok) {
+        try { await kvDel([`schedule${sfx}`]); } catch (_) {}
+        try { await kvDel([`user_items${sfx}`]); } catch (_) {}
+        return json({ ok: true, skipped: 'free_tier' }, corsHeaders);
+      }
       await kvSet([`schedule${sfx}`], JSON.stringify({ startDate, startTime: startTime||'09:00', intervalDays: intervalDays??30, email, emailHash: ehash }));
       if (urgent.length || upcoming.length) await kvSet([`user_items${sfx}`], JSON.stringify({ urgent, upcoming }));
       return json({ ok: true }, corsHeaders);
@@ -4079,6 +4594,15 @@ Deno.serve(async (request) => {
         if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
       } else {
         return json({ error: 'Missing credentials' }, corsHeaders, 400);
+      }
+      // ── Free-tier feature gate: notes mode ──
+      // Allow deletes through (so users can clean up old notes when
+      // downgrading) but block creation/update of note bodies.
+      if (ciphertext) {
+        const gate = await gateFeature(emailHash, 'notes');
+        if (!gate.ok) {
+          return json({ error: 'Notes require upgrade', reason: gate.reason }, corsHeaders, gate.status);
+        }
       }
       if (ciphertext) {
         await kvSet(['note_body', emailHash, noteId], ciphertext);
@@ -4615,8 +5139,18 @@ async function cronCheck() {
   try {
     const schedRaw = await kvGet(['schedule']);
     if (!schedRaw.value) { console.log('Cron: no schedule'); return; }
-    const { email, startDate, startTime, intervalDays } = JSON.parse(schedRaw.value);
+    const { email, startDate, startTime, intervalDays, emailHash } = JSON.parse(schedRaw.value);
     if (!email) { console.log('Cron: no email in schedule'); return; }
+    // ── Free-tier email gate ──
+    // Even if a stale schedule exists in KV (e.g. user upgraded, scheduled,
+    // then downgraded), don't actually send emails to free-tier users.
+    if (emailHash) {
+      const eff = computeEffectiveStatus(await getBillingAccount(emailHash));
+      if (eff === 'free') {
+        console.log(`Cron: skipping ${email} — free tier`);
+        return;
+      }
+    }
     const lastSent = await kvGet(['last_sent']);
     const now      = new Date();
 
