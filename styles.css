@@ -3043,7 +3043,10 @@ body.has-demo-banner #view-notes #notes-header {
   right: 12px;
   min-width: 240px;
   max-width: 320px;
-  background: var(--card);
+  /* Opaque surface to match the rest of the app's chrome (item cards,
+     install banner, etc.). Previously used var(--card) which isn't
+     defined in the codebase, falling through to a transparent default. */
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
   box-shadow: 0 12px 36px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.35);
@@ -3104,22 +3107,6 @@ body.has-demo-banner #view-notes #notes-header {
 }
 .mobile-menu-item.active .icon-tab { color: #111; }
 
-/* Section divider + label inside the dropdown (used by the temporary
-   tab-style picker). */
-.mobile-menu-section-divider {
-  height: 1px;
-  background: var(--border);
-  margin: 6px 8px;
-}
-.mobile-menu-section-label {
-  font-size: 10px;
-  font-family: var(--mono);
-  letter-spacing: 1.5px;
-  color: var(--muted);
-  padding: 6px 14px 2px;
-  text-transform: uppercase;
-}
-
 /* Burger button refines on hover/active for a tactile feel */
 #header-burger-btn:hover,
 #header-burger-btn:active {
@@ -3127,51 +3114,25 @@ body.has-demo-banner #view-notes #notes-header {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   MOBILE TAB-BAR LAYOUT VARIANTS (TEMPORARY)
+   MOBILE TAB BAR LAYOUT
    ═══════════════════════════════════════════════════════════
-   Three styles toggled via body class (set by setTabStyle in app.js).
-   Default (no class) is the current stacked-icon-above-label layout.
-   These ONLY apply at the mobile breakpoint (≤600px) where the 3×2
-   grid lives — at medium widths the row layout takes over.
-   Once the winning style is chosen, the picker UI + the unused
-   variants will be removed and the chosen one folded into the base
-   mobile rules. */
+   Icons-left-of-label, larger sizing — picked from a side-by-side
+   A/B/C trial as 'Style B'. Applied at the mobile breakpoint (≤600px)
+   where the 3×2 grid lives. Medium widths (601-899px) use the row
+   layout from the base .tab styles — no override needed there.
+   The base .tab rules in @media (max-width: 600px) set
+   flex-direction: column; this section overrides to flex-direction: row
+   to put the icon to the left of the label. */
 @media (max-width: 600px) {
-  /* ── Style A: Icons LEFT of label, current size ── */
-  body.tabs-style-A #tabs > .tab {
-    flex-direction: row;
-    gap: 8px;
-    padding: 10px 6px;
-    font-size: 12px;
-  }
-  body.tabs-style-A #tabs > .tab .icon-tab {
-    width: 18px;
-    height: 18px;
-  }
-
-  /* ── Style B: Icons LEFT of label, BIGGER ── */
-  body.tabs-style-B #tabs > .tab {
+  #tabs > .tab {
     flex-direction: row;
     gap: 10px;
     padding: 14px 6px;
     font-size: 14px;
     font-weight: 700;
   }
-  body.tabs-style-B #tabs > .tab .icon-tab {
+  #tabs > .tab .icon-tab {
     width: 22px;
     height: 22px;
-  }
-
-  /* ── Style C: Stacked (current), but BIGGER icons + text ── */
-  body.tabs-style-C #tabs > .tab {
-    /* flex-direction stays as 'column' from the base mobile rule */
-    padding: 12px 4px;
-    font-size: 13px;
-    font-weight: 700;
-    gap: 6px;
-  }
-  body.tabs-style-C #tabs > .tab .icon-tab {
-    width: 24px;
-    height: 24px;
   }
 }

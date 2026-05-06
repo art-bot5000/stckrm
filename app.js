@@ -8462,7 +8462,6 @@ function openMobileMenu() {
   // Sync the active highlight with the current view BEFORE showing,
   // so there's no flash of the wrong state.
   _syncMobileMenuActive();
-  _syncMobileMenuTabStyle();
   el.classList.add('open');
   el.setAttribute('aria-hidden', 'false');
   // Defer attaching the outside-click listener by one event-loop tick
@@ -8507,37 +8506,6 @@ function navFromMobileMenu(name) {
 }
 // Stub kept for backwards-compat with any cached HTML/onclicks.
 function closeMobileMenuOnOverlay(e) { closeMobileMenu(); }
-
-// ── Tab style picker (TEMPORARY — for choosing the new mobile tab layout) ──
-// Stores the choice in localStorage so it persists between reloads. Three
-// styles applied via body class: tabs-style-A / tabs-style-B / tabs-style-C.
-// Default is current behaviour (no class set = stacked, original size).
-function setTabStyle(style) {
-  if (!['A','B','C'].includes(style)) return;
-  document.body.classList.remove('tabs-style-A','tabs-style-B','tabs-style-C');
-  document.body.classList.add('tabs-style-' + style);
-  try { localStorage.setItem('tabs_style_choice', style); } catch (_) {}
-  _syncMobileMenuTabStyle();
-}
-// Apply persisted choice on every page load. Called from DOMContentLoaded.
-function _applyPersistedTabStyle() {
-  let choice = null;
-  try { choice = localStorage.getItem('tabs_style_choice'); } catch (_) {}
-  if (choice && ['A','B','C'].includes(choice)) {
-    document.body.classList.add('tabs-style-' + choice);
-  }
-}
-function _syncMobileMenuTabStyle() {
-  const el = document.getElementById('mobile-menu-dropdown');
-  if (!el) return;
-  let cur = '';
-  if (document.body.classList.contains('tabs-style-A')) cur = 'A';
-  else if (document.body.classList.contains('tabs-style-B')) cur = 'B';
-  else if (document.body.classList.contains('tabs-style-C')) cur = 'C';
-  el.querySelectorAll('.mobile-menu-item-tabstyle').forEach(btn => {
-    btn.classList.toggle('active', btn.getAttribute('data-tab-style') === cur);
-  });
-}
 
 // Promo code field handlers
 function onBillingPromoInput() {
@@ -15628,9 +15596,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initialise the billing module — handles return-from-Stripe URLs,
   // sets up periodic status refresh, and binds focus/visibility hooks.
   try { window.stockroomBilling && stockroomBilling.init(); } catch (_) {}
-  // Apply any persisted mobile-tabs style choice (A/B/C) so the layout
-  // is correct from first paint, no flash.
-  try { _applyPersistedTabStyle(); } catch (_) {}
+  // Clean up any stale tab-style A/B/C choice from the temporary picker
+  // (the picker is gone; Style B is now the baked-in default).
+  try { localStorage.removeItem('tabs_style_choice'); } catch (_) {}
 });
 
 // Predictive button ripple — gives physical depth feedback on tap
