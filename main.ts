@@ -256,6 +256,7 @@ const R2_DURABLE_PREFIXES = [
   'schedule', 'last_sent', 'user_email', 'user_items',
   'deactivation', 'deactivation_reactivate',
   'billing', 'billing_idx',
+  'referral',
 ];
 
 const R2_CFG = {
@@ -1597,6 +1598,11 @@ async function _handleInvoicePaid(emailHash: string, invoice: any): Promise<void
   } catch (err) {
     console.error(`[stripe-webhook] failed to fetch subscription ${invoice.subscription}:`, (err as Error).message);
   }
+  // Advance the referral state machine if this user is a referee.
+  // Each successful invoice (1st → converted, 2nd → qualified). Idempotent
+  // on already-qualified or rejected referrals.
+  try { await processInvoiceForReferral(emailHash); }
+  catch (err) { console.error('[referral] processInvoiceForReferral failed:', (err as Error).message); }
 }
 
 async function _handleInvoiceFailed(emailHash: string, invoice: any): Promise<void> {
@@ -1610,7 +1616,13 @@ async function _handleInvoiceFailed(emailHash: string, invoice: any): Promise<vo
 async function _handlePaymentMethodAttached(emailHash: string, pm: any): Promise<void> {
   const acct = await ensureBillingAccount(emailHash);
   acct.cardOnFile = true;
-  if (pm?.card?.fingerprint) acct.cardFingerprint = pm.card.fingerprint;
+  if (pm?.card?.fingerprint) {
+    acct.cardFingerprint = pm.card.fingerprint;
+    // Maintain the fingerprint reverse-index for abuse detection.
+    // Best-effort — never block the webhook on this.
+    try { await indexCardFingerprint(emailHash, pm.card.fingerprint); }
+    catch (err) { console.warn('[referral] indexCardFingerprint failed:', (err as Error).message); }
+  }
   await setBillingAccount(emailHash, acct);
 }
 
@@ -1712,6 +1724,391 @@ runBillingMigration().catch(err => {
   console.error('Billing migration: unhandled error:', err);
 });
 
+// ═══════════════════════════════════════════════════════════
+//  REFERRALS — Phase 3
+// ═══════════════════════════════════════════════════════════
+// Each user gets one referral code (lazy-created on first request).
+// Referees who sign up with a code get 50% off their first 3 paid months
+// via a Stripe coupon attached at checkout. When a referee completes
+// their 2nd successful paid invoice, the referrer gets a 30-day extension
+// on their subscription period (or a 30-day extension to their trial if
+// they're not yet on paid). Lifetime cap of 12 referrer extensions.
+//
+// Abuse defenses applied at qualification time:
+//   • Card fingerprint dedup (set on payment_method.attached webhook)
+//   • Email normalization (gmail dots/+aliases collapsed)
+//   • Lifetime cap (12 months total per referrer)
+//
+// KV schema:
+//   referral:code:{emailHash}     → JSON { code, createdAt, lifetimeCreditsMonths, qualifiedCount, signupCount, convertedCount }
+//   referral:lookup:{CODE}        → emailHash (uppercase code → owner)
+//   referral:signup:{refereeHash} → JSON { referrerHash, signedUpAt, firstPaymentAt?, qualifiedAt?, status, rejectionReason? }
+//   referral:fp_index:{fingerprint} → JSON [emailHash, ...]   (cards seen across multiple accounts)
+//   referral:emailnorm:{hash}     → emailHash                  (normalized-email reverse index)
+
+const REFERRAL_LIFETIME_CAP_MONTHS = 12;
+const REFEREE_DISCOUNT_PERCENT     = 50;
+const REFEREE_DISCOUNT_MONTHS      = 3;
+const REFERRER_EXTENSION_DAYS      = 30;
+const REFERRAL_CODE_RANDOM_DIGITS  = 4;
+// Stripe coupon ID we create lazily for the referee 50%-off-3-months perk.
+const REFEREE_COUPON_ID            = 'STOCKROOM_REFEREE_50OFF_3MO';
+
+// ── Code generation ──
+// Generate a friendly code like "PETE-7421" using the user's email
+// localpart (max 4 chars, A-Z only) + a 4-digit random suffix. The
+// alphabet excludes ambiguous chars (0, O, 1, I) to make codes
+// shareable verbally.
+const REFERRAL_CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // 32 chars, no 0/O/1/I
+function _genReferralSuffix(): string {
+  const bytes = new Uint8Array(REFERRAL_CODE_RANDOM_DIGITS);
+  crypto.getRandomValues(bytes);
+  let out = '';
+  for (let i = 0; i < REFERRAL_CODE_RANDOM_DIGITS; i++) {
+    out += REFERRAL_CODE_ALPHABET[bytes[i] % REFERRAL_CODE_ALPHABET.length];
+  }
+  return out;
+}
+function _genReferralPrefix(plaintextEmail?: string): string {
+  if (!plaintextEmail) return 'USER';
+  const local = plaintextEmail.split('@')[0] || '';
+  const cleaned = local.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 4);
+  return cleaned.length >= 3 ? cleaned.padEnd(4, 'X') : 'USER';
+}
+
+// Email normalization for abuse detection. Returns a hashed token that
+// is stable across gmail dots/+aliases and case variants. SHA-256 hashed
+// so we never store plaintext emails in the abuse index.
+async function _normalizeEmail(email: string): Promise<string> {
+  if (!email) return '';
+  let e = email.toLowerCase().trim();
+  const at = e.indexOf('@');
+  if (at < 0) return e;
+  let local = e.slice(0, at);
+  const domain = e.slice(at + 1);
+  // Strip + suffix (gmail, fastmail, etc. all support this convention)
+  const plus = local.indexOf('+');
+  if (plus >= 0) local = local.slice(0, plus);
+  // Strip dots in local part for known gmail domains
+  if (domain === 'gmail.com' || domain === 'googlemail.com') {
+    local = local.replace(/\./g, '');
+  }
+  const normalized = `${local}@${domain === 'googlemail.com' ? 'gmail.com' : domain}`;
+  // Hash so we don't store plaintext emails in the abuse index
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
+  const arr = Array.from(new Uint8Array(buf));
+  return arr.map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
+}
+
+interface ReferralCodeRecord {
+  code:                  string;
+  createdAt:             number;
+  lifetimeCreditsMonths: number; // running total of months credited (cap = 12)
+  signupCount:           number; // count of referees who signed up using this code
+  convertedCount:        number; // count of referees who reached 1st paid invoice
+  qualifiedCount:        number; // count of referees who qualified (2nd paid invoice)
+}
+interface ReferralSignupRecord {
+  referrerHash:    string;
+  signedUpAt:      number;
+  firstPaymentAt?: number;
+  qualifiedAt?:    number;
+  creditedAt?:     number;
+  status:          'pending' | 'converted' | 'qualified' | 'rejected';
+  rejectionReason?: 'card_dup' | 'email_dup' | 'lifetime_cap' | 'self_referral' | 'churned' | 'manual';
+}
+
+async function getReferralCodeForUser(emailHash: string): Promise<ReferralCodeRecord | null> {
+  const r = await kvGet(['referral', 'code', emailHash]);
+  if (!r.value) return null;
+  try { return JSON.parse(String(r.value)); } catch { return null; }
+}
+
+async function ensureReferralCode(emailHash: string, plaintextEmail?: string): Promise<ReferralCodeRecord> {
+  const existing = await getReferralCodeForUser(emailHash);
+  if (existing) return existing;
+  // Generate a unique code with retry-on-collision (extremely rare —
+  // 32^4 = ~1M space, but we still loop to be safe).
+  const prefix = _genReferralPrefix(plaintextEmail);
+  let code = '';
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const candidate = `${prefix}-${_genReferralSuffix()}`;
+    const collision = await kvGet(['referral', 'lookup', candidate]);
+    if (!collision.value) { code = candidate; break; }
+  }
+  if (!code) throw new Error('Could not generate unique referral code');
+  const now = Math.floor(Date.now() / 1000);
+  const record: ReferralCodeRecord = {
+    code,
+    createdAt:             now,
+    lifetimeCreditsMonths: 0,
+    signupCount:           0,
+    convertedCount:        0,
+    qualifiedCount:        0,
+  };
+  await kvSet(['referral', 'code', emailHash], JSON.stringify(record));
+  await kvSet(['referral', 'lookup', code], emailHash);
+  return record;
+}
+
+async function getReferrerByCode(code: string): Promise<string | null> {
+  if (!code) return null;
+  const r = await kvGet(['referral', 'lookup', code.toUpperCase()]);
+  return r.value ? String(r.value) : null;
+}
+
+async function getReferralSignup(refereeHash: string): Promise<ReferralSignupRecord | null> {
+  const r = await kvGet(['referral', 'signup', refereeHash]);
+  if (!r.value) return null;
+  try { return JSON.parse(String(r.value)); } catch { return null; }
+}
+
+async function setReferralSignup(refereeHash: string, rec: ReferralSignupRecord): Promise<void> {
+  await kvSet(['referral', 'signup', refereeHash], JSON.stringify(rec));
+}
+
+// Update referrer's stats counter (one of signupCount/convertedCount/
+// qualifiedCount/lifetimeCreditsMonths). Caller passes the field and an
+// integer delta. No-op if the code record doesn't exist.
+async function _bumpReferrerStat(referrerHash: string, field: keyof ReferralCodeRecord, delta: number): Promise<void> {
+  const rec = await getReferralCodeForUser(referrerHash);
+  if (!rec) return;
+  (rec as any)[field] = ((rec as any)[field] || 0) + delta;
+  await kvSet(['referral', 'code', referrerHash], JSON.stringify(rec));
+}
+
+// Lazily ensure the referee Stripe coupon exists. Called from /billing/checkout
+// when a referee starts their first paid month.
+async function ensureRefereeCoupon(): Promise<string | null> {
+  if (!stripeConfigured()) return null;
+  try {
+    // GET first — Stripe coupons are idempotent by ID. If it exists, we're done.
+    const existing = await stripeFetch(`/v1/coupons/${REFEREE_COUPON_ID}`, 'GET').catch(() => null);
+    if (existing?.id) return existing.id;
+    // Create
+    const created = await stripeFetch('/v1/coupons', 'POST', {
+      'id':                  REFEREE_COUPON_ID,
+      'percent_off':         REFEREE_DISCOUNT_PERCENT,
+      'duration':            'repeating',
+      'duration_in_months':  REFEREE_DISCOUNT_MONTHS,
+      'name':                `${REFEREE_DISCOUNT_PERCENT}% off first ${REFEREE_DISCOUNT_MONTHS} months (referee perk)`,
+      'metadata[source]':    'stockroom_referral_referee',
+    });
+    return created.id;
+  } catch (err) {
+    console.error('[referral] ensureRefereeCoupon failed:', (err as Error).message);
+    return null;
+  }
+}
+
+// Apply the referrer reward: 30-day extension. Logic differs by current state:
+//   • Trial user (no Stripe sub yet) → bump trialEndsAt forward by 30 days
+//   • Active Stripe sub → push trial_end (which Stripe interprets as
+//     'skip next billing for this period')
+//   • Free / cancelled → set a 30-day local "rewarded period" by writing
+//     trialEndsAt = now + 30 days and status = trialing
+async function applyReferrerExtension(referrerHash: string): Promise<{ ok: boolean; reason?: string }> {
+  const acct = await getBillingAccount(referrerHash);
+  if (!acct) return { ok: false, reason: 'no_billing_account' };
+  if (acct.grandfathered) {
+    // No effect — grandfathered users already have full access. Still
+    // count it for stats but don't change their state.
+    return { ok: true };
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const ext = REFERRER_EXTENSION_DAYS * 86400;
+
+  // Active Stripe sub → push trial_end forward to extend free period
+  if (acct.stripeSubscriptionId && (acct.status === 'active' || acct.status === 'trialing')) {
+    try {
+      // Compute the new trial end: max(current_period_end, now) + 30 days
+      const baseTs = Math.max(acct.currentPeriodEnd || 0, now);
+      const newTrialEnd = baseTs + ext;
+      await stripeFetch(`/v1/subscriptions/${acct.stripeSubscriptionId}`, 'POST', {
+        'trial_end':              String(newTrialEnd),
+        'proration_behavior':     'none',
+      });
+      // The webhook customer.subscription.updated will mirror status into KV;
+      // we also patch optimistically so UI updates instantly.
+      acct.trialEndsAt = newTrialEnd;
+      acct.status      = 'trialing';
+      await setBillingAccount(referrerHash, acct);
+      return { ok: true };
+    } catch (err) {
+      console.error('[referral] Stripe sub extension failed:', (err as Error).message);
+      return { ok: false, reason: 'stripe_error' };
+    }
+  }
+
+  // No Stripe sub (or sub is inactive) → bump local trial state
+  const newTrialEnd = Math.max(acct.trialEndsAt || now, now) + ext;
+  acct.trialEndsAt = newTrialEnd;
+  acct.status      = 'trialing';
+  await setBillingAccount(referrerHash, acct);
+  return { ok: true };
+}
+
+// Send the referrer-rewarded email (Resend). Best-effort — we never throw.
+async function _sendReferrerQualifiedEmail(referrerHash: string): Promise<void> {
+  try {
+    const emailRow = await kvGet(['user', referrerHash, 'email']);
+    if (!emailRow.value) return; // user signed up without sharing plaintext email
+    const to = String(emailRow.value);
+    const RESEND_KEY = Deno.env.get('RESEND_API_KEY') || '';
+    const FROM       = Deno.env.get('FROM_EMAIL') || 'STOCKROOM <noreply@stckrm.com>';
+    if (!RESEND_KEY) { console.warn('[referral] RESEND_API_KEY not set; skipping email'); return; }
+    const subject = '✓ A friend just signed up — you earned 30 free days!';
+    const html = `<!DOCTYPE html>
+<html><body style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#111">
+  <h2 style="font-size:20px;margin:0 0 12px">A friend you referred just qualified.</h2>
+  <p style="font-size:15px;line-height:1.5;color:#333">
+    They signed up using your code, completed their second paid month, and now
+    you've earned <strong>30 free days</strong> on your subscription.
+  </p>
+  <p style="font-size:15px;line-height:1.5;color:#333">
+    The credit has been applied automatically — your next renewal date has
+    been pushed out by a month. No action needed on your part.
+  </p>
+  <p style="font-size:13px;color:#666;margin-top:24px">
+    Want to refer more friends? Open STOCKROOM → Billing to grab your code.
+  </p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+  <p style="font-size:11px;color:#999">You're receiving this because someone signed up with your referral code on STOCKROOM. If you didn't expect this email, you can safely ignore it.</p>
+</body></html>`;
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: FROM, to, subject, html }),
+    });
+  } catch (err) {
+    console.warn('[referral] email send failed:', (err as Error).message);
+  }
+}
+
+// Record a referee's signup. Validates the code exists and isn't a self-
+// referral. Idempotent — calling twice for the same referee is a no-op.
+async function recordReferralSignup(refereeHash: string, code: string, refereeEmail?: string): Promise<{ ok: boolean; reason?: string }> {
+  if (!code) return { ok: false, reason: 'no_code' };
+  const referrerHash = await getReferrerByCode(code);
+  if (!referrerHash) return { ok: false, reason: 'invalid_code' };
+  if (referrerHash === refereeHash) return { ok: false, reason: 'self_referral' };
+  // Don't overwrite an existing record (prevents fraud via re-running signup)
+  const existing = await getReferralSignup(refereeHash);
+  if (existing) return { ok: false, reason: 'already_recorded' };
+  const now = Math.floor(Date.now() / 1000);
+  await setReferralSignup(refereeHash, {
+    referrerHash,
+    signedUpAt: now,
+    status:     'pending',
+  });
+  await _bumpReferrerStat(referrerHash, 'signupCount', 1);
+  // Pre-compute and store the normalized email for abuse detection
+  if (refereeEmail) {
+    const norm = await _normalizeEmail(refereeEmail);
+    if (norm) await kvSet(['referral', 'emailnorm', norm], refereeHash);
+  }
+  return { ok: true };
+}
+
+// Run abuse checks at qualification. Returns null if clean, or a rejection
+// reason string. We check: card fingerprint vs referrer, normalized email
+// vs referrer, lifetime cap.
+async function _checkReferralAbuse(refereeHash: string, referrerHash: string): Promise<string | null> {
+  // 1. Card fingerprint dedup
+  const refereeAcct  = await getBillingAccount(refereeHash);
+  const referrerAcct = await getBillingAccount(referrerHash);
+  if (refereeAcct?.cardFingerprint && referrerAcct?.cardFingerprint
+      && refereeAcct.cardFingerprint === referrerAcct.cardFingerprint) {
+    return 'card_dup';
+  }
+  // Also check the fingerprint index for any other account collision
+  if (refereeAcct?.cardFingerprint) {
+    const idxRow = await kvGet(['referral', 'fp_index', refereeAcct.cardFingerprint]);
+    if (idxRow.value) {
+      try {
+        const accounts = JSON.parse(String(idxRow.value)) as string[];
+        // If the referrer is anywhere in this list, the cards have crossed
+        if (accounts.includes(referrerHash)) return 'card_dup';
+      } catch (_) {}
+    }
+  }
+  // 2. Normalized email dedup
+  const refereeEmailRow  = await kvGet(['user', refereeHash, 'email']);
+  const referrerEmailRow = await kvGet(['user', referrerHash, 'email']);
+  if (refereeEmailRow.value && referrerEmailRow.value) {
+    const refNorm  = await _normalizeEmail(String(refereeEmailRow.value));
+    const reffNorm = await _normalizeEmail(String(referrerEmailRow.value));
+    if (refNorm && refNorm === reffNorm) return 'email_dup';
+  }
+  // 3. Lifetime cap
+  const refRecord = await getReferralCodeForUser(referrerHash);
+  if (refRecord && refRecord.lifetimeCreditsMonths >= REFERRAL_LIFETIME_CAP_MONTHS) {
+    return 'lifetime_cap';
+  }
+  return null;
+}
+
+// Track a paid invoice for a referee. Advances state machine:
+//   pending  →  converted  (1st paid invoice)
+//   converted → qualified (2nd paid invoice; runs abuse checks; issues credit)
+async function processInvoiceForReferral(refereeHash: string): Promise<void> {
+  const signup = await getReferralSignup(refereeHash);
+  if (!signup) return; // not a referral signup
+  if (signup.status === 'qualified' || signup.status === 'rejected') return;
+  const now = Math.floor(Date.now() / 1000);
+
+  if (signup.status === 'pending') {
+    signup.status = 'converted';
+    signup.firstPaymentAt = now;
+    await setReferralSignup(refereeHash, signup);
+    await _bumpReferrerStat(signup.referrerHash, 'convertedCount', 1);
+    console.log(`[referral] ${refereeHash.slice(0,8)} converted (1st payment)`);
+    return;
+  }
+
+  if (signup.status === 'converted') {
+    // Run abuse checks
+    const rejectionReason = await _checkReferralAbuse(refereeHash, signup.referrerHash);
+    if (rejectionReason) {
+      signup.status          = 'rejected';
+      signup.rejectionReason = rejectionReason as any;
+      await setReferralSignup(refereeHash, signup);
+      console.log(`[referral] ${refereeHash.slice(0,8)} rejected at qualification: ${rejectionReason}`);
+      return;
+    }
+    // Apply the extension
+    const ext = await applyReferrerExtension(signup.referrerHash);
+    if (!ext.ok) {
+      console.error(`[referral] failed to apply extension: ${ext.reason}`);
+      return; // leave as 'converted' so we retry next webhook
+    }
+    signup.status      = 'qualified';
+    signup.qualifiedAt = now;
+    signup.creditedAt  = now;
+    await setReferralSignup(refereeHash, signup);
+    await _bumpReferrerStat(signup.referrerHash, 'qualifiedCount', 1);
+    await _bumpReferrerStat(signup.referrerHash, 'lifetimeCreditsMonths', 1);
+    console.log(`[referral] ${refereeHash.slice(0,8)} QUALIFIED — referrer ${signup.referrerHash.slice(0,8)} got 30 days`);
+    // Send referrer email (best-effort, async)
+    _sendReferrerQualifiedEmail(signup.referrerHash).catch(_ => {});
+  }
+}
+
+// Maintain the card fingerprint reverse index — append-only list of
+// emailHashes that have used this fingerprint.
+async function indexCardFingerprint(emailHash: string, fingerprint: string): Promise<void> {
+  if (!fingerprint) return;
+  const row = await kvGet(['referral', 'fp_index', fingerprint]);
+  let list: string[] = [];
+  if (row.value) {
+    try { list = JSON.parse(String(row.value)); } catch { list = []; }
+  }
+  if (!list.includes(emailHash)) {
+    list.push(emailHash);
+    await kvSet(['referral', 'fp_index', fingerprint], JSON.stringify(list));
+  }
+}
+
 // ── Request handler ───────────────────────────────────────
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') {
@@ -1799,6 +2196,30 @@ Deno.serve(async (request) => {
           }
         } catch (err) {
           console.warn(`[billing/checkout] promo lookup failed: ${(err as Error).message}`);
+        }
+      } else {
+        // No explicit promo code → check if this user is a referee with a
+        // pending discount (50% off first 3 months) and apply that.
+        // Promo code takes precedence over referee perk because the user
+        // explicitly chose to enter a code (e.g. WELCOME50 may be better).
+        try {
+          const refSignup = await getReferralSignup(emailHash);
+          // Eligible only if signup exists, hasn't been rejected, and we
+          // haven't already applied the discount on a previous checkout
+          // attempt that succeeded (in which case they'd have a Stripe
+          // sub already and wouldn't be checking out again).
+          if (refSignup
+              && refSignup.status !== 'rejected'
+              && !(await getBillingAccount(emailHash))?.stripeSubscriptionId) {
+            const couponId = await ensureRefereeCoupon();
+            if (couponId) {
+              params['discounts[0][coupon]'] = couponId;
+              delete params['allow_promotion_codes'];
+              console.log(`[billing/checkout] applied referee coupon ${couponId} for ${emailHash.slice(0,8)}`);
+            }
+          }
+        } catch (err) {
+          console.warn(`[billing/checkout] referee coupon attach failed: ${(err as Error).message}`);
         }
       }
 
@@ -1926,6 +2347,110 @@ Deno.serve(async (request) => {
       await setBillingAccount(emailHash, acct);
       return json({ ok: true }, corsHeaders);
     } catch(err) {
+      return json({ error: (err as Error).message }, corsHeaders, 500);
+    }
+  }
+
+  // ── Referral: get my code + stats ──
+  // Returns the user's referral code (creating it lazily) plus stats and
+  // a list of their referrals (with status). UI uses this to populate the
+  // 'Refer a Friend' section.
+  if (url.pathname === '/referral/code' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      const emailRow = await kvGet(['user', emailHash, 'email']);
+      const plaintextEmail = emailRow.value ? String(emailRow.value) : undefined;
+      const record = await ensureReferralCode(emailHash, plaintextEmail);
+      const cap = REFERRAL_LIFETIME_CAP_MONTHS;
+      return json({
+        ok:                    true,
+        code:                  record.code,
+        createdAt:             record.createdAt,
+        signupCount:           record.signupCount,
+        convertedCount:        record.convertedCount,
+        qualifiedCount:        record.qualifiedCount,
+        lifetimeCreditsMonths: record.lifetimeCreditsMonths,
+        lifetimeCapMonths:     cap,
+        capReached:            record.lifetimeCreditsMonths >= cap,
+        rewards: {
+          referrerExtensionDays: REFERRER_EXTENSION_DAYS,
+          refereeDiscountPercent: REFEREE_DISCOUNT_PERCENT,
+          refereeDiscountMonths:  REFEREE_DISCOUNT_MONTHS,
+        },
+      }, corsHeaders);
+    } catch (err) {
+      console.error('[referral/code] error:', (err as Error).message);
+      return json({ error: (err as Error).message }, corsHeaders, 500);
+    }
+  }
+
+  // ── Referral: list my referrals ──
+  // Returns the signups attributed to this user's code, with each
+  // referee's status (pending/converted/qualified/rejected). Referee
+  // identity is anonymized (we expose first 6 chars of emailHash + signup
+  // date only) — never plaintext email.
+  if (url.pathname === '/referral/list' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      // Walk all referral:signup:* entries and collect those where
+      // referrerHash matches. This is O(N) over all signups but N is small
+      // and we don't need a reverse index for this rare-ish query.
+      const list: any[] = [];
+      const iter = kv.list({ prefix: ['referral', 'signup'] });
+      for await (const entry of iter) {
+        try {
+          const rec = JSON.parse(String(entry.value)) as ReferralSignupRecord;
+          if (rec.referrerHash !== emailHash) continue;
+          const refereeHash = String((entry.key as any[])[2]);
+          list.push({
+            refereeRef:    refereeHash.slice(0, 6),
+            signedUpAt:    rec.signedUpAt,
+            firstPaymentAt: rec.firstPaymentAt,
+            qualifiedAt:   rec.qualifiedAt,
+            status:        rec.status,
+            rejectionReason: rec.rejectionReason,
+          });
+        } catch (_) {}
+      }
+      // Sort newest first
+      list.sort((a, b) => (b.signedUpAt || 0) - (a.signedUpAt || 0));
+      return json({ ok: true, referrals: list }, corsHeaders);
+    } catch (err) {
+      return json({ error: (err as Error).message }, corsHeaders, 500);
+    }
+  }
+
+  // ── Referral: validate a code ──
+  // Used by the signup form to give live feedback. Returns whether the
+  // code is valid + a friendly description. Does NOT reveal the
+  // referrer's identity.
+  if (url.pathname === '/referral/validate' && request.method === 'POST') {
+    try {
+      const { code } = await request.json();
+      if (!code || typeof code !== 'string') return json({ valid: false, reason: 'missing' }, corsHeaders);
+      const referrerHash = await getReferrerByCode(code);
+      if (!referrerHash) return json({ valid: false, reason: 'not_found' }, corsHeaders);
+      return json({
+        valid:           true,
+        rewardForReferee:`${REFEREE_DISCOUNT_PERCENT}% off your first ${REFEREE_DISCOUNT_MONTHS} paid months`,
+      }, corsHeaders);
+    } catch (err) {
       return json({ error: (err as Error).message }, corsHeaders, 500);
     }
   }
@@ -3801,7 +4326,7 @@ Deno.serve(async (request) => {
   // Registration just checks the email isn't already taken.
   if (url.pathname === '/user/register' && request.method === 'POST') {
     try {
-      const { emailHash, verifier, email } = await request.json();
+      const { emailHash, verifier, email, referralCode } = await request.json();
       if (!emailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
       const existing = await kvGet(['user', emailHash, 'verifier']);
       if (existing.value) {
@@ -3852,7 +4377,24 @@ Deno.serve(async (request) => {
         console.error(`Billing record init failed for ${emailHash} (continuing anyway):`, (err as Error).message);
       }
 
-      return json({ ok: true, cryptoVersion }, corsHeaders);
+      // ── Referrals: record signup if code was provided ──
+      // Best-effort — failures here don't block signup. The result is
+      // returned in the response so the client can show a "Welcome,
+      // your friend's code was applied!" message.
+      let referralApplied = false;
+      let referralReason: string | undefined;
+      if (referralCode && typeof referralCode === 'string') {
+        try {
+          const result = await recordReferralSignup(emailHash, referralCode, email);
+          if (result.ok) referralApplied = true;
+          else referralReason = result.reason;
+        } catch (err) {
+          console.error('[referral] signup recording failed:', (err as Error).message);
+          referralReason = 'error';
+        }
+      }
+
+      return json({ ok: true, cryptoVersion, referralApplied, referralReason }, corsHeaders);
     } catch(err) {
       return json({ error: err.message }, corsHeaders, 500);
     }
