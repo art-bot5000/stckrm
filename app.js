@@ -1754,16 +1754,21 @@ function ic(name, size='') {
   return `<svg class="${cls}" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
 }
 const today = () => new Date().toISOString().split('T')[0];
-const fmtDate = d => d ? new Date(d+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—';
-// Generic date formatter — accepts both 'YYYY-MM-DD' and full ISO timestamps.
-// Replaces a previously-local helper that several call sites still reference.
-const fmt = d => {
-  if (!d) return '—';
+// ── Unified date formatter ─────────────────────────────────────
+// Accepts 'YYYY-MM-DD' or full ISO timestamps. Returns '—' for falsy/invalid input.
+// opts.short=true returns day+month only (no year), e.g. "5 Nov".
+const fmt = (d, opts = {}) => {
+  if (!d) return opts.short ? '' : '—';
   const s = String(d);
   const date = s.length <= 10 ? new Date(s + 'T12:00:00') : new Date(s);
-  if (isNaN(date)) return '—';
-  return date.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+  if (isNaN(date)) return opts.short ? '' : '—';
+  const fmtOpts = opts.short
+    ? { day: 'numeric', month: 'short' }
+    : { day: 'numeric', month: 'short', year: 'numeric' };
+  return date.toLocaleDateString('en-GB', fmtOpts);
 };
+// Alias kept for back-compat — many call sites use fmtDate
+const fmtDate = fmt;
 
 function timeAgo(dateStr) {
   if (!dateStr) return '—';
@@ -1889,13 +1894,6 @@ function formatProjectedUnits(projected) {
   if (projected < 1)     return '<1';
   if (projected < 10)    return `~${projected.toFixed(1).replace(/\.0$/, '')}`;
   return `~${Math.round(projected)}`;
-}
-
-function getStatus(pct, threshold) {
-  if (pct === null || pct === undefined) return 'nodata';
-  if (pct <= threshold/2) return 'critical';
-  if (pct <= threshold) return 'warn';
-  return 'ok';
 }
 
 const STATUS_COLOR = { critical:'#e85050', warn:'#e8a838', ok:'#4cbb8a', nodata:'#7880a0' };
@@ -2117,28 +2115,6 @@ function mergeItemFields(local, remote) {
   return result;
 }
 
-async function mergeItems(local, remote, remoteWins = false) {
-  const deletedIds = await loadDeletedIds();
-  const merged = new Map();
-
-  for (const item of local) {
-    if (!deletedIds.has(item.id)) merged.set(item.id, item);
-  }
-
-  for (const remoteItem of remote) {
-    if (deletedIds.has(remoteItem.id)) continue;
-    const localItem = merged.get(remoteItem.id);
-    if (!localItem) {
-      // Item only in remote — add it
-      merged.set(remoteItem.id, remoteItem);
-    } else {
-      // Item in both — field-level merge
-      merged.set(remoteItem.id, mergeItemFields(localItem, remoteItem));
-    }
-  }
-
-  return Array.from(merged.values());
-}
 // ── Grocery tombstones — tracks deleted grocery item IDs so they aren't re-added on sync
 async function loadGroceryDeletedIds() {
   try {
@@ -5026,31 +5002,6 @@ async function swipeEnd(e, id) {
 //  ARCHIVE / UNARCHIVE ITEM
 // ═══════════════════════════════════════════
 
-async function archiveItem(id) {
-  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
-  const item = items.find(i => i.id === id);
-  if (!item) return;
-  item._archived  = true;
-  item.updatedAt  = new Date().toISOString();
-  await saveData();
-  scheduleRender('grid', 'dashboard');
-  _syncQueue.enqueue();
-  toast(`"${item.name}" archived`);
-}
-
-async function restoreItem(id) {
-  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
-  const item = items.find(i => i.id === id);
-  if (!item) return;
-  delete item._archived;
-  item.updatedAt = new Date().toISOString();
-  await saveData();
-  scheduleRender('grid', 'dashboard');
-  _syncQueue.enqueue();
-  toast(`"${item.name}" restored`);
-}
-
-
 let lastAutoSync = 0;
 const AUTO_SYNC_COOLDOWN = 30000; // min 30s between auto-syncs
 
@@ -6461,43 +6412,6 @@ function setTagFilter(index, btn) {
 function buildTagSettingsRows() {} // no-op — tags now managed inline
 
 
-
-async function fetchProductImage() {
-  const url = document.getElementById('f-url').value.trim();
-  if (!url) { alert('Enter a product URL first.'); return; }
-
-  const btn = document.getElementById('fetch-img-btn');
-  const wrap = document.getElementById('img-preview-wrap');
-  const status = document.getElementById('img-preview-status');
-  const preview = document.getElementById('img-preview');
-
-  btn.textContent = '⏳ Fetching…';
-  btn.disabled = true;
-  status.textContent = '';
-  wrap.style.display = 'none';
-
-  const imageUrl = await extractOgImage(url);
-
-  btn.textContent = 'Fetch Image';
-  btn.disabled = false;
-
-  if (imageUrl) {
-    pendingImageUrl = imageUrl;
-    preview.src = imageUrl;
-    preview.onerror = () => {
-      status.textContent = '<svg class="icon" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> Image loaded but may not display';
-      status.style.color = 'var(--warn)';
-    };
-    status.textContent = '✓ Image found';
-    status.style.color = 'var(--ok)';
-    wrap.style.display = 'flex';
-  } else {
-    status.textContent = '';
-    pendingImageUrl = null;
-    wrap.style.display = 'none';
-    toast('No image found for this URL — the retailer may block scraping');
-  }
-}
 
 async function fetchProductImage() {
   // Free-tier photo gate
@@ -14023,16 +13937,6 @@ async function trustThisDevice() {
   await trustThisDeviceWith(_kvEmail, _kvEmailHash, _kvVerifier, _kvKey);
 }
 
-function toggleTrustedDevicesPanel() {
-  const panel = document.getElementById('trusted-devices-panel');
-  const btn = event.target.closest('button');
-  if (!panel) return;
-  const hidden = panel.style.display === 'none';
-  panel.style.display = hidden ? 'block' : 'none';
-  if (btn) btn.textContent = hidden ? 'Hide devices' : 'Show devices';
-  if (hidden) loadTrustedDevices();
-}
-
 async function loadTrustedDevices() {
   if (!kvConnected || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
   const list = document.getElementById('trusted-devices-list');
@@ -17192,11 +17096,8 @@ function _money(n) {
   return sign + '£' + abs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function _shortDate(iso) {
-  if (!iso) return '';
-  const d = new Date(iso + 'T12:00:00');
-  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-}
+// _shortDate — alias for fmt(d, { short: true }). Kept for back-compat.
+const _shortDate = (iso) => fmt(iso, { short: true });
 
 function _daysFromToday(iso) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -22516,7 +22417,7 @@ function renderGroceryListPicker() {
     });
   }
 
-  const fmt = d => new Date(d).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+  // (uses outer unified fmt())
 
   body.innerHTML = `
     <div style="margin-bottom:16px">
@@ -25379,28 +25280,6 @@ function loadHouseholdShareState() {
 }
 
 function saveHouseholdShareState() { saveShareState(); }
-
-function updateHouseholdShareUI() {
-  const joinedSection = document.getElementById('household-joined-section');
-  const joinSection   = document.getElementById('household-join-section');
-  const ownerSection  = document.getElementById('household-owner-section');
-  const statusEl      = document.getElementById('household-share-status');
-  if (!joinedSection) return;
-
-  if (_sharedFileId) {
-    joinedSection.style.display = 'block';
-    joinSection.style.display   = 'none';
-    ownerSection.style.display  = 'none';
-    if (statusEl) statusEl.textContent = 'Your data syncs to the shared household. The owner manages the connection.';
-  } else {
-    joinedSection.style.display = 'none';
-    joinSection.style.display   = 'block';
-    ownerSection.style.display  = 'block';
-    if (statusEl) statusEl.textContent = kvConnected
-      ? 'You are the household owner. Generate an invite code for others to join.'
-      : 'Sign in above, then generate an invite code for others to join.';
-  }
-}
 
 async function createInviteCode() {
   if (!kvConnected) {
