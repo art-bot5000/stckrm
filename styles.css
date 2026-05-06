@@ -765,7 +765,8 @@
     #view-notes,
     #view-account-security,
     #view-settings,
-    #view-savings { max-width: 800px; margin-left: 0; margin-right: 0; }
+    #view-savings,
+    #view-budget { max-width: 800px; margin-left: 0; margin-right: 0; }
     #wizard .wizard-box { max-width: 540px; }
     .wizard-features { grid-template-columns: 1fr 1fr; gap: 12px; }
     .country-grid { grid-template-columns: 1fr 1fr 1fr; }
@@ -1127,8 +1128,10 @@
   /* Grocery: hide Edit button + Add Item in multi-list picker view */
   body.grocery-multilist #grocery-edit-toggle { display:none !important; }
   body.grocery-multilist .grocery-toolbar .btn-primary { display:none !important; }
-  /* Notes view on desktop - must clear the 220px sidebar since it is at body level */
-  #view-notes { position:fixed; top:0; right:0; bottom:0; left:220px; overflow-y:auto; padding:28px 36px; display:none; background:var(--bg); z-index:10; }
+  /* Notes view on desktop - must clear the 220px sidebar since it is at body level.
+     Width constrained to 800px to match Reminders/Savings/etc (the 800px max-width
+     rule above doesn't apply because position:fixed + right:0 would override it). */
+  #view-notes { position:fixed; top:0; bottom:0; left:220px; width:800px; overflow-y:auto; padding:28px 36px; display:none; background:var(--bg); z-index:10; }
   #view-notes.active { display:block; }
   /* Width constraints centralised in the desktop @media block above */
   #view-account-security.active { display:block; }
@@ -1140,6 +1143,14 @@
    don't render edge-to-edge. */
 @media (max-width: 899px) {
   #view-notes { padding: 16px 12px; }
+  /* When Notes is active, hide the now-empty #view-content and zero #main's
+     bottom padding so the empty space (otherwise ~32px) doesn't push the
+     Notes header below where other tabs render. The tab bar lives in
+     #tabs-sticky-wrap (sibling of #view-content, also inside #main) and stays
+     visible. Top padding on #main is preserved so the tab bar still has
+     breathing room below the app header. */
+  body.notes-view-active #main { padding-bottom: 0; }
+  body.notes-view-active #view-content { display: none; }
 }
 /* Mobile: Hi greeting flush with logo */
 @media (max-width:899px) {

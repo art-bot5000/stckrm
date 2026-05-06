@@ -8563,6 +8563,11 @@ function showView(name, btn) {
     _refreshBudgetWeekStartRadio();
   }
   _currentView = name;
+  // Notes view sits OUTSIDE #main (it's a body-level sibling, for reasons related
+  // to its desktop fixed-positioning). Toggle a body class so CSS can hide the
+  // empty #main when Notes is active — otherwise its empty padding leaves a
+  // visual gap above the Notes header on mobile.
+  document.body.classList.toggle('notes-view-active', name === 'notes');
   if (_householdEnabled) pushPresence();
   updateFab(name);
   // Clear grocery done-slide when leaving grocery view
