@@ -65,6 +65,9 @@
     handle /billing/* {
         reverse_proxy localhost:8000
     }
+    handle /referral/* {
+        reverse_proxy localhost:8000
+    }
     handle /auth/* {
         reverse_proxy localhost:8000
     }
