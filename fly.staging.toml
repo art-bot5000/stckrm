@@ -1,0 +1,53 @@
+# fly.staging.toml — Staging environment for STOCKROOM
+#
+# Deploy with: flyctl deploy --config fly.staging.toml
+#
+# This is a parallel app to production (stckrm) with its own:
+#   - app name (stckrm-staging)
+#   - persistent volume (stockroom_staging_data — totally separate KV data)
+#   - environment secrets (set via flyctl secrets set --app stckrm-staging ...)
+#
+# IMPORTANT: Keep this file in sync with fly.toml when production-shape
+# changes are made (region, mounts, http_service, vm size). The intentional
+# differences are: app name, mount source name, and (optionally) min_machines_running.
+
+app = 'stckrm-staging'
+primary_region = 'lhr'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[deploy]
+  strategy = 'rolling'
+
+[env]
+  DENO_KV_PATH = '/data/stockroom.db'
+  # Build flag baked into the image — the Dockerfile uses this to inject
+  # noindex meta tags and a "STAGING" banner. See Dockerfile for details.
+  STOCKROOM_ENV = 'staging'
+
+[[mounts]]
+  source = 'stockroom_staging_data'
+  destination = '/data'
+  initial_size = '1gb'
+  snapshot_retention = 5
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  # Staging can sleep fully when idle — no need to keep a machine warm.
+  # Production has min_machines_running = 1; staging has 0 so it's free
+  # when nobody's testing.
+  min_machines_running = 0
+  processes = ['app']
+
+  [http_service.concurrency]
+    type = 'requests'
+    hard_limit = 200
+    soft_limit = 150
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'

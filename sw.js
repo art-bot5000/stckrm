@@ -1,5 +1,14 @@
 const CACHE_VERSION = 'stockroom-kv-v286';
-const CACHE_NAME    = CACHE_VERSION;
+// Namespace the cache by hostname so staging and production PWAs don't
+// fight over the same cache when both are installed on the same device.
+// Production hostnames (stckrm.com, app.stckrm.com, stckrm.fly.dev) all
+// resolve to 'prod'; anything else (stckrm-staging.fly.dev, localhost)
+// gets its own namespace based on the hostname.
+const SW_HOSTNAME   = (self.location && self.location.hostname) || 'prod';
+const SW_NAMESPACE  = /^(stckrm\.com|app\.stckrm\.com|stckrm\.fly\.dev)$/.test(SW_HOSTNAME)
+  ? 'prod'
+  : SW_HOSTNAME.replace(/[^a-z0-9]/gi, '-');
+const CACHE_NAME    = `${SW_NAMESPACE}-${CACHE_VERSION}`;
 
 const CACHE_URLS = [
   '/',                  // landing page

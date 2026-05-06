@@ -1645,7 +1645,13 @@ async function migrateFromLocalStorage(lsKey, dbStore, dbKey, transform) {
 const CLIENT_ID       = '589308993147-rfj3kbaave6uhf3k1ojes3ph2l1pkd1m.apps.googleusercontent.com';
 const SCOPES          = 'https://www.googleapis.com/auth/drive.file';
 // KV-native: no Drive file
-const WORKER_URL      = 'https://stckrm.fly.dev';
+// Same-origin backend: the frontend always talks to whichever backend
+// served it. Production (stckrm.com / app.stckrm.com) hits its own
+// Caddy → Deno; staging (stckrm-staging.fly.dev) hits its own backend.
+// This means staging users can't accidentally write to production data.
+const WORKER_URL      = (typeof location !== 'undefined' && location.origin)
+  ? location.origin
+  : 'https://stckrm.fly.dev';
 // Legacy constants kept to prevent reference errors in dead code paths
 const DROPBOX_FILE    = '';
 
