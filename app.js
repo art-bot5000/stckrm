@@ -1772,7 +1772,7 @@ const fmtDate = fmt;
 
 function timeAgo(dateStr) {
   if (!dateStr) return '—';
-  const days = Math.floor((Date.now() - new Date(dateStr+'T12:00:00')) / 86400000);
+  const days = Math.floor((Date.now() - new Date(dateStr+'T12:00:00')) / MS_PER_DAY);
   if (days === 0) return 'today';
   if (days === 1) return 'yesterday';
   if (days < 7)  return `${days}d ago`;
@@ -1796,11 +1796,11 @@ function getDaysPerUnit(item) {
     return item.daysPerUnit;
   }
   // Legacy migration: months was intended as "purchase supply",
-  // so per-unit lifetime = months × 30.5 / qty.
+  // so per-unit lifetime = months × AVG_DAYS_PER_MONTH / qty.
   const months = (item && typeof item.months === 'number') ? item.months : 1;
   const qty    = (item && typeof item.qty    === 'number' && item.qty > 0) ? item.qty : 1;
-  const dpu    = (months * 30.5) / qty;
-  return dpu > 0 ? dpu : 30.5;
+  const dpu    = (months * AVG_DAYS_PER_MONTH) / qty;
+  return dpu > 0 ? dpu : AVG_DAYS_PER_MONTH;
 }
 
 // Convenience: total supply (in days) for a freshly-stocked purchase of N units.
@@ -1819,11 +1819,11 @@ function calcStock(item) {
 
   // If a manual stock count has been recorded, project from that count
   if (item.stockCount != null && item.stockCountDate) {
-    const daysSinceCount  = (Date.now() - new Date(item.stockCountDate+'T12:00:00')) / 86400000;
+    const daysSinceCount  = (Date.now() - new Date(item.stockCountDate+'T12:00:00')) / MS_PER_DAY;
     const unitsRemaining  = item.stockCount;
     const totalDays       = dpu * Math.max(1, unitsRemaining);
     let daysLeft;
-    const daysSincePurchase = (Date.now() - new Date(last.date+'T12:00:00')) / 86400000;
+    const daysSincePurchase = (Date.now() - new Date(last.date+'T12:00:00')) / MS_PER_DAY;
     const used = (last.qty || 1) - unitsRemaining;
     if (used > 0 && daysSincePurchase > 1) {
       // Learned rate: use actual measured consumption since purchase
@@ -1839,7 +1839,7 @@ function calcStock(item) {
 
   // Default: time-based from purchase / startedUsing date
   const referenceDate = item.startedUsing || last.date;
-  const daysSince  = (Date.now() - new Date(referenceDate+'T12:00:00')) / 86400000;
+  const daysSince  = (Date.now() - new Date(referenceDate+'T12:00:00')) / MS_PER_DAY;
   const totalDays  = dpu * (last.qty || 1);
   const daysLeft   = Math.round(Math.max(0, totalDays - daysSince));
   const pct        = totalDays > 0
@@ -1854,7 +1854,7 @@ function formatDaysLeft(daysLeft) {
   if (daysLeft == null || isNaN(daysLeft)) return { num: '?', unit: 'days left', suspect: false };
   if (daysLeft >= 1095) return { num: '3+', unit: 'years left', suspect: true };  // 3+ years suggests model misconfig
   if (daysLeft >= 730)  return { num: '2+', unit: 'years left', suspect: true };
-  if (daysLeft >= 365)  return { num: Math.round(daysLeft / 30.5), unit: 'months left', suspect: false };
+  if (daysLeft >= 365)  return { num: Math.round(daysLeft / AVG_DAYS_PER_MONTH), unit: 'months left', suspect: false };
   if (daysLeft >= 60)   return { num: Math.round(daysLeft / 7), unit: 'weeks left', suspect: false };
   return { num: daysLeft, unit: daysLeft === 1 ? 'day left' : 'days left', suspect: false };
 }
@@ -1867,7 +1867,7 @@ function getProjectedUnitsLeft(item) {
   if (!item || item.stockCount == null || !item.stockCountDate) return null;
   const dpu = getDaysPerUnit(item);
   if (dpu <= 0) return item.stockCount;
-  const daysSinceCount = (Date.now() - new Date(item.stockCountDate + 'T12:00:00')) / 86400000;
+  const daysSinceCount = (Date.now() - new Date(item.stockCountDate + 'T12:00:00')) / MS_PER_DAY;
   if (daysSinceCount <= 0) return item.stockCount;
 
   // Try to compute a learned rate from the last delivered purchase
@@ -1875,7 +1875,7 @@ function getProjectedUnitsLeft(item) {
   const last = deliveredLogs[deliveredLogs.length - 1];
   let ratePerDay = 1 / dpu; // default: configured rate (units consumed per day)
   if (last && last.qty != null) {
-    const daysSincePurchase = (Date.now() - new Date(last.date + 'T12:00:00')) / 86400000;
+    const daysSincePurchase = (Date.now() - new Date(last.date + 'T12:00:00')) / MS_PER_DAY;
     const used = (last.qty || 1) - item.stockCount;
     if (used > 0 && daysSincePurchase > 1) {
       const learned = used / daysSincePurchase;
@@ -2208,7 +2208,15 @@ async function removeTombstone(id) {
 // hard-removes them and writes a tombstone (so sync can't resurrect them).
 
 const RECYCLE_BIN_DAYS = 30;
-const RECYCLE_BIN_MS   = RECYCLE_BIN_DAYS * 24 * 60 * 60 * 1000;
+// ── Time constants ────────────────────────────────────────────
+// MS_PER_DAY is the canonical milliseconds-in-a-day value used throughout
+// the date math (item age, recycle-bin expiry, sync intervals, etc).
+// AVG_DAYS_PER_MONTH is the simple AVG_DAYS_PER_MONTH approximation used to convert
+// per-month rates to per-day rates (and vice versa) for stock-burn-down
+// calculations. Not calendar-accurate but consistent across the app.
+const MS_PER_DAY          = 86400000;
+const AVG_DAYS_PER_MONTH  = 30.5;
+const RECYCLE_BIN_MS   = RECYCLE_BIN_DAYS * MS_PER_DAY;
 
 function _isInRecycleBin(obj) {
   return !!(obj && obj._deletedAt);
@@ -2217,7 +2225,7 @@ function _isInRecycleBin(obj) {
 function _daysLeftInBin(obj) {
   if (!obj?._deletedAt) return null;
   const elapsed = Date.now() - new Date(obj._deletedAt).getTime();
-  return Math.max(0, RECYCLE_BIN_DAYS - Math.floor(elapsed / 86400000));
+  return Math.max(0, RECYCLE_BIN_DAYS - Math.floor(elapsed / MS_PER_DAY));
 }
 
 function _expiredFromBin(obj) {
@@ -2706,8 +2714,8 @@ function updateLastSentUI() {
     return;
   }
 
-  const next      = new Date(new Date(lastSent).getTime() + interval * 86400000);
-  const daysUntil = Math.ceil((next - now) / 86400000);
+  const next      = new Date(new Date(lastSent).getTime() + interval * MS_PER_DAY);
+  const daysUntil = Math.ceil((next - now) / MS_PER_DAY);
   textEl.textContent = `Last sent ${fmtDate(lastSent)} · Next ${daysUntil > 0
     ? `in ${daysUntil} day${daysUntil !== 1 ? 's' : ''}`
     : 'is overdue — Deno will send on next hourly check'}`;
@@ -3190,21 +3198,21 @@ function getReminderIntervalDays(reminder) {
   const n = reminder.interval || 1;
   if (reminder.unit === 'days')   return n;
   if (reminder.unit === 'weeks')  return n * 7;
-  if (reminder.unit === 'months') return n * 30.5;
-  return n * 30.5;
+  if (reminder.unit === 'months') return n * AVG_DAYS_PER_MONTH;
+  return n * AVG_DAYS_PER_MONTH;
 }
 
 function getReminderDueDate(reminder) {
   if (!reminder.lastReplaced) return null;
   const lastMs   = new Date(reminder.lastReplaced + 'T12:00:00').getTime();
-  const intervalMs = getReminderIntervalDays(reminder) * 86400000;
+  const intervalMs = getReminderIntervalDays(reminder) * MS_PER_DAY;
   return new Date(lastMs + intervalMs);
 }
 
 function getReminderDaysUntil(reminder) {
   const due = getReminderDueDate(reminder);
   if (!due) return null;
-  return Math.round((due.getTime() - Date.now()) / 86400000);
+  return Math.round((due.getTime() - Date.now()) / MS_PER_DAY);
 }
 
 function getReminderStatus(reminder) {
@@ -3498,12 +3506,12 @@ function openReminderTimeline(reminderId) {
 
   if (r.lastReplaced) {
     const startMs    = new Date(r.lastReplaced + 'T12:00:00').getTime();
-    const intervalMs = intervalDays * 86400000;
+    const intervalMs = intervalDays * MS_PER_DAY;
 
     // Past replacement events (up to 2 before the most recent)
     for (let i = 2; i >= 1; i--) {
       const d = new Date(startMs - i * intervalMs);
-      if (d < new Date(startMs - 365 * 86400000 * 2)) continue; // don't go more than 2 years back
+      if (d < new Date(startMs - 365 * MS_PER_DAY * 2)) continue; // don't go more than 2 years back
       nodes.push({ type: 'past', date: d, label: 'Replaced' });
     }
     // Most recent replacement (anchor)
@@ -3607,7 +3615,7 @@ function openReminderTimeline(reminderId) {
         const isToday   = node.date.toISOString().slice(0,10) === today;
         const dateStr   = isToday ? 'Today' : fmtDate(node.date.toISOString().slice(0,10));
         const relStr    = isToday ? '' : (() => {
-          const diff = Math.round((node.date - now) / 86400000);
+          const diff = Math.round((node.date - now) / MS_PER_DAY);
           if (diff < 0) return `${Math.abs(diff)}d ago`;
           if (diff === 0) return 'today';
           return `in ${diff}d`;
@@ -4366,7 +4374,7 @@ function _addDeletedHousehold(key) {
 // ═══════════════════════════════════════════
 function getExpiryStatus(item) {
   if (!item.expiry) return null;
-  const daysUntil = Math.floor((new Date(item.expiry + 'T12:00:00') - Date.now()) / 86400000);
+  const daysUntil = Math.floor((new Date(item.expiry + 'T12:00:00') - Date.now()) / MS_PER_DAY);
   if (daysUntil < 0)   return { label: 'Expired', color: 'var(--danger)', days: daysUntil };
   if (daysUntil <= 30) return { label: `Expires in ${daysUntil}d`, color: 'var(--warn)', days: daysUntil };
   return { label: `Expires ${fmtDate(item.expiry)}`, color: 'var(--muted)', days: daysUntil };
@@ -4400,7 +4408,7 @@ function getReorderSuggestion(item) {
   const sorted = [...item.logs].sort((a, b) => new Date(a.date) - new Date(b.date));
   const gaps   = [];
   for (let i = 1; i < sorted.length; i++) {
-    const gap = (new Date(sorted[i].date) - new Date(sorted[i-1].date)) / 86400000;
+    const gap = (new Date(sorted[i].date) - new Date(sorted[i-1].date)) / MS_PER_DAY;
     if (gap > 0) gaps.push(gap);
   }
   if (!gaps.length) return null;
@@ -4442,7 +4450,7 @@ function openAnalyticsModal(id) {
   const sorted = [...item.logs].sort((a,b) => new Date(a.date) - new Date(b.date));
   const gaps   = [];
   for (let i = 1; i < sorted.length; i++) {
-    const gap = (new Date(sorted[i].date) - new Date(sorted[i-1].date)) / 86400000;
+    const gap = (new Date(sorted[i].date) - new Date(sorted[i-1].date)) / MS_PER_DAY;
     if (gap > 0) gaps.push({ gap: Math.round(gap), date: sorted[i].date });
   }
 
@@ -5839,11 +5847,11 @@ function openItemActionsModal(id) {
     stat3Num.textContent = '⏳';
     stat3Lab.textContent = 'pending';
   } else if (lastLog) {
-    const days = Math.max(0, Math.round((Date.now() - new Date(lastLog.date+'T12:00:00')) / 86400000));
+    const days = Math.max(0, Math.round((Date.now() - new Date(lastLog.date+'T12:00:00')) / MS_PER_DAY));
     if (days === 0)        { stat3Num.textContent = 'today'; stat3Lab.textContent = 'last order'; }
     else if (days < 14)    { stat3Num.textContent = `${days}d`; stat3Lab.textContent = 'since order'; }
     else if (days < 60)    { stat3Num.textContent = `${Math.round(days/7)}w`; stat3Lab.textContent = 'since order'; }
-    else                   { stat3Num.textContent = `${Math.round(days/30.5)}mo`; stat3Lab.textContent = 'since order'; }
+    else                   { stat3Num.textContent = `${Math.round(days/AVG_DAYS_PER_MONTH)}mo`; stat3Lab.textContent = 'since order'; }
   } else {
     stat3Num.textContent = '—';
     stat3Lab.textContent = 'no orders';
@@ -6596,12 +6604,12 @@ function getFrequencyAnalysis(item) {
   const sorted = [...item.logs].sort((a,b) => new Date(a.date) - new Date(b.date));
   const gaps = [];
   for (let i = 1; i < sorted.length; i++) {
-    const days = (new Date(sorted[i].date) - new Date(sorted[i-1].date)) / 86400000;
+    const days = (new Date(sorted[i].date) - new Date(sorted[i-1].date)) / MS_PER_DAY;
     if (days > 0) gaps.push(days);
   }
   if (!gaps.length) return null;
   const avgDays = gaps.reduce((a,b) => a+b, 0) / gaps.length;
-  const avgMonths = avgDays / 30.5;
+  const avgMonths = avgDays / AVG_DAYS_PER_MONTH;
   const configuredMonths = item.months || 1;
   const ratio = avgMonths / configuredMonths;
   // Only suggest if meaningfully different (>25% off)
@@ -6634,7 +6642,7 @@ async function applyFrequencySuggestion(id, avgMonths) {
   const rounded = Math.max(0.5, Math.round(avgMonths * 2) / 2); // round to nearest 0.5
   item.months = rounded;
   // Keep daysPerUnit in sync with the new months value
-  item.daysPerUnit = (rounded * 30.5) / Math.max(0.0001, item.qty || 1);
+  item.daysPerUnit = (rounded * AVG_DAYS_PER_MONTH) / Math.max(0.0001, item.qty || 1);
   await saveData();
   scheduleRender('grid');
   toast(`Updated to ${rounded} month${rounded !== 1 ? 's' : ''} per purchase ✓`);
@@ -7019,7 +7027,7 @@ function buildEmailBody() {
   within7.sort((a,b)  => a.daysLeft - b.daysLeft);
   within30.sort((a,b) => a.daysLeft - b.daysLeft);
 
-  const runOutDate = daysLeft => new Date(now + daysLeft * 86400000)
+  const runOutDate = daysLeft => new Date(now + daysLeft * MS_PER_DAY)
     .toLocaleDateString('en-GB', { day:'numeric', month:'short' });
 
   const stars = r => r ? '★'.repeat(r) + '☆'.repeat(5-r) : 'unrated';
@@ -7245,7 +7253,7 @@ function openStockCountModal(id) {
   // The "How long does 1 unit last?" field is per-unit lifetime in months.
   // Derive from the canonical daysPerUnit accessor.
   const dpu = getDaysPerUnit(item);
-  const perUnitMonths = Math.max(0.25, Math.round((dpu / 30.5) * 4) / 4); // round to 0.25
+  const perUnitMonths = Math.max(0.25, Math.round((dpu / AVG_DAYS_PER_MONTH) * 4) / 4); // round to 0.25
   document.getElementById('sc-months').value = perUnitMonths;
   document.getElementById('sc-preview').style.display = 'none';
 
@@ -7264,10 +7272,10 @@ function openStockCountModal(id) {
 function updateStockCountPreview(item) {
   const remaining = parseFloat(document.getElementById('sc-remaining').value);
   const countDate = document.getElementById('sc-date').value;
-  // The field is per-unit lifetime in months → days-per-unit = months × 30.5
+  // The field is per-unit lifetime in months → days-per-unit = months × AVG_DAYS_PER_MONTH
   const perUnitMonths = parseFloat(document.getElementById('sc-months').value);
   const dpu = (!isNaN(perUnitMonths) && perUnitMonths > 0)
-    ? perUnitMonths * 30.5
+    ? perUnitMonths * AVG_DAYS_PER_MONTH
     : getDaysPerUnit(item);
   const preview = document.getElementById('sc-preview');
   const previewText = document.getElementById('sc-preview-text');
@@ -7276,7 +7284,7 @@ function updateStockCountPreview(item) {
 
   const last = item.logs?.at(-1);
   const totalPurchased = last?.qty || 1;
-  const daysSincePurchase = (Date.now() - new Date((last?.date||countDate)+'T12:00:00')) / 86400000;
+  const daysSincePurchase = (Date.now() - new Date((last?.date||countDate)+'T12:00:00')) / MS_PER_DAY;
   const used = totalPurchased - remaining;
 
   let daysLeft;
@@ -7290,7 +7298,7 @@ function updateStockCountPreview(item) {
 
   const pct = Math.round(Math.max(0, Math.min(100, (remaining / totalPurchased) * 100)));
   const runOutDate = daysLeft != null
-    ? new Date(Date.now() + daysLeft * 86400000).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})
+    ? new Date(Date.now() + daysLeft * MS_PER_DAY).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})
     : 'unknown';
 
   let msg;
@@ -7323,7 +7331,7 @@ async function saveStockCount() {
   // is per-unit lifetime, so update daysPerUnit directly and re-derive
   // `months` for back-compat with anywhere still reading the old field.
   if (!isNaN(monthsVal) && monthsVal > 0) {
-    item.daysPerUnit = monthsVal * 30.5;
+    item.daysPerUnit = monthsVal * AVG_DAYS_PER_MONTH;
     // Keep `months` consistent — it now represents whole-purchase lifetime
     // (= per-unit-lifetime × pack-qty).
     item.months = monthsVal * (item.qty || 1);
@@ -7424,7 +7432,7 @@ function analyseSnS() {
 
     const firstDate = new Date(logs[0].date + 'T12:00:00');
     const lastDate  = new Date(logs[logs.length-1].date + 'T12:00:00');
-    const spanDays  = (lastDate - firstDate) / 86400000;
+    const spanDays  = (lastDate - firstDate) / MS_PER_DAY;
 
     if (spanDays < SNS_MIN_SPAN_DAYS) {
       results.push({ item, status: 'tracking', logs, purchaseCount: logs.length, spanDays, avgMonthlySpend: null, annualSaving: null });
@@ -7438,7 +7446,7 @@ function analyseSnS() {
 
     if (pricedLogs.length >= 1) {
       const avgPrice    = pricedLogs.reduce((s,l) => s + parsePriceValue(l.price), 0) / pricedLogs.length;
-      const monthsSpan  = spanDays / 30.5;
+      const monthsSpan  = spanDays / AVG_DAYS_PER_MONTH;
       const buysPerMonth = logs.length / monthsSpan;
       avgMonthlySpend   = avgPrice * buysPerMonth;
       annualSaving      = avgMonthlySpend * 12 * SNS_DISCOUNT;
@@ -7523,7 +7531,7 @@ function renderSavingsView() {
       </div>
       <div class="sns-stats">
         <div class="sns-stat"><strong>${purchaseCount}</strong><span>purchases</span></div>
-        ${spanDays ? `<div class="sns-stat"><strong>${Math.round(spanDays/30.5 * 10)/10}mo</strong><span>tracked</span></div>` : ''}
+        ${spanDays ? `<div class="sns-stat"><strong>${Math.round(spanDays/AVG_DAYS_PER_MONTH * 10)/10}mo</strong><span>tracked</span></div>` : ''}
         ${lastPrice ? `<div class="sns-stat"><strong>${esc(lastPrice)}</strong><span>last price</span></div>` : ''}
         ${avgMonthlySpend ? `<div class="sns-stat"><strong>£${avgMonthlySpend.toFixed(2)}</strong><span>/month avg</span></div>` : ''}
       </div>
@@ -8755,7 +8763,7 @@ function renderShoppingList() {
       const color = STATUS_COLOR[status];
       const fillColor = status === 'critical' ? '#e85050' : status === 'warn' ? '#e8a838' : '#4cbb8a';
       const urgencyColor = daysLeft <= 7 ? 'var(--danger)' : daysLeft <= 14 ? 'var(--warn)' : 'var(--muted)';
-      const runOutDate = new Date(Date.now() + daysLeft * 86400000)
+      const runOutDate = new Date(Date.now() + daysLeft * MS_PER_DAY)
         .toLocaleDateString('en-GB', { day:'numeric', month:'short' });
 
       // Buy now link
@@ -8828,7 +8836,7 @@ function exportShoppingList() {
   Object.entries(byStore).forEach(([store, entries]) => {
     lines.push(`## ${store}`);
     entries.forEach(({item, daysLeft}) => {
-      const runOut = new Date(Date.now() + daysLeft * 86400000).toLocaleDateString('en-GB');
+      const runOut = new Date(Date.now() + daysLeft * MS_PER_DAY).toLocaleDateString('en-GB');
       lines.push(`[ ] ${item.name}`);
       lines.push(`    Runs out: ${runOut} (${daysLeft}d)`);
       if (item.url) lines.push(`    Buy: ${item.url}`);
@@ -9042,17 +9050,17 @@ function _wizRenderTimeline() {
                || document.getElementById('wiz-last-date').value
                || today();
   // New model: months = lifetime of a full pack (wiz-qty units),
-  // so days-per-unit = months × 30.5 / wiz-qty, and total days for the most-
+  // so days-per-unit = months × AVG_DAYS_PER_MONTH / wiz-qty, and total days for the most-
   // recent purchase = days-per-unit × lastQty.
-  const dpu        = (months * 30.5) / Math.max(0.0001, wizQty);
+  const dpu        = (months * AVG_DAYS_PER_MONTH) / Math.max(0.0001, wizQty);
   const totalDays  = Math.round(dpu * lastQty);
   const ref     = new Date(refDate + 'T12:00:00');
-  const runOut  = new Date(ref.getTime() + totalDays * 86400000);
+  const runOut  = new Date(ref.getTime() + totalDays * MS_PER_DAY);
   const threshold = settings.threshold || 20;
   const warnDays  = Math.round(totalDays * threshold / 100);
-  const warnDate  = new Date(runOut.getTime() - warnDays * 86400000);
+  const warnDate  = new Date(runOut.getTime() - warnDays * MS_PER_DAY);
   const fmtD = d => d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
-  const daysDiff = d => Math.round((d - Date.now()) / 86400000);
+  const daysDiff = d => Math.round((d - Date.now()) / MS_PER_DAY);
   const relLabel = d => { const diff = daysDiff(d); return diff < 0 ? `${Math.abs(diff)}d ago` : diff === 0 ? 'today' : `in ${diff}d`; };
 
   const events = awaitingDelivery
@@ -9069,8 +9077,8 @@ function _wizRenderTimeline() {
   // Add replacement reminders to timeline (only meaningful once delivered/started)
   if (!awaitingDelivery) {
     _wizReminders.forEach(r => {
-      const days = r.unit==='days' ? r.interval : r.unit==='weeks' ? r.interval*7 : r.interval*30.5;
-      const replDate = new Date(ref.getTime() + Math.round(days)*86400000);
+      const days = r.unit==='days' ? r.interval : r.unit==='weeks' ? r.interval*7 : r.interval*AVG_DAYS_PER_MONTH;
+      const replDate = new Date(ref.getTime() + Math.round(days)*MS_PER_DAY);
       events.push({ label: `Replace${r.name ? ` (${r.name})` : ''}`, date: replDate, color:'var(--ok)', icon:'i-repeat' });
     });
   }
@@ -9143,8 +9151,8 @@ async function wizSave() {
   const wizQty    = parseFloat(document.getElementById('wiz-qty').value) || 1;
   const wizMonths = parseFloat(document.getElementById('wiz-months').value) || 1;
   // Compute canonical per-unit lifetime: months entered = whole-purchase supply,
-  // so per-unit lifetime = months × 30.5 / qty. (e.g. 24 cans, 1 month → 1.27 d/can)
-  const daysPerUnit = (wizMonths * 30.5) / Math.max(0.0001, wizQty);
+  // so per-unit lifetime = months × AVG_DAYS_PER_MONTH / qty. (e.g. 24 cans, 1 month → 1.27 d/can)
+  const daysPerUnit = (wizMonths * AVG_DAYS_PER_MONTH) / Math.max(0.0001, wizQty);
 
   const newItem = {
     id:                   uid(),
@@ -9311,7 +9319,7 @@ function _renderEditStockSummary(item) {
   let perUnitLabel;
   if (dpu < 7)        perUnitLabel = `~${dpu.toFixed(1)} days/unit`;
   else if (dpu < 60)  perUnitLabel = `~${Math.round(dpu)} days/unit`;
-  else if (dpu < 365) perUnitLabel = `~${(dpu / 30.5).toFixed(1)} months/unit`;
+  else if (dpu < 365) perUnitLabel = `~${(dpu / AVG_DAYS_PER_MONTH).toFixed(1)} months/unit`;
   else                perUnitLabel = `~${(dpu / 365).toFixed(1)} years/unit`;
 
   let lines = [];
@@ -9749,7 +9757,7 @@ async function saveItem() {
       const newMonths   = parseFloat(document.getElementById('f-months').value)||1;
       // Recompute daysPerUnit if months or qty changed (or if missing)
       if (newQty !== item.qty || newMonths !== item.months || typeof item.daysPerUnit !== 'number') {
-        item.daysPerUnit = (newMonths * 30.5) / Math.max(0.0001, newQty);
+        item.daysPerUnit = (newMonths * AVG_DAYS_PER_MONTH) / Math.max(0.0001, newQty);
       }
       item.qty          = newQty;
       item.months       = newMonths;
@@ -9804,7 +9812,7 @@ async function saveItem() {
       cadence:           document.getElementById('f-cadence').value,
       qty:               newQty,
       months:            newMonths,
-      daysPerUnit:       (newMonths * 30.5) / Math.max(0.0001, newQty),
+      daysPerUnit:       (newMonths * AVG_DAYS_PER_MONTH) / Math.max(0.0001, newQty),
       url:               document.getElementById('f-url').value.trim(),
       store:             storeVal,
       notes:             document.getElementById('f-notes').value.trim(),
@@ -10193,7 +10201,7 @@ function _bhFmtAge(iso) {
   if (ms < 60*1000)      return 'just now';
   if (ms < 60*60*1000)   return Math.floor(ms/60000) + ' min ago';
   if (ms < 24*60*60*1000) return Math.floor(ms/3600000) + ' hr ago';
-  if (ms < 7*24*60*60*1000) return Math.floor(ms/86400000) + ' day' + (Math.floor(ms/86400000)===1?'':'s') + ' ago';
+  if (ms < 7*MS_PER_DAY) return Math.floor(ms/MS_PER_DAY) + ' day' + (Math.floor(ms/MS_PER_DAY)===1?'':'s') + ' ago';
   return new Date(iso).toLocaleDateString();
 }
 function _bhSnapshotLabel(key, lastModified) {
@@ -15748,7 +15756,7 @@ function _periodsBetween(fromIso, toIso, unit) {
   const b = new Date(toIso   + 'T12:00:00');
   if (isNaN(a.getTime()) || isNaN(b.getTime())) return 0;
   if (unit === 'week') {
-    return Math.floor((b.getTime() - a.getTime()) / (7 * 86400000));
+    return Math.floor((b.getTime() - a.getTime()) / (7 * MS_PER_DAY));
   }
   // 'month': calendar months between the two dates, ignoring day-of-month
   const months = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
@@ -16619,7 +16627,7 @@ function getNextDueBill(yyyymm, fromIsoDate = null) {
 function getUpcomingBills(fromIsoDate = null, withinDays = 14) {
   // Pulls from current month and next month if within the window
   const today = new Date(fromIsoDate || new Date().toISOString().slice(0, 10) + 'T12:00:00');
-  const end   = new Date(today.getTime() + withinDays * 86400000);
+  const end   = new Date(today.getTime() + withinDays * MS_PER_DAY);
   const months = new Set([_yyyymm(today), _yyyymm(end)]);
   const out = [];
   for (const yyyymm of months) {
@@ -16951,7 +16959,7 @@ const _shortDate = (iso) => fmt(iso, { short: true });
 function _daysFromToday(iso) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const d = new Date(iso + 'T12:00:00'); d.setHours(0, 0, 0, 0);
-  return Math.round((d.getTime() - today.getTime()) / 86400000);
+  return Math.round((d.getTime() - today.getTime()) / MS_PER_DAY);
 }
 
 function _relativeDay(iso) {
@@ -18489,7 +18497,7 @@ function _spendDayHeading(iso) {
   const d = new Date(iso + 'T12:00:00');
   const today = new Date(); today.setHours(0,0,0,0);
   const dDate = new Date(iso + 'T00:00:00');
-  const days = Math.round((today - dDate) / 86400000);
+  const days = Math.round((today - dDate) / MS_PER_DAY);
   if (days === 0)  return 'Today, ' + d.toLocaleDateString(undefined, { day:'numeric', month:'short' });
   if (days === 1)  return 'Yesterday, ' + d.toLocaleDateString(undefined, { day:'numeric', month:'short' });
   return d.toLocaleDateString(undefined, { weekday:'short', day:'numeric', month:'short' });
@@ -19686,13 +19694,13 @@ function _renderAccountRow(acc) {
     const d = new Date(acc.balanceAsOf + 'T12:00:00');
     const today = new Date(); today.setHours(0,0,0,0);
     const dDate = new Date(acc.balanceAsOf + 'T00:00:00');
-    const days = Math.round((today - dDate) / 86400000);
+    const days = Math.round((today - dDate) / MS_PER_DAY);
     if (days === 0)  return 'as of today';
     if (days === 1)  return 'as of yesterday';
     if (days < 30)   return `as of ${days} days ago`;
     return 'as of ' + d.toLocaleDateString(undefined, { day:'numeric', month:'short' });
   })();
-  const stale = acc.balanceAsOf && (Date.now() - new Date(acc.balanceAsOf + 'T12:00:00').getTime()) > 14 * 86400000;
+  const stale = acc.balanceAsOf && (Date.now() - new Date(acc.balanceAsOf + 'T12:00:00').getTime()) > 14 * MS_PER_DAY;
 
   const primaryBadge = acc.isPrimary && !acc.archived
     ? '<span class="bill-tag" style="background:rgba(232,168,56,0.15);color:var(--accent);border-color:rgba(232,168,56,0.3)">PRIMARY</span>'
@@ -19972,7 +19980,7 @@ function _renderIncomeEntriesList() {
 
   // Show last 30 days of one-off (non-template) entries
   const today = new Date();
-  const past = new Date(today.getTime() - 30 * 86400000);
+  const past = new Date(today.getTime() - 30 * MS_PER_DAY);
   const startIso = past.toISOString().slice(0, 10);
   const endIso   = today.toISOString().slice(0, 10);
 
@@ -20108,7 +20116,7 @@ function renderCashFlowChart() {
         <svg aria-hidden="true" style="width:11px;height:11px;vertical-align:-1px"><use href="#i-alert-triangle"></use></svg>
         Balance was last updated ${(() => {
           const d = new Date(proj.account.balanceAsOf + 'T12:00:00');
-          const days = Math.round((Date.now() - d.getTime()) / 86400000);
+          const days = Math.round((Date.now() - d.getTime()) / MS_PER_DAY);
           return days + ' day' + (days === 1 ? '' : 's') + ' ago';
         })()} — projection assumes bills paid + income received in between.
         <button class="btn btn-ghost btn-sm" style="margin-left:6px;font-size:11px;padding:2px 8px" onclick="openUpdateBalanceModal('${proj.account.id}')">Update</button>
@@ -20438,19 +20446,18 @@ function getInstanceDatesInMonth(template, year, monthZeroIdx) {
     // If anchor is later than the month-end, no instances yet
     if (anchor > monthEnd) return [];
     // Find the first occurrence on or after monthStart by jumping in stepDays
-    const oneDay = 86400000;
-    const daysFromAnchorToMonthStart = Math.floor((monthStart.getTime() - anchor.getTime()) / oneDay);
+    const daysFromAnchorToMonthStart = Math.floor((monthStart.getTime() - anchor.getTime()) / MS_PER_DAY);
     let stepsToMonthStart = Math.max(0, Math.ceil(daysFromAnchorToMonthStart / stepDays));
-    let cursor = new Date(anchor.getTime() + stepsToMonthStart * stepDays * oneDay);
+    let cursor = new Date(anchor.getTime() + stepsToMonthStart * stepDays * MS_PER_DAY);
     // Edge: if cursor is before monthStart (anchor is itself within or before the month),
     // bump forward until we're inside or past
     while (cursor < monthStart) {
-      cursor = new Date(cursor.getTime() + stepDays * oneDay);
+      cursor = new Date(cursor.getTime() + stepDays * MS_PER_DAY);
     }
     const out = [];
     while (cursor <= monthEnd) {
       out.push(_dateToIso(cursor));
-      cursor = new Date(cursor.getTime() + stepDays * oneDay);
+      cursor = new Date(cursor.getTime() + stepDays * MS_PER_DAY);
     }
     return out;
   }
@@ -21349,8 +21356,8 @@ _renderIncomeEntriesList = function() {
 
   // Show last 60 days of all income entries (one-off + materialised template instances)
   const today = new Date();
-  const past  = new Date(today.getTime() - 60 * 86400000);
-  const future = new Date(today.getTime() + 14 * 86400000); // include next 2 weeks
+  const past  = new Date(today.getTime() - 60 * MS_PER_DAY);
+  const future = new Date(today.getTime() + 14 * MS_PER_DAY); // include next 2 weeks
   const startIso = past.toISOString().slice(0, 10);
   const endIso   = future.toISOString().slice(0, 10);
   const todayIso = today.toISOString().slice(0, 10);
@@ -21590,7 +21597,7 @@ _renderCategoryTile = function(cat, startIso, endIso, period, clickable) {
 function openCsvExportModal() {
   // Default range: last 30 days
   const today = new Date();
-  const past = new Date(today.getTime() - 30 * 86400000);
+  const past = new Date(today.getTime() - 30 * MS_PER_DAY);
   document.getElementById('csv-export-start').value = past.toISOString().slice(0, 10);
   document.getElementById('csv-export-end').value   = today.toISOString().slice(0, 10);
   _csvExportRange = 'last30';
@@ -21605,10 +21612,10 @@ function csvExportRangeChanged() {
   let start, end;
   if (range === 'last30') {
     end   = today;
-    start = new Date(today.getTime() - 30 * 86400000);
+    start = new Date(today.getTime() - 30 * MS_PER_DAY);
   } else if (range === 'last90') {
     end   = today;
-    start = new Date(today.getTime() - 90 * 86400000);
+    start = new Date(today.getTime() - 90 * MS_PER_DAY);
   } else if (range === 'this_year') {
     end   = today;
     start = new Date(today.getFullYear(), 0, 1);
@@ -22342,7 +22349,7 @@ function renderGroceryListPicker() {
         </div>
         <div class="recycle-bin-subtitle">Lists are permanently deleted after 30 days.</div>
         ${deletedLists.map(l => {
-          const days = Math.max(0, Math.ceil(30 - (Date.now() - new Date(l._deletedAt).getTime()) / 86400000));
+          const days = Math.max(0, Math.ceil(30 - (Date.now() - new Date(l._deletedAt).getTime()) / MS_PER_DAY));
           const totalItems = groceryItems.filter(i => (i.listId||'default') === l.id).length;
           return `
             <div class="recycle-bin-row">
@@ -24865,7 +24872,7 @@ async function checkGroceryRecurring() {
   let changed = false;
   groceryItems.forEach(item => {
     if (!item.recurring || !item.checked || !item.checkedAt) return;
-    const intervalMs = (item.intervalDays || 7) * 86400000;
+    const intervalMs = (item.intervalDays || 7) * MS_PER_DAY;
     if (now - new Date(item.checkedAt).getTime() >= intervalMs) {
       item.checked   = false;
       item.checkedAt = null;
@@ -27252,7 +27259,7 @@ function _noteCardHTML(n) {
   if (n.locked)  icons.push(isUnlocked ? '<svg class="icon" aria-hidden="true"><use href="#i-unlock"></use></svg>' : '<svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>');
   if (n.archived) icons.push('<svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg>');
   if (n.deletedAt) {
-    const daysLeft = Math.max(0, 30 - Math.round((Date.now()-new Date(n.deletedAt).getTime())/86400000));
+    const daysLeft = Math.max(0, 30 - Math.round((Date.now()-new Date(n.deletedAt).getTime())/MS_PER_DAY));
     icons.push(`<span style="font-size:10px;color:var(--danger);font-family:var(--mono)">🗑 ${daysLeft}d</span>`);
   }
   const linkedReminder = reminders.find(r => r.linkedNoteId === n.id);
@@ -29715,7 +29722,7 @@ function _getMonthEndProjection(yyyymm) {
   const endIso  = _isoDate(year, month, lastDay);
   const a = new Date(todayIso + 'T12:00:00');
   const b = new Date(endIso   + 'T12:00:00');
-  const daysAhead = Math.max(1, Math.ceil((b.getTime() - a.getTime()) / 86400000) + 1);
+  const daysAhead = Math.max(1, Math.ceil((b.getTime() - a.getTime()) / MS_PER_DAY) + 1);
   const proj = projectCashFlow(null, daysAhead);
   if (!proj.setupComplete) return null;
   const endPoint = proj.points.find(p => p.date === endIso);
@@ -29999,7 +30006,7 @@ function _azAvgInterval(dates) {
   if (dates.length < 2) return null;
   const sorted = [...dates].sort();
   const dts = sorted.map(d => new Date(d).getTime());
-  const gaps = dts.slice(1).map((t,i) => (t-dts[i])/86400000);
+  const gaps = dts.slice(1).map((t,i) => (t-dts[i])/MS_PER_DAY);
   return Math.round(gaps.reduce((a,b)=>a+b,0)/gaps.length);
 }
 
@@ -30440,7 +30447,7 @@ function _azGroupCard(g) {
   const projDate=(()=>{
     if (!g.avgInterval) return null;
     const last=new Date(g.items[g.items.length-1].date+'T12:00:00');
-    const next=new Date(last.getTime()+g.avgInterval*86400000);
+    const next=new Date(last.getTime()+g.avgInterval*MS_PER_DAY);
     return next>new Date()?next.toISOString().slice(0,10):null;
   })();
   return `
