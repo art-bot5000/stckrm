@@ -10188,9 +10188,15 @@ function _doExportData(includeSecureNotes = false) {
     }
     return n;
   });
+  // Version 3 covers every data area the app currently has: stockroom items,
+  // groceries (lists + departments), reminders, notes, bills, and the entire
+  // budget system (categories, transactions, accounts, income). Earlier
+  // versions silently omitted bills/budget so backups looked complete but
+  // weren't. Importers should remain backwards-compatible with v1/v2 files.
   const exportPayload = {
     items,
     settings,
+<<<<<<< Updated upstream
     groceries:    groceryItems,
     groceryLists,
     reminders,
@@ -10207,6 +10213,26 @@ function _doExportData(includeSecureNotes = false) {
     incomeEntries,
     exportedAt:   new Date().toISOString(),
     version:      3,
+=======
+    groceries:        groceryItems,
+    reminders,
+    departments:      groceryDepts,
+    groceryLists,
+    notes:            exportNotes,
+    // Bills (recurring template + per-month instances)
+    bills,
+    billInstances,
+    // Budget — categorisation + spending log
+    budgetSettings,
+    budgetCategories,
+    transactions,
+    // Budget — accounts + income
+    budgetAccounts,
+    incomeTemplates,
+    incomeEntries,
+    exportedAt:       new Date().toISOString(),
+    version:          3,
+>>>>>>> Stashed changes
   };
   const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -10428,8 +10454,16 @@ async function importData(e) {
         alert('Invalid backup file — unexpected format.');
         return;
       }
-      // Restore all data types from the backup
+      // ── Restore from the backup ────────────────────────────────────────
+      // We use Array.isArray / object-shape guards on each field so old
+      // backup files (v1, v2) that omitted notes/budget/bills still import
+      // cleanly — we just don't touch the in-memory state for any field
+      // the file doesn't carry.
+      const isPlainObj = v => v && typeof v === 'object' && !Array.isArray(v);
+
+      // Core
       if (Array.isArray(d.items))       items        = d.items;
+<<<<<<< Updated upstream
       if (d.settings && typeof d.settings === 'object')
                                         settings     = { ...settings, ...d.settings };
       if (Array.isArray(d.groceries))   groceryItems = d.groceries;
@@ -10526,6 +10560,56 @@ async function importData(e) {
           console.warn('importData: cannot re-secure notes — not connected to KV');
         }
       }
+=======
+      if (isPlainObj(d.settings))       settings     = { ...settings, ...d.settings };
+
+      // Groceries
+      if (Array.isArray(d.groceries))    groceryItems = d.groceries;
+      if (Array.isArray(d.reminders))    reminders    = d.reminders;
+      if (Array.isArray(d.departments))  groceryDepts = d.departments;
+      if (Array.isArray(d.groceryLists)) groceryLists = d.groceryLists;
+
+      // Notes — NOTE bodies of secured notes won't be in the export
+      // unless the user opted in at export time (handled in _doExportData).
+      if (Array.isArray(d.notes))        notes        = d.notes;
+
+      // Bills (templates + per-month instances)
+      if (Array.isArray(d.bills))        bills          = d.bills;
+      if (isPlainObj(d.billInstances))   billInstances  = d.billInstances;
+
+      // Budget core
+      if (isPlainObj(d.budgetSettings))    budgetSettings   = { ...budgetSettings, ...d.budgetSettings };
+      if (Array.isArray(d.budgetCategories)) budgetCategories = d.budgetCategories;
+      if (isPlainObj(d.transactions))      transactions     = d.transactions;
+
+      // Budget accounts + income
+      if (Array.isArray(d.budgetAccounts))  budgetAccounts  = d.budgetAccounts;
+      if (Array.isArray(d.incomeTemplates)) incomeTemplates = d.incomeTemplates;
+      if (isPlainObj(d.incomeEntries))      incomeEntries   = d.incomeEntries;
+
+      // ── Persist everything we just loaded ──
+      // Use the area-specific Local savers where they exist — they hit the
+      // right IDB stores in one go. For items/settings/groceries/reminders
+      // we keep the older save* helpers since saveData() also kicks off
+      // background-sync registration.
+      await saveData();
+      await _saveSettings();
+      if (Array.isArray(d.groceries))    await saveGrocery();
+      if (Array.isArray(d.reminders))    await saveReminders();
+      if (Array.isArray(d.departments))  await saveGroceryDepts();
+      if (Array.isArray(d.groceryLists)) await _saveGroceryLists();
+      if (Array.isArray(d.notes))        await saveNotes();
+      if (Array.isArray(d.bills) || isPlainObj(d.billInstances) || isPlainObj(d.budgetSettings)) {
+        await saveBudgetLocal();
+      }
+      if (Array.isArray(d.budgetCategories) || isPlainObj(d.transactions)) {
+        await saveBudgetSpendLocal();
+      }
+      if (Array.isArray(d.budgetAccounts) || Array.isArray(d.incomeTemplates) || isPlainObj(d.incomeEntries)) {
+        await saveBudgetAccountsAndIncomeLocal();
+      }
+
+>>>>>>> Stashed changes
       scheduleRender(...RENDER_REGIONS);
       // Push to server so data is encrypted and saved
       if (kvConnected) {
@@ -10535,12 +10619,22 @@ async function importData(e) {
         ? Object.values(d.transactions).reduce((n, m) => n + (m && typeof m === 'object' ? Object.keys(m).length : 0), 0)
         : 0;
       const counts = [
+<<<<<<< Updated upstream
         d.items?.length      ? `${d.items.length} items` : '',
         d.groceries?.length  ? `${d.groceries.length} groceries` : '',
         d.notes?.length      ? `${d.notes.length} notes` : '',
         d.reminders?.length  ? `${d.reminders.length} reminders` : '',
         d.bills?.length      ? `${d.bills.length} bills` : '',
         _txCount             ? `${_txCount} transactions` : '',
+=======
+        d.items?.length      ? `${d.items.length} items`           : '',
+        d.groceries?.length  ? `${d.groceries.length} groceries`   : '',
+        d.reminders?.length  ? `${d.reminders.length} reminders`   : '',
+        d.notes?.length      ? `${d.notes.length} notes`           : '',
+        d.bills?.length      ? `${d.bills.length} bills`           : '',
+        d.budgetCategories?.length ? `${d.budgetCategories.length} budget categories` : '',
+        d.budgetAccounts?.length   ? `${d.budgetAccounts.length} accounts`            : '',
+>>>>>>> Stashed changes
       ].filter(Boolean).join(', ');
       let toastMsg = 'Imported ✓' + (counts ? ` — ${counts}` : '');
       if (_reSecuredOk > 0)     toastMsg += ` · 🔒 ${_reSecuredOk} re-secured`;
