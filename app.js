@@ -1908,17 +1908,74 @@ const STATUS_LABEL = { critical:`<span class='status-dot status-critical'></span
 // ═══════════════════════════════════════════
 //  PERSISTENCE — IndexedDB backed
 // ═══════════════════════════════════════════
+// ── User-switch wipe ──────────────────────────────────────────────────────
+// Clears every data-bearing IDB store and resets every in-memory variable
+// that backs one. Called when we detect that the active user has changed
+// — either at page load (loadData) or live during a sign-in (kvStoreSession).
+//
+// This is critical for shared-device scenarios: previous-user data (notes,
+// groceries, reminders, bills, budget) must not render in the new user's
+// session before the cloud sync overwrites it.
+//
+// We clear EVERY data-bearing store. Per-user setup flags (device_setup_<id>_*)
+// are preserved as they're already keyed by deviceId, not user.
+async function _wipeStaleUserDataForSwitch(newEmailHash) {
+  console.log('[user-switch] Wiping stale data for switch to', newEmailHash);
+  // Core data stores
+  await dbPut('items',            'items',            []);
+  await dbPut('items',            'notes',            []);    // notes share the items store under key 'notes'
+  await dbPut('settings',         'settings',         {});
+  await dbPut('reminders',        'reminders',        []);
+  await dbPut('groceries',        'items',            []);
+  await dbPut('departments',      'departments',      []);
+  await dbPut('groceryLists',     'groceryLists',     []);
+  await dbPut('profiles',         'profiles',         {});
+  // Budget data (financial — particularly important to wipe)
+  await dbPut('bills',            'bills',            []);
+  await dbPut('billInstances',    'billInstances',    {});
+  await dbPut('budgetSettings',   'budgetSettings',   {});
+  await dbPut('budgetCategories', 'budgetCategories', []);
+  await dbPut('transactions',     'transactions',     {});
+  await dbPut('budgetAccounts',   'budgetAccounts',   []);
+  await dbPut('incomeTemplates',  'incomeTemplates',  []);
+  await dbPut('incomeEntries',    'incomeEntries',    {});
+  // Tombstone stores — wipe so previous user's deletes don't haunt new user
+  await dbPut('deletedIds',                  'deletedIds',                  []);
+  await dbPut('groceryDeletedIds',           'groceryDeletedIds',           []);
+  await dbPut('reminderDeletedIds',          'reminderDeletedIds',          []);
+  await dbPut('budgetCategoryDeletedIds',    'budgetCategoryDeletedIds',    []);
+  await dbPut('budgetTransactionDeletedIds', 'budgetTransactionDeletedIds', []);
+  await dbPut('budgetAccountDeletedIds',     'budgetAccountDeletedIds',     []);
+  await dbPut('incomeTemplateDeletedIds',    'incomeTemplateDeletedIds',    []);
+  await dbPut('incomeEntryDeletedIds',       'incomeEntryDeletedIds',       []);
+  await dbPut('billsDeletedIds',             'billsDeletedIds',             []);
+  // Stamp the new owner so subsequent loads on the same device skip the wipe
+  if (newEmailHash) await dbPut('settings', '_activeUserHash', newEmailHash);
+  // Reset every in-memory variable that backs a wiped store
+  items            = [];
+  notes            = [];
+  reminders        = [];
+  groceryItems     = [];
+  groceryDepts     = [];
+  groceryLists     = [];
+  bills            = [];
+  billInstances    = {};
+  budgetSettings   = {};
+  budgetCategories = [];
+  transactions     = {};
+  budgetAccounts   = [];
+  incomeTemplates  = [];
+  incomeEntries    = {};
+  settings = { threshold:20, country:'GB', email:'', emailInterval:7, emailStartDate:null, emailStartTime:'09:00', displayName:'', mfa:{ enabled:false, method:'email', totpSecret:null }, customTags:[], lastSynced:'' };
+}
+
 async function loadData() {
-  // Detect user switch — if emailHash changed, wipe stale local data before sync
+  // Detect user switch — if emailHash changed, wipe stale local data before sync.
+  // See _wipeStaleUserDataForSwitch above for the full rationale.
   const storedHash = await dbGet('settings', '_activeUserHash');
   const currentHash = _kvEmailHash || null;
   if (currentHash && storedHash && storedHash !== currentHash) {
-    await dbPut('items',    'items',    []);
-    await dbPut('settings', 'settings', {});
-    await dbPut('profiles', 'profiles', {});
-    await dbPut('settings', '_activeUserHash', currentHash);
-    items    = [];
-    settings = { threshold:20, country:'GB', email:'', emailInterval:7, emailStartDate:null, emailStartTime:'09:00', displayName:'', mfa:{ enabled:false, method:'email', totpSecret:null }, customTags:[], lastSynced:'' };
+    await _wipeStaleUserDataForSwitch(currentHash);
     return;
   }
   if (currentHash) await dbPut('settings', '_activeUserHash', currentHash);
@@ -10162,51 +10219,24 @@ function exportDataWithSecureChoice(includeUnlocked) {
 }
 
 function _doExportData(includeSecureNotes = false) {
-  // Build notes export - exclude body of locked notes unless includeSecureNotes.
-  //
-  // When the user opts in to including locked-note bodies in the file:
-  //   - The body is written as plaintext (so the file is portable / human-readable)
-  //   - We mark the note with `_reSecureOnImport: true` so that on import,
-  //     the receiving app re-encrypts the body with the new account's key
-  //     and restores the locked state. The flag is dropped at import time.
-  //   - If the body could not be unlocked at export time (the note isn't in
-  //     _noteUnlocked because the user never opened it during this session),
-  //     we fall back to the placeholder text and DO NOT set the re-secure
-  //     flag — there's nothing meaningful to re-secure.
-  let reSecuredCount = 0;
+  // Build notes export - exclude body of locked notes unless includeSecureNotes
   const exportNotes = notes.map(n => {
     if (n.locked && !includeSecureNotes) return { ...n, body: undefined };
     if (n.locked && includeSecureNotes) {
       const unlocked = _noteUnlocked.get(n.id);
-      if (unlocked?.body) {
-        reSecuredCount++;
-        return { ...n, body: unlocked.body, locked: false, _reSecureOnImport: true };
-      }
-      // Fallback — body wasn't available; export the placeholder without
-      // the re-secure flag (nothing meaningful to re-encrypt on import).
-      return { ...n, body: '[locked — could not export]', locked: false };
+      return { ...n, body: unlocked?.body || '[locked — could not export]', locked: false };
     }
     return n;
   });
   const exportPayload = {
     items,
     settings,
-    groceries:    groceryItems,
-    groceryLists,
+    groceries:   groceryItems,
     reminders,
-    departments:  groceryDepts,
-    notes:        exportNotes,
-    // Budget — full set of collections that the sync blob carries
-    bills,
-    billInstances,
-    budgetSettings,
-    budgetCategories,
-    transactions,
-    budgetAccounts,
-    incomeTemplates,
-    incomeEntries,
-    exportedAt:   new Date().toISOString(),
-    version:      3,
+    departments: groceryDepts,
+    notes:       exportNotes,
+    exportedAt:  new Date().toISOString(),
+    version:     2,
   };
   const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -10215,52 +10245,6 @@ function _doExportData(includeSecureNotes = false) {
   a.click();
   try { localStorage.setItem('stockroom_last_export', String(Date.now())); } catch(e) {}
   document.getElementById('export-reminder-banner')?.remove();
-  // If the user included secure notes in plaintext, surface a clear warning
-  // about the file on disk being unencrypted. The notes will re-lock on
-  // import to a Stockroom account, but the file itself is plaintext.
-  if (reSecuredCount > 0) {
-    _showExportPlaintextWarning(reSecuredCount);
-  }
-}
-
-// Modal: warn the user that the just-downloaded export file contains
-// previously-locked notes in plaintext form, and that those notes will
-// re-secure themselves only when imported back into a Stockroom account.
-function _showExportPlaintextWarning(count) {
-  // Remove any leftover instance from a prior export this session.
-  const prior = document.getElementById('export-plaintext-warning-modal');
-  if (prior) prior.remove();
-  const overlay = document.createElement('div');
-  overlay.id = 'export-plaintext-warning-modal';
-  overlay.className = 'modal-overlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px';
-  const noteWord = count === 1 ? 'note' : 'notes';
-  const wasWord  = count === 1 ? 'was'  : 'were';
-  overlay.innerHTML = `
-    <div role="dialog" aria-modal="true" aria-labelledby="export-pt-title"
-         style="background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:440px;width:100%;padding:20px;box-shadow:0 16px 48px rgba(0,0,0,0.6)">
-      <h3 id="export-pt-title" style="margin:0 0 12px;display:flex;align-items:center;gap:8px;font-size:16px">
-        <svg class="icon" aria-hidden="true" style="color:var(--warn)"><use href="#i-alert-triangle"></use></svg>
-        Decrypted notes saved to disk
-      </h3>
-      <p style="margin:0 0 12px;font-size:14px;line-height:1.5;color:var(--text)">
-        ${count} secured ${noteWord} ${wasWord} included in your backup file as
-        <strong>plaintext</strong>. The file on your computer is not encrypted —
-        anyone with access to it can read those notes.
-      </p>
-      <p style="margin:0 0 16px;font-size:13px;line-height:1.5;color:var(--muted)">
-        When you import this file back into Stockroom, those notes will be
-        automatically re-secured with the receiving account's passphrase.
-      </p>
-      <div style="display:flex;justify-content:flex-end;gap:8px">
-        <button class="btn btn-primary" id="export-pt-ok-btn">Got it</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector('#export-pt-ok-btn').addEventListener('click', close);
-  // Click outside dialog to dismiss too (matches other modals' behaviour)
-  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -10433,119 +10417,24 @@ async function importData(e) {
       if (d.settings && typeof d.settings === 'object')
                                         settings     = { ...settings, ...d.settings };
       if (Array.isArray(d.groceries))   groceryItems = d.groceries;
-      if (Array.isArray(d.groceryLists)) groceryLists = d.groceryLists;
       if (Array.isArray(d.reminders))   reminders    = d.reminders;
       if (Array.isArray(d.departments)) groceryDepts = d.departments;
-      // Notes: handle the _reSecureOnImport flag — these are notes that
-      // were locked at export time and had their body decrypted into the
-      // file. We need to (a) accept the body locally, (b) re-encrypt it
-      // and push to the server's per-note body endpoint, and (c) mark
-      // the note as locked again so it behaves like a secured note.
-      // The actual server push happens AFTER initial save so we have a
-      // settled local state to work from.
-      const _notesToReSecure = [];
-      if (Array.isArray(d.notes)) {
-        notes = d.notes.map(n => {
-          if (n && n._reSecureOnImport && typeof n.body === 'string' && n.body.length) {
-            // Stash the plaintext body for re-encryption, then mark the
-            // note as locked (matching its original state at export time).
-            _notesToReSecure.push({ id: n.id, body: n.body });
-            const out = { ...n, locked: true, body: undefined };
-            delete out._reSecureOnImport;
-            return out;
-          }
-          // Non-secure note, or secure note without a usable body — drop
-          // the flag if present and pass through unchanged.
-          if (n && n._reSecureOnImport) {
-            const out = { ...n }; delete out._reSecureOnImport; return out;
-          }
-          return n;
-        });
-      }
-      // Budget — bills/categories/accounts/income templates are arrays;
-      // billInstances/transactions/incomeEntries are objects keyed by 'YYYY-MM'.
-      if (Array.isArray(d.bills))            bills            = d.bills;
-      if (d.billInstances && typeof d.billInstances === 'object' && !Array.isArray(d.billInstances))
-                                             billInstances    = d.billInstances;
-      if (d.budgetSettings && typeof d.budgetSettings === 'object')
-                                             budgetSettings   = { ...budgetSettings, ...d.budgetSettings };
-      if (Array.isArray(d.budgetCategories)) budgetCategories = d.budgetCategories;
-      if (d.transactions && typeof d.transactions === 'object' && !Array.isArray(d.transactions))
-                                             transactions     = d.transactions;
-      if (Array.isArray(d.budgetAccounts))   budgetAccounts   = d.budgetAccounts;
-      if (Array.isArray(d.incomeTemplates))  incomeTemplates  = d.incomeTemplates;
-      if (d.incomeEntries && typeof d.incomeEntries === 'object' && !Array.isArray(d.incomeEntries))
-                                             incomeEntries    = d.incomeEntries;
-      // Mark the just-imported data as freshly local. Sync's merge logic
-      // uses settings.lastSynced to decide which side "wins" when both
-      // sides have data; without this, a stale lastSynced from the export
-      // file (or a fresher remote blob) can cause the kvSyncNow that runs
-      // immediately below to overwrite the imported data with the server's
-      // empty/older state — most visibly for notes, whose merge has a
-      // remoteWins short-circuit. Setting it to now makes local fresher.
-      settings.lastSynced = new Date().toISOString();
       await saveData();
       await _saveSettings();
-      if (Array.isArray(d.groceries))    await saveGrocery();
-      if (Array.isArray(d.groceryLists)) await _saveGroceryLists();
-      if (Array.isArray(d.reminders))    await saveReminders();
-      if (Array.isArray(d.departments))  await saveGroceryDepts();
-      if (Array.isArray(d.notes))        await saveNotes();
-      // Budget — three persistence buckets covering all the budget collections
-      const _hasBillsData    = Array.isArray(d.bills) || (d.billInstances && typeof d.billInstances === 'object') || (d.budgetSettings && typeof d.budgetSettings === 'object');
-      const _hasSpendData    = Array.isArray(d.budgetCategories) || (d.transactions && typeof d.transactions === 'object');
-      const _hasAccountsData = Array.isArray(d.budgetAccounts) || Array.isArray(d.incomeTemplates) || (d.incomeEntries && typeof d.incomeEntries === 'object');
-      if (_hasBillsData    && typeof saveBudgetLocal === 'function')                 await saveBudgetLocal();
-      if (_hasSpendData    && typeof saveBudgetSpendLocal === 'function')            await saveBudgetSpendLocal();
-      if (_hasAccountsData && typeof saveBudgetAccountsAndIncomeLocal === 'function') await saveBudgetAccountsAndIncomeLocal();
-      // Re-secure any notes flagged for re-encryption. Mirrors secureLockNote
-      // but doesn't require the note to be in _noteUnlocked first (we have
-      // the plaintext from the import file). If we're not connected to KV
-      // or can't get a key, we skip and report — the notes stay as locked
-      // placeholders locally and the user can re-secure them later from
-      // a connected session.
-      let _reSecuredOk = 0, _reSecureFailed = 0;
-      if (_notesToReSecure.length > 0) {
-        if (kvConnected && _kvEmailHash && (await kvEnsureKey())) {
-          for (const { id, body } of _notesToReSecure) {
-            try {
-              const ciphertext = await kvEncrypt(_kvKey, body);
-              const res = await postKV(`${WORKER_URL}/note/body/push`, {
-                emailHash: _kvEmailHash,
-                ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
-                noteId: id, ciphertext,
-              });
-              if (res.ok) _reSecuredOk++; else _reSecureFailed++;
-            } catch (e) {
-              console.warn('importData: re-secure failed for note', id, e.message);
-              _reSecureFailed++;
-            }
-          }
-        } else {
-          _reSecureFailed = _notesToReSecure.length;
-          console.warn('importData: cannot re-secure notes — not connected to KV');
-        }
-      }
+      if (Array.isArray(d.groceries))   await saveGrocery();
+      if (Array.isArray(d.reminders))   await saveReminders();
+      if (Array.isArray(d.departments)) await saveGroceryDepts();
       scheduleRender(...RENDER_REGIONS);
       // Push to server so data is encrypted and saved
       if (kvConnected) {
         await kvSyncNow(true).catch(err => console.warn('Import sync failed:', err.message));
       }
-      const _txCount = d.transactions && typeof d.transactions === 'object'
-        ? Object.values(d.transactions).reduce((n, m) => n + (m && typeof m === 'object' ? Object.keys(m).length : 0), 0)
-        : 0;
       const counts = [
-        d.items?.length      ? `${d.items.length} items` : '',
-        d.groceries?.length  ? `${d.groceries.length} groceries` : '',
-        d.notes?.length      ? `${d.notes.length} notes` : '',
-        d.reminders?.length  ? `${d.reminders.length} reminders` : '',
-        d.bills?.length      ? `${d.bills.length} bills` : '',
-        _txCount             ? `${_txCount} transactions` : '',
+        d.items?.length ? `${d.items.length} items` : '',
+        d.groceries?.length ? `${d.groceries.length} groceries` : '',
+        d.reminders?.length ? `${d.reminders.length} reminders` : '',
       ].filter(Boolean).join(', ');
-      let toastMsg = 'Imported ✓' + (counts ? ` — ${counts}` : '');
-      if (_reSecuredOk > 0)     toastMsg += ` · 🔒 ${_reSecuredOk} re-secured`;
-      if (_reSecureFailed > 0)  toastMsg += ` · ⚠ ${_reSecureFailed} note${_reSecureFailed===1?'':'s'} couldn't re-secure`;
-      toast(toastMsg);
+      toast('Imported ✓' + (counts ? ` — ${counts}` : ''));
     } catch(err) {
       alert('Import failed: ' + err.message + '\n\nPlease try again or check the browser console for details.');
       console.error('importData error:', err);
@@ -10571,7 +10460,7 @@ async function clearAll() {
     if (kvConnected) kvSyncNow().catch(() => {});
     return;
   }
-  if (!confirm('This will permanently delete ALL your data — items, groceries, lists, notes, reminders, budget, custom tags, recently-deleted items, and shared data. Are you sure?')) return;
+  if (!confirm('This will permanently delete ALL your items, purchase history, and shared data. Are you sure?')) return;
   requireReauth('Confirm your identity to clear all data.', _doClearAll, { passkeyAllowed: true });
 }
 
@@ -10584,65 +10473,9 @@ async function _doClearAll() {
   }
   _shareTargets = [];
   try { localStorage.removeItem('stockroom_share_keys'); } catch(e) {}
-
-  // ── Reset all in-memory data ────────────────────────────────────────
-  // Items + recently-deleted (recycle bin lives inside items via _deletedAt,
-  // so emptying items clears it too).
+  // Clear own data locally and push empty state to server
   items = [];
-  // Custom tags — preserve everything else in settings (theme, threshold,
-  // displayName, MFA config, etc.) but wipe the user-defined tag list.
-  // Bump customTagsUpdatedAt so the empty list wins the next sync merge.
-  if (settings && typeof settings === 'object') {
-    settings.customTags = [];
-    settings.customTagsUpdatedAt = new Date().toISOString();
-    // Mark as freshly local so the empty state wins on next sync.
-    settings.lastSynced = new Date().toISOString();
-  }
-  // Groceries — items + lists + departments. Departments could arguably
-  // be retained as a system list, but they live in user data and are
-  // editable, so a "clear everything" should reset them too.
-  groceryItems = [];
-  groceryLists = [];
-  groceryDepts = [];
-  // Reminders
-  reminders = [];
-  // Notes
-  notes = [];
-  // Budget — bills, instances, categories, transactions, accounts, income
-  bills = [];
-  billInstances = {};
-  budgetCategories = [];
-  transactions = {};
-  budgetAccounts = [];
-  incomeTemplates = [];
-  incomeEntries = {};
-  // Tombstone sets — wipe these too so a future import or reseed isn't
-  // silently undone by stale delete markers from the old data.
-  if (typeof billsDeletedIds            !== 'undefined') billsDeletedIds            = new Set();
-  if (typeof budgetCategoryDeletedIds   !== 'undefined') budgetCategoryDeletedIds   = new Set();
-  if (typeof budgetTransactionDeletedIds!== 'undefined') budgetTransactionDeletedIds= new Set();
-  if (typeof budgetAccountDeletedIds    !== 'undefined') budgetAccountDeletedIds    = new Set();
-  if (typeof incomeTemplateDeletedIds   !== 'undefined') incomeTemplateDeletedIds   = new Set();
-  if (typeof incomeEntryDeletedIds      !== 'undefined') incomeEntryDeletedIds      = new Set();
-
-  // ── Persist the cleared state to IndexedDB ──────────────────────────
   await saveData();
-  await _saveSettings();
-  await saveGrocery().catch(()=>{});
-  if (typeof _saveGroceryLists === 'function')          await _saveGroceryLists().catch(()=>{});
-  if (typeof saveGroceryDepts === 'function')           await saveGroceryDepts().catch(()=>{});
-  if (typeof saveReminders === 'function')              await saveReminders().catch(()=>{});
-  if (typeof saveNotes === 'function')                  await saveNotes().catch(()=>{});
-  if (typeof saveBudgetLocal === 'function')            await saveBudgetLocal().catch(()=>{});
-  if (typeof saveBudgetSpendLocal === 'function')       await saveBudgetSpendLocal().catch(()=>{});
-  if (typeof saveBudgetAccountsAndIncomeLocal === 'function') await saveBudgetAccountsAndIncomeLocal().catch(()=>{});
-  // Wipe other tombstone stores not covered by the budget save helpers.
-  try { await dbPut('deletedIds',            'deletedIds',            []); } catch(_) {}
-  try { await dbPut('groceryDeletedIds',     'groceryDeletedIds',     []); } catch(_) {}
-  try { await dbPut('reminderDeletedIds',    'reminderDeletedIds',    []); } catch(_) {}
-  try { await dbPut('groceryLists',          '_deletedIds',           []); } catch(_) {}
-
-  // Push the cleared state to the server so other devices see it.
   await kvPush().catch(e => console.warn('clearAll: push failed', e.message));
   renderShareTargetsList();
   scheduleRender(...RENDER_REGIONS);
@@ -11687,6 +11520,17 @@ async function showEmailVerification(email, emailHash, onSuccess) {
   if (errEl)    errEl.style.display = 'none';
   if (okEl)     okEl.style.display  = 'none';
 
+  // Show the "Cancel and use a different email" button only when this
+  // verification is happening as a recovery from a Back-button bypass —
+  // i.e. when there's a pending unverified login or restore in flight.
+  // For the normal first-time signup path (where the user is right inside
+  // the wizard), the button isn't needed and would be confusing.
+  const cancelBtn = document.getElementById('email-verify-cancel-btn');
+  if (cancelBtn) {
+    const isRecovery = !!(_pendingUnverifiedLogin || _pendingUnverifiedRestore);
+    cancelBtn.style.display = isRecovery ? 'block' : 'none';
+  }
+
   // Show the step
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   document.getElementById('wizard-step-1f')?.classList.add('active');
@@ -12075,8 +11919,16 @@ async function kvRegister() {
     if (window._demoMode && _demoConvertSeed) {
       try { await _demoCompleteConversion(); } catch (e) { console.error('demo convert failed:', e); }
     }
-    // Verify email ownership before continuing to protect screen
-    await showEmailVerification(email, emailHash, () => showProtectDataScreen(recoveryCodes));
+    // Verify email ownership before continuing to protect screen.
+    // We mark this as a "fresh registration" so the verification screen
+    // shows a Cancel button — the user might bail if e.g. they typed the
+    // wrong email and the OTP is going to the wrong address. Cancelling
+    // deletes the half-built account and returns them to signup.
+    _pendingUnverifiedRestore = { email, emailHash, verifier };
+    await showEmailVerification(email, emailHash, () => {
+      _pendingUnverifiedRestore = null;
+      showProtectDataScreen(recoveryCodes);
+    });
   } catch(err) {
     if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
   } finally {
@@ -12099,6 +11951,21 @@ async function kvLogin() {
     if (res.status === 404) throw new Error('Account not found for ' + email + ' — check your email address, or create a new account');
     if (res.status === 429) throw new Error(_handleLoginRateLimit(res, data) || data.error);
     if (res.status === 401) throw new Error(data.error || 'Incorrect passphrase — try again');
+    // ── Email-verification gate ─────────────────────────────────────────
+    // Server returns 403 with requiresEmailVerification when the passphrase
+    // is correct but the user's email has never been confirmed (e.g. they
+    // pressed Back during sign-up). We route to the verification step
+    // INSTEAD of admitting them. We deliberately do NOT call kvStoreSession
+    // before verification completes — so a Back-out leaves no usable session
+    // on the device. The verification screen itself only needs emailHash
+    // (resends the OTP) and the OTP value (validates).
+    if (res.status === 403 && data.requiresEmailVerification) {
+      if (btn) { btn.textContent = 'Sign in →'; btn.disabled = false; }
+      const verifyEmail = data.email || email;
+      _pendingUnverifiedLogin = { email: verifyEmail, emailHash, verifier, passphrase };
+      await showEmailVerification(verifyEmail, emailHash, _completePendingUnverifiedLogin);
+      return;
+    }
     if (!res.ok) throw new Error(data.error || 'Sign-in failed');
 
     // Fetch key envelope — response carries cryptoVersion, kdfSalt, migrationDue
@@ -12134,6 +12001,111 @@ async function kvLogin() {
     if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
   } finally {
     if (btn) { btn.textContent = 'Sign in →'; btn.disabled = false; }
+  }
+}
+
+// ── Pending-unverified-login state ──────────────────────────────────────────
+// Set by kvLogin when /user/verify returns 403 requiresEmailVerification.
+// After the user completes the OTP step, _completePendingUnverifiedLogin
+// uses these credentials to finish the login as if /user/verify had returned
+// 200 the first time. The state is cleared on success or cancel.
+let _pendingUnverifiedLogin = null;
+
+// ── Pending-unverified-restore state ────────────────────────────────────────
+// Set by init() when session-restore detects an unverified account. After
+// the user completes the OTP, we drop them back at the login screen — they
+// then sign in cleanly via the normal flow (which will now succeed because
+// email_verified is set on the server).
+let _pendingUnverifiedRestore = null;
+
+async function _completePendingUnverifiedRestore() {
+  _pendingUnverifiedRestore = null;
+  // Verification succeeded server-side — but the cached session in IDB/LS
+  // was set up before we knew that. Clear it so the user signs in fresh
+  // (and so we don't strand them with a session whose key we never unlocked).
+  try { localStorage.removeItem('stockroom_kv_session'); } catch(e) {}
+  try { localStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
+  try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
+  try { await dbPut('settings', 'stockroom_kv_session', null); } catch(e) {}
+  toast('Email verified — please sign in to continue');
+  showKvLogin();
+}
+
+// Called from the verification screen when the user wants to abandon the
+// half-finished signup and start over with a different email. Deletes the
+// account on the server (best-effort — the user has the verifier in
+// memory), clears local session state, and returns to the registration
+// screen. Surfaced as the "Cancel and use a different email" button on
+// wizard-step-1f when _pendingUnverifiedRestore is set.
+async function cancelUnverifiedAccount() {
+  const ctx = _pendingUnverifiedRestore || _pendingUnverifiedLogin;
+  if (!ctx) {
+    showKvLogin();
+    return;
+  }
+  if (!confirm('Delete this unverified account and start over?\n\nThe partial account for ' + ctx.email + ' will be removed from the server. You can then sign up with a different email.')) return;
+  try {
+    // Best-effort delete. We have emailHash + verifier (from the session
+    // the server stamped at registration time). If verifier isn't around
+    // — e.g. the restore path stripped it — the call will 401 silently
+    // and the user can finish cleanup from the admin panel.
+    const verifier = ctx.verifier || _kvVerifier || null;
+    if (verifier) {
+      await postKV(`${WORKER_URL}/user/delete`, { emailHash: ctx.emailHash, verifier }).catch(() => {});
+    }
+  } catch(e) { console.warn('cancelUnverifiedAccount: delete failed:', e.message); }
+  // Clear all local session/key material regardless of server outcome
+  _pendingUnverifiedLogin = null;
+  _pendingUnverifiedRestore = null;
+  try { localStorage.removeItem('stockroom_kv_session'); } catch(e) {}
+  try { localStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
+  try { localStorage.removeItem('stockroom_kv_key_fallback'); } catch(e) {}
+  try { localStorage.removeItem('stockroom_device_secret'); } catch(e) {}
+  try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
+  try { await dbPut('settings', 'stockroom_kv_session', null); } catch(e) {}
+  try { await removeWrappedKey(getOrCreateDeviceId()); } catch(e) {}
+  // Reset in-memory session
+  kvConnected  = false;
+  _kvEmail     = '';
+  _kvEmailHash = '';
+  _kvVerifier  = '';
+  _kvSessionToken = '';
+  _kvKey       = null;
+  toast('Account removed — you can sign up again with a different email');
+  showKvRegister();
+}
+
+async function _completePendingUnverifiedLogin() {
+  if (!_pendingUnverifiedLogin) return;
+  const { email, emailHash, verifier, passphrase } = _pendingUnverifiedLogin;
+  _pendingUnverifiedLogin = null;
+  try {
+    // Fetch key envelope — same path as the happy /user/verify case
+    const keyRes  = await postKV(`${WORKER_URL}/key/get`, { emailHash, verifier });
+    const keyData = await keyRes.json();
+    let dataKey;
+    if (keyRes.ok && !keyData.legacy && keyData.envelope) {
+      if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
+        const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
+        dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+      } else {
+        const { wrapKey } = await derivePassphraseWrapKey(passphrase, emailHash, keyData.salt);
+        dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
+      }
+    } else {
+      dataKey = await kvDeriveKey(email, passphrase);
+    }
+    await kvStoreSession(email, emailHash, verifier, dataKey);
+    persistLoginCookies(email, false);
+    await _trustIfRemembered(email, emailHash, verifier, dataKey);
+    if (keyData.migrationDue) {
+      await runCryptoMigration(email, emailHash, verifier, passphrase, dataKey);
+      return;
+    }
+    await postLoginWizardRoute();
+  } catch (e) {
+    toast('Sign-in failed after verification — please try again');
+    showKvLogin();
   }
 }
 
@@ -13307,6 +13279,18 @@ async function _getKeyViaPassphrase(emailHash, sessionToken, credentialId, errEl
 }
 
 async function kvStorePasskeySession(email, emailHash, sessionToken, dataKey) {
+  // ── User-switch detection ─────────────────────────────────────────────
+  // Same logic as kvStoreSession — wipe stale local data if a different
+  // user is signing in than the one whose data is currently in IDB.
+  try {
+    const prevHash = await dbGet('settings', '_activeUserHash');
+    if (prevHash && prevHash !== emailHash) {
+      await _wipeStaleUserDataForSwitch(emailHash);
+    } else if (!prevHash) {
+      await dbPut('settings', '_activeUserHash', emailHash);
+    }
+  } catch(e) { console.warn('[kvStorePasskeySession] user-switch wipe failed (non-fatal):', e.message); }
+
   _kvEmail        = email;
   _kvEmailHash    = emailHash;
   _kvSessionToken = sessionToken;
@@ -14136,6 +14120,23 @@ async function clearAllTrustedDevices() {
 }
 
 async function kvStoreSession(email, emailHash, verifier, key) {
+  // ── User-switch detection ─────────────────────────────────────────────
+  // If a different user is signing in than the one whose data is currently
+  // sitting in IDB (e.g. after a sign-out, or registration of a new account
+  // on a device that previously held another), wipe stale local data BEFORE
+  // we set the new session credentials. Without this, the previous user's
+  // notes/groceries/budget would render in the new account on the first
+  // tab that lands on the app before kvSyncNow finishes.
+  try {
+    const prevHash = await dbGet('settings', '_activeUserHash');
+    if (prevHash && prevHash !== emailHash) {
+      await _wipeStaleUserDataForSwitch(emailHash);
+    } else if (!prevHash) {
+      // First sign-in on this device — just stamp ownership
+      await dbPut('settings', '_activeUserHash', emailHash);
+    }
+  } catch(e) { console.warn('[kvStoreSession] user-switch wipe failed (non-fatal):', e.message); }
+
   _kvEmail     = email;
   _kvEmailHash = emailHash;
   _kvVerifier  = verifier;
@@ -14829,14 +14830,9 @@ async function kvSyncNow(silent = false) {
           await dbPut('reminderDeletedIds', 'reminderDeletedIds', arr);
         } catch(_) {}
       }
-      // Merge notes — always per-id by updatedAt timestamp, like items
-      // and groceries. The previous code had a remoteWins short-circuit
-      // that replaced the entire local notes array; that broke the
-      // import flow (imported notes immediately wiped by sync) and
-      // wasn't actually necessary — the per-id merge below handles
-      // both directions correctly via timestamps.
+      // Merge notes
       if (remote.notes && Array.isArray(remote.notes)) {
-        if (notes.length === 0) {
+        if (remoteWins || notes.length === 0) {
           notes = remote.notes;
         } else {
           const localNMap = new Map(notes.map(n => [n.id, n]));
@@ -26437,7 +26433,56 @@ async function init() {
   console.log('[DIAG] session_key (ls): ', _diagLsKey   ? 'SET' : 'ABSENT');
   const kvRestored = await kvRestoreSession();
   console.log('[DIAG] kvRestored:', kvRestored, '| kvConnected:', kvConnected, '| _kvKey:', !!_kvKey);
-  if (kvRestored) {
+
+  // ── Email-verification gate on session restore ─────────────────────────
+  // Defends against the "Back-button bypass" path: user signed up, the OTP
+  // email failed (or they pressed Back before entering it), and now there's
+  // a session cached in localStorage/IDB for an unverified account. Without
+  // this check they'd be admitted on next page load. We make a cheap call
+  // to /user/email-verified to see whether the server has marked this hash
+  // as verified; if not, we drop them at the verification screen instead
+  // of the app. The server call is unauthenticated (just emailHash) so it
+  // works even without _kvKey unlocked.
+  let _blockedUnverified = false;
+  if (kvRestored && _kvEmailHash) {
+    try {
+      const r = await fetch(`${WORKER_URL}/user/email-verified`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailHash: _kvEmailHash }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data.exists && !data.verified) {
+        console.warn('[init] Session restored for unverified email — blocking entry');
+        _blockedUnverified = true;
+        // Show the wizard and route to the verification step. The
+        // _pendingUnverifiedRestore state lets us complete the handoff
+        // (drop the half-built session, return to login) once the OTP
+        // is entered — they then sign in cleanly to a verified account.
+        const restoreEmail = data.email || _kvEmail || '';
+        _pendingUnverifiedRestore = { email: restoreEmail, emailHash: _kvEmailHash };
+        // Drop the unauthenticated session bits — we don't want any
+        // background sync running on this account until verification
+        // completes. Setting kvConnected=false stops kvSyncNow.
+        kvConnected = false;
+        document.body.classList.add('wizard-active');
+        const wiz = document.getElementById('wizard');
+        if (wiz) wiz.style.display = 'flex';
+        await showEmailVerification(
+          restoreEmail,
+          _kvEmailHash,
+          _completePendingUnverifiedRestore
+        );
+      }
+    } catch (e) {
+      // Network error — fail open rather than locking the user out of an
+      // already-verified account just because the check call failed. The
+      // server-side gate on /user/verify still catches anything important.
+      console.warn('[init] email-verified check failed (continuing):', e.message);
+    }
+  }
+
+  if (kvRestored && !_blockedUnverified) {
     // Always ensure the data key is available before syncing.
     // If _kvKey is already set (trusted device / 4h cache), this is instant.
     // If not, kvEnsureKey will prompt cleanly BEFORE the stockroom shows.
@@ -27178,7 +27223,12 @@ async function shareGateRegister() {
     if (!storeRes.ok) throw new Error('Could not store key envelopes — try again');
     _kvKey = dataKey;
     await kvStoreSession(email, emailHash, verifier, dataKey);
+    // Mark as fresh registration so the verification screen shows a Cancel
+    // button — share-gate users hit the same Resend-failure path as the
+    // main signup wizard, and need an exit if their email won't deliver.
+    _pendingUnverifiedRestore = { email, emailHash, verifier };
     await showEmailVerification(email, emailHash, async () => {
+      _pendingUnverifiedRestore = null;
       await _trustIfRemembered(email, emailHash, verifier, dataKey);
       await completePendingJoin();
     });
