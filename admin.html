@@ -147,7 +147,12 @@ const _auth = (() => {
   };
 })();
 
-const WORKER_URL    = 'https://stckrm.fly.dev';
+// Use the origin the page was served from. This way the same admin.html
+// works on both production (https://stckrm.fly.dev) and staging
+// (https://stckrm-staging.fly.dev) without needing two builds — each
+// deployment talks to its own backend, which is the one that knows its
+// own ADMIN_SECRET.
+const WORKER_URL    = window.location.origin;
 let allAccounts     = [];
 let sessionExpiry   = 0;
 let sessionTimerInt = null;
