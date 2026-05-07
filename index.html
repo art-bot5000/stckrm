@@ -1308,7 +1308,7 @@
 
       <!-- 1. Passphrase — already done -->
       <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:rgba(76,187,138,0.08);border:1px solid rgba(76,187,138,0.2);border-radius:10px;margin-bottom:12px">
-        <div style="font-size:18px">✅</div>
+        <div style="color:var(--ok);display:flex;align-items:center"><svg aria-hidden="true" style="width:20px;height:20px"><use href="#i-check-circle-2"></use></svg></div>
         <div><div style="font-size:13px;font-weight:700">Passphrase set</div><div style="font-size:11px;color:var(--muted)">Your data is encrypted with your passphrase</div></div>
       </div>
 
@@ -1406,6 +1406,7 @@
       </div>
       <button class="btn btn-primary btn-xl full" style="margin-bottom:10px" onclick="submitEmailVerification()">Verify email →</button>
       <button class="btn btn-ghost btn-sm full" id="email-verify-resend-btn" style="margin-bottom:6px" onclick="resendEmailVerification()">Resend code</button>
+      <button class="btn btn-ghost btn-sm full" id="email-verify-cancel-btn" style="margin-bottom:6px;display:none;color:var(--danger)" onclick="cancelUnverifiedAccount()">Cancel and use a different email</button>
       <p id="email-verify-error" style="font-size:12px;color:var(--danger);margin-top:8px;display:none"></p>
       <p id="email-verify-ok" style="font-size:12px;color:var(--ok);margin-top:8px;display:none"></p>
     </div>
