@@ -10388,6 +10388,14 @@ async function importData(e) {
       if (Array.isArray(d.incomeTemplates))  incomeTemplates  = d.incomeTemplates;
       if (d.incomeEntries && typeof d.incomeEntries === 'object' && !Array.isArray(d.incomeEntries))
                                              incomeEntries    = d.incomeEntries;
+      // Mark the just-imported data as freshly local. Sync's merge logic
+      // uses settings.lastSynced to decide which side "wins" when both
+      // sides have data; without this, a stale lastSynced from the export
+      // file (or a fresher remote blob) can cause the kvSyncNow that runs
+      // immediately below to overwrite the imported data with the server's
+      // empty/older state — most visibly for notes, whose merge has a
+      // remoteWins short-circuit. Setting it to now makes local fresher.
+      settings.lastSynced = new Date().toISOString();
       await saveData();
       await _saveSettings();
       if (Array.isArray(d.groceries))    await saveGrocery();
@@ -10444,7 +10452,7 @@ async function clearAll() {
     if (kvConnected) kvSyncNow().catch(() => {});
     return;
   }
-  if (!confirm('This will permanently delete ALL your items, purchase history, and shared data. Are you sure?')) return;
+  if (!confirm('This will permanently delete ALL your data — items, groceries, lists, notes, reminders, budget, custom tags, recently-deleted items, and shared data. Are you sure?')) return;
   requireReauth('Confirm your identity to clear all data.', _doClearAll, { passkeyAllowed: true });
 }
 
@@ -10457,9 +10465,65 @@ async function _doClearAll() {
   }
   _shareTargets = [];
   try { localStorage.removeItem('stockroom_share_keys'); } catch(e) {}
-  // Clear own data locally and push empty state to server
+
+  // ── Reset all in-memory data ────────────────────────────────────────
+  // Items + recently-deleted (recycle bin lives inside items via _deletedAt,
+  // so emptying items clears it too).
   items = [];
+  // Custom tags — preserve everything else in settings (theme, threshold,
+  // displayName, MFA config, etc.) but wipe the user-defined tag list.
+  // Bump customTagsUpdatedAt so the empty list wins the next sync merge.
+  if (settings && typeof settings === 'object') {
+    settings.customTags = [];
+    settings.customTagsUpdatedAt = new Date().toISOString();
+    // Mark as freshly local so the empty state wins on next sync.
+    settings.lastSynced = new Date().toISOString();
+  }
+  // Groceries — items + lists + departments. Departments could arguably
+  // be retained as a system list, but they live in user data and are
+  // editable, so a "clear everything" should reset them too.
+  groceryItems = [];
+  groceryLists = [];
+  groceryDepts = [];
+  // Reminders
+  reminders = [];
+  // Notes
+  notes = [];
+  // Budget — bills, instances, categories, transactions, accounts, income
+  bills = [];
+  billInstances = {};
+  budgetCategories = [];
+  transactions = {};
+  budgetAccounts = [];
+  incomeTemplates = [];
+  incomeEntries = {};
+  // Tombstone sets — wipe these too so a future import or reseed isn't
+  // silently undone by stale delete markers from the old data.
+  if (typeof billsDeletedIds            !== 'undefined') billsDeletedIds            = new Set();
+  if (typeof budgetCategoryDeletedIds   !== 'undefined') budgetCategoryDeletedIds   = new Set();
+  if (typeof budgetTransactionDeletedIds!== 'undefined') budgetTransactionDeletedIds= new Set();
+  if (typeof budgetAccountDeletedIds    !== 'undefined') budgetAccountDeletedIds    = new Set();
+  if (typeof incomeTemplateDeletedIds   !== 'undefined') incomeTemplateDeletedIds   = new Set();
+  if (typeof incomeEntryDeletedIds      !== 'undefined') incomeEntryDeletedIds      = new Set();
+
+  // ── Persist the cleared state to IndexedDB ──────────────────────────
   await saveData();
+  await _saveSettings();
+  await saveGrocery().catch(()=>{});
+  if (typeof _saveGroceryLists === 'function')          await _saveGroceryLists().catch(()=>{});
+  if (typeof saveGroceryDepts === 'function')           await saveGroceryDepts().catch(()=>{});
+  if (typeof saveReminders === 'function')              await saveReminders().catch(()=>{});
+  if (typeof saveNotes === 'function')                  await saveNotes().catch(()=>{});
+  if (typeof saveBudgetLocal === 'function')            await saveBudgetLocal().catch(()=>{});
+  if (typeof saveBudgetSpendLocal === 'function')       await saveBudgetSpendLocal().catch(()=>{});
+  if (typeof saveBudgetAccountsAndIncomeLocal === 'function') await saveBudgetAccountsAndIncomeLocal().catch(()=>{});
+  // Wipe other tombstone stores not covered by the budget save helpers.
+  try { await dbPut('deletedIds',            'deletedIds',            []); } catch(_) {}
+  try { await dbPut('groceryDeletedIds',     'groceryDeletedIds',     []); } catch(_) {}
+  try { await dbPut('reminderDeletedIds',    'reminderDeletedIds',    []); } catch(_) {}
+  try { await dbPut('groceryLists',          '_deletedIds',           []); } catch(_) {}
+
+  // Push the cleared state to the server so other devices see it.
   await kvPush().catch(e => console.warn('clearAll: push failed', e.message));
   renderShareTargetsList();
   scheduleRender(...RENDER_REGIONS);
@@ -14646,9 +14710,14 @@ async function kvSyncNow(silent = false) {
           await dbPut('reminderDeletedIds', 'reminderDeletedIds', arr);
         } catch(_) {}
       }
-      // Merge notes
+      // Merge notes — always per-id by updatedAt timestamp, like items
+      // and groceries. The previous code had a remoteWins short-circuit
+      // that replaced the entire local notes array; that broke the
+      // import flow (imported notes immediately wiped by sync) and
+      // wasn't actually necessary — the per-id merge below handles
+      // both directions correctly via timestamps.
       if (remote.notes && Array.isArray(remote.notes)) {
-        if (remoteWins || notes.length === 0) {
+        if (notes.length === 0) {
           notes = remote.notes;
         } else {
           const localNMap = new Map(notes.map(n => [n.id, n]));
