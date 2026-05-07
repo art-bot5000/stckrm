@@ -1,8 +1,4 @@
-<<<<<<< Updated upstream
-const CACHE_VERSION = 'stockroom-kv-v288';
-=======
-const CACHE_VERSION = 'stockroom-kv-v290';
->>>>>>> Stashed changes
+const CACHE_VERSION = 'stockroom-kv-v291';
 // Namespace the cache by hostname so staging and production PWAs don't
 // fight over the same cache when both are installed on the same device.
 // Production hostnames (stckrm.com, app.stckrm.com, stckrm.fly.dev) all
@@ -97,7 +93,7 @@ self.addEventListener('fetch', event => {
   const apiPaths = [
     '/ping','/auth/','/user/','/device/','/share/','/schedule/',
     '/passkey/','/admin/','/household/','/items/','/key/','/data/',
-    '/recovery/','/email/','/invite/','/crypto/','/sync/','/presence',
+    '/recovery/','/email/','/note/','/invite/','/crypto/','/sync/','/presence',
     '/reminder','/status','/register','/unregister','/unsubscribe',
     '/check-now','/send-now','/debug-schedule','/reset-schedule',
     '/set-schedule','/send-reminder',
