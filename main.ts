@@ -4483,7 +4483,49 @@ Deno.serve(async (request) => {
 
       // Success — clear rate limit
       if (rl.attempts.length > 0) await kvSet(rlKey, JSON.stringify({ attempts: [], lockedUntil: 0 }), { expireIn: WINDOW });
+
+      // ── Email verification gate ─────────────────────────────────
+      // Passphrase is correct, but if the account's email has never been
+      // verified, the client must complete verification before entering
+      // the app. We return 403 with a flag so the client can route to
+      // the verification step rather than treating this as a hard error.
+      // The plaintext email (stored at register/verify time) is returned
+      // so the client doesn't need to ask the user to type it again.
+      const emailVerified = await kvGet(['user', emailHash, 'email_verified']);
+      if (!emailVerified.value) {
+        const emailRow = await kvGet(['user', emailHash, 'email']);
+        return json({
+          error: 'Email address not verified',
+          requiresEmailVerification: true,
+          email: emailRow.value || null,
+        }, corsHeaders, 403);
+      }
+
       return json({ ok: true }, corsHeaders);
+    } catch(err) {
+      return json({ error: (err as Error).message }, corsHeaders, 500);
+    }
+  }
+
+  // ── User: check if an account's email is verified ─────────
+  // Lightweight, unauthenticated lookup by emailHash. Used by the client
+  // on session restore to detect "user pressed Back during verification
+  // and now has a session for an unverified account" — in which case it
+  // routes to the verification step instead of letting them in.
+  // Returns plaintext email so the verification UI can address them by name.
+  if (url.pathname === '/user/email-verified' && request.method === 'POST') {
+    try {
+      const { emailHash } = await request.json();
+      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);
+      const exists = await kvGet(['user', emailHash, 'verifier']);
+      if (!exists.value) return json({ exists: false }, corsHeaders);
+      const verified = await kvGet(['user', emailHash, 'email_verified']);
+      const emailRow = await kvGet(['user', emailHash, 'email']);
+      return json({
+        exists: true,
+        verified: !!verified.value,
+        email: emailRow.value || null,
+      }, corsHeaders);
     } catch(err) {
       return json({ error: (err as Error).message }, corsHeaders, 500);
     }
