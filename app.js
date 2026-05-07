@@ -10174,12 +10174,22 @@ function _doExportData(includeSecureNotes = false) {
   const exportPayload = {
     items,
     settings,
-    groceries:   groceryItems,
+    groceries:    groceryItems,
+    groceryLists,
     reminders,
-    departments: groceryDepts,
-    notes:       exportNotes,
-    exportedAt:  new Date().toISOString(),
-    version:     2,
+    departments:  groceryDepts,
+    notes:        exportNotes,
+    // Budget — full set of collections that the sync blob carries
+    bills,
+    billInstances,
+    budgetSettings,
+    budgetCategories,
+    transactions,
+    budgetAccounts,
+    incomeTemplates,
+    incomeEntries,
+    exportedAt:   new Date().toISOString(),
+    version:      3,
   };
   const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -10360,22 +10370,53 @@ async function importData(e) {
       if (d.settings && typeof d.settings === 'object')
                                         settings     = { ...settings, ...d.settings };
       if (Array.isArray(d.groceries))   groceryItems = d.groceries;
+      if (Array.isArray(d.groceryLists)) groceryLists = d.groceryLists;
       if (Array.isArray(d.reminders))   reminders    = d.reminders;
       if (Array.isArray(d.departments)) groceryDepts = d.departments;
+      if (Array.isArray(d.notes))       notes        = d.notes;
+      // Budget — bills/categories/accounts/income templates are arrays;
+      // billInstances/transactions/incomeEntries are objects keyed by 'YYYY-MM'.
+      if (Array.isArray(d.bills))            bills            = d.bills;
+      if (d.billInstances && typeof d.billInstances === 'object' && !Array.isArray(d.billInstances))
+                                             billInstances    = d.billInstances;
+      if (d.budgetSettings && typeof d.budgetSettings === 'object')
+                                             budgetSettings   = { ...budgetSettings, ...d.budgetSettings };
+      if (Array.isArray(d.budgetCategories)) budgetCategories = d.budgetCategories;
+      if (d.transactions && typeof d.transactions === 'object' && !Array.isArray(d.transactions))
+                                             transactions     = d.transactions;
+      if (Array.isArray(d.budgetAccounts))   budgetAccounts   = d.budgetAccounts;
+      if (Array.isArray(d.incomeTemplates))  incomeTemplates  = d.incomeTemplates;
+      if (d.incomeEntries && typeof d.incomeEntries === 'object' && !Array.isArray(d.incomeEntries))
+                                             incomeEntries    = d.incomeEntries;
       await saveData();
       await _saveSettings();
-      if (Array.isArray(d.groceries))   await saveGrocery();
-      if (Array.isArray(d.reminders))   await saveReminders();
-      if (Array.isArray(d.departments)) await saveGroceryDepts();
+      if (Array.isArray(d.groceries))    await saveGrocery();
+      if (Array.isArray(d.groceryLists)) await _saveGroceryLists();
+      if (Array.isArray(d.reminders))    await saveReminders();
+      if (Array.isArray(d.departments))  await saveGroceryDepts();
+      if (Array.isArray(d.notes))        await saveNotes();
+      // Budget — three persistence buckets covering all the budget collections
+      const _hasBillsData    = Array.isArray(d.bills) || (d.billInstances && typeof d.billInstances === 'object') || (d.budgetSettings && typeof d.budgetSettings === 'object');
+      const _hasSpendData    = Array.isArray(d.budgetCategories) || (d.transactions && typeof d.transactions === 'object');
+      const _hasAccountsData = Array.isArray(d.budgetAccounts) || Array.isArray(d.incomeTemplates) || (d.incomeEntries && typeof d.incomeEntries === 'object');
+      if (_hasBillsData    && typeof saveBudgetLocal === 'function')                 await saveBudgetLocal();
+      if (_hasSpendData    && typeof saveBudgetSpendLocal === 'function')            await saveBudgetSpendLocal();
+      if (_hasAccountsData && typeof saveBudgetAccountsAndIncomeLocal === 'function') await saveBudgetAccountsAndIncomeLocal();
       scheduleRender(...RENDER_REGIONS);
       // Push to server so data is encrypted and saved
       if (kvConnected) {
         await kvSyncNow(true).catch(err => console.warn('Import sync failed:', err.message));
       }
+      const _txCount = d.transactions && typeof d.transactions === 'object'
+        ? Object.values(d.transactions).reduce((n, m) => n + (m && typeof m === 'object' ? Object.keys(m).length : 0), 0)
+        : 0;
       const counts = [
-        d.items?.length ? `${d.items.length} items` : '',
-        d.groceries?.length ? `${d.groceries.length} groceries` : '',
-        d.reminders?.length ? `${d.reminders.length} reminders` : '',
+        d.items?.length      ? `${d.items.length} items` : '',
+        d.groceries?.length  ? `${d.groceries.length} groceries` : '',
+        d.notes?.length      ? `${d.notes.length} notes` : '',
+        d.reminders?.length  ? `${d.reminders.length} reminders` : '',
+        d.bills?.length      ? `${d.bills.length} bills` : '',
+        _txCount             ? `${_txCount} transactions` : '',
       ].filter(Boolean).join(', ');
       toast('Imported ✓' + (counts ? ` — ${counts}` : ''));
     } catch(err) {
