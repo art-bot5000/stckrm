@@ -10162,12 +10162,29 @@ function exportDataWithSecureChoice(includeUnlocked) {
 }
 
 function _doExportData(includeSecureNotes = false) {
-  // Build notes export - exclude body of locked notes unless includeSecureNotes
+  // Build notes export - exclude body of locked notes unless includeSecureNotes.
+  //
+  // When the user opts in to including locked-note bodies in the file:
+  //   - The body is written as plaintext (so the file is portable / human-readable)
+  //   - We mark the note with `_reSecureOnImport: true` so that on import,
+  //     the receiving app re-encrypts the body with the new account's key
+  //     and restores the locked state. The flag is dropped at import time.
+  //   - If the body could not be unlocked at export time (the note isn't in
+  //     _noteUnlocked because the user never opened it during this session),
+  //     we fall back to the placeholder text and DO NOT set the re-secure
+  //     flag — there's nothing meaningful to re-secure.
+  let reSecuredCount = 0;
   const exportNotes = notes.map(n => {
     if (n.locked && !includeSecureNotes) return { ...n, body: undefined };
     if (n.locked && includeSecureNotes) {
       const unlocked = _noteUnlocked.get(n.id);
-      return { ...n, body: unlocked?.body || '[locked — could not export]', locked: false };
+      if (unlocked?.body) {
+        reSecuredCount++;
+        return { ...n, body: unlocked.body, locked: false, _reSecureOnImport: true };
+      }
+      // Fallback — body wasn't available; export the placeholder without
+      // the re-secure flag (nothing meaningful to re-encrypt on import).
+      return { ...n, body: '[locked — could not export]', locked: false };
     }
     return n;
   });
@@ -10198,6 +10215,52 @@ function _doExportData(includeSecureNotes = false) {
   a.click();
   try { localStorage.setItem('stockroom_last_export', String(Date.now())); } catch(e) {}
   document.getElementById('export-reminder-banner')?.remove();
+  // If the user included secure notes in plaintext, surface a clear warning
+  // about the file on disk being unencrypted. The notes will re-lock on
+  // import to a Stockroom account, but the file itself is plaintext.
+  if (reSecuredCount > 0) {
+    _showExportPlaintextWarning(reSecuredCount);
+  }
+}
+
+// Modal: warn the user that the just-downloaded export file contains
+// previously-locked notes in plaintext form, and that those notes will
+// re-secure themselves only when imported back into a Stockroom account.
+function _showExportPlaintextWarning(count) {
+  // Remove any leftover instance from a prior export this session.
+  const prior = document.getElementById('export-plaintext-warning-modal');
+  if (prior) prior.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'export-plaintext-warning-modal';
+  overlay.className = 'modal-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px';
+  const noteWord = count === 1 ? 'note' : 'notes';
+  const wasWord  = count === 1 ? 'was'  : 'were';
+  overlay.innerHTML = `
+    <div role="dialog" aria-modal="true" aria-labelledby="export-pt-title"
+         style="background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:440px;width:100%;padding:20px;box-shadow:0 16px 48px rgba(0,0,0,0.6)">
+      <h3 id="export-pt-title" style="margin:0 0 12px;display:flex;align-items:center;gap:8px;font-size:16px">
+        <svg class="icon" aria-hidden="true" style="color:var(--warn)"><use href="#i-alert-triangle"></use></svg>
+        Decrypted notes saved to disk
+      </h3>
+      <p style="margin:0 0 12px;font-size:14px;line-height:1.5;color:var(--text)">
+        ${count} secured ${noteWord} ${wasWord} included in your backup file as
+        <strong>plaintext</strong>. The file on your computer is not encrypted —
+        anyone with access to it can read those notes.
+      </p>
+      <p style="margin:0 0 16px;font-size:13px;line-height:1.5;color:var(--muted)">
+        When you import this file back into Stockroom, those notes will be
+        automatically re-secured with the receiving account's passphrase.
+      </p>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        <button class="btn btn-primary" id="export-pt-ok-btn">Got it</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector('#export-pt-ok-btn').addEventListener('click', close);
+  // Click outside dialog to dismiss too (matches other modals' behaviour)
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -10373,7 +10436,32 @@ async function importData(e) {
       if (Array.isArray(d.groceryLists)) groceryLists = d.groceryLists;
       if (Array.isArray(d.reminders))   reminders    = d.reminders;
       if (Array.isArray(d.departments)) groceryDepts = d.departments;
-      if (Array.isArray(d.notes))       notes        = d.notes;
+      // Notes: handle the _reSecureOnImport flag — these are notes that
+      // were locked at export time and had their body decrypted into the
+      // file. We need to (a) accept the body locally, (b) re-encrypt it
+      // and push to the server's per-note body endpoint, and (c) mark
+      // the note as locked again so it behaves like a secured note.
+      // The actual server push happens AFTER initial save so we have a
+      // settled local state to work from.
+      const _notesToReSecure = [];
+      if (Array.isArray(d.notes)) {
+        notes = d.notes.map(n => {
+          if (n && n._reSecureOnImport && typeof n.body === 'string' && n.body.length) {
+            // Stash the plaintext body for re-encryption, then mark the
+            // note as locked (matching its original state at export time).
+            _notesToReSecure.push({ id: n.id, body: n.body });
+            const out = { ...n, locked: true, body: undefined };
+            delete out._reSecureOnImport;
+            return out;
+          }
+          // Non-secure note, or secure note without a usable body — drop
+          // the flag if present and pass through unchanged.
+          if (n && n._reSecureOnImport) {
+            const out = { ...n }; delete out._reSecureOnImport; return out;
+          }
+          return n;
+        });
+      }
       // Budget — bills/categories/accounts/income templates are arrays;
       // billInstances/transactions/incomeEntries are objects keyed by 'YYYY-MM'.
       if (Array.isArray(d.bills))            bills            = d.bills;
@@ -10410,6 +10498,34 @@ async function importData(e) {
       if (_hasBillsData    && typeof saveBudgetLocal === 'function')                 await saveBudgetLocal();
       if (_hasSpendData    && typeof saveBudgetSpendLocal === 'function')            await saveBudgetSpendLocal();
       if (_hasAccountsData && typeof saveBudgetAccountsAndIncomeLocal === 'function') await saveBudgetAccountsAndIncomeLocal();
+      // Re-secure any notes flagged for re-encryption. Mirrors secureLockNote
+      // but doesn't require the note to be in _noteUnlocked first (we have
+      // the plaintext from the import file). If we're not connected to KV
+      // or can't get a key, we skip and report — the notes stay as locked
+      // placeholders locally and the user can re-secure them later from
+      // a connected session.
+      let _reSecuredOk = 0, _reSecureFailed = 0;
+      if (_notesToReSecure.length > 0) {
+        if (kvConnected && _kvEmailHash && (await kvEnsureKey())) {
+          for (const { id, body } of _notesToReSecure) {
+            try {
+              const ciphertext = await kvEncrypt(_kvKey, body);
+              const res = await postKV(`${WORKER_URL}/note/body/push`, {
+                emailHash: _kvEmailHash,
+                ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+                noteId: id, ciphertext,
+              });
+              if (res.ok) _reSecuredOk++; else _reSecureFailed++;
+            } catch (e) {
+              console.warn('importData: re-secure failed for note', id, e.message);
+              _reSecureFailed++;
+            }
+          }
+        } else {
+          _reSecureFailed = _notesToReSecure.length;
+          console.warn('importData: cannot re-secure notes — not connected to KV');
+        }
+      }
       scheduleRender(...RENDER_REGIONS);
       // Push to server so data is encrypted and saved
       if (kvConnected) {
@@ -10426,7 +10542,10 @@ async function importData(e) {
         d.bills?.length      ? `${d.bills.length} bills` : '',
         _txCount             ? `${_txCount} transactions` : '',
       ].filter(Boolean).join(', ');
-      toast('Imported ✓' + (counts ? ` — ${counts}` : ''));
+      let toastMsg = 'Imported ✓' + (counts ? ` — ${counts}` : '');
+      if (_reSecuredOk > 0)     toastMsg += ` · 🔒 ${_reSecuredOk} re-secured`;
+      if (_reSecureFailed > 0)  toastMsg += ` · ⚠ ${_reSecureFailed} note${_reSecureFailed===1?'':'s'} couldn't re-secure`;
+      toast(toastMsg);
     } catch(err) {
       alert('Import failed: ' + err.message + '\n\nPlease try again or check the browser console for details.');
       console.error('importData error:', err);
