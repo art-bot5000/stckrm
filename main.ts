@@ -4857,10 +4857,69 @@ Deno.serve(async (request) => {
       const hKey = household && household !== 'default' ? household : 'default';
       await kvSetLarge(['share_data', code.toUpperCase(), hKey], ciphertext);
       await kvSet(['share_data', code.toUpperCase(), `${hKey}_modified`], new Date().toISOString());
+      // Mark the writer as the owner — guests pulling this blob can use
+      // this to skip merging their own writes back as if they were owner edits.
+      await kvSet(['share_data', code.toUpperCase(), `${hKey}_writer`], JSON.stringify({ kind: 'owner', emailHash: ownerEmailHash, at: new Date().toISOString() }));
       // Share data lives under the owner's emailHash conceptually — mark the
       // owner dirty so the per-user backup captures the new ciphertext.
       await markUserDirty(ownerEmailHash);
       return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Share: guest pushes their own edits back to the share blob ──────
+  // Authenticated as a guest member with at least one rw permission on
+  // the requested household. The server can't read what's in the
+  // ciphertext (e2e encrypted with the share key), so per-section
+  // enforcement is necessarily at the blob level — if the guest has no
+  // rw permission on the household at all, we refuse. If they have at
+  // least one rw section, we accept the whole blob and trust the client
+  // not to mutate read-only sections. (The owner's view of merged
+  // state is ground truth, and tampering would be visible to them on
+  // their next sync — see pull-guest-writes flow.)
+  if (url.pathname === '/share/data/push-guest' && request.method === 'POST') {
+    try {
+      const { guestEmailHash, guestVerifier, guestSessionToken, code, household, ciphertext } = await request.json();
+      if (!code || !guestEmailHash || (!guestVerifier && !guestSessionToken) || !ciphertext) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      if (guestSessionToken) {
+        const sessStored = await kvGet(['passkey_session', guestEmailHash, guestSessionToken]);
+        if (!sessStored.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);
+        if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      // Email-verification gate (see /share/join, /share/data/pull)
+      const guestVerifiedPush = await kvGet(['user', guestEmailHash, 'email_verified']);
+      if (!guestVerifiedPush.value) {
+        return json({ error: 'Email verification required', requiresEmailVerification: true }, corsHeaders, 403);
+      }
+      const revoked = await kvGet(['share_revoked', code.toUpperCase(), guestEmailHash]);
+      if (revoked.value) return json({ error: 'Access revoked', revoked: true }, corsHeaders, 403);
+      const share = await kvGet(['share', code.toUpperCase()]);
+      if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);
+      const target = JSON.parse(share.value);
+      if (!target.members?.includes(guestEmailHash)) return json({ error: 'Not a member of this share' }, corsHeaders, 403);
+      const hKey  = household && household !== 'default' ? household : 'default';
+      const perms = target.households?.[hKey];
+      if (!perms) return json({ error: 'No access to this household' }, corsHeaders, 403);
+      // Require at least one rw section on this household. A read-only
+      // guest must not be able to overwrite the share blob.
+      const hasAnyRw = Object.values(perms).some(p => p === 'rw');
+      if (!hasAnyRw) return json({ error: 'No write access to this household' }, corsHeaders, 403);
+      await kvSetLarge(['share_data', code.toUpperCase(), hKey], ciphertext);
+      const nowIso = new Date().toISOString();
+      await kvSet(['share_data', code.toUpperCase(), `${hKey}_modified`], nowIso);
+      // Stamp the writer as this guest so the owner can recognise the
+      // edit and merge it into their own data on next sync. Without
+      // this, an owner pulling the share blob after a guest write would
+      // be unable to distinguish guest changes from their own last push.
+      await kvSet(['share_data', code.toUpperCase(), `${hKey}_writer`], JSON.stringify({ kind: 'guest', emailHash: guestEmailHash, at: nowIso }));
+      // Mark owner dirty for backup purposes — a guest write is still a
+      // write to the owner's logical share data.
+      await markUserDirty(target.ownerEmailHash);
+      return json({ ok: true, modified: nowIso }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
@@ -4899,6 +4958,9 @@ Deno.serve(async (request) => {
       if (!perms) return json({ error: 'No access to this household' }, corsHeaders, 403);
       const data     = await kvGetLarge(['share_data', code.toUpperCase(), hKey]);
       const modified = await kvGet(['share_data', code.toUpperCase(), `${hKey}_modified`]);
+      const writerR  = await kvGet(['share_data', code.toUpperCase(), `${hKey}_writer`]);
+      let writer = null;
+      try { writer = writerR.value ? JSON.parse(writerR.value) : null; } catch(_e) { writer = null; }
       // Record member activity. We update at most every 60 seconds per member
       // to avoid hammering KV — pulls are frequent (every focus/visibility
       // change for active guests). Owner sees a "last active" timestamp
@@ -4916,7 +4978,49 @@ Deno.serve(async (request) => {
           await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
         }
       } catch(_e) { /* best-effort, never block the pull */ }
-      return json({ ciphertext: data.value||null, modified: modified.value||null, permissions: perms, householdNames: target.householdNames }, corsHeaders);
+      return json({
+        ciphertext: data.value||null,
+        modified: modified.value||null,
+        writer,
+        permissions: perms,
+        householdNames: target.householdNames,
+      }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Share: owner pulls share blob to absorb guest writes ────
+  // After a guest pushes via /share/data/push-guest, the owner needs a
+  // way to read the updated blob and merge those changes into their
+  // own KV data. This endpoint authenticates as owner and returns the
+  // blob plus writer metadata. The owner's client decrypts with the
+  // share key and merges using the same logic as the standard sync.
+  if (url.pathname === '/share/data/pull-owner' && request.method === 'POST') {
+    try {
+      const { ownerEmailHash, verifier, sessionToken, code, household } = await request.json();
+      if (!ownerEmailHash || (!verifier && !sessionToken) || !code) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      const share = await kvGet(['share', code.toUpperCase()]);
+      if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);
+      const target = JSON.parse(share.value);
+      if (target.ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
+      const hKey     = household && household !== 'default' ? household : 'default';
+      const data     = await kvGetLarge(['share_data', code.toUpperCase(), hKey]);
+      const modified = await kvGet(['share_data', code.toUpperCase(), `${hKey}_modified`]);
+      const writerR  = await kvGet(['share_data', code.toUpperCase(), `${hKey}_writer`]);
+      let writer = null;
+      try { writer = writerR.value ? JSON.parse(writerR.value) : null; } catch(_e) { writer = null; }
+      return json({
+        ciphertext: data.value||null,
+        modified: modified.value||null,
+        writer,
+        householdNames: target.householdNames,
+      }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
