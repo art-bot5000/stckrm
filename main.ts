@@ -4616,7 +4616,7 @@ Deno.serve(async (request) => {
   if (url.pathname === '/share/create' && request.method === 'POST') {
     try {
       const body = await request.json();
-      const { ownerEmailHash, verifier, sessionToken, name, type, ownerName, households, householdNames, colour } = body;
+      const { ownerEmailHash, verifier, sessionToken, name, type, ownerName, households, householdNames, colour, shareManagement } = body;
       if (!ownerEmailHash || (!verifier && !sessionToken) || !name || !households) return json({ error: 'Missing required fields' }, corsHeaders, 400);
       if (sessionToken) {
         const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
@@ -4627,12 +4627,16 @@ Deno.serve(async (request) => {
       }
       const code = Array.from(crypto.getRandomValues(new Uint8Array(4)))
         .map(b => b.toString(36).padStart(2,'0')).join('').toUpperCase().slice(0,6);
+      // Validate shareManagement; default to 'none' if absent or invalid.
+      const mgmt = ['none','view','edit'].includes(shareManagement) ? shareManagement : 'none';
       const target = {
         name, type: type||'guest', ownerName: ownerName||'Owner', ownerEmailHash,
         households, householdNames: householdNames||{}, colour: colour||'#e8a838',
+        shareManagement: mgmt,
         createdAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 24*60*60*1000).toISOString(),
         members: [],
+        memberDetails: {},
       };
       await kvSet(['share', code], JSON.stringify(target));
       const link = `${env.APP_URL}?join=${code}`;
@@ -4674,12 +4678,20 @@ Deno.serve(async (request) => {
   }
 
   // ── Share: list (authenticated) ──────────────────────
+  // Accepts both `verifier` (passphrase login) and `sessionToken` (passkey
+  // login). Mismatched auth was a recurring bug — passkey sessions getting
+  // silently rejected. See pattern note in account memory.
   if (url.pathname === '/share/list' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier } = await request.json();
-      if (!ownerEmailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken } = await request.json();
+      if (!ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const targets = [];
       const entries = kv.list({ prefix: ['share'] });
       for await (const entry of entries) {
@@ -4719,9 +4731,24 @@ Deno.serve(async (request) => {
         if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
       }
       if (!target.members) target.members = [];
-      if (!target.members.includes(guestEmailHash)) {
+      if (!target.memberDetails) target.memberDetails = {};
+      const isNewMember = !target.members.includes(guestEmailHash);
+      if (isNewMember) {
         target.members.push(guestEmailHash);
-        await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
+      }
+      // Record/refresh memberDetails on every successful join so the owner
+      // can see when each guest first connected and last accessed the share.
+      const nowIso = new Date().toISOString();
+      const md = target.memberDetails[guestEmailHash] || {};
+      if (!md.firstSeenAt) md.firstSeenAt = nowIso;
+      md.lastActiveAt = nowIso;
+      target.memberDetails[guestEmailHash] = md;
+      await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
+      // Re-joining a previously-evicted member clears the revocation marker
+      // (the owner can re-add them via /share/update or by sharing the link
+      // again — this just allows the rejoin path to succeed).
+      if (isNewMember) {
+        await kvDel(['share_revoked', code.toUpperCase(), guestEmailHash]);
       }
       return json({ ok: true, ...target, code: code.toUpperCase() }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
@@ -4766,6 +4793,11 @@ Deno.serve(async (request) => {
         const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);
         if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
       }
+      // Check eviction marker first — short-circuits before share record fetch
+      // so a removed guest gets a clear, fast response and the client can
+      // self-clean its share state.
+      const revoked = await kvGet(['share_revoked', code.toUpperCase(), guestEmailHash]);
+      if (revoked.value) return json({ error: 'Access revoked', revoked: true }, corsHeaders, 403);
       const share = await kvGet(['share', code.toUpperCase()]);
       if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);
       const target = JSON.parse(share.value);
@@ -4775,6 +4807,23 @@ Deno.serve(async (request) => {
       if (!perms) return json({ error: 'No access to this household' }, corsHeaders, 403);
       const data     = await kvGetLarge(['share_data', code.toUpperCase(), hKey]);
       const modified = await kvGet(['share_data', code.toUpperCase(), `${hKey}_modified`]);
+      // Record member activity. We update at most every 60 seconds per member
+      // to avoid hammering KV — pulls are frequent (every focus/visibility
+      // change for active guests). Owner sees a "last active" timestamp
+      // accurate to the minute, which is enough granularity.
+      try {
+        const now = Date.now();
+        if (!target.memberDetails) target.memberDetails = {};
+        const md = target.memberDetails[guestEmailHash] || {};
+        const lastTs = md.lastActiveAt ? new Date(md.lastActiveAt).getTime() : 0;
+        if (now - lastTs > 60 * 1000) {
+          md.lastActiveAt = new Date(now).toISOString();
+          if (!md.firstSeenAt) md.firstSeenAt = md.lastActiveAt;
+          md.pullCount = (md.pullCount || 0) + 1;
+          target.memberDetails[guestEmailHash] = md;
+          await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
+        }
+      } catch(_e) { /* best-effort, never block the pull */ }
       return json({ ciphertext: data.value||null, modified: modified.value||null, permissions: perms, householdNames: target.householdNames }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
@@ -4795,7 +4844,7 @@ Deno.serve(async (request) => {
   // ── Share: update permissions ─────────────────────────
   if (url.pathname === '/share/update' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, sessionToken, code, name, type, colour, households } = await request.json();
+      const { ownerEmailHash, verifier, sessionToken, code, name, type, colour, households, shareManagement } = await request.json();
       if (!code || !ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
       if (sessionToken) {
         const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
@@ -4808,7 +4857,15 @@ Deno.serve(async (request) => {
       if (!r.value) return json({ error: 'Not found' }, corsHeaders, 404);
       const existing = JSON.parse(r.value);
       if (existing.ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
-      const updated = { ...existing, ...(name&&{name}), ...(type&&{type}), ...(colour&&{colour}), ...(households&&{households}) };
+      // shareManagement is a string ('none' | 'view' | 'edit'); accept it
+      // explicitly so we don't merge in undefined and clobber existing.
+      const validMgmt = ['none','view','edit'].includes(shareManagement) ? shareManagement : null;
+      const updated = {
+        ...existing,
+        ...(name&&{name}), ...(type&&{type}), ...(colour&&{colour}),
+        ...(households&&{households}),
+        ...(validMgmt!==null && { shareManagement: validMgmt }),
+      };
       await kvSet(['share', code.toUpperCase()], JSON.stringify(updated));
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
@@ -4819,10 +4876,15 @@ Deno.serve(async (request) => {
 
   if (url.pathname === '/share/delete' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, code } = await request.json();
-      if (!code || !ownerEmailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken, code } = await request.json();
+      if (!code || !ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const r = await kvGet(['share', code.toUpperCase()]);
       if (r.value && JSON.parse(r.value).ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
       await kvDel(['share', code.toUpperCase()]);
@@ -4837,13 +4899,62 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
+  // ── Share: remove a single member (surgical eject) ────
+  // Accepts owner credentials (passphrase or passkey) and a guestEmailHash.
+  // Removes the member from the share record, deletes their ECDH-wrapped
+  // key entry, and writes a "revoked" tombstone entry so the guest's next
+  // pull returns 403 fast and they can detect the eviction client-side.
+  // The share itself stays intact for other members.
+  if (url.pathname === '/share/member/remove' && request.method === 'POST') {
+    try {
+      const { ownerEmailHash, verifier, sessionToken, code, guestEmailHash } = await request.json();
+      if (!code || !ownerEmailHash || (!verifier && !sessionToken) || !guestEmailHash) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      const r = await kvGet(['share', code.toUpperCase()]);
+      if (!r.value) return json({ error: 'Not found' }, corsHeaders, 404);
+      const target = JSON.parse(r.value);
+      if (target.ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
+      // Drop from members list
+      target.members = (target.members || []).filter((m: string) => m !== guestEmailHash);
+      // Drop activity record for this member
+      if (target.memberDetails && typeof target.memberDetails === 'object') {
+        delete target.memberDetails[guestEmailHash];
+      }
+      await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
+      // Drop the ECDH-wrapped key so the guest can't decrypt new pushes
+      await kvDel(['share_ecdh_key', code.toUpperCase(), guestEmailHash]);
+      // Write a short-lived revocation marker that the guest's next /pull
+      // can read to know they were evicted (so the client can self-clean).
+      // 7 day TTL is enough for any realistic resync window.
+      await kvSet(
+        ['share_revoked', code.toUpperCase(), guestEmailHash],
+        new Date().toISOString(),
+        { expireIn: 7 * 24 * 60 * 60 * 1000 }
+      );
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
   // ── Share: refresh link (new 24h window) ─────────────
   if (url.pathname === '/share/refresh' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, code } = await request.json();
-      if (!code || !ownerEmailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken, code } = await request.json();
+      if (!code || !ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const r = await kvGet(['share', code.toUpperCase()]);
       if (!r.value) return json({ error: 'Not found' }, corsHeaders, 404);
       const existing = JSON.parse(r.value);
