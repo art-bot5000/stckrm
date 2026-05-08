@@ -26153,6 +26153,7 @@ function renderShareTargetsList() {
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;font-weight:700">${typeEmoji[t.type]||'👤'} ${esc(t.name)}</div>
             <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${t.type}${members?' · '+members+' member'+(members!==1?'s':''):''}${t.shareManagement && t.shareManagement !== 'none' ? ' · share-'+t.shareManagement : ''}</div>
+            ${t.pendingInvite ? `<div style="font-size:10px;color:var(--accent);margin-top:2px"><svg class="icon" aria-hidden="true" style="width:10px;height:10px;vertical-align:-1px"><use href="#i-clock"></use></svg> Awaiting signup${t.pendingInvite.guestEmail?` from ${esc(t.pendingInvite.guestEmail)}`:''}</div>` : ''}
             ${expiryStr?`<div style="font-size:10px;color:${expired?'var(--danger)':'var(--muted)'};margin-top:2px">${expiryStr}</div>`:''}
           </div>
           ${expandBtn}
@@ -26389,7 +26390,7 @@ async function openEditShareTarget(code) {
   const emailLabel = document.querySelector('#share-target-email-group label');
   if (emailLabel) emailLabel.textContent = 'Their email address';
   const emailHint = document.querySelector('#share-target-email-group p');
-  if (emailHint) emailHint.textContent = 'Their email is used to encrypt the share key — it never leaves your device.';
+  if (emailHint) emailHint.textContent = "If they don't have a STOCKROOM account, the link will let them sign up with this email. Their email is used to encrypt the share key — it never leaves your device.";
   // Pre-fill saved email
   document.getElementById('share-target-email').value = target.guestEmail || '';
 
@@ -26446,14 +26447,30 @@ async function saveShareTarget() {
       const guestEmail = document.getElementById('share-target-email')?.value.trim();
       if (!guestEmail) throw new Error('Enter their email address so their share key can be encrypted for them');
 
-      // 1. Hash guest email → fetch their ECDH public key
+      // 1. Hash guest email → fetch their ECDH public key.
+      // A 404 here means they don't have a STOCKROOM account yet. That's
+      // fine: we create the share anyway and record `pendingInvite` on
+      // the share record. When they sign up using this link and join,
+      // their app calls /share/ecdh-key/request-rewrap, the owner picks
+      // up the request on next sync, wraps the key, and the guest
+      // unwraps on the following sync. End-to-end with no synchronous
+      // dependency on the guest having pre-existed.
       const guestEmailHash = await kvHashEmail(guestEmail);
       const pubRes = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: guestEmailHash });
-      if (pubRes.status === 404) throw new Error(`${guestEmail} doesn't have a STOCKROOM account yet — they need to sign up first`);
-      if (!pubRes.ok) throw new Error('Could not fetch their encryption key — try again');
-      const { publicKeyJwk: guestPubKeyJwk } = await pubRes.json();
+      let guestPubKeyJwk = null;
+      let guestHasAccount = false;
+      if (pubRes.ok) {
+        const pubData = await pubRes.json();
+        guestPubKeyJwk = pubData.publicKeyJwk;
+        guestHasAccount = true;
+      } else if (pubRes.status !== 404) {
+        // Real network/server error — bail. Only 404 is a known "no account" signal.
+        throw new Error('Could not fetch their encryption key — try again');
+      }
 
-      // 2. Load our own ECDH private key
+      // 2. Load our own ECDH private key (always needed if guest exists; for
+      //    pending invites we still want it loaded so that if they sign up
+      //    in the next few seconds we can fulfil the rewrap immediately).
       const ownerPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
       if (!ownerPrivKey) throw new Error('Your encryption key is missing — try signing out and back in');
 
@@ -26461,15 +26478,21 @@ async function saveShareTarget() {
       const shareKey    = await generateShareKey();
       const shareKeyB64 = await exportShareKey(shareKey);
 
-      // 4. ECDH-wrap the share key for the guest
-      const wrappedKey = await ecdhWrapShareKey(ownerPrivKey, guestPubKeyJwk, shareKey);
+      // 4. ECDH-wrap the share key for the guest (only if they exist).
+      //    For pending invites the wrap happens later via the rewrap flow.
+      let wrappedKey = null;
+      let ownerPubKeyJwk = null;
+      if (guestHasAccount) {
+        wrappedKey = await ecdhWrapShareKey(ownerPrivKey, guestPubKeyJwk, shareKey);
+        // 5. Export our own public key JWK so the guest can unwrap.
+        const ownerPubRes = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: _kvEmailHash });
+        if (!ownerPubRes.ok) throw new Error('Could not fetch your encryption key — try again');
+        ({ publicKeyJwk: ownerPubKeyJwk } = await ownerPubRes.json());
+      }
 
-      // 5. Export our own public key JWK to send alongside (guest needs it to unwrap)
-      const ownerPubRes = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: _kvEmailHash });
-      if (!ownerPubRes.ok) throw new Error('Could not fetch your encryption key — try again');
-      const { publicKeyJwk: ownerPubKeyJwk } = await ownerPubRes.json();
-
-      // 6. Create share on server
+      // 6. Create share on server. Records pendingInvite so the owner UI
+      //    can show "awaiting signup" status and so this server-side
+      //    knowledge survives across the owner's devices.
       const res = await postKV(`${WORKER_URL}/share/create`, {
           ownerEmailHash: _kvEmailHash,
           ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
@@ -26479,22 +26502,29 @@ async function saveShareTarget() {
           householdNames: Object.fromEntries(
             Object.entries(profiles).map(([k,p]) => [k, p.name||(k==='default'?'Home':k)])
           ),
+          ...(guestHasAccount
+            ? { guestEmail }
+            : { pendingInvite: { guestEmailHash, guestEmail } }),
         });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed');
 
-      // 7. Store ECDH-wrapped key on server for the guest
-      const ecdhStoreRes = await postKV(`${WORKER_URL}/share/ecdh-key/store`, {
-          ownerEmailHash: _kvEmailHash,
-          ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
-          code: data.code,
-          guestEmailHash,
-          wrappedKey,
-          ownerPublicKeyJwk: ownerPubKeyJwk,
-        });
-      if (!ecdhStoreRes.ok) throw new Error('Could not store encrypted share key — try again');
+      // 7. Store ECDH-wrapped key on server — only if we have one.
+      if (guestHasAccount && wrappedKey && ownerPubKeyJwk) {
+        const ecdhStoreRes = await postKV(`${WORKER_URL}/share/ecdh-key/store`, {
+            ownerEmailHash: _kvEmailHash,
+            ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+            code: data.code,
+            guestEmailHash,
+            wrappedKey,
+            ownerPublicKeyJwk: ownerPubKeyJwk,
+          });
+        if (!ecdhStoreRes.ok) throw new Error('Could not store encrypted share key — try again');
+      }
 
-      // 8. Cache share key locally and back it up (for owner cross-device recovery)
+      // 8. Cache share key locally and back it up — this MUST happen for
+      //    pending invites too, otherwise when the guest later requests
+      //    a rewrap we won't have the share key to wrap.
       try {
         const stored = await _getShareKeys();
         stored[data.code] = shareKeyB64;
@@ -26523,6 +26553,7 @@ async function saveShareTarget() {
         await _sendShareEmail(createEmailVal, {
           code: data.code, name, type: _shareTargetType,
           households: _shareTargetPerms, isUpdate: false, inviteLink,
+          guestHasAccount,
         }).catch(() => {});
       }
 
@@ -26530,7 +26561,14 @@ async function saveShareTarget() {
       closeModal('share-target-modal');
       _shareTargetDone = false; // reset for next use
 
-      toast(`✓ Share created — link copied! Send it to ${name}`);
+      // Different toast depending on whether the guest has an account.
+      // For pending invites we want the owner to know that the link is
+      // valid but the guest still needs to sign up before access kicks in.
+      if (guestHasAccount) {
+        toast(`✓ Share created — link copied! Send it to ${name}`);
+      } else {
+        toast(`✓ Link created for ${name} — they'll need to sign up with ${guestEmail} to access. Link copied to clipboard.`);
+      }
       if (kvConnected) setTimeout(syncAll, 600);
     }
   } catch(err) {
@@ -27892,6 +27930,13 @@ function showShareAuthGate(meta) {
   if (!step1) return;
   const hCount = Object.keys(meta.households || {}).length;
   const groupName = meta.name ? `the <strong>${esc(meta.name)}</strong> group` : 'this household';
+  // If the share was created with a pendingInvite for a specific email,
+  // pre-fill it. The user CAN override — that's fine, they'll just join
+  // under their actual emailHash and the existing rewrap flow handles
+  // it. But pre-filling guides them to the email the owner expects.
+  const prefillEmail = (meta.pendingInvite && typeof meta.pendingInvite.guestEmail === 'string')
+    ? meta.pendingInvite.guestEmail : '';
+  const isPending = !!meta.pendingInvite;
   step1.innerHTML = `
     <div style="margin-bottom:12px;color:var(--accent)"><svg aria-hidden="true" style="width:44px;height:44px"><use href="#i-home"></use></svg></div>
     <h1 style="font-size:22px;font-weight:700;margin-bottom:6px">You're invited!</h1>
@@ -27899,10 +27944,14 @@ function showShareAuthGate(meta) {
       <strong style="color:var(--text)">${esc(meta.ownerName||'Someone')}</strong> has invited you
       to access ${hCount} household${hCount!==1?'s':''} as a member of ${groupName}.
     </p>
+    ${isPending ? `<p style="color:var(--muted);font-size:12px;line-height:1.5;margin-bottom:12px;background:var(--surface2);border-radius:8px;padding:8px 10px">
+      <svg class="icon" aria-hidden="true" style="width:12px;height:12px;vertical-align:-1px"><use href="#i-info"></use></svg>
+      No account yet? Use <strong style="color:var(--text)">Create new account</strong> below — sign up with the email this invite was sent to.
+    </p>` : ''}
     <div style="text-align:left;margin-bottom:12px">
       <div class="form-group" style="margin-bottom:10px">
         <label class="form-label">Email address</label>
-        <input class="form-input" id="share-gate-email" type="email" placeholder="you@example.com" autocomplete="email">
+        <input class="form-input" id="share-gate-email" type="email" placeholder="you@example.com" autocomplete="email"${prefillEmail ? ` value="${esc(prefillEmail)}"` : ''}>
       </div>
       <div class="form-group" style="margin-bottom:8px">
         <label class="form-label">Passphrase</label>

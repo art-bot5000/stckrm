@@ -4616,7 +4616,7 @@ Deno.serve(async (request) => {
   if (url.pathname === '/share/create' && request.method === 'POST') {
     try {
       const body = await request.json();
-      const { ownerEmailHash, verifier, sessionToken, name, type, ownerName, households, householdNames, colour, shareManagement } = body;
+      const { ownerEmailHash, verifier, sessionToken, name, type, ownerName, households, householdNames, colour, shareManagement, guestEmail, pendingInvite } = body;
       if (!ownerEmailHash || (!verifier && !sessionToken) || !name || !households) return json({ error: 'Missing required fields' }, corsHeaders, 400);
       if (sessionToken) {
         const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
@@ -4629,10 +4629,21 @@ Deno.serve(async (request) => {
         .map(b => b.toString(36).padStart(2,'0')).join('').toUpperCase().slice(0,6);
       // Validate shareManagement; default to 'none' if absent or invalid.
       const mgmt = ['none','view','edit'].includes(shareManagement) ? shareManagement : 'none';
+      // pendingInvite is set by the client when the guest doesn't have an
+      // ECDH public key yet (i.e. no STOCKROOM account at create time).
+      // It's a hint for the owner UI ("awaiting signup") and lets us
+      // recognise a sign-up-via-link flow on the server side. The actual
+      // ECDH key wrapping happens later via the existing rewrap queue.
+      const validPending = pendingInvite && typeof pendingInvite === 'object'
+        && typeof pendingInvite.guestEmailHash === 'string'
+        ? { guestEmailHash: pendingInvite.guestEmailHash, guestEmail: pendingInvite.guestEmail || null }
+        : null;
       const target = {
         name, type: type||'guest', ownerName: ownerName||'Owner', ownerEmailHash,
         households, householdNames: householdNames||{}, colour: colour||'#e8a838',
         shareManagement: mgmt,
+        ...(typeof guestEmail === 'string' && guestEmail ? { guestEmail } : {}),
+        ...(validPending ? { pendingInvite: validPending } : {}),
         createdAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 24*60*60*1000).toISOString(),
         members: [],
@@ -4718,9 +4729,18 @@ Deno.serve(async (request) => {
         const expiresAt = target.expiresAt ? new Date(target.expiresAt).getTime() : Infinity;
         if (Date.now() > expiresAt) return json({ error: 'This invite link has expired. Ask the owner for a new link.' }, corsHeaders, 410);
       }
-      // No credentials at all — return metadata so UI can prompt sign-in
+      // No credentials at all — return metadata so UI can prompt sign-in.
+      // Include `pendingInvite` so the share-gate can pre-fill the email
+      // for guests who don't have an account yet (the link was created
+      // for a specific address and signing up with that address gives
+      // them direct access without an owner-side rewrap roundtrip).
       if (!guestEmailHash || (!guestVerifier && !guestSessionToken)) {
-        return json({ ok: false, requiresAuth: true, ownerName: target.ownerName, name: target.name, type: target.type, householdNames: target.householdNames, households: target.households }, corsHeaders);
+        return json({
+          ok: false, requiresAuth: true,
+          ownerName: target.ownerName, name: target.name, type: target.type,
+          householdNames: target.householdNames, households: target.households,
+          ...(target.pendingInvite ? { pendingInvite: target.pendingInvite } : {}),
+        }, corsHeaders);
       }
       // Authenticate: accept passkey sessionToken OR passphrase verifier
       if (guestSessionToken) {
@@ -4735,6 +4755,16 @@ Deno.serve(async (request) => {
       const isNewMember = !target.members.includes(guestEmailHash);
       if (isNewMember) {
         target.members.push(guestEmailHash);
+        // If this share was created for a guest who didn't have an account
+        // at create time, joining is the moment we promote pendingInvite
+        // to guestEmail (so the owner UI shows a normal "linked" state)
+        // and clear pendingInvite. We only do this when the joining
+        // emailHash matches the pending one — a guest who signs up with a
+        // different email shouldn't silently consume someone else's pending invite.
+        if (target.pendingInvite && target.pendingInvite.guestEmailHash === guestEmailHash) {
+          if (target.pendingInvite.guestEmail) target.guestEmail = target.pendingInvite.guestEmail;
+          delete target.pendingInvite;
+        }
       }
       // Record/refresh memberDetails on every successful join so the owner
       // can see when each guest first connected and last accessed the share.
