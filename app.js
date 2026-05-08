@@ -15031,6 +15031,26 @@ async function kvPush() {
     console.warn('kvPush: missing credentials (no verifier or sessionToken), skipping');
     return;
   }
+
+  // ── Guest write path ───────────────────────────────
+  // When the user is a guest of someone else's share, all of `items`,
+  // `groceryItems`, etc. in memory reflect the SHARED data — kvPull
+  // wrote them in. So when the guest edits and we kvPush, what we push
+  // back must go to the share blob (encrypted with the share key),
+  // not to the guest's own /data/push endpoint (which would write to
+  // their unused personal blob and the owner would never see it).
+  //
+  // We respect per-section permissions: only sections the guest has
+  // 'rw' on are written; read-only sections are pulled fresh from the
+  // current shared blob so we don't overwrite owner-side updates the
+  // guest had no business changing. The server also enforces "at least
+  // one rw section" before accepting the push — this client check is
+  // for correctness, the server's is for security.
+  if (_shareState) {
+    if (!_shareKey) { console.warn('kvPush (guest): no share key in memory, skipping'); return; }
+    return _kvPushAsGuest();
+  }
+
   if (!await kvEnsureKey()) return;
   const allProfiles  = await getProfiles();
   const householdDir = Object.fromEntries(
@@ -15079,8 +15099,192 @@ async function kvPush() {
     }
     throw new Error(msg);
   }
-  // After successful push, re-encrypt for all active share targets
+  // After successful push, re-encrypt for all active share targets.
+  // Owners only — guests already pushed via _kvPushAsGuest above and
+  // returned before reaching this block.
   await pushAllSharedData().catch(e => console.warn('pushAllSharedData failed:', e.message));
+}
+
+// Guest-side push. Encrypts the current local state with the share key
+// and writes it to the share blob via /share/data/push-guest. We do
+// section-level permission filtering on the way out: only sections
+// the guest has 'rw' on are written from the in-memory state; read-
+// only sections are taken from the most recently pulled shared blob
+// so we don't accidentally clobber owner edits the guest's UI never
+// surfaced as editable. If we can't read the latest blob (network
+// blip), we fall back to skipping this push — better to lose the
+// guest's edit than to overwrite the owner's data with a stale view.
+async function _kvPushAsGuest() {
+  if (!_shareState || !_shareKey) return;
+  const code  = _shareState.code;
+  const hKey  = activeProfile && activeProfile !== 'default' ? activeProfile : 'default';
+  const perms = (_shareState.households && _shareState.households[hKey]) || {};
+  const canWriteStockroom = perms.stockroom === 'rw';
+  const canWriteGroceries = perms.groceries === 'rw';
+  const canWriteReminders = perms.reminders === 'rw';
+  const canWriteBudget    = perms.budget    === 'rw';
+  const hasAnyRw = canWriteStockroom || canWriteGroceries || canWriteReminders || canWriteBudget;
+  if (!hasAnyRw) {
+    console.log('[kvPushAsGuest] no rw permission on this household, skipping');
+    return;
+  }
+
+  // Pull the current shared blob so we can merge our writable sections
+  // into it without disturbing read-only sections. Best-effort — if
+  // the pull fails, fall back to a straight push of what's in memory.
+  let baseState = null;
+  try {
+    const pullRes = await postKV(`${WORKER_URL}/share/data/pull`, {
+      guestEmailHash: _kvEmailHash, guestVerifier: _kvVerifier, guestSessionToken: _kvSessionToken,
+      code, household: hKey,
+    });
+    if (pullRes.ok) {
+      const j = await pullRes.json();
+      if (j.ciphertext) {
+        try {
+          const plain = await decryptWithShareKey(_shareKey, j.ciphertext);
+          baseState = JSON.parse(plain);
+        } catch(e) { console.warn('[kvPushAsGuest] could not decrypt base state, falling back to in-memory state'); }
+      }
+    }
+  } catch(_e) { /* swallow — fall back below */ }
+
+  // Build the merged blob. For sections we have rw on, do a per-record
+  // merge against the freshly-pulled base state — this prevents two
+  // guests editing different records from clobbering each other when
+  // their writes arrive serially. For sections we don't have rw on,
+  // round-trip the base state unchanged (so we don't disturb owner-
+  // managed data we're not allowed to touch).
+  //
+  // If we couldn't read a base state (network blip, decrypt failure)
+  // we abort the push rather than risk overwriting unseen state.
+  if (!baseState) {
+    console.warn('[kvPushAsGuest] no base state available — skipping push to avoid clobber');
+    return;
+  }
+  const merged = { ...baseState };
+
+  if (canWriteStockroom && Array.isArray(items)) {
+    const baseItems = Array.isArray(baseState.items) ? baseState.items : [];
+    const m = _mergeArrayById(baseItems, items);
+    merged.items = m.list;
+    // Carry the guest's stockroom delete tombstones forward so a guest
+    // delete propagates back to the owner. Union with whatever was on
+    // the base (so we don't drop owner deletes the guest hasn't seen
+    // resolved yet).
+    try {
+      const guestTombs = await loadDeletedIds();
+      const baseArr = Array.isArray(baseState.deletedIds) ? baseState.deletedIds : [];
+      const out = new Set(baseArr);
+      if (guestTombs && typeof guestTombs.forEach === 'function') guestTombs.forEach(id => out.add(id));
+      merged.deletedIds = Array.from(out);
+    } catch(_e) {}
+  }
+  if (canWriteGroceries) {
+    if (Array.isArray(groceryItems)) {
+      const baseGroceries = Array.isArray(baseState.groceries) ? baseState.groceries : [];
+      const m = _mergeArrayById(baseGroceries, groceryItems);
+      merged.groceries = m.list;
+    }
+    if (Array.isArray(groceryDepts) && groceryDepts.length) {
+      // Departments are a small list — overwrite is fine; merging by
+      // name would risk duplicate entries.
+      merged.departments = groceryDepts;
+    }
+    // Named grocery lists — id-keyed merge so two guests creating
+    // different lists don't lose each other's, and edits to the same
+    // list (rename, store-attribute change) take the newer updatedAt.
+    if (Array.isArray(groceryLists)) {
+      const baseLists = Array.isArray(baseState.groceryLists) ? baseState.groceryLists : [];
+      merged.groceryLists = _mergeArrayById(baseLists, groceryLists).list;
+    }
+    // Grocery-list tombstones — same union pattern as stockroom above.
+    try {
+      const guestGLTombs = await loadGroceryListDeletedIds();
+      const baseArr = Array.isArray(baseState.groceryListDeletedIds) ? baseState.groceryListDeletedIds : [];
+      const out = new Set(baseArr);
+      if (guestGLTombs && typeof guestGLTombs.forEach === 'function') guestGLTombs.forEach(id => out.add(id));
+      merged.groceryListDeletedIds = Array.from(out);
+    } catch(_e) {}
+  }
+  if (canWriteReminders && Array.isArray(reminders)) {
+    const baseReminders = Array.isArray(baseState.reminders) ? baseState.reminders : [];
+    const m = _mergeArrayById(baseReminders, reminders);
+    merged.reminders = m.list;
+  }
+  if (canWriteBudget) {
+    if (Array.isArray(bills)) {
+      const baseBills = Array.isArray(baseState.bills) ? baseState.bills : [];
+      merged.bills = _mergeArrayById(baseBills, bills).list;
+    }
+    if (billInstances && typeof billInstances === 'object') {
+      merged.billInstances = { ...(baseState.billInstances || {}), ...billInstances };
+    }
+    if (budgetSettings && typeof budgetSettings === 'object') {
+      merged.budgetSettings = { ...(baseState.budgetSettings || {}), ...budgetSettings };
+    }
+    if (Array.isArray(budgetCategories)) {
+      const base = Array.isArray(baseState.budgetCategories) ? baseState.budgetCategories : [];
+      merged.budgetCategories = _mergeArrayById(base, budgetCategories).list;
+    }
+    if (transactions && typeof transactions === 'object') {
+      // transactions shape: { "2026-04": { txId: {...}, ... }, ... }
+      // Use the nested-month-map merge so two guests editing different
+      // transactions in the same month don't lose each other's writes.
+      merged.transactions = _mergeMonthMap(baseState.transactions || {}, transactions).map;
+    }
+    if (Array.isArray(budgetAccounts)) {
+      const base = Array.isArray(baseState.budgetAccounts) ? baseState.budgetAccounts : [];
+      merged.budgetAccounts = _mergeArrayById(base, budgetAccounts).list;
+    }
+    if (Array.isArray(incomeTemplates)) {
+      const base = Array.isArray(baseState.incomeTemplates) ? baseState.incomeTemplates : [];
+      merged.incomeTemplates = _mergeArrayById(base, incomeTemplates).list;
+    }
+    if (incomeEntries && typeof incomeEntries === 'object') {
+      // Same nested-month-map shape as transactions.
+      merged.incomeEntries = _mergeMonthMap(baseState.incomeEntries || {}, incomeEntries).map;
+    }
+    // Tombstones — union with base. A guest's deletion must survive
+    // round-trip; an owner's deletion previously propagated must not be
+    // un-deleted by a guest's stale view.
+    const _tombUnion = (k, localSet) => {
+      const baseArr = Array.isArray(baseState[k]) ? baseState[k] : [];
+      const out = new Set(baseArr);
+      if (localSet && typeof localSet.forEach === 'function') localSet.forEach(id => out.add(id));
+      merged[k] = Array.from(out);
+    };
+    _tombUnion('billsDeletedIds',                billsDeletedIds);
+    _tombUnion('budgetCategoryDeletedIds',       budgetCategoryDeletedIds);
+    _tombUnion('budgetTransactionDeletedIds',    budgetTransactionDeletedIds);
+    _tombUnion('budgetAccountDeletedIds',        budgetAccountDeletedIds);
+    _tombUnion('incomeTemplateDeletedIds',       incomeTemplateDeletedIds);
+    _tombUnion('incomeEntryDeletedIds',          incomeEntryDeletedIds);
+  }
+  // Always stamp lastSynced with our local clock — used for last-writer-wins
+  // tie-breaking on the receiving side.
+  merged.lastSynced = new Date().toISOString();
+
+  const ciphertext = await encryptWithShareKey(_shareKey, JSON.stringify(merged));
+  const res = await postKV(`${WORKER_URL}/share/data/push-guest`, {
+    guestEmailHash:    _kvEmailHash,
+    guestVerifier:     _kvVerifier,
+    guestSessionToken: _kvSessionToken,
+    code, household: hKey, ciphertext,
+  });
+  if (!res.ok) {
+    let body = null; try { body = await res.json(); } catch(_e) {}
+    if (res.status === 403 && body?.requiresEmailVerification) {
+      // Surface the same OTP gate as kvPull
+      console.warn('[kvPushAsGuest] verification required');
+      return;
+    }
+    if (res.status === 403 && body?.revoked) {
+      console.warn('[kvPushAsGuest] access revoked');
+      return;
+    }
+    throw new Error(body?.error || `Push failed (${res.status})`);
+  }
 }
 
 // ── Sync: pull and decrypt data from KV ────
@@ -15419,12 +15623,58 @@ async function kvSyncNow(silent = false) {
     await _saveSettings();
     const tombstones = await loadDeletedIds();
     await saveDeletedIds(tombstones);
-    // Push if we have any local data — items OR groceries OR reminders
+
+    // ── Owner: absorb guest writes from share blobs ────────
+    // After the owner has merged their own /data/pull and BEFORE
+    // pushing back, check each active share target for blobs whose
+    // last writer was a guest. Decrypt those, merge into local state.
+    // The subsequent kvPush will then push the merged result back to
+    // both the owner's own KV blob (via /data/push) AND every share
+    // blob (via pushAllSharedData inside kvPush). Net effect: a
+    // guest's edit propagates owner ↔ guest1 ↔ guest2 within one
+    // sync cycle on whichever device syncs next.
+    let absorbedGuestWrite = false;
+    if (kvConnected && !_shareState) {
+      // _shareTargets is normally populated when the user visits the
+      // Settings tab. For background syncs that fire before they've
+      // been there, lazy-load so absorption still runs.
+      if (!_shareTargets?.length && WORKER_URL) {
+        try { await loadShareTargets(); } catch(_e) {}
+      }
+      if (_shareTargets?.length) {
+        try { absorbedGuestWrite = await _absorbGuestWritesForOwner(); }
+        catch(e) { console.warn('absorb guest writes failed:', e.message); }
+      }
+    }
+
+    // Push if we have any local data — items OR groceries OR reminders.
+    // Also push when we absorbed a guest write, so the merged result
+    // round-trips back to the share blob (giving other guests the
+    // converged view).
     const hasLocalData = items.length > 0 || groceryItems.length > 0 || reminders.length > 0;
-    if (kvConnected && !_shareState && hasLocalData) {
+    if (kvConnected && !_shareState && (hasLocalData || absorbedGuestWrite)) {
       await kvPush();
     } else if (kvConnected && !_shareState) {
       // Nothing local to push — pull was enough
+    }
+    // ── Guest: push edits back to the share blob ──────────
+    // Guests don't write to /data/push (the personal blob); they write
+    // to the share blob via _kvPushAsGuest (which kvPush dispatches to
+    // when _shareState is set). Without this branch, edits made by the
+    // guest only ever lived in the guest's local IDB until they
+    // happened to call kvPush directly via a tool action. _syncQueue
+    // funnels everything through kvSyncNow, so we have to invoke push
+    // here too — guarded on whether the guest has rw permission, since
+    // a read-only guest pushing would just bounce off the server's
+    // "no write access" check.
+    if (_shareState) {
+      const perms = (_shareState.households && _shareState.households[activeProfile || 'default']) || {};
+      const hasRw = perms.stockroom === 'rw' || perms.groceries === 'rw'
+                 || perms.reminders === 'rw' || perms.budget    === 'rw';
+      if (hasRw) {
+        try { await _kvPushAsGuest(); }
+        catch(e) { console.warn('guest push failed:', e.message); }
+      }
     }
     if (!_wasSilent) updateSyncPill('synced'); else updateSyncPill('connected');
     hideDataLoadingOverlay();
@@ -26732,15 +26982,31 @@ async function pushSharedData(code, shareKey) {
       const canSeeReminders  = perms.reminders  && perms.reminders  !== 'none';
       const canSeeBudget     = perms.budget     && perms.budget     !== 'none';
 
+      // Stockroom and grocery-list tombstones — needed so guests
+      // honour the owner's deletes for items and named grocery lists.
+      // These were previously missing from the share payload, which
+      // meant a deleted owner item could resurrect on the guest side.
+      const stockroomTombstones = canSeeStockroom ? await loadDeletedIds() : new Set();
+      const groceryListTombs    = canSeeGroceries ? await loadGroceryListDeletedIds() : new Set();
+      const billsDeletedTombs   = canSeeBudget    ? billsDeletedIds : new Set();
+
       const payload = JSON.stringify({
         items:       canSeeStockroom ? hItems     : [],
+        deletedIds:  [...stockroomTombstones],
         settings:    hSettings,
         groceries:   canSeeGroceries ? hGroceries : [],
+        // Named grocery lists (per-store) — guests with grocery rw need
+        // these to render the list picker and add items to specific lists.
+        groceryLists: canSeeGroceries ? groceryLists : [],
         reminders:   canSeeReminders ? hReminders : [],
         departments: canSeeGroceries ? hDepts     : [],
+        // Grocery-list tombstones — fixes a parallel resurrection bug
+        // for named grocery lists that mirrored the items one above.
+        groceryListDeletedIds: [...groceryListTombs],
         // Budget — Phase 1 (bills) + Phase 2 (categories, transactions) + Phase 3 (accounts, income).
         // Lives at user-level (not per-household), so the same data goes to every share with budget perm.
         bills:                       canSeeBudget ? bills           : [],
+        billsDeletedIds:             [...billsDeletedTombs],
         billInstances:               canSeeBudget ? billInstances   : {},
         budgetSettings:              canSeeBudget ? budgetSettings  : {},
         budgetCategories:            canSeeBudget ? budgetCategories: [],
@@ -26770,6 +27036,325 @@ async function pushAllSharedData() {
     // Also fulfil any pending rewrap requests from new guests
     await _fulfilPendingRewraps(target.code).catch(e => console.warn('rewrap failed for', target.code, e.message));
   }
+}
+
+// Owner-side absorption of guest writes — called from kvSyncNow before
+// the owner's kvPush. Returns true if any guest write was merged in,
+// in which case the caller should kvPush so the merged state round-
+// trips back to the share blob (and thence to other guests). Tracks
+// per-(code, household) "last absorbed at" markers in localStorage so
+// we never absorb the same guest write twice (which would re-issue
+// its changes after the owner has already pushed them).
+async function _absorbGuestWritesForOwner() {
+  if (!_shareTargets?.length) return false;
+  let anyAbsorbed = false;
+  const absorbedKey = 'stockroom_share_absorbed';
+  let absorbed = {};
+  try { absorbed = JSON.parse(localStorage.getItem(absorbedKey) || '{}') || {}; } catch(_e) { absorbed = {}; }
+  const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+
+  for (const target of _shareTargets) {
+    const code      = target.code;
+    const households = Object.keys(target.households || {});
+    if (!households.length) households.push('default');
+
+    // Locate the share key for this code — same recovery chain as pushSharedData
+    let sk = null;
+    try {
+      const stored = await _getShareKeys();
+      const b64 = stored[code];
+      if (b64) {
+        const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        sk = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+      }
+    } catch(_e) {}
+    if (!sk) {
+      try { sk = await recoverShareKey(code); } catch(_e) {}
+    }
+    if (!sk) { console.warn('[absorb] no share key for', code, '— skipping'); continue; }
+
+    for (const hKey of households) {
+      try {
+        const res = await postKV(`${WORKER_URL}/share/data/pull-owner`, {
+          ownerEmailHash: _kvEmailHash, ...authFields, code, household: hKey,
+        });
+        if (!res.ok) continue;
+        const j = await res.json();
+        if (!j.ciphertext || !j.writer) continue;
+        // Only absorb writes that came from a guest. Owner writes are
+        // already in our own state — re-absorbing them would just
+        // reverse any local edits made since.
+        if (j.writer.kind !== 'guest') continue;
+        const writerAt = j.writer.at ? new Date(j.writer.at).getTime() : 0;
+        if (!writerAt) continue;
+        const stamp = `${code}:${hKey}`;
+        const lastAbsorbed = absorbed[stamp] ? new Date(absorbed[stamp]).getTime() : 0;
+        if (writerAt <= lastAbsorbed) continue; // already absorbed
+
+        let parsed;
+        try {
+          const plain = await decryptWithShareKey(sk, j.ciphertext);
+          parsed = JSON.parse(plain);
+        } catch(e) { console.warn('[absorb] decrypt failed for', stamp, e.message); continue; }
+
+        // Merge into local state. We respect per-section permissions
+        // here too — if a guest somehow pushed a section they had no
+        // rw on (defensive against client tampering), we ignore that
+        // section and trust our local view.
+        const perms = target.households?.[hKey] || {};
+        const mergedSomething = await _absorbGuestPayloadIntoLocal(parsed, perms, hKey);
+        if (mergedSomething) {
+          anyAbsorbed = true;
+          console.log('[absorb] merged guest write from', stamp, 'writer:', j.writer.emailHash?.slice(0,8));
+        }
+        // Stamp regardless of mergedSomething — we've processed this writer event.
+        absorbed[stamp] = j.writer.at;
+      } catch(e) { console.warn('[absorb] failed for', code, hKey, e.message); }
+    }
+  }
+  try { localStorage.setItem(absorbedKey, JSON.stringify(absorbed)); } catch(_e) {}
+  return anyAbsorbed;
+}
+
+// Merge a guest's pushed share-blob payload into the owner's in-memory
+// state for one household. Returns true if anything actually changed.
+// Section-level permission gating is applied: a section the guest
+// didn't have rw on is skipped (we don't trust that part of the blob).
+async function _absorbGuestPayloadIntoLocal(payload, perms, hKey) {
+  if (!payload || typeof payload !== 'object') return false;
+  // For now, absorption only applies to the active profile. Cross-profile
+  // absorption would require switching profile context to merge into
+  // their stored items, which is a bigger refactor — and in practice
+  // owners are usually on the same profile they're sharing.
+  const isActiveProfile = hKey === activeProfile || (hKey === 'default' && (!activeProfile || activeProfile === 'default'));
+  if (!isActiveProfile) {
+    // Fold into the stored profile via getProfiles/saveProfiles. This is
+    // less surgical than the active-profile path but covers the case of
+    // an owner on profile A receiving a guest write to profile B.
+    return _absorbGuestPayloadIntoStoredProfile(payload, perms, hKey);
+  }
+  let changed = false;
+
+  // Stockroom items — use existing mergeItems logic (last-edit-wins
+  // per record via _modifiedAt). The "remoteWins" flag here is true:
+  // we're absorbing a guest write that's *newer than our last absorb*,
+  // so prefer the guest's per-record timestamps.
+  if (perms.stockroom === 'rw' && Array.isArray(payload.items)) {
+    items = await mergeItems(items, payload.items, true);
+    await saveData();
+    changed = true;
+  }
+  // Stockroom tombstones — union with local. A guest's "deleted item X"
+  // must propagate to the owner so the next push doesn't resurrect it.
+  if (perms.stockroom === 'rw' && Array.isArray(payload.deletedIds) && payload.deletedIds.length) {
+    try {
+      const local = await loadDeletedIds();
+      const before = local.size;
+      payload.deletedIds.forEach(id => local.add(id));
+      if (local.size !== before) {
+        await saveDeletedIds(local);
+        changed = true;
+      }
+    } catch(_e) {}
+  }
+
+  // Groceries — same merge pattern as kvSyncNow's standard path
+  if (perms.groceries === 'rw' && Array.isArray(payload.groceries)) {
+    const tombstones = await loadGroceryDeletedIds();
+    const incoming   = payload.groceries.filter(i => !tombstones.has(i.id));
+    const merged = _mergeArrayById(groceryItems, incoming);
+    if (merged.changed) { groceryItems = merged.list; await _saveGroceryLocal(); changed = true; }
+  }
+  // Named grocery lists — same id-merge as the guest push side.
+  if (perms.groceries === 'rw' && Array.isArray(payload.groceryLists)) {
+    const m = _mergeArrayById(groceryLists, payload.groceryLists);
+    if (m.changed) { groceryLists = m.list; await _saveGroceryLists(); changed = true; }
+  }
+  // Grocery-list tombstones — same union pattern as stockroom above.
+  if (perms.groceries === 'rw' && Array.isArray(payload.groceryListDeletedIds) && payload.groceryListDeletedIds.length) {
+    try {
+      const local = await loadGroceryListDeletedIds();
+      const before = local.size;
+      payload.groceryListDeletedIds.forEach(id => local.add(id));
+      if (local.size !== before) {
+        await dbPut('groceryLists', '_deletedIds', [...local]);
+        changed = true;
+      }
+    } catch(_e) {}
+  }
+
+  // Reminders — append-style merge by id
+  if (perms.reminders === 'rw' && Array.isArray(payload.reminders)) {
+    const merged = _mergeArrayById(reminders, payload.reminders);
+    if (merged.changed) { reminders = merged.list; await saveReminders(); changed = true; }
+  }
+
+  // Budget — bills, transactions, categories, accounts, income.
+  // These all use last-write-wins per record with explicit deletedIds
+  // tombstones already maintained on both sides. We merge by id and
+  // prefer the side with the newer per-record timestamp. Local
+  // persistence is split across saveBudgetLocal (bills + bill instances
+  // + bills tombstones), saveBudgetSpendLocal (categories + transactions
+  // + their tombstones) and saveBudgetAccountsAndIncomeLocal (accounts
+  // + income + their tombstones), so we track which group needs
+  // re-saving with three flags rather than calling each piece's save.
+  if (perms.budget === 'rw') {
+    let budgetTouched = false;
+    let spendTouched  = false;
+    let accIncTouched = false;
+
+    if (Array.isArray(payload.bills)) {
+      const merged = _mergeArrayById(bills, payload.bills);
+      if (merged.changed) { bills = merged.list; budgetTouched = true; }
+    }
+    if (payload.billInstances && typeof payload.billInstances === 'object') {
+      const before = JSON.stringify(billInstances);
+      billInstances = { ...billInstances, ...payload.billInstances };
+      if (JSON.stringify(billInstances) !== before) budgetTouched = true;
+    }
+    if (Array.isArray(payload.budgetCategories)) {
+      const merged = _mergeArrayById(budgetCategories, payload.budgetCategories);
+      if (merged.changed) { budgetCategories = merged.list; spendTouched = true; }
+    }
+    if (payload.transactions && typeof payload.transactions === 'object') {
+      // transactions: { "yyyymm": { txId: {...}, ... }, ... }
+      const m = _mergeMonthMap(transactions, payload.transactions);
+      if (m.changed) { transactions = m.map; spendTouched = true; }
+    }
+    if (Array.isArray(payload.budgetAccounts)) {
+      const merged = _mergeArrayById(budgetAccounts, payload.budgetAccounts);
+      if (merged.changed) { budgetAccounts = merged.list; accIncTouched = true; }
+    }
+    if (Array.isArray(payload.incomeTemplates)) {
+      const merged = _mergeArrayById(incomeTemplates, payload.incomeTemplates);
+      if (merged.changed) { incomeTemplates = merged.list; accIncTouched = true; }
+    }
+    if (payload.incomeEntries && typeof payload.incomeEntries === 'object') {
+      // incomeEntries: same yyyymm-keyed nested-map shape as transactions
+      const m = _mergeMonthMap(incomeEntries, payload.incomeEntries);
+      if (m.changed) { incomeEntries = m.map; accIncTouched = true; }
+    }
+    // Tombstones — union with local. A guest's "deleted X" must propagate.
+    if (Array.isArray(payload.billsDeletedIds)) {
+      const before = billsDeletedIds.size;
+      payload.billsDeletedIds.forEach(id => billsDeletedIds.add(id));
+      if (billsDeletedIds.size !== before) budgetTouched = true;
+    }
+    if (Array.isArray(payload.budgetCategoryDeletedIds)) {
+      const before = budgetCategoryDeletedIds.size;
+      payload.budgetCategoryDeletedIds.forEach(id => budgetCategoryDeletedIds.add(id));
+      if (budgetCategoryDeletedIds.size !== before) spendTouched = true;
+    }
+    if (Array.isArray(payload.budgetTransactionDeletedIds)) {
+      const before = budgetTransactionDeletedIds.size;
+      payload.budgetTransactionDeletedIds.forEach(id => budgetTransactionDeletedIds.add(id));
+      if (budgetTransactionDeletedIds.size !== before) spendTouched = true;
+    }
+    if (Array.isArray(payload.budgetAccountDeletedIds)) {
+      const before = budgetAccountDeletedIds.size;
+      payload.budgetAccountDeletedIds.forEach(id => budgetAccountDeletedIds.add(id));
+      if (budgetAccountDeletedIds.size !== before) accIncTouched = true;
+    }
+    if (Array.isArray(payload.incomeTemplateDeletedIds)) {
+      const before = incomeTemplateDeletedIds.size;
+      payload.incomeTemplateDeletedIds.forEach(id => incomeTemplateDeletedIds.add(id));
+      if (incomeTemplateDeletedIds.size !== before) accIncTouched = true;
+    }
+    if (Array.isArray(payload.incomeEntryDeletedIds)) {
+      const before = incomeEntryDeletedIds.size;
+      payload.incomeEntryDeletedIds.forEach(id => incomeEntryDeletedIds.add(id));
+      if (incomeEntryDeletedIds.size !== before) accIncTouched = true;
+    }
+
+    if (budgetTouched) { await saveBudgetLocal(); changed = true; }
+    if (spendTouched)  { await saveBudgetSpendLocal(); changed = true; }
+    if (accIncTouched) { await saveBudgetAccountsAndIncomeLocal(); changed = true; }
+  }
+
+  if (changed) scheduleRender(...RENDER_REGIONS);
+  return changed;
+}
+
+// Lightweight merge helper for arrays of records keyed by `id`. Newer
+// timestamp wins per-record (using updatedAt or _modifiedAt or
+// modifiedAt). Returns { list, changed }.
+function _mergeArrayById(local, remote) {
+  if (!Array.isArray(remote) || !remote.length) return { list: local, changed: false };
+  const byId = new Map((local || []).map(it => [it.id, it]));
+  let changed = false;
+  for (const r of remote) {
+    if (!r || !r.id) continue;
+    const l = byId.get(r.id);
+    if (!l) { byId.set(r.id, r); changed = true; continue; }
+    const lTs = l.updatedAt || l._modifiedAt || l.modifiedAt;
+    const rTs = r.updatedAt || r._modifiedAt || r.modifiedAt;
+    if (rTs && (!lTs || new Date(rTs).getTime() > new Date(lTs).getTime())) {
+      byId.set(r.id, r);
+      changed = true;
+    }
+  }
+  return { list: Array.from(byId.values()), changed };
+}
+
+// Merge helper for the nested map shape used by `transactions` and
+// `incomeEntries`: { "yyyymm": { recordId: record, ... }, ... }
+// Per-record last-write-wins on updatedAt. Returns { map, changed }.
+// Empty months (those that lose all their records) are pruned to match
+// the rest of the codebase's convention (see updateTransaction at
+// ~18915 — it deletes empty yyyymm keys after a record moves out).
+function _mergeMonthMap(local, remote) {
+  if (!remote || typeof remote !== 'object') return { map: local || {}, changed: false };
+  const out = { ...(local || {}) };
+  let changed = false;
+  for (const ym of Object.keys(remote)) {
+    const localMonth  = out[ym] || {};
+    const remoteMonth = remote[ym] || {};
+    const mergedMonth = { ...localMonth };
+    for (const id of Object.keys(remoteMonth)) {
+      const r = remoteMonth[id];
+      if (!r) continue;
+      const l = localMonth[id];
+      if (!l) { mergedMonth[id] = r; changed = true; continue; }
+      const lTs = l.updatedAt || l._modifiedAt || l.modifiedAt;
+      const rTs = r.updatedAt || r._modifiedAt || r.modifiedAt;
+      if (rTs && (!lTs || new Date(rTs).getTime() > new Date(lTs).getTime())) {
+        mergedMonth[id] = r; changed = true;
+      }
+    }
+    if (Object.keys(mergedMonth).length === 0) {
+      if (out[ym]) { delete out[ym]; changed = true; }
+    } else {
+      out[ym] = mergedMonth;
+    }
+  }
+  return { map: out, changed };
+}
+
+// Inactive-profile absorption — fold guest write into stored profile data
+// without disturbing the owner's currently-active profile in memory.
+async function _absorbGuestPayloadIntoStoredProfile(payload, perms, hKey) {
+  try {
+    const profiles = await getProfiles();
+    const p = profiles[hKey] || {};
+    let changed = false;
+    if (perms.stockroom === 'rw' && Array.isArray(payload.items)) {
+      const merged = _mergeArrayById(p.items || [], payload.items);
+      if (merged.changed) { p.items = merged.list; changed = true; }
+    }
+    if (perms.groceries === 'rw' && Array.isArray(payload.groceries)) {
+      const merged = _mergeArrayById(p.groceries || [], payload.groceries);
+      if (merged.changed) { p.groceries = merged.list; changed = true; }
+    }
+    if (perms.reminders === 'rw' && Array.isArray(payload.reminders)) {
+      const merged = _mergeArrayById(p.reminders || [], payload.reminders);
+      if (merged.changed) { p.reminders = merged.list; changed = true; }
+    }
+    if (changed) {
+      profiles[hKey] = p;
+      await saveProfiles(profiles);
+    }
+    return changed;
+  } catch(e) { console.warn('[absorb] stored-profile merge failed:', e.message); return false; }
 }
 
 // When a new guest accepts an invite before the owner had their ECDH pubkey,
@@ -27958,14 +28543,22 @@ async function handleShareJoinLink(code) {
   updateSyncPill('syncing');
   try {
     const probe = await postKV(`${WORKER_URL}/share/join`, { code });
-    const probeData = await probe.json();
+    let probeData = {};
+    try { probeData = await probe.json(); } catch(_e) {}
     if (probe.status === 410) { toast('This invite link has expired — ask the owner for a new one'); updateSyncPill('error'); return; }
-    if (!probe.ok && !probeData.requiresAuth) throw new Error(probeData.error || 'Invalid link');
+    if (probe.status === 404) { toast('Invalid invite link — it may have been deleted'); updateSyncPill('error'); return; }
+    if (!probe.ok && !probeData.requiresAuth) {
+      throw new Error(probeData.error || `Probe failed (HTTP ${probe.status})`);
+    }
     _pendingJoinCode  = code.toUpperCase();
     _pendingShareMeta = probeData;
     if (kvConnected && _kvEmailHash && (_kvVerifier || _kvSessionToken)) { await completePendingJoin(); return; }
     showShareAuthGate(probeData);
-  } catch(err) { updateSyncPill('error'); toast('Invalid invite link — ' + err.message); }
+  } catch(err) {
+    console.error('[share] handleShareJoinLink failed:', err);
+    updateSyncPill('error');
+    toast('Invalid invite link — ' + (err?.message || 'Network error'));
+  }
 }
 
 function showShareAuthGate(meta) {
@@ -28077,6 +28670,14 @@ async function shareGateRegister() {
     if (!storeRes.ok) throw new Error('Could not store key envelopes — try again');
     _kvKey = dataKey;
     await kvStoreSession(email, emailHash, verifier, dataKey);
+    // Generate the user's ECDH keypair NOW, before they get into the
+    // share-join flow. completePendingJoin will need to unwrap a share
+    // key with this keypair (or signal pending-rewrap if the owner
+    // hadn't pre-wrapped one) — without it we'd hit "Your encryption
+    // key is missing" and the join would fail silently after OTP.
+    // ensureEcdhKeypair is idempotent, safe to call from anywhere.
+    try { await ensureEcdhKeypair(emailHash); }
+    catch(e) { console.warn('ensureEcdhKeypair failed during share-gate register:', e.message); }
     // Mark as fresh registration so the verification screen shows a Cancel
     // button — share-gate users hit the same Resend-failure path as the
     // main signup wizard, and need an exit if their email won't deliver.
@@ -28092,7 +28693,13 @@ async function shareGateRegister() {
 async function completePendingJoin() {
   if (!_pendingJoinCode) return;
   const code = _pendingJoinCode;
+  // Track which step we're on so the catch can produce a useful message
+  // even when the underlying error has an empty `.message` (the WebCrypto
+  // OperationError that ecdhUnwrapShareKey can throw is the canonical
+  // example — it surfaces as "Unknown error" in the toast otherwise).
+  let step = 'starting';
   try {
+    step = 'calling /share/join';
     const res  = await postKV(`${WORKER_URL}/share/join`, {
         code,
         guestEmailHash:    _kvEmailHash,
@@ -28119,10 +28726,11 @@ async function completePendingJoin() {
       return;
     }
 
-    if (!res.ok) throw new Error(data.error || 'Invalid invite link — it may have expired');
+    if (!res.ok) throw new Error(data.error || `Join failed (HTTP ${res.status})`);
     // Server returned 200 but with ok:false — means it needs auth (shouldn't happen here but guard it)
     if (data.requiresAuth) throw new Error('Authentication required — please sign in first');
 
+    step = 'fetching wrapped share key';
     const ecdhRes = await postKV(`${WORKER_URL}/share/ecdh-key/get`, {
         guestEmailHash: _kvEmailHash,
         ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
@@ -28142,18 +28750,46 @@ async function completePendingJoin() {
 
     if (!ecdhRes.ok) {
       const ed = await ecdhRes.json().catch(() => ({}));
-      throw new Error(ed.error || 'Could not retrieve your share key — ask the owner to re-send the invite');
+      throw new Error(ed.error || `Could not retrieve your share key (HTTP ${ecdhRes.status}) — ask the owner to re-send the invite`);
     }
+    step = 'parsing wrapped key response';
     const { wrappedKey, ownerPublicKeyJwk } = await ecdhRes.json();
+    if (!wrappedKey)        throw new Error('Server returned no wrapped share key — ask the owner to re-send the invite');
+    if (!ownerPublicKeyJwk) throw new Error("Server returned no owner public key — ask the owner to open STOCKROOM and re-sync");
+
+    step = 'loading your encryption key';
     const guestPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
-    if (!guestPrivKey) throw new Error('Your encryption key is missing — sign out and back in to regenerate it');
-    const shareKey    = await ecdhUnwrapShareKey(guestPrivKey, ownerPublicKeyJwk, wrappedKey);
+    if (!guestPrivKey) {
+      // Try generating one on the fly — this hits the case where a
+      // share-gate registration somehow skipped ECDH provisioning.
+      // ensureEcdhKeypair is idempotent so this is safe to retry.
+      try { await ensureEcdhKeypair(_kvEmailHash); } catch(_e) {}
+      const retry = await loadEcdhPrivateKey(_kvEmailHash);
+      if (!retry) throw new Error('Your encryption key is missing — sign out and back in to regenerate it');
+    }
+
+    step = 'unwrapping share key (ECDH)';
+    const privKey = guestPrivKey || await loadEcdhPrivateKey(_kvEmailHash);
+    let shareKey;
+    try {
+      shareKey = await ecdhUnwrapShareKey(privKey, ownerPublicKeyJwk, wrappedKey);
+    } catch(unwrapErr) {
+      // WebCrypto's OperationError surfaces with an empty .message which
+      // bubbles up as "Unknown error" in the toast. Wrap it so the user
+      // sees something actionable. The most common cause: the wrapped
+      // key on the server was wrapped against a different ECDH keypair
+      // than the one this guest currently holds (e.g. they deleted and
+      // recreated the account between the share creation and the join).
+      console.error('[share] ECDH unwrap failed:', unwrapErr);
+      throw new Error('Could not decrypt your share key — your encryption keys may have changed. Ask the owner to re-send the invite to refresh.');
+    }
     const shareKeyB64 = await exportShareKey(shareKey);
     try {
       const stored = await _getShareKeys();
       stored[code] = shareKeyB64;
       await _setShareKeys(stored);
     } catch(e) {}
+    step = 'finalising join';
     _shareState = { ...data, code };
     _shareKey   = shareKey;
     saveShareState();
@@ -28169,7 +28805,10 @@ async function completePendingJoin() {
     scheduleRender(...RENDER_REGIONS);
     toast(`✓ Joined ${data.ownerName || 'household'}'s STOCKROOM`);
   } catch(err) {
-    const msg = err.message || 'Unknown error — please try again';
+    // Always log the full error to console — the toast is necessarily
+    // short, but the console gives you stack + step context to diagnose.
+    console.error('[share] completePendingJoin failed at step:', step, err);
+    const msg = err?.message || `Could not join (failed at ${step})`;
     toast('Could not join: ' + msg);
     updateSyncPill('error');
   }
