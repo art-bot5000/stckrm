@@ -1,6 +1,6 @@
 
 // ═══════════════════════════════════════════
-//  DATA -test 
+//  DATA
 // ═══════════════════════════════════════════
 const CATEGORIES = ['Kitchen','Bathroom','Cleaning','Food & Drink','Health','Garden','Office','Other'];
 
@@ -10218,12 +10218,84 @@ function exportDataWithSecureChoice(includeUnlocked) {
   requireReauth('Re-enter your passphrase to export your data.', () => _doExportData(includeUnlocked), { passkeyAllowed: true });
 }
 
-function _doExportData(includeSecureNotes = false) {
-  // Build notes export - exclude body of locked notes unless includeSecureNotes
+async function _doExportData(includeSecureNotes = false) {
+  // ── Fetch & decrypt secure note bodies on demand ──────────────────────
+  // Locked note bodies live encrypted on the server, keyed by noteId. The
+  // _noteUnlocked cache only contains notes the user has manually unlocked
+  // in the UI during this session — exporting "with secure notes" requires
+  // explicitly fetching every locked body that isn't already cached. Without
+  // this step the export silently falls back to the placeholder string and
+  // the data is unrecoverable from the file.
+  //
+  // We fetch in series (not parallel) to avoid hammering /note/body/pull
+  // and to keep error handling simple — most users have <50 notes and the
+  // call is fast. If any fetch fails (404/network/decrypt), we keep the
+  // placeholder for that one note and continue with the rest, so a single
+  // bad note doesn't kill the entire export.
+  const bodyMisses = [];
+  if (includeSecureNotes) {
+    const lockedNotesMissingBody = notes.filter(n => n.locked && !_noteUnlocked.has(n.id));
+    if (lockedNotesMissingBody.length > 0) {
+      // Pre-flight: must be signed in with a usable key to decrypt at all
+      if (!_kvEmailHash || (!_kvSessionToken && !_kvVerifier)) {
+        toast('Sign in required to export secure notes');
+        return;
+      }
+      if (!await kvEnsureKey()) {
+        toast('Encryption key unavailable — try refreshing');
+        return;
+      }
+      // Show a loading overlay while fetching — this can take a few seconds
+      // if there are many secure notes. We use the generic data-loading
+      // overlay for visual consistency.
+      showDataLoadingOverlay(`Preparing export (${lockedNotesMissingBody.length} secure note${lockedNotesMissingBody.length === 1 ? '' : 's'})…`);
+      try {
+        for (const n of lockedNotesMissingBody) {
+          try {
+            const res = await postKV(`${WORKER_URL}/note/body/pull`, {
+              emailHash: _kvEmailHash,
+              ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+              noteId: n.id,
+            });
+            if (!res.ok) {
+              bodyMisses.push({ id: n.id, title: n.title, reason: `HTTP ${res.status}` });
+              continue;
+            }
+            const data = await res.json().catch(() => null);
+            if (!data || !data.ciphertext) {
+              bodyMisses.push({ id: n.id, title: n.title, reason: 'empty server response' });
+              continue;
+            }
+            const body = await kvDecrypt(_kvKey, data.ciphertext);
+            // Cache for the rest of this session — saves re-fetching if user
+            // opens the note in the UI later, and means a re-export skips the
+            // network call.
+            _noteUnlocked.set(n.id, { body, lastActivity: Date.now(), inactivityTimer: null });
+          } catch (e) {
+            bodyMisses.push({ id: n.id, title: n.title, reason: e.message || 'unknown' });
+            console.warn('[export] could not fetch body for note', n.id, e);
+          }
+        }
+      } finally {
+        hideDataLoadingOverlay();
+      }
+      if (bodyMisses.length > 0) {
+        const titles = bodyMisses.map(m => `"${m.title || '(untitled)'}"`).slice(0, 3).join(', ');
+        const more   = bodyMisses.length > 3 ? ` +${bodyMisses.length - 3} more` : '';
+        toast(`Could not export ${bodyMisses.length} secure note${bodyMisses.length === 1 ? '' : 's'}: ${titles}${more}`);
+        // Continue anyway — partial export is more useful than no export.
+      }
+    }
+  }
+
+  // Build notes export — exclude body of locked notes unless includeSecureNotes
   const exportNotes = notes.map(n => {
     if (n.locked && !includeSecureNotes) return { ...n, body: undefined };
     if (n.locked && includeSecureNotes) {
       const unlocked = _noteUnlocked.get(n.id);
+      // If we have a body (from cache or just-fetched), inline it as an
+      // unlocked note. If not (fetch failed), keep placeholder so the
+      // import side renders something explanatory rather than blank.
       return { ...n, body: unlocked?.body || '[locked — could not export]', locked: false };
     }
     return n;
