@@ -16042,6 +16042,185 @@ const _syncQueue = {
   },
 };
 
+// ── Active-tab share-tip poll ───────────────────────────────────────────
+// Tiny 15s heartbeat that asks the server "did anything change in the
+// shares I care about?" and triggers the existing absorb/pull paths
+// only when the answer is yes. Runs ONLY while the tab is visible AND
+// focused — backgrounded tabs do nothing, no battery drain, no network
+// traffic when the user isn't looking.
+//
+// On return-to-active we fire one immediate check to catch up. Most of
+// the time the user comes back, blinks once, and the data is fresh.
+//
+// The poll is purely additive — it triggers the same `_absorbGuestWritesForOwner`
+// and `kvPull` paths that the existing 30s background timer + focus
+// handler already use. If the poll breaks for any reason the existing
+// paths still run; this just makes them more responsive.
+const _sharePoll = {
+  TICK_MS:           15000,         // poll cadence when active
+  WATCHDOG_MS:       30000,         // if no tick in 30s, treat as resumed-from-suspend
+  timer:             null,
+  lastTickAt:        0,
+  inFlight:          false,
+  consecutiveErrors: 0,
+
+  // Last seen tips per stamp ("CODE:HH"), so we know what's "new". For
+  // the owner we compare against `stockroom_share_absorbed` which is
+  // already maintained by `_absorbGuestWritesForOwner`. For the guest
+  // we use a small in-memory map (per-tab is enough — pulls are
+  // idempotent so worst case on tab-restore we pull once unnecessarily).
+  guestLastSeen:     {},
+
+  start() {
+    if (this.timer) return;
+    document.addEventListener('visibilitychange', () => this._onVisOrFocus());
+    window.addEventListener('focus',              () => this._onVisOrFocus());
+    window.addEventListener('blur',               () => this._maybeStop());
+    // Kick off the loop only if we're actually active right now.
+    this._onVisOrFocus();
+  },
+
+  // Called on visibilitychange / focus / blur. Decides whether the tab
+  // is "active enough" to poll, and if so kicks off an immediate tick
+  // followed by the regular cadence.
+  _onVisOrFocus() {
+    const active = (document.visibilityState === 'visible') && document.hasFocus();
+    if (active) {
+      // If we haven't ticked in WATCHDOG_MS, the OS probably suspended
+      // the timer (mobile lock screen, tab discarded etc.). Treat
+      // return-to-active as a "fresh start" and run an immediate tick.
+      const stale = (Date.now() - this.lastTickAt) > this.WATCHDOG_MS;
+      if (!this.timer || stale) {
+        this._scheduleNext(0); // immediate
+      }
+    } else {
+      this._maybeStop();
+    }
+  },
+
+  _maybeStop() {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  },
+
+  _scheduleNext(delay = this.TICK_MS) {
+    this._maybeStop();
+    // If the tab is no longer active, don't reschedule. Visibility/focus
+    // handlers will restart us on return.
+    const active = (document.visibilityState === 'visible') && document.hasFocus();
+    if (!active) return;
+    this.timer = setTimeout(() => this._tick(), delay);
+  },
+
+  async _tick() {
+    this.timer = null;
+    this.lastTickAt = Date.now();
+
+    // Skip silently if nothing's worth polling for.
+    if (this.inFlight) { this._scheduleNext(); return; }
+    if (!WORKER_URL || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) {
+      this._scheduleNext(); return;
+    }
+    // Build the list of codes we care about.
+    //   Owner: every share they have a target for.
+    //   Guest: their single _shareState code.
+    const codes = [];
+    if (_shareState && _shareState.code) codes.push(_shareState.code);
+    if (Array.isArray(_shareTargets)) {
+      for (const t of _shareTargets) if (t.code && !codes.includes(t.code)) codes.push(t.code);
+    }
+    if (!codes.length) { this._scheduleNext(); return; }
+
+    this.inFlight = true;
+    try {
+      const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+      const res = await postKV(`${WORKER_URL}/share/tips`, {
+        emailHash: _kvEmailHash, ...authFields, codes,
+      });
+      if (!res.ok) {
+        // Don't spam the console on 401/403 (auth state changed mid-poll)
+        // — just back off. 5 errors in a row → exponential backoff.
+        if (res.status !== 401 && res.status !== 403) {
+          this.consecutiveErrors++;
+        }
+        return;
+      }
+      this.consecutiveErrors = 0;
+      const { tips } = await res.json();
+      if (!tips || typeof tips !== 'object') return;
+
+      await this._dispatch(tips);
+    } catch(e) {
+      this.consecutiveErrors++;
+      if (this.consecutiveErrors <= 3) console.warn('[sharePoll] tick failed:', e?.message);
+    } finally {
+      this.inFlight = false;
+      // Backoff schedule when erroring repeatedly so we don't hammer
+      // a broken endpoint. Resets to TICK_MS on first success.
+      const delay = this.consecutiveErrors >= 3
+        ? Math.min(this.TICK_MS * Math.pow(2, this.consecutiveErrors - 2), 5 * 60 * 1000)
+        : this.TICK_MS;
+      this._scheduleNext(delay);
+    }
+  },
+
+  // Compare the server's tip table against what we last saw / absorbed,
+  // and dispatch into the existing sync paths for any stamp that's
+  // genuinely newer. Doesn't block — fires the work and returns so
+  // the next tick can schedule.
+  async _dispatch(tips) {
+    // Owner-side: read absorbed-marker from localStorage so we agree
+    // with `_absorbGuestWritesForOwner` on what counts as "new".
+    let absorbed = {};
+    try { absorbed = JSON.parse(localStorage.getItem('stockroom_share_absorbed') || '{}') || {}; } catch(_e) {}
+
+    let ownerNeedsAbsorb = false;
+    let guestNeedsPull   = false;
+
+    for (const stamp of Object.keys(tips)) {
+      const tip = tips[stamp];
+      if (!tip || !tip.modified) continue;
+      const modifiedTs = new Date(tip.modified).getTime();
+      if (!modifiedTs) continue;
+
+      // Guest path — we're a member of this share.
+      if (_shareState && stamp.startsWith(`${_shareState.code}:`)) {
+        // Only pull if the writer is the OWNER (or unspecified —
+        // legacy data without a writer field). Don't pull on our own
+        // writes; we'd just re-receive what we just sent.
+        if (tip.writer === 'guest') continue;
+        const lastSeen = this.guestLastSeen[stamp] || 0;
+        if (modifiedTs > lastSeen) {
+          this.guestLastSeen[stamp] = modifiedTs;
+          guestNeedsPull = true;
+        }
+        continue;
+      }
+
+      // Owner path — we own this share. Absorb only if a guest wrote
+      // and we haven't absorbed THAT specific writer event yet. The
+      // absorb function uses a per-stamp marker keyed on writer.at,
+      // not _modified, but they're written together so they're
+      // monotonic with each other.
+      if (tip.writer !== 'guest') continue;
+      const absorbedAt = absorbed[stamp] ? new Date(absorbed[stamp]).getTime() : 0;
+      if (modifiedTs > absorbedAt) {
+        ownerNeedsAbsorb = true;
+      }
+    }
+
+    // Fire the appropriate sync path. We funnel through kvSyncNow so
+    // any ancillary work (last-synced timestamp, pill state, etc.)
+    // runs consistently with manual syncs. The silent flag suppresses
+    // the pill flash for these polled syncs.
+    if (ownerNeedsAbsorb || guestNeedsPull) {
+      kvSyncNow(true).catch(e => console.warn('[sharePoll] kvSyncNow failed:', e?.message));
+    }
+  },
+};
+
 // ── syncAll with debounce to prevent rapid-fire calls ─────
 let _syncDebounceTimer = null;
 async function syncAll() {
@@ -28342,6 +28521,13 @@ async function init() {
   await purgeExpiredGroceryLists();
   await checkGroceryRecurring();
   renderReminders(); // pre-render for badge count
+
+  // Active-tab share-tip poll — 15s heartbeat that triggers a real
+  // sync only when the server says something actually changed in a
+  // share we care about. Pauses cleanly when the tab is hidden or
+  // unfocused, resumes on return. Idempotent — start() guards
+  // against double-init.
+  try { _sharePoll.start(); } catch(e) { console.warn('[sharePoll] start failed:', e?.message); }
 
   setTimeout(() => { lastAutoSync = Date.now(); checkCloudAhead(); }, 1500);
   checkPendingSWSync();
