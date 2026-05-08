@@ -1052,14 +1052,15 @@ async function _deleteAllUserData(kv: Deno.Kv, emailHash: string): Promise<void>
   }
 
   const prefixesToScan = [
-    ['user',             emailHash],   // verifier, key envelopes, data, settings, etc.
+    ['user',             emailHash],   // verifier, key envelopes, data, settings, email_verified, etc.
     ['device',           emailHash],   // trusted devices
     ['passkey',          emailHash],   // WebAuthn credentials
     ['passkey_session',  emailHash],   // active session tokens
     ['passkey_challenge',emailHash],   // pending WebAuthn challenges
     ['passkey_key',          emailHash],   // old server-wrapped data key copies (deprecated)
     ['passkey_prf_envelope', emailHash],   // PRF/device-bound envelope (new architecture)
-    ['email_verify',     emailHash],   // email verification OTPs
+    ['email_verify',     emailHash],   // (legacy) email verification namespace
+    ['email_verify_otp', emailHash],   // pending email verify OTP — actual key shape
     ['note_body',        emailHash],   // secure note bodies
     ['notes_session',    emailHash],   // notes 2FA session tokens
     ['mfa_otp',          emailHash],   // MFA login OTP
@@ -1074,6 +1075,9 @@ async function _deleteAllUserData(kv: Deno.Kv, emailHash: string): Promise<void>
 
   // Point keys (not prefix-scanned)
   await kv.delete(['recovery_otp', emailHash]);
+  // Login rate-limit counter — leaving this would let a deleted-then-
+  // recreated account inherit a stale lockout window.
+  await kv.delete(['rate_limit', 'login', emailHash]);
 
   // Share targets owned by this user + their data
   const shares = kv.list({ prefix: ['share'] });
@@ -4385,6 +4389,17 @@ Deno.serve(async (request) => {
       // Store plaintext email (hashed separately) so we can send migration emails
       if (email) await kvSet(['user', emailHash, 'email'], email);
 
+      // Defensively clear any residual email_verified flag and pending
+      // verification OTP from a previous account life. _deleteAllUserData
+      // already covers these via prefix scan, but a fresh registration is
+      // the canonical "new identity" event — verification status from a
+      // prior signup must not carry over. Without this, a deleted-then-
+      // recreated account could skip the OTP step entirely (and thence
+      // join shares) because /email/verify/send returns alreadyVerified
+      // and /user/verify allows sign-in.
+      await kvDel(['user', emailHash, 'email_verified']);
+      await kvDel(['email_verify_otp', emailHash]);
+
       // ── Billing: create or refresh the billing record ──
       // For new signups, we initialise a 30-day local trial (hybrid model
       // per spec: track trial in our KV, do NOT create a Stripe sub yet —
@@ -4483,6 +4498,27 @@ Deno.serve(async (request) => {
 
       // Success — clear rate limit
       if (rl.attempts.length > 0) await kvSet(rlKey, JSON.stringify({ attempts: [], lockedUntil: 0 }), { expireIn: WINDOW });
+
+      // ── Email verification gate ─────────────────────────
+      // Block sign-in until the user has confirmed their email address.
+      // Without this gate, anyone who completes signup but never enters
+      // the OTP (e.g. by closing the tab on wizard-step-1f) can still
+      // log in normally — and worse, can accept share invites without
+      // the owner ever seeing an OTP roundtrip. The client expects 403
+      // with { requiresEmailVerification: true } and routes to the OTP
+      // step. Note: this fires AFTER rate-limit clearing because a
+      // correct passphrase is what got us here — the issue is only the
+      // missing email confirmation, not bad credentials.
+      const verified = await kvGet(['user', emailHash, 'email_verified']);
+      if (!verified.value) {
+        const emailRow = await kvGet(['user', emailHash, 'email']);
+        return json({
+          error: 'Email verification required',
+          requiresEmailVerification: true,
+          email: emailRow.value || null,
+        }, corsHeaders, 403);
+      }
+
       return json({ ok: true }, corsHeaders);
     } catch(err) {
       return json({ error: (err as Error).message }, corsHeaders, 500);
@@ -4750,6 +4786,24 @@ Deno.serve(async (request) => {
         const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);
         if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
       }
+
+      // ── Email verification gate (security-critical) ─────────────
+      // Even with a valid passphrase or session, refuse to admit an
+      // unverified account to a share. This is the canonical security
+      // boundary — without it, an attacker who registers (or re-registers
+      // a deleted account) can join any share they were invited to
+      // without ever proving they control the inbox. Client-side checks
+      // in shareGateSignIn / shareGateRegister are belt-and-braces; this
+      // is the actual fence.
+      const guestVerified = await kvGet(['user', guestEmailHash, 'email_verified']);
+      if (!guestVerified.value) {
+        const emailRow = await kvGet(['user', guestEmailHash, 'email']);
+        return json({
+          error: 'Email verification required before joining a shared household',
+          requiresEmailVerification: true,
+          email: emailRow.value || null,
+        }, corsHeaders, 403);
+      }
       if (!target.members) target.members = [];
       if (!target.memberDetails) target.memberDetails = {};
       const isNewMember = !target.members.includes(guestEmailHash);
@@ -4822,6 +4876,14 @@ Deno.serve(async (request) => {
       } else {
         const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);
         if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      // Email verification gate — also enforced at /share/join, but
+      // re-checked here so that a guest who joined before the gate was
+      // added (legacy data) can't keep pulling shared data without
+      // verifying. Defence in depth.
+      const guestVerifiedPull = await kvGet(['user', guestEmailHash, 'email_verified']);
+      if (!guestVerifiedPull.value) {
+        return json({ error: 'Email verification required', requiresEmailVerification: true }, corsHeaders, 403);
       }
       // Check eviction marker first — short-circuits before share record fetch
       // so a removed guest gets a clear, fast response and the client can

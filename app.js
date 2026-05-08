@@ -15099,6 +15099,33 @@ async function kvPull() {
     if (!_shareKey) { console.warn('kvPull (share): no share key in memory'); return null; }
     const res = await postKV(`${WORKER_URL}/share/data/pull`, { guestEmailHash: _kvEmailHash, guestVerifier: _kvVerifier, guestSessionToken: _kvSessionToken, code: _shareState.code, household: activeProfile });
     if (!res.ok) {
+      // Differentiate the 403 reasons. The server may return:
+      //   - { revoked: true } when the owner removed this member
+      //   - { requiresEmailVerification: true } when the guest's email
+      //     is unverified (e.g. they signed up but skipped OTP)
+      // Only the first should wipe local share state. The second should
+      // route to the OTP step and leave _shareState intact so the user
+      // can resume after verifying.
+      let body = null;
+      try { body = await res.clone().json(); } catch(_e) {}
+      if (res.status === 403 && body?.requiresEmailVerification) {
+        // Don't clear _shareState — they're a legitimate guest, just
+        // need to confirm their email. Show the OTP step (the existing
+        // _pendingUnverifiedRestore flow surfaces a Cancel button).
+        console.warn('kvPull (share): email verification required');
+        toast('Email verification required — check your inbox');
+        const verifyEmail = body.email || _kvEmail || '';
+        if (verifyEmail) {
+          _pendingUnverifiedRestore = { email: verifyEmail, emailHash: _kvEmailHash, verifier: _kvVerifier };
+          await showEmailVerification(verifyEmail, _kvEmailHash, async () => {
+            _pendingUnverifiedRestore = null;
+            // Re-trigger a sync so shared data flows in now that the
+            // gate has cleared.
+            if (kvConnected) setTimeout(() => kvSyncNow(true), 200);
+          });
+        }
+        return null;
+      }
       // Share has been deleted or guest removed — auto-clear local share state
       if (res.status === 404 || res.status === 403) {
         console.warn('kvPull (share): share gone from server, clearing local state');
@@ -27995,6 +28022,28 @@ async function shareGateSignIn() {
     const res = await postKV(`${WORKER_URL}/user/verify`, { emailHash, verifier });
     const d = await res.json();
     if (res.status === 404) throw new Error('Account not found — use Create new account');
+
+    // Email verification gate. Server returns 403 with requiresEmailVerification
+    // when the passphrase matches but the email has never been confirmed.
+    // Mirror the kvLogin handling: derive the data key, stash it as a
+    // pending unverified login (so _completePendingUnverifiedLogin can
+    // finish the sign-in after OTP succeeds), and route to wizard-step-1f.
+    // We deliberately do NOT call kvStoreSession or completePendingJoin
+    // before verification — backing out of the OTP screen must not leave
+    // a usable session or a joined share behind.
+    if (res.status === 403 && d.requiresEmailVerification) {
+      const verifyEmail = d.email || email;
+      _pendingUnverifiedLogin = { email: verifyEmail, emailHash, verifier, passphrase: pass };
+      await showEmailVerification(verifyEmail, emailHash, async () => {
+        await _completePendingUnverifiedLogin();
+        // _completePendingUnverifiedLogin lands the user in their normal
+        // post-login flow; in the share-gate context we want to also
+        // accept the pending share invite that brought them here.
+        await completePendingJoin();
+      });
+      return;
+    }
+
     if (!res.ok) throw new Error(d.error || 'Sign-in failed');
     const key = await kvDeriveKey(email, pass);
     await kvStoreSession(email, emailHash, verifier, key);
@@ -28050,6 +28099,26 @@ async function completePendingJoin() {
         ...(_kvSessionToken ? { guestSessionToken: _kvSessionToken } : { guestVerifier: _kvVerifier }),
       });
     const data = await res.json();
+
+    // If the guest's email is unverified, /share/join refuses with 403 —
+    // route them through the OTP step before retrying. This catches
+    // already-signed-in users who land on an invite link without ever
+    // having confirmed their email (e.g. backed out of OTP at signup
+    // and somehow established a session). After OTP succeeds the
+    // callback re-enters completePendingJoin to finish the join.
+    if (res.status === 403 && data.requiresEmailVerification) {
+      const verifyEmail = data.email || _kvEmail || '';
+      // Re-use _pendingUnverifiedRestore so the verify screen surfaces
+      // the Cancel button (this user has a session but no verified email
+      // — letting them bail out is safer than locking them in a loop).
+      _pendingUnverifiedRestore = { email: verifyEmail, emailHash: _kvEmailHash, verifier: _kvVerifier };
+      await showEmailVerification(verifyEmail, _kvEmailHash, async () => {
+        _pendingUnverifiedRestore = null;
+        await completePendingJoin();
+      });
+      return;
+    }
+
     if (!res.ok) throw new Error(data.error || 'Invalid invite link — it may have expired');
     // Server returned 200 but with ok:false — means it needs auth (shouldn't happen here but guard it)
     if (data.requiresAuth) throw new Error('Authentication required — please sign in first');
