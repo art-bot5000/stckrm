@@ -5064,6 +5064,75 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
+  // ── Share: cheap multi-tip endpoint for active-tab polling ────
+  // Returns the modified timestamp + last writer for every (code,
+  // household) pair the caller has access to. Used by the client's
+  // 15s active-tab poll to decide whether to fire a real sync. No
+  // ciphertext, no decryption, no bandwidth — just a few KV point
+  // reads per request.
+  //
+  // Auth: caller passes their emailHash + verifier|sessionToken.
+  // Per share, we either confirm they own it OR they're a member.
+  // Anything else they ask about is silently dropped (returns null
+  // for that stamp) so we don't leak existence of shares to non-
+  // members.
+  if (url.pathname === '/share/tips' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, codes } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken) || !Array.isArray(codes) || !codes.length) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      // Auth — accept either passphrase verifier or session token.
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      // Email-verification gate — same as /share/data/pull et al.
+      // Without this an unverified attacker could still poll for
+      // existence of shares, which leaks low-grade info. Cheap to
+      // gate.
+      const verifiedRow = await kvGet(['user', emailHash, 'email_verified']);
+      if (!verifiedRow.value) {
+        return json({ error: 'Email verification required', requiresEmailVerification: true }, corsHeaders, 403);
+      }
+      // Cap codes at 20 to bound work per request. A normal user is
+      // a member of one share or owner of a handful — well under 20.
+      const requestedCodes = codes.slice(0, 20).map(c => String(c).toUpperCase());
+      const tips = {};
+      for (const code of requestedCodes) {
+        const shareRow = await kvGet(['share', code]);
+        if (!shareRow.value) continue;
+        let target;
+        try { target = JSON.parse(shareRow.value); } catch(_e) { continue; }
+        const isOwner    = target.ownerEmailHash === emailHash;
+        const isMember   = Array.isArray(target.members) && target.members.includes(emailHash);
+        if (!isOwner && !isMember) continue; // silently drop
+        // For each household in this share, return its tip.
+        const households = target.households ? Object.keys(target.households) : ['default'];
+        for (const hKey of households) {
+          const stamp     = `${code}:${hKey}`;
+          const modifiedR = await kvGet(['share_data', code, `${hKey}_modified`]);
+          const writerR   = await kvGet(['share_data', code, `${hKey}_writer`]);
+          let writer = null;
+          try {
+            if (writerR.value) {
+              const w = JSON.parse(writerR.value);
+              writer = w?.kind || null;
+            }
+          } catch(_e) {}
+          tips[stamp] = {
+            modified: modifiedR.value || null,
+            writer,
+          };
+        }
+      }
+      return json({ tips }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
   // ── Share: modified time ──────────────────────────────
   if (url.pathname === '/share/data/modified' && request.method === 'POST') {
     try {
