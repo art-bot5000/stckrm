@@ -2277,7 +2277,7 @@
           <input type="file" id="import-file-sec" style="display:none" accept=".json" onchange="importData(event)">
         </div>
         <div class="acc-sec-row">
-          <div class="acc-sec-label"><div class="acc-sec-h">Clear all data</div><div class="acc-sec-p">Remove all items and history from this household</div></div>
+          <div class="acc-sec-label"><div class="acc-sec-h">Clear all data</div><div class="acc-sec-p">Remove all items, notes, groceries, reminders, bills, budget, and tags from this household</div></div>
           <button class="btn btn-danger acc-sec-btn" onclick="clearAll()">Clear All</button>
         </div>
       </div>
@@ -4116,11 +4116,32 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
   <div class="modal" style="max-width:380px">
     <div style="text-align:center;margin-bottom:10px;color:var(--accent)"><svg aria-hidden="true" style="width:32px;height:32px"><use href="#i-lock"></use></svg></div>
     <h3 style="font-size:16px;font-weight:700;margin-bottom:8px;text-align:center">Secure notes found</h3>
-    <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px">Your export contains secure notes. How would you like to handle them?</p>
+    <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:14px">Your export contains secure notes. How would you like to handle them?</p>
+    <p style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:16px;padding:10px;background:rgba(232,168,56,0.06);border:1px solid rgba(232,168,56,0.18);border-radius:8px"><strong style="color:var(--accent)">Heads-up:</strong> if you include them, the bodies are written as plain text in the file (so the backup is human-readable). They&rsquo;re tagged for automatic re-encryption when the file is imported back into a STOCKROOM account &mdash; secure notes will become secure again on the destination device.</p>
     <div style="display:flex;flex-direction:column;gap:10px">
-      <button class="btn btn-primary" onclick="exportDataWithSecureChoice(true)"><svg class="icon" aria-hidden="true"><use href="#i-unlock"></use></svg> Unlock &amp; export as plain text</button>
+      <button class="btn btn-primary" onclick="exportDataWithSecureChoice(true)"><svg class="icon" aria-hidden="true"><use href="#i-unlock"></use></svg> Include as plain text (re-secured on import)</button>
       <button class="btn btn-ghost" onclick="exportDataWithSecureChoice(false)">Skip secure notes (titles only)</button>
       <button class="btn btn-ghost" onclick="closeModal('export-secure-notes-modal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- POST-EXPORT PLAINTEXT WARNING — shown after a successful export
+     that included plaintext secure-note bodies. Reminds the user to
+     handle the file carefully and explains the re-secure-on-import
+     behaviour so they're not surprised when imported notes lock again. -->
+<div class="modal-backdrop" id="export-plaintext-warning-modal">
+  <div class="modal" style="max-width:420px">
+    <div style="text-align:center;margin-bottom:10px;color:var(--warn)"><svg aria-hidden="true" style="width:32px;height:32px"><use href="#i-alert-triangle"></use></svg></div>
+    <h3 style="font-size:16px;font-weight:700;margin-bottom:8px;text-align:center">Backup downloaded — plaintext warning</h3>
+    <p style="font-size:13px;color:var(--text);line-height:1.6;margin-bottom:12px">
+      Your backup file contains <strong><span id="export-plaintext-warning-count">0</span> secure <span id="export-plaintext-warning-noun">note</span></strong> as plaintext. Treat the file as sensitive — anyone who opens it can read the content.
+    </p>
+    <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:18px">
+      The notes are tagged so that when you (or anyone you trust) import this file back into the app, those bodies are automatically re-encrypted with the destination account's key and the locked state is restored. You don't need to re-lock them manually after import.
+    </p>
+    <div style="display:flex;justify-content:center">
+      <button class="btn btn-primary" onclick="closeExportPlaintextWarning()">Got it</button>
     </div>
   </div>
 </div>

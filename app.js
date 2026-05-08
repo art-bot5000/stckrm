@@ -10293,10 +10293,22 @@ async function _doExportData(includeSecureNotes = false) {
     if (n.locked && !includeSecureNotes) return { ...n, body: undefined };
     if (n.locked && includeSecureNotes) {
       const unlocked = _noteUnlocked.get(n.id);
-      // If we have a body (from cache or just-fetched), inline it as an
-      // unlocked note. If not (fetch failed), keep placeholder so the
-      // import side renders something explanatory rather than blank.
-      return { ...n, body: unlocked?.body || '[locked — could not export]', locked: false };
+      // Inline the plaintext body so the file is human-readable AND
+      // importable into a different account (which has a different
+      // encryption key and therefore can't reuse the original ciphertext).
+      // The _reSecureOnImport flag is a transit-only marker: the destination
+      // app sees it on import, re-encrypts the body with the new account's
+      // key, pushes it to /note/body/push, then strips the flag and the
+      // plaintext body so the note ends up locked again on the new device.
+      // If we couldn't fetch the body (rare; would have been toasted above),
+      // we still mark it for re-secure so that if the user manually edits
+      // the placeholder before importing, their content is protected.
+      return {
+        ...n,
+        body: unlocked?.body || '[locked — could not export]',
+        locked: false,
+        _reSecureOnImport: true,
+      };
     }
     return n;
   });
@@ -10547,7 +10559,6 @@ async function importData(e) {
       if (Array.isArray(d.reminders))    await saveReminders();
       if (Array.isArray(d.departments))  await saveGroceryDepts();
       if (Array.isArray(d.groceryLists)) await _saveGroceryLists();
-      if (Array.isArray(d.notes))        await saveNotes();
       if (Array.isArray(d.bills) || isPlainObj(d.billInstances) || isPlainObj(d.budgetSettings)) {
         await saveBudgetLocal();
       }
@@ -10558,21 +10569,119 @@ async function importData(e) {
         await saveBudgetAccountsAndIncomeLocal();
       }
 
-      scheduleRender(...RENDER_REGIONS);
-      // Push to server so data is encrypted and saved
-      if (kvConnected) {
-        await kvSyncNow(true).catch(err => console.warn('Import sync failed:', err.message));
+      // ── Re-secure imported notes that were originally locked ─────────────
+      // Notes exported from a secured state carry _reSecureOnImport: true and
+      // arrive with plaintext body inlined (so the file is human-readable and
+      // portable across accounts with different encryption keys). Here we
+      // re-encrypt each flagged body with THIS account's key and push to
+      // /note/body/push, then clear the plaintext body and set locked=true so
+      // the note ends up secured in the destination account just as it was
+      // in the source. The flag is stripped — it's transit metadata only.
+      const reSecureFails = [];
+      // Capture this count BEFORE the loop strips the flag from each note.
+      // Used in the success toast to report how many were re-secured.
+      const reSecureRequestedCount = Array.isArray(d.notes)
+        ? notes.filter(n => n._reSecureOnImport === true).length
+        : 0;
+      if (Array.isArray(d.notes)) {
+        const toReSecure = notes.filter(n => n._reSecureOnImport === true);
+        if (toReSecure.length > 0) {
+          // Pre-flight: must be signed in with credentials and a usable key
+          if (!kvConnected || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) {
+            console.warn('[import] cannot re-secure notes: not signed in');
+            reSecureFails.push(...toReSecure.map(n => ({ id: n.id, title: n.title, reason: 'not signed in' })));
+          } else if (!await kvEnsureKey()) {
+            console.warn('[import] cannot re-secure notes: encryption key unavailable');
+            reSecureFails.push(...toReSecure.map(n => ({ id: n.id, title: n.title, reason: 'no key' })));
+          } else {
+            showDataLoadingOverlay(`Re-securing ${toReSecure.length} note${toReSecure.length === 1 ? '' : 's'}…`);
+            try {
+              for (const n of toReSecure) {
+                try {
+                  const body = n.body || '';
+                  // Skip notes whose body is the placeholder string from a
+                  // failed export — there's nothing meaningful to encrypt,
+                  // and re-securing would lock content the user can't see.
+                  // Leave them unlocked + flag-stripped so user can edit.
+                  if (body === '[locked — could not export]' || !body.trim()) {
+                    delete n._reSecureOnImport;
+                    continue;
+                  }
+                  const ciphertext = await kvEncrypt(_kvKey, body);
+                  const res = await postKV(`${WORKER_URL}/note/body/push`, {
+                    emailHash: _kvEmailHash,
+                    ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+                    noteId: n.id, ciphertext,
+                  });
+                  if (!res.ok) {
+                    reSecureFails.push({ id: n.id, title: n.title, reason: `HTTP ${res.status}` });
+                    delete n._reSecureOnImport;
+                    continue;
+                  }
+                  // Success — strip body, set locked, drop transit flag
+                  n.body = undefined;
+                  n.locked = true;
+                  delete n._reSecureOnImport;
+                } catch (e) {
+                  console.warn('[import] re-secure failed for note', n.id, e);
+                  reSecureFails.push({ id: n.id, title: n.title, reason: e.message || 'unknown' });
+                  // Leave the note unlocked but strip the flag so it doesn't
+                  // try to re-secure on every subsequent sync/save.
+                  delete n._reSecureOnImport;
+                }
+              }
+            } finally {
+              hideDataLoadingOverlay();
+            }
+          }
+        }
       }
+      // Save notes ONCE after re-secure mutations (locked/body changes baked in)
+      if (Array.isArray(d.notes)) await saveNotes();
+
+      scheduleRender(...RENDER_REGIONS);
+      // Push to server so data is encrypted and saved.
+      //
+      // CRITICAL: we use kvPush (push only) rather than kvSyncNow (pull → merge → push).
+      // A pull-merge here is dangerous because the destination account may have
+      // stale data on the server from a previous bad import attempt; that stale
+      // data could win the merge (e.g. equal updatedAt timestamps, or a remote
+      // lastSynced ahead of what's in the imported settings) and overwrite the
+      // good freshly-imported data we just loaded. Importing should be
+      // authoritative — the file is the source of truth, and the local
+      // state we just built from it is what should hit the server.
+      //
+      // Bump lastSynced to "now" before push so any other device the user
+      // signs into next will see the imported data as the authoritative
+      // remote state (remote lastSynced > their local lastSynced → remote wins).
+      if (kvConnected) {
+        settings.lastSynced = new Date().toISOString();
+        await _saveSettings();
+        await kvPush().catch(err => console.warn('Import push failed:', err.message));
+      }
+      // Count how many notes were successfully re-secured (originally
+      // flagged minus any that failed). reSecureFails is empty unless
+      // something went wrong during the encryption/upload step above.
+      const reSecuredCount = Math.max(0, reSecureRequestedCount - reSecureFails.length);
       const counts = [
         d.items?.length      ? `${d.items.length} items`           : '',
         d.groceries?.length  ? `${d.groceries.length} groceries`   : '',
         d.reminders?.length  ? `${d.reminders.length} reminders`   : '',
         d.notes?.length      ? `${d.notes.length} notes`           : '',
+        reSecuredCount > 0   ? `${reSecuredCount} re-secured`      : '',
         d.bills?.length      ? `${d.bills.length} bills`           : '',
         d.budgetCategories?.length ? `${d.budgetCategories.length} budget categories` : '',
         d.budgetAccounts?.length   ? `${d.budgetAccounts.length} accounts`            : '',
       ].filter(Boolean).join(', ');
       toast('Imported ✓' + (counts ? ` — ${counts}` : ''));
+      // If any re-secure attempts failed, surface a separate toast so the
+      // user knows those notes are sitting in plaintext locally and may need
+      // to be manually locked from the Notes screen.
+      if (reSecureFails.length > 0) {
+        const titles = reSecureFails.map(f => `"${f.title || '(untitled)'}"`).slice(0, 3).join(', ');
+        const more   = reSecureFails.length > 3 ? ` +${reSecureFails.length - 3} more` : '';
+        toast(`Could not re-secure ${reSecureFails.length} note${reSecureFails.length === 1 ? '' : 's'}: ${titles}${more} — open each and tap the lock icon to secure manually`);
+      }
     } catch(err) {
       alert('Import failed: ' + err.message + '\n\nPlease try again or check the browser console for details.');
       console.error('importData error:', err);
@@ -10598,12 +10707,13 @@ async function clearAll() {
     if (kvConnected) kvSyncNow().catch(() => {});
     return;
   }
-  if (!confirm('This will permanently delete ALL your items, purchase history, and shared data. Are you sure?')) return;
+  if (!confirm('This will permanently delete EVERYTHING:\n\n• Stockroom items & purchase history\n• Recently deleted bin\n• Notes (including secured ones)\n• Groceries, lists & departments\n• Reminders\n• Bills & budget (categories, transactions, accounts, income)\n• Custom tags\n• Shared household data\n\nThis cannot be undone. Are you sure?')) return;
   requireReauth('Confirm your identity to clear all data.', _doClearAll, { passkeyAllowed: true });
 }
 
 async function _doClearAll() {
-  // Delete all share targets from backend first
+  // Delete all share targets from backend first so the cleanup hits the
+  // server before we drop credentials or disconnect anything.
   for (const target of (_shareTargets || [])) {
     try {
       await postKV(`${WORKER_URL}/share/delete`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code: target.code });
@@ -10611,10 +10721,111 @@ async function _doClearAll() {
   }
   _shareTargets = [];
   try { localStorage.removeItem('stockroom_share_keys'); } catch(e) {}
-  // Clear own data locally and push empty state to server
+
+  // Delete server-side encrypted note bodies for every locked note. These
+  // live at /note/body/{noteId} keyed by noteId — the bulk blob doesn't
+  // touch them, so without explicit deletion they become orphans on the
+  // server (and would still count toward note-body storage if tracked).
+  // We iterate the current notes list so we only ask the server to delete
+  // what we know about; orphans from prior bad imports may persist but
+  // that's a pre-existing issue, not a regression of this code path.
+  const lockedNoteIds = notes.filter(n => n.locked).map(n => n.id);
+  for (const noteId of lockedNoteIds) {
+    try {
+      await postKV(`${WORKER_URL}/note/body/delete`, {
+        emailHash: _kvEmailHash,
+        ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+        noteId,
+      }).catch(() => {});
+    } catch(e) { console.warn('clearAll: could not delete note body', noteId, e.message); }
+  }
+
+  // ── Wipe every data area ─────────────────────────────────────────────
+  // We mirror the structure of the user-switch wipe (_wipeStaleUserDataForSwitch)
+  // but keep this implementation independent — that helper is for the live
+  // login user-switch path; this is for explicit user-initiated clears, and
+  // we want each to evolve on its own (e.g. clear-all may eventually offer
+  // selective "clear only X" choices). They happen to clear the same stores
+  // today.
+
+  // Core stockroom (including the recently-deleted bin, since those items
+  // sit inside the items array with _deletedAt set).
   items = [];
+
+  // Notes (the items store also holds key 'notes'; see saveNotes below).
+  notes = [];
+  _noteUnlocked.forEach((state) => { clearTimeout(state?.inactivityTimer); });
+  _noteUnlocked.clear();
+
+  // Reminders (recently-deleted reminders are in the same array with
+  // deletedAt set — wiping the whole array clears the bin).
+  reminders = [];
+
+  // Groceries
+  groceryItems = [];
+  groceryDepts = [];
+  groceryLists = [];
+
+  // Bills (templates + per-month instances) and the bills tombstone set
+  bills = [];
+  billInstances = {};
+  billsDeletedIds.clear();
+
+  // Budget core
+  budgetSettings = {};
+  budgetCategories = [];
+  transactions = {};
+  budgetCategoryDeletedIds.clear();
+  budgetTransactionDeletedIds.clear();
+
+  // Budget accounts + income
+  budgetAccounts = [];
+  incomeTemplates = [];
+  incomeEntries = {};
+  budgetAccountDeletedIds.clear();
+  incomeTemplateDeletedIds.clear();
+  incomeEntryDeletedIds.clear();
+
+  // Custom user-defined tags — five-slot array. Reset to empty slots so the
+  // UI stays consistent (existing code defaults to ['','','','',''] when
+  // missing). User-facing settings like country/threshold/email schedule
+  // are deliberately preserved — those are configuration, not user content.
+  settings.customTags = ['', '', '', '', ''];
+  settings.customTagsUpdatedAt = new Date().toISOString();
+
+  // ── Persist the wiped state to IDB ───────────────────────────────────
+  // saveData covers items + settings. The other Local savers each cover
+  // their own area's stores including tombstones (saveBudgetLocal writes
+  // billsDeletedIds, etc.).
   await saveData();
+  await _saveSettings();
+  await saveNotes();
+  await saveReminders();
+  await saveGrocery();
+  await saveGroceryDepts();
+  if (typeof _saveGroceryLists === 'function') await _saveGroceryLists();
+  await saveBudgetLocal();
+  await saveBudgetSpendLocal();
+  await saveBudgetAccountsAndIncomeLocal();
+
+  // Wipe the IDB-only tombstone stores for items/groceries/reminders/lists.
+  // These don't have in-memory globals — they live exclusively in IDB and
+  // are loaded on-demand by the sync code. Without this step a freshly
+  // re-added item with a recycled id could be silently suppressed by an
+  // old tombstone from a previous lifetime.
+  try { await dbPut('deletedIds',            'deletedIds',            []); } catch(e) {}
+  try { await dbPut('groceryDeletedIds',     'groceryDeletedIds',     []); } catch(e) {}
+  try { await dbPut('reminderDeletedIds',    'reminderDeletedIds',    []); } catch(e) {}
+  try { await dbPut('groceryListDeletedIds', 'groceryListDeletedIds', []); } catch(e) {}
+
+  // Bump lastSynced so the now-empty state is the authoritative remote.
+  // Same rationale as the import path — without this, another device of
+  // the user's might pull and merge their old (non-empty) cached data
+  // back over the just-cleared state.
+  settings.lastSynced = new Date().toISOString();
+  await _saveSettings();
   await kvPush().catch(e => console.warn('clearAll: push failed', e.message));
+
   renderShareTargetsList();
   scheduleRender(...RENDER_REGIONS);
   toast('All data cleared');
