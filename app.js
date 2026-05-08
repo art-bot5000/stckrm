@@ -26101,7 +26101,26 @@ function renderShareTargetsList() {
       const colour    = t.colour || '#e8a838';
       const members   = t.members?.length || 0;
       const expired   = t.expiresAt && Date.now() > new Date(t.expiresAt).getTime();
-      const expiryStr = t.expiresAt ? (expired ? '<svg class="icon" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> Link expired' : `Link valid until ${new Date(t.expiresAt).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`) : '';
+      // Show "Link valid until 13:42" when the expiry is on the same calendar
+      // day (the common case for a 1-hour window), or include the date when
+      // it spans into tomorrow (e.g. created at 23:30). Also append a short
+      // relative hint like "(45m left)" so it's obvious how much window
+      // remains without doing the maths.
+      const expiryStr = (() => {
+        if (!t.expiresAt) return '';
+        if (expired)      return '<svg class="icon" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> Link expired';
+        const exp        = new Date(t.expiresAt);
+        const now        = new Date();
+        const sameDay    = exp.toDateString() === now.toDateString();
+        const timeStr    = exp.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+        const dateStr    = sameDay ? '' : ' ' + exp.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+        const msLeft     = exp.getTime() - now.getTime();
+        const minsLeft   = Math.max(0, Math.round(msLeft / 60000));
+        const hintStr    = minsLeft < 60
+          ? ` (${minsLeft}m left)`
+          : ` (${Math.floor(minsLeft/60)}h ${minsLeft%60}m left)`;
+        return `Link valid until ${timeStr}${dateStr}${hintStr}`;
+      })();
       const isExpanded = !!_expandedShareCodes[t.code];
       const memberDetails = t.memberDetails || {};
 
@@ -26135,7 +26154,7 @@ function renderShareTargetsList() {
       const actionsHtml = editable ? `
         <button class="btn btn-ghost btn-sm" onclick="openEditShareTarget('${t.code}')" title="Edit"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
         ${expired
-          ? `<button class="btn btn-ghost btn-sm" onclick="refreshShareLink('${t.code}')" title="Refresh link (new 24h window)"><svg class="icon" aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>`
+          ? `<button class="btn btn-ghost btn-sm" onclick="refreshShareLink('${t.code}')" title="Refresh link (new 1h window)"><svg class="icon" aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>`
           : `<button class="btn btn-ghost btn-sm" onclick="copyShareTargetLink('${t.code}')" title="Copy invite link">🔗</button>`
         }
         <button class="btn btn-ghost btn-sm" onclick="resyncSharedData('${t.code}')" title="Re-sync data to guest"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg></button>
@@ -26873,7 +26892,7 @@ async function refreshShareLink(code) {
     if (!res.ok) throw new Error('Could not refresh');
     const baseLink = `${location.origin}${location.pathname}?join=${code}`;
     await navigator.clipboard.writeText(baseLink).catch(()=>{});
-    toast('New link copied ✓ (valid 24h)');
+    toast('New link copied ✓ (valid 1h)');
     await loadShareTargets();
   } catch(err) { toast('Could not refresh link: ' + err.message); }
 }

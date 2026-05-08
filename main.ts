@@ -4645,7 +4645,7 @@ Deno.serve(async (request) => {
         ...(typeof guestEmail === 'string' && guestEmail ? { guestEmail } : {}),
         ...(validPending ? { pendingInvite: validPending } : {}),
         createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 24*60*60*1000).toISOString(),
+        expiresAt: new Date(Date.now() + 60*60*1000).toISOString(),
         members: [],
         memberDetails: {},
       };
@@ -4989,7 +4989,9 @@ Deno.serve(async (request) => {
       if (!r.value) return json({ error: 'Not found' }, corsHeaders, 404);
       const existing = JSON.parse(r.value);
       if (existing.ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
-      existing.expiresAt = new Date(Date.now() + 24*60*60*1000).toISOString();
+      // Match the original 1-hour window from /share/create — refresh
+      // gives the link a fresh hour, not a different duration.
+      existing.expiresAt = new Date(Date.now() + 60*60*1000).toISOString();
       await kvSet(['share', code.toUpperCase()], JSON.stringify(existing));
       return json({ ok: true, expiresAt: existing.expiresAt }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
@@ -5233,7 +5235,7 @@ Deno.serve(async (request) => {
           <a href="${inviteLink}" style="background:#e8a838;color:#111;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:16px">Accept invite →</a>
         </div>
         <p style="font-size:12px;color:#999;text-align:center">Or copy this link: <code>${inviteLink}</code></p>
-        <p style="font-size:12px;color:#999;text-align:center">This link expires in 24 hours.</p>` : '';
+        <p style="font-size:12px;color:#999;text-align:center">This link expires in 1 hour.</p>` : '';
 
       const permsSection = permLines ? `
         <div style="background:#1a1d27;border-radius:8px;padding:14px 16px;margin:16px 0">
