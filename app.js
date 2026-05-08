@@ -5690,11 +5690,13 @@ function cardHTML(item, threshold) {
   // else fall back to the per-purchase descriptor.
   const projectedUnits = getProjectedUnitsLeft(item);
   let qtyText;
+  let qtyIsInterval = false; // true when qty pill is the "Xmo per purchase" fallback
   if (projectedUnits != null) {
     const projStr = formatProjectedUnits(projectedUnits);
     qtyText = `<strong>${projStr}</strong> left`;
   } else if (daysLeft !== null) {
     qtyText = `<strong>${item.months || 1}mo</strong> per purchase`;
+    qtyIsInterval = true;
   } else {
     qtyText = '';
   }
@@ -5718,15 +5720,26 @@ function cardHTML(item, threshold) {
       </div>
       <div class="card-name">${esc(item.name)}</div>
       ${(() => {
-        if (daysLeft === null) return `<div class="card-nodata">No stock data yet</div>`;
-        const f = formatDaysLeft(daysLeft);
-        const suspectFlag = f.suspect
-          ? ` <span title="Estimate looks unusually long — tap to recount stock" style="font-size:14px;cursor:help;color:var(--warn);vertical-align:middle" onclick="event.stopPropagation();openStockCountModal('${item.id}')">⚠</span>`
-          : '';
-        return `<div class="card-hero">
-             <span class="card-days-num" style="color:${color}">${f.num}</span>
-             <span class="card-days-unit">${f.unit}${suspectFlag}</span>
-           </div>`;
+        // Hero + (mobile-shown) tags wrapper. On mobile the wrapper becomes
+        // a horizontal flex row so the tag chips sit opposite the days-left
+        // number; see .card-tags-row-mobile in styles.css. On desktop the
+        // mobile copy is hidden and tags render in their original position
+        // below the meta row (further down).
+        const heroInner = (daysLeft === null)
+          ? `<div class="card-nodata">No stock data yet</div>`
+          : (() => {
+              const f = formatDaysLeft(daysLeft);
+              const suspectFlag = f.suspect
+                ? ` <span title="Estimate looks unusually long — tap to recount stock" style="font-size:14px;cursor:help;color:var(--warn);vertical-align:middle" onclick="event.stopPropagation();openStockCountModal('${item.id}')">⚠</span>`
+                : '';
+              return `<div class="card-hero">
+                   <span class="card-days-num" style="color:${color}">${f.num}</span>
+                   <span class="card-days-unit">${f.unit}${suspectFlag}</span>
+                 </div>`;
+            })();
+        const inlineTags = cardSelectedTagsInline(item);
+        const tagsBlock = inlineTags ? `<div class="card-tags-row card-tags-row-mobile">${inlineTags}</div>` : '';
+        return `<div class="card-hero-block">${heroInner}${tagsBlock}</div>`;
       })()}
       ${pct !== null
         ? `<div class="card-bar" data-card-bar><div class="card-bar-fill" style="width:${pct}%;background:${fillColor}"></div></div>`
@@ -5737,11 +5750,13 @@ function cardHTML(item, threshold) {
           ${bestPriceStr ? `<div class="card-meta-item">Best: <strong>${bestPriceStr}</strong></div>` : ''}
         </div>` : ''}
       ${(() => {
+        // Desktop-shown tags row (hidden on mobile by CSS; mobile uses the
+        // copy inside .card-hero-block above).
         const inline = cardSelectedTagsInline(item);
-        return inline ? `<div class="card-tags-row">${inline}</div>` : '';
+        return inline ? `<div class="card-tags-row card-tags-row-desktop">${inline}</div>` : '';
       })()}
       <div class="card-footer">
-        ${qtyText ? `<div class="card-qty">${qtyText}</div>` : ''}
+        ${qtyText ? `<div class="card-qty${qtyIsInterval ? ' card-qty-interval' : ''}">${qtyText}</div>` : ''}
         ${item.ordered ? `<div class="card-ordered"><svg class="icon" aria-hidden="true"><use href="#i-truck"></use></svg> Ordered</div>` : ''}
         ${expiry ? `<div class="card-expiry" style="color:${expiry.color};border-color:${expiry.color}55" title="${fmtDate(item.expiry)}">⏰ ${expiry.label}</div>` : ''}
         ${decrementBtn ? `<div class="card-action-btns" onclick="event.stopPropagation()">${decrementBtn}</div>` : ''}

@@ -1940,6 +1940,52 @@ body.note-open { overflow: hidden; touch-action: none; }
   letter-spacing: 0.2px;
 }
 
+/* ── Card hero-block: hero (days-left) + optional tags ─────────────────
+   Default (desktop): block flow — the mobile-shown tags copy is hidden so
+   the hero stands alone above the bar. Tags render in their original
+   position via .card-tags-row-desktop further down.
+   Mobile (≤899px): becomes a flex row so the tag chips sit opposite the
+   days-left number, above the stock balance bar. */
+.card-hero-block { display: block; }
+.card-tags-row-mobile  { display: none; }   /* desktop: hide mobile copy */
+.card-tags-row-desktop { display: flex; }   /* desktop: show original-position copy */
+
+@media (max-width: 899px) {
+  .card-hero-block {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  /* Inside the flex row the hero shouldn't also push its own bottom margin —
+     the wrapper carries the spacing to the bar below. */
+  .card-hero-block > .card-hero,
+  .card-hero-block > .card-nodata { margin-bottom: 0; flex: 0 1 auto; }
+  /* Mobile-shown tags: pushed to the right, capped width so they never eat
+     the days number even when the user has lots of tags. */
+  .card-tags-row-mobile {
+    display: flex;
+    margin-bottom: 0;
+    justify-content: flex-end;
+    flex: 0 1 auto;
+    max-width: 60%;
+  }
+  /* Restore the gap that .card-hero used to provide above the bar. */
+  .card-hero-block { margin-bottom: 10px; }
+
+  /* Desktop-position tags row: hidden on mobile (the .card-hero-block copy
+     replaces it). */
+  .card-tags-row-desktop { display: none; }
+
+  /* "Xmo per purchase" qty pill is the per-purchase interval fallback —
+     hide it on mobile to declutter the bottom row. The same info is still
+     available in the item detail modal. */
+  .card-qty-interval { display: none; }
+  /* If hiding the interval pill leaves the footer with no other children,
+     collapse the now-empty footer so it doesn't add dead vertical space. */
+  .card-footer:not(:has(> *:not(.card-qty-interval))) { display: none; }
+}
+
 /* ── Tag picker modal ──────────────────────────────────────────────── */
 #card-tag-picker-modal.modal-overlay {
   position: fixed;
