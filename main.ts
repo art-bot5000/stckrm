@@ -2805,6 +2805,32 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
+  // ── Email verification status (unauthenticated check) ──────
+  // Used by the client on session restore to detect "user has a
+  // cached session but their account isn't email-verified" — e.g.
+  // they signed up, the OTP email failed, they closed the tab,
+  // come back later. Without this check the client would let them
+  // straight into the app on a session that the server now refuses
+  // (post-fix). Returns minimal info: whether the account exists,
+  // whether it's verified, and the stored email if any. The same
+  // existence signal is already implicit in /user/register's
+  // "account already exists" response, so no new info is leaked.
+  if (url.pathname === '/user/email-verified' && request.method === 'POST') {
+    try {
+      const { emailHash } = await request.json();
+      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);
+      const verifierRow = await kvGet(['user', emailHash, 'verifier']);
+      if (!verifierRow.value) return json({ exists: false, verified: false }, corsHeaders);
+      const verified = await kvGet(['user', emailHash, 'email_verified']);
+      const emailRow = await kvGet(['user', emailHash, 'email']);
+      return json({
+        exists: true,
+        verified: !!verified.value,
+        email: emailRow.value || null,
+      }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
   // ── Account recovery ──────────────────────────────────
   if (url.pathname === '/recovery/request' && request.method === 'POST') {
     try {
@@ -3182,10 +3208,19 @@ Deno.serve(async (request) => {
   // ── Passkey: list credentials ─────────────────────────
   if (url.pathname === '/passkey/list' && request.method === 'POST') {
     try {
-      const { emailHash, sessionToken } = await request.json();
-      if (!emailHash || !sessionToken) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const session = await kvGet(['passkey_session', emailHash, sessionToken]);
-      if (!session.value) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { emailHash, sessionToken, verifier } = await request.json();
+      if (!emailHash || (!sessionToken && !verifier)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      // Accept passkey session OR passphrase verifier — the recurring
+      // auth-gap pattern. A user signed in via passphrase on a device
+      // that never registered a passkey still has a legitimate need
+      // to view (and add to) their passkey list.
+      if (sessionToken) {
+        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!session.value) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const credentials = [];
       const entries = kv.list({ prefix: ['passkey', emailHash] });
       for await (const entry of entries) {
@@ -3201,10 +3236,15 @@ Deno.serve(async (request) => {
   // ── Passkey: remove credential ────────────────────────
   if (url.pathname === '/passkey/remove' && request.method === 'POST') {
     try {
-      const { emailHash, sessionToken, credentialId } = await request.json();
-      if (!emailHash || !sessionToken || !credentialId) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const session = await kvGet(['passkey_session', emailHash, sessionToken]);
-      if (!session.value) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { emailHash, sessionToken, verifier, credentialId } = await request.json();
+      if (!emailHash || !credentialId || (!sessionToken && !verifier)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!session.value) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       await kvDel(['passkey', emailHash, credentialId]);
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
