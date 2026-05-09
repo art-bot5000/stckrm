@@ -15633,6 +15633,20 @@ async function kvSyncNow(silent = false) {
       if (_shareTargets?.length) {
         try { absorbedGuestWrite = await _absorbGuestWritesForOwner(); }
         catch(e) { console.warn('absorb guest writes failed:', e.message); }
+
+        // Fulfil any pending rewrap requests that have piled up. This
+        // used to fire only from kvPush (i.e. only when the owner
+        // edited something), which meant a guest joining a stale share
+        // would sit blocked indefinitely while the owner's app was
+        // open-but-idle. Running it from kvSyncNow means just having
+        // the app open — focus events, the 15s tip-poll, manual sync,
+        // any restoration path — all give the owner's client a chance
+        // to process pending rewraps within seconds.
+        for (const target of _shareTargets) {
+          _fulfilPendingRewraps(target.code).catch(e =>
+            console.warn('rewrap fulfil failed for', target.code, e?.message)
+          );
+        }
       }
     }
 
@@ -29086,6 +29100,21 @@ async function handleShareJoinLink(code) {
     if (!probe.ok && !probeData.requiresAuth) {
       throw new Error(probeData.error || `Probe failed (HTTP ${probe.status})`);
     }
+    // Owner-clicks-own-invite check. If the currently signed-in user
+    // is the owner of this share, the join flow doesn't make sense
+    // (they'd hit /share/ecdh-key/get looking for a key wrapped for
+    // themselves, which doesn't exist, and 404 with the misleading
+    // "ask the owner to open STOCKROOM" toast — confusing because they
+    // ARE the owner). Route them home instead with a friendly note.
+    if (kvConnected && _kvEmailHash && probeData.ownerEmailHash === _kvEmailHash) {
+      toast("That's your own invite — sharing is set up in Settings → Household sharing");
+      // Dismiss any "Joining household…" overlay that init may have shown
+      document.body.classList.remove('wizard-active');
+      const wiz = document.getElementById('wizard');
+      if (wiz) wiz.style.display = 'none';
+      updateSyncPill('idle');
+      return;
+    }
     _pendingJoinCode  = code.toUpperCase();
     _pendingShareMeta = probeData;
     if (kvConnected && _kvEmailHash && (_kvVerifier || _kvSessionToken)) { await completePendingJoin(); return; }
@@ -29455,6 +29484,23 @@ async function completePendingJoin() {
     const msg = err?.message || `Could not join (failed at ${step})`;
     toast('Could not join: ' + msg);
     updateSyncPill('error');
+    // Dismiss the "Joining household…" overlay so the user isn't stranded
+    // there. We replace its contents with a clear failure card + Retry
+    // and Cancel buttons. Without this dismissal users couldn't get out
+    // — the wizard step has no inherent close affordance and the toast
+    // alone leaves them staring at a permanent loading screen.
+    const _step1b = document.getElementById('wizard-step-1b');
+    if (_step1b) {
+      _step1b.innerHTML = `
+        <div style="font-size:52px;margin-bottom:16px">⚠️</div>
+        <h1 style="font-size:22px;font-weight:700;margin-bottom:8px">Couldn't join the household</h1>
+        <p style="color:var(--muted);font-size:14px;line-height:1.5;margin-bottom:24px;max-width:340px;margin-left:auto;margin-right:auto">${esc(msg)}</p>
+        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+          <button class="btn btn-primary btn-xl" onclick="completePendingJoin()">Try again</button>
+          <button class="btn btn-ghost btn-xl" onclick="(function(){ _pendingJoinCode=null; _pendingShareMeta=null; document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display='none'; })()">Cancel</button>
+        </div>
+      `;
+    }
   }
 }
 
