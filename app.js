@@ -11710,6 +11710,26 @@ async function buildRecoveryEnvelopesV2(codes, dataKey, emailHash) {
   return envelopes;
 }
 
+// ─── Recovery-code utilities ────────────────────────────────────────────
+// Format-only helpers — no crypto-version branching here. The same 16-char
+// human-readable code is used by both signup/recovery flows; v2 differs
+// only in how the resulting wrap key is derived (deriveRecoveryWrapKeyV2),
+// not in code generation or hashing.
+
+function generateRecoveryCodes(count = 10) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({ length: count }, () => {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    return [0,4,8,12].map(s => Array.from(bytes.slice(s,s+4)).map(b => chars[b % chars.length]).join('')).join('-');
+  });
+}
+
+async function hashRecoveryCode(code, emailHash) {
+  const encoded = new TextEncoder().encode(code.replace(/-/g,'').toUpperCase() + ':' + emailHash);
+  const hash    = await crypto.subtle.digest('SHA-256', encoded);
+  return btoa(String.fromCharCode(...new Uint8Array(hash)));
+}
+
 // ─── Compression helpers ────────────────────────────────────────────────
 // New writes are gzip-compressed before encryption to stay under the 64KiB
 // Deno KV value limit. A 1-byte version marker (0x01) before the gzipped
