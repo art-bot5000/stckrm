@@ -4827,6 +4827,7 @@ Deno.serve(async (request) => {
         return json({
           ok: false, requiresAuth: true,
           ownerName: target.ownerName, name: target.name, type: target.type,
+          ownerEmailHash: target.ownerEmailHash,
           householdNames: target.householdNames, households: target.households,
           ...(target.pendingInvite ? { pendingInvite: target.pendingInvite } : {}),
         }, corsHeaders);
