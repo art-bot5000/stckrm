@@ -14,15 +14,15 @@ const env = {
   ADMIN_EMAIL:   Deno.env.get('ADMIN_EMAIL')   || 'pete@artbot5000.com',
 };
 
-// ── Crypto migration config ───────────────────────────────
-// Accounts registered before this date are crypto_version='v1'.
-// After this date, new accounts get 'v2'. Existing v1 users are
-// migrated on their next login after this date.
-// Grace period: v1 ciphertext kept for 90 days after migration,
-// then deleted. Set CRYPTO_V2_SWITCHOVER to a future date to
-// schedule the migration; set to a past date to migrate immediately.
-const CRYPTO_V2_SWITCHOVER     = '2026-05-01'; // ISO date
-const CRYPTO_V1_GRACE_DAYS     = 90;
+// ── Crypto architecture ───────────────────────────────────
+// All accounts use the v2 envelope architecture:
+//   - DATA KEY: random 256-bit AES-GCM key, never stored raw
+//   - WRAP KEY: PBKDF2(passphrase, kdf_salt, 600,000 iters) → AES-KW
+//   - On disk we store an envelope: the data key wrapped by the wrap key
+//   - Recovery: extra envelopes wrapped by recovery-code-derived keys
+// Legacy v1 (passphrase-derived data key, no envelope) was retired —
+// the auto-migration path that ran on first login post-2026-05-01
+// upgraded the entire user base in May 2026.
 
 // On Fly.io, DENO_KV_PATH points to a mounted volume (/data/stockroom.db)
 // Locally (or on Deno Deploy) it defaults to the built-in KV store
@@ -999,34 +999,6 @@ Deno.cron('stockroom-r2-prune', '0 3 * * *', async () => {
 Deno.cron('stockroom-kv-email-check', '0 * * * *', async () => {
   console.log('Cron: running');
   await cronCheck();
-});
-
-// Send migration notification emails 7 days before switchover (runs daily at 09:00)
-Deno.cron('stockroom-crypto-migration-notify', '0 9 * * *', async () => {
-  const now        = new Date();
-  const switchover = new Date(CRYPTO_V2_SWITCHOVER);
-  const daysUntil  = Math.ceil((switchover.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-  if (daysUntil !== 7) return; // only send exactly 7 days before
-  console.log('Cron: sending migration notification emails');
-  // Iterate all users on v1 and notify them
-  const iter = kv.list({ prefix: ['user'] });
-  for await (const entry of iter) {
-    const key = entry.key as string[];
-    if (key[2] !== 'email') continue;
-    const emailHash     = key[1];
-    const cryptoVersion = await kvGet(['user', emailHash, 'crypto_version']);
-    const alreadyNotified = await kvGet(['user', emailHash, 'migration_notified']);
-    if ((cryptoVersion.value || 'v1') !== 'v1') continue;
-    if (alreadyNotified.value) continue;
-    const emailAddr = entry.value as string;
-    try {
-      await sendMigrationEmail(emailAddr, 'notify');
-      await kvSet(['user', emailHash, 'migration_notified'], now.toISOString());
-      console.log('Migration notify sent to:', emailHash.slice(0, 8) + '…');
-    } catch(e) {
-      console.warn('Migration notify failed for', emailHash.slice(0, 8), e.message);
-    }
-  }
 });
 
 // ── Account deletion helper — deletes EVERY key for a given emailHash ──
@@ -3303,12 +3275,10 @@ Deno.serve(async (request) => {
         await kvSet(['user', emailHash, 'key_envelope_passphrase'], passphraseEnvelope);
       }
 
-      // v2: separate random KDF salt for PBKDF2 derivation
-      if (kdfSalt) await kvSet(['user', emailHash, 'kdf_salt'], kdfSalt);
-
-      // Stamp crypto version — v2 if kdfSalt present, v1 otherwise
-      const cryptoVersion = kdfSalt ? 'v2' : 'v1';
-      await kvSet(['user', emailHash, 'crypto_version'], cryptoVersion);
+      // v2 envelope architecture is the only supported format. kdfSalt
+      // is required — it's the random per-user salt used for PBKDF2.
+      if (!kdfSalt) return json({ error: 'kdfSalt required (v2 only)' }, corsHeaders, 400);
+      await kvSet(['user', emailHash, 'kdf_salt'], kdfSalt);
 
       // Store recovery code envelopes (up to 10)
       if (recoveryEnvelopes && Array.isArray(recoveryEnvelopes)) {
@@ -3318,13 +3288,13 @@ Deno.serve(async (request) => {
         }
         await kvSet(['user', emailHash, 'recovery_count'], String(recoveryEnvelopes.length));
       }
-      return json({ ok: true, cryptoVersion }, corsHeaders);
+      return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
   // ── Get passphrase envelope + salt ────────────────────
-  // Client sends emailHash + verifier, gets back encrypted DATA KEY.
-  // Also returns crypto_version so client knows whether to migrate.
+  // Client sends emailHash + verifier, gets back the encrypted DATA KEY
+  // envelope and salts needed to derive the wrap key.
   if (url.pathname === '/key/get' && request.method === 'POST') {
     try {
       const { emailHash, verifier, sessionToken } = await request.json();
@@ -3341,28 +3311,22 @@ Deno.serve(async (request) => {
         return json({ error: 'Missing credentials' }, corsHeaders, 400);
       }
 
-      const salt          = await kvGet(['user', emailHash, 'key_salt']);
-      const envelope      = await kvGet(['user', emailHash, 'key_envelope_passphrase']);
-      const kdfSalt       = await kvGet(['user', emailHash, 'kdf_salt']);
-      const cryptoVersion = await kvGet(['user', emailHash, 'crypto_version']);
+      const salt     = await kvGet(['user', emailHash, 'key_salt']);
+      const envelope = await kvGet(['user', emailHash, 'key_envelope_passphrase']);
+      const kdfSalt  = await kvGet(['user', emailHash, 'kdf_salt']);
 
-      // Legacy users (before key envelope) won't have these
-      if (!salt.value || !envelope.value) {
-        return json({ legacy: true, message: 'No key envelope found — legacy account' }, corsHeaders);
+      // Passkey-only accounts have no passphrase envelope but may still
+      // call /key/get during a probe — return what we have. The client
+      // distinguishes by checking `envelope` itself.
+      if (!salt.value || !envelope.value || !kdfSalt.value) {
+        return json({ ok: true, envelope: null, salt: null, kdfSalt: null }, corsHeaders);
       }
-
-      const now        = new Date();
-      const switchover = new Date(CRYPTO_V2_SWITCHOVER);
-      const migrationDue = now >= switchover && (cryptoVersion.value || 'v1') === 'v1';
 
       return json({
         ok: true,
-        salt:          salt.value,
-        envelope:      envelope.value,
-        kdfSalt:       kdfSalt.value   || null,
-        cryptoVersion: cryptoVersion.value || 'v1',
-        migrationDue,
-        switchoverDate: CRYPTO_V2_SWITCHOVER,
+        salt:    salt.value,
+        envelope: envelope.value,
+        kdfSalt: kdfSalt.value,
       }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
@@ -3420,12 +3384,16 @@ Deno.serve(async (request) => {
   }
 
   // ── Update passphrase envelope ─────────────────────────
-
-  // Called when user changes passphrase — re-wraps DATA KEY
+  // Re-wraps DATA KEY when user changes passphrase. The data key
+  // inside the envelope is unchanged, so all per-household ciphertext,
+  // share keys, ECDH keypair, and recovery envelopes stay readable.
+  // Passphrase rotation is O(1), not O(data).
   if (url.pathname === '/key/update-passphrase' && request.method === 'POST') {
     try {
-      const { emailHash, verifier, sessionToken, newVerifier, newSalt, newEnvelope } = await request.json();
-      if (!emailHash || !newVerifier || !newSalt || !newEnvelope) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const { emailHash, verifier, sessionToken, newVerifier, newSalt, newEnvelope, newKdfSalt } = await request.json();
+      if (!emailHash || !newVerifier || !newSalt || !newEnvelope || !newKdfSalt) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
 
       // Verify current auth
       if (sessionToken) {
@@ -3438,9 +3406,10 @@ Deno.serve(async (request) => {
         return json({ error: 'Missing credentials' }, corsHeaders, 400);
       }
 
-      await kvSet(['user', emailHash, 'verifier'], newVerifier);
-      await kvSet(['user', emailHash, 'key_salt'], newSalt);
-      await kvSet(['user', emailHash, 'key_envelope_passphrase'], newEnvelope);
+      await kvSet(['user', emailHash, 'verifier'],                 newVerifier);
+      await kvSet(['user', emailHash, 'key_salt'],                 newSalt);
+      await kvSet(['user', emailHash, 'key_envelope_passphrase'],  newEnvelope);
+      await kvSet(['user', emailHash, 'kdf_salt'],                 newKdfSalt);
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
@@ -3474,72 +3443,6 @@ Deno.serve(async (request) => {
       }
       await kvSet(['user', emailHash, 'recovery_count'], String(recoveryEnvelopes.length));
       return json({ ok: true }, corsHeaders);
-    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
-  }
-
-  // ── Crypto migration: re-encrypt data with v2 standard ───
-  // Client has already decrypted with v1 key, re-encrypted with v2 key,
-  // and sends: new verifier, new key envelope (v2), new kdfSalt, new ciphertext.
-  // Server preserves v1 ciphertext under a grace-period key, updates primary.
-  if (url.pathname === '/crypto/migrate' && request.method === 'POST') {
-    try {
-      const {
-        emailHash, verifier,
-        newVerifier, newSalt, newEnvelope, newKdfSalt,
-        newRecoveryEnvelopes, ciphertext,
-      } = await request.json();
-      if (!emailHash || !verifier || !newVerifier || !newSalt || !newEnvelope || !newKdfSalt || !ciphertext) {
-        return json({ error: 'Missing fields' }, corsHeaders, 400);
-      }
-      const stored = await kvGet(['user', emailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) {
-        return json({ error: 'Unauthorised' }, corsHeaders, 401);
-      }
-      const currentVersion = await kvGet(['user', emailHash, 'crypto_version']);
-      if (currentVersion.value === 'v2') {
-        return json({ ok: true, alreadyMigrated: true }, corsHeaders);
-      }
-
-      // Archive v1 ciphertext under grace-period key (retained for CRYPTO_V1_GRACE_DAYS)
-      const existingData = await kvGet(['user', emailHash, 'data']);
-      if (existingData.value) {
-        const graceExpiry = Date.now() + CRYPTO_V1_GRACE_DAYS * 24 * 60 * 60 * 1000;
-        await kvSet(['user', emailHash, 'v1_data_archive'], existingData.value,
-          { expireIn: CRYPTO_V1_GRACE_DAYS * 24 * 60 * 60 * 1000 });
-        await kvSet(['user', emailHash, 'v1_grace_expires'], new Date(graceExpiry).toISOString());
-      }
-
-      // Write v2 primary data
-      await kvSet(['user', emailHash, 'data'], ciphertext);
-
-      // Update key material to v2
-      await kvSet(['user', emailHash, 'verifier'],               newVerifier);
-      await kvSet(['user', emailHash, 'key_salt'],               newSalt);
-      await kvSet(['user', emailHash, 'key_envelope_passphrase'], newEnvelope);
-      await kvSet(['user', emailHash, 'kdf_salt'],               newKdfSalt);
-      await kvSet(['user', emailHash, 'crypto_version'],         'v2');
-      await kvSet(['user', emailHash, 'migrated_at'],            new Date().toISOString());
-
-      // Update recovery envelopes if provided
-      if (newRecoveryEnvelopes && Array.isArray(newRecoveryEnvelopes)) {
-        for (let i = 0; i < 10; i++) {
-          await kvDel(['user', emailHash, 'recovery', String(i)]);
-          await kvDel(['user', emailHash, 'recovery_used', String(i)]);
-        }
-        for (let i = 0; i < Math.min(newRecoveryEnvelopes.length, 10); i++) {
-          await kvSet(['user', emailHash, 'recovery', String(i)], newRecoveryEnvelopes[i]);
-          await kvSet(['user', emailHash, 'recovery_used', String(i)], 'false');
-        }
-        await kvSet(['user', emailHash, 'recovery_count'], String(newRecoveryEnvelopes.length));
-      }
-
-      // Send migration confirmation email
-      const emailAddr = await kvGet(['user', emailHash, 'email']);
-      if (emailAddr.value && env.RESEND_API_KEY) {
-        sendMigrationEmail(emailAddr.value, 'complete').catch(() => {});
-      }
-
-      return json({ ok: true, cryptoVersion: 'v2' }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
@@ -3929,7 +3832,8 @@ Deno.serve(async (request) => {
   }
 
   // ── Admin: crypto version status ──────────────────────
-  // Returns counts of v1/v2 users so we know when migration is complete.
+  // All accounts are v2; this endpoint is kept for the admin UI which
+  // still polls it. Returns total user count and zero v1.
   if (url.pathname === '/admin/crypto-status' && request.method === 'POST') {
     try {
       const body = await request.json();
@@ -3939,36 +3843,18 @@ Deno.serve(async (request) => {
         return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
       }
       await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });
-      let v1Count = 0, v2Count = 0, unknownCount = 0;
+      let total = 0;
       const iter = kv.list({ prefix: ['user'] });
-      const seen = new Set();
       for await (const entry of iter) {
         const key = entry.key as string[];
-        if (key[2] === 'crypto_version') {
-          const emailHash = key[1];
-          if (seen.has(emailHash)) continue;
-          seen.add(emailHash);
-          if (entry.value === 'v2') v2Count++;
-          else if (entry.value === 'v1') v1Count++;
-          else unknownCount++;
-        }
+        if (key[2] === 'verifier') total++;
       }
-      // Users with no crypto_version key are implicitly v1
-      const verifierIter = kv.list({ prefix: ['user'] });
-      const withVerifier = new Set();
-      for await (const entry of verifierIter) {
-        const key = entry.key as string[];
-        if (key[2] === 'verifier') withVerifier.add(key[1]);
-      }
-      const implicitV1 = [...withVerifier].filter(h => !seen.has(h)).length;
       return json({
         ok: true,
-        v1: v1Count + implicitV1,
-        v2: v2Count,
-        unknown: unknownCount,
-        total: v1Count + v2Count + unknownCount + implicitV1,
-        switchoverDate: CRYPTO_V2_SWITCHOVER,
-        graceDays: CRYPTO_V1_GRACE_DAYS,
+        v1: 0,
+        v2: total,
+        unknown: 0,
+        total,
       }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
@@ -3992,11 +3878,9 @@ Deno.serve(async (request) => {
         const emailHash = key[1];
         if (seen.has(emailHash)) continue;
         seen.add(emailHash);
-        const [emailR, createdR, versionR, migratedR, pendingDelR, deactivationR] = await Promise.all([
+        const [emailR, createdR, pendingDelR, deactivationR] = await Promise.all([
           kvGet(['user', emailHash, 'email']),
           kvGet(['user', emailHash, 'created']),
-          kvGet(['user', emailHash, 'crypto_version']),
-          kvGet(['user', emailHash, 'migrated_at']),
           kvGet(['user', emailHash, 'pending_deletion']),
           kvGet(['deactivation', emailHash]),
         ]);
@@ -4004,8 +3888,10 @@ Deno.serve(async (request) => {
           emailHash,
           email:          emailR.value   as string | null || null,
           created:        createdR.value as string | null || null,
-          cryptoVersion:  versionR.value as string        || 'v1',
-          migrated:       migratedR.value as string | null || null,
+          // All accounts are v2 — kept in the response shape for the
+          // existing admin.html badge column (always shows v2 ✓).
+          cryptoVersion:  'v2',
+          migrated:       null,
           pendingDeletion: pendingDelR.value ? JSON.parse(pendingDelR.value as string) : null,
           deactivated:    deactivationR.value ? JSON.parse(deactivationR.value as string) : null,
         });
@@ -4380,8 +4266,8 @@ Deno.serve(async (request) => {
   // ── Recovery: complete reset with new passphrase ──────
   if (url.pathname === '/recovery/reset' && request.method === 'POST') {
     try {
-      const { emailHash, recoveryToken, newVerifier, newSalt, newEnvelope } = await request.json();
-      if (!emailHash || !recoveryToken || !newVerifier || !newSalt || !newEnvelope) {
+      const { emailHash, recoveryToken, newVerifier, newSalt, newEnvelope, newKdfSalt } = await request.json();
+      if (!emailHash || !recoveryToken || !newVerifier || !newSalt || !newEnvelope || !newKdfSalt) {
         return json({ error: 'Missing fields' }, corsHeaders, 400);
       }
       const stored = await kvGet(['recovery_token', emailHash]);
@@ -4390,9 +4276,10 @@ Deno.serve(async (request) => {
       if (tokenData.token !== recoveryToken) return json({ error: 'Invalid recovery token' }, corsHeaders, 401);
 
       // Update verifier and passphrase envelope with new passphrase
-      await kvSet(['user', emailHash, 'verifier'], newVerifier);
-      await kvSet(['user', emailHash, 'key_salt'], newSalt);
+      await kvSet(['user', emailHash, 'verifier'],                newVerifier);
+      await kvSet(['user', emailHash, 'key_salt'],                newSalt);
       await kvSet(['user', emailHash, 'key_envelope_passphrase'], newEnvelope);
+      await kvSet(['user', emailHash, 'kdf_salt'],                newKdfSalt);
       await kvDel(['recovery_token', emailHash]);
 
       // Issue session token
@@ -4419,14 +4306,11 @@ Deno.serve(async (request) => {
         if (existing.value === verifier) return json({ ok: true, existing: true }, corsHeaders);
         return json({ error: 'Email already registered with a different passphrase' }, corsHeaders, 409);
       }
-      // Determine crypto version for this account
-      const now        = new Date();
-      const switchover = new Date(CRYPTO_V2_SWITCHOVER);
-      const cryptoVersion = now >= switchover ? 'v2' : 'v1';
+      const now = new Date();
       await kvSet(['user', emailHash, 'verifier'], verifier);
       await kvSet(['user', emailHash, 'created'], now.toISOString());
-      await kvSet(['user', emailHash, 'crypto_version'], cryptoVersion);
-      // Store plaintext email (hashed separately) so we can send migration emails
+      // Store plaintext email (hashed separately) so we can address
+      // operational emails like account-deletion confirmations.
       if (email) await kvSet(['user', emailHash, 'email'], email);
 
       // Defensively clear any residual email_verified flag and pending
@@ -4491,7 +4375,7 @@ Deno.serve(async (request) => {
         }
       }
 
-      return json({ ok: true, cryptoVersion, referralApplied, referralReason }, corsHeaders);
+      return json({ ok: true, referralApplied, referralReason }, corsHeaders);
     } catch(err) {
       return json({ error: err.message }, corsHeaders, 500);
     }
@@ -6307,56 +6191,6 @@ async function cronCheck() {
 }
 
 // ── Email sending ─────────────────────────────────────────
-async function sendMigrationEmail(to: string, stage: 'notify' | 'complete') {
-  if (!env.RESEND_API_KEY) return;
-  const appUrl = env.APP_URL;
-
-  const subjects = {
-    notify:   'STOCKROOM — Security upgrade coming on ' + CRYPTO_V2_SWITCHOVER,
-    complete: 'STOCKROOM — Your account has been upgraded',
-  };
-
-  const bodies = {
-    notify: `
-      <p>Hi,</p>
-      <p>We're upgrading STOCKROOM's encryption standard on <strong>${CRYPTO_V2_SWITCHOVER}</strong>.</p>
-      <p>What this means for you:</p>
-      <ul>
-        <li>Your data stays completely safe — nothing will be lost.</li>
-        <li>The next time you sign in after ${CRYPTO_V2_SWITCHOVER}, you'll be prompted to enter your passphrase once to complete the upgrade.</li>
-        <li>Your data will be re-encrypted using stronger standards and synced automatically.</li>
-        <li>Your old encrypted data will be kept as a backup for ${CRYPTO_V1_GRACE_DAYS} days, then deleted.</li>
-      </ul>
-      <p>No action is needed before the date — just sign in as normal after ${CRYPTO_V2_SWITCHOVER}.</p>`,
-    complete: `
-      <p>Hi,</p>
-      <p>Your STOCKROOM account has been upgraded to our stronger encryption standard.</p>
-      <ul>
-        <li>Your data is now protected with 600,000-iteration PBKDF2 and a unique random salt.</li>
-        <li>Your previous encrypted data will be kept as a backup for ${CRYPTO_V1_GRACE_DAYS} days, then permanently deleted.</li>
-        <li>We recommend generating a fresh set of recovery codes in Settings → Security checklist.</li>
-      </ul>`,
-  };
-
-  const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:560px;margin:32px auto;color:#333">
-    <div style="background:#111;padding:20px 24px;border-radius:12px 12px 0 0;display:flex;align-items:center;gap:12px">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e8a838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg>
-      <span style="color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px">STOCKROOM</span>
-    </div>
-    <div style="background:#fff;border:1px solid #e5e7eb;border-top:none;padding:24px 28px;border-radius:0 0 12px 12px">
-      ${bodies[stage]}
-      <div style="text-align:center;margin-top:28px">
-        <a href="${appUrl}" style="background:#e8a838;color:#111;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px">Open STOCKROOM →</a>
-      </div>
-    </div>
-  </body></html>`;
-
-  await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: env.FROM_EMAIL, to: [to], subject: subjects[stage], html }),
-  });
-}
 
 async function sendEmail(to, urgentItems, upcomingItems, household = null) {
   if (!env.RESEND_API_KEY) return { ok: false, error: 'No RESEND_API_KEY configured' };
