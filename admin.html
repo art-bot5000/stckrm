@@ -403,7 +403,7 @@ async function deleteAccount() {
 async function loadCryptoStatus() {
   try {
     const d = await adminPost('/admin/crypto-status');
-    log(`Crypto — v1: ${d.v1}  v2: ${d.v2}  total: ${d.total}  switchover: ${d.switchoverDate}`, 'log-ok');
+    log(`Crypto — v1: ${d.v1}  v2: ${d.v2}  total: ${d.total}`, 'log-ok');
   } catch(e) { log('Error: ' + e.message, 'log-err'); }
 }
 

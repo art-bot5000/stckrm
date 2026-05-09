@@ -11654,21 +11654,6 @@ async function _recoverySendOtp(emailHash) {
 
 // ── Crypto helpers (client-side) ───────────
 // ── Crypto version config ─────────────────────────────────
-// Must match CRYPTO_V2_SWITCHOVER in main.ts
-const CRYPTO_V2_SWITCHOVER = '2026-05-01';
-
-// v1 key derivation — kept for legacy login and migration decryption only
-async function kvDeriveKey(email, passphrase) {
-  const raw  = new TextEncoder().encode(email.toLowerCase().trim() + ':' + passphrase);
-  const base = await crypto.subtle.importKey('raw', raw, 'PBKDF2', false, ['deriveKey']);
-  const salt = new TextEncoder().encode('stockroom-kv-v1-' + email.toLowerCase().trim());
-  return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
-    base, { name: 'AES-GCM', length: 256 },
-    true, ['encrypt', 'decrypt']
-  );
-}
-
 // ── v2 crypto primitives ───────────────────────────────────
 // 600k PBKDF2 iterations, server-stored random KDF salt, AES-KW wrapping.
 
@@ -12452,11 +12437,8 @@ async function kvRegister() {
   try {
     const emailHash = await kvHashEmail(email);
     const verifier  = await kvMakeVerifier(passphrase, emailHash);
-    // Always use v2 for new registrations — the switchover date only controls migration of
-    // existing v1 accounts, not the crypto version chosen for brand-new ones.
-    const useV2     = true;
 
-    // Register — send plaintext email so server can send migration notifications
+    // Register — send plaintext email so server can address operational mail.
     // Include referral code if one was captured at app load (from ?ref=) or
     // typed into the optional field on the signup form.
     const referralCode = (window._pendingReferralCode || document.getElementById('kv-ref')?.value || '').trim().toUpperCase();
@@ -12464,33 +12446,22 @@ async function kvRegister() {
     const data = await res.json();
     if (res.status === 409) { showDuplicateAccountScreen(email); return; }
     if (!res.ok) throw new Error(data.error || 'Registration failed');
-    // If referral was applied, surface a friendly toast after sign-in completes
     if (data.referralApplied) {
       window._referralAppliedAtSignup = true;
     }
 
-    let dataKey, passphraseEnvelope, saltB64, kdfSalt, recoveryCodes, recoveryEnvelopes;
-
-    if (useV2) {
-      kdfSalt            = generateKdfSalt();
-      const wrapKey      = await derivePassphraseWrapKeyV2(passphrase, emailHash, kdfSalt);
-      dataKey            = await generateDataKeyV2Extractable();
-      passphraseEnvelope = await wrapDataKeyV2(dataKey, wrapKey);
-      saltB64            = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
-      recoveryCodes      = generateRecoveryCodes(10);
-      recoveryEnvelopes  = await buildRecoveryEnvelopesV2(recoveryCodes, dataKey, emailHash);
-    } else {
-      dataKey            = await generateDataKey();
-      const wrapped      = await derivePassphraseWrapKey(passphrase, emailHash, null);
-      passphraseEnvelope = await wrapDataKey(dataKey, wrapped.wrapKey);
-      saltB64            = wrapped.saltB64;
-      recoveryCodes      = generateRecoveryCodes(10);
-      recoveryEnvelopes  = await buildRecoveryEnvelopes(recoveryCodes, dataKey, emailHash);
-    }
+    // Build v2 envelope material: random data key, passphrase-wrapped envelope,
+    // recovery-code envelopes for offline restore.
+    const kdfSalt            = generateKdfSalt();
+    const wrapKey            = await derivePassphraseWrapKeyV2(passphrase, emailHash, kdfSalt);
+    const dataKey            = await generateDataKeyV2Extractable();
+    const passphraseEnvelope = await wrapDataKeyV2(dataKey, wrapKey);
+    const saltB64            = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    const recoveryCodes      = generateRecoveryCodes(10);
+    const recoveryEnvelopes  = await buildRecoveryEnvelopesV2(recoveryCodes, dataKey, emailHash);
 
     const storeRes = await postKV(`${WORKER_URL}/key/store`, {
-        emailHash, verifier, salt: saltB64, passphraseEnvelope, recoveryEnvelopes,
-        ...(useV2 ? { kdfSalt } : {}),
+        emailHash, verifier, salt: saltB64, passphraseEnvelope, recoveryEnvelopes, kdfSalt,
       });
     if (!storeRes.ok) throw new Error('Could not store key envelopes — try again');
 
@@ -12562,21 +12533,16 @@ async function kvLogin() {
     }
     if (!res.ok) throw new Error(data.error || 'Sign-in failed');
 
-    // Fetch key envelope — response carries cryptoVersion, kdfSalt, migrationDue
+    // Fetch key envelope and unwrap with passphrase
     let dataKey;
     const keyRes  = await postKV(`${WORKER_URL}/key/get`, { emailHash, verifier });
     const keyData = await keyRes.json();
 
-    if (keyRes.ok && !keyData.legacy && keyData.envelope) {
-      if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
-        const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
-        dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
-      } else {
-        const { wrapKey } = await derivePassphraseWrapKey(passphrase, emailHash, keyData.salt);
-        dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
-      }
+    if (keyRes.ok && keyData.envelope && keyData.kdfSalt) {
+      const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
+      dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
     } else {
-      dataKey = await kvDeriveKey(email, passphrase);
+      throw new Error('Account is missing its encryption envelope');
     }
 
     await kvStoreSession(email, emailHash, verifier, dataKey);
@@ -12585,11 +12551,6 @@ async function kvLogin() {
     persistLoginCookies(email, false);
     await _trustIfRemembered(email, emailHash, verifier, dataKey);
 
-    // Trigger v1→v2 migration if server says it's due
-    if (keyData.migrationDue) {
-      await runCryptoMigration(email, emailHash, verifier, passphrase, dataKey);
-      return;
-    }
     await postLoginWizardRoute();
   } catch(err) {
     if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
@@ -12678,24 +12639,15 @@ async function _completePendingUnverifiedLogin() {
     const keyRes  = await postKV(`${WORKER_URL}/key/get`, { emailHash, verifier });
     const keyData = await keyRes.json();
     let dataKey;
-    if (keyRes.ok && !keyData.legacy && keyData.envelope) {
-      if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
-        const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
-        dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
-      } else {
-        const { wrapKey } = await derivePassphraseWrapKey(passphrase, emailHash, keyData.salt);
-        dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
-      }
+    if (keyRes.ok && keyData.envelope && keyData.kdfSalt) {
+      const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
+      dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
     } else {
-      dataKey = await kvDeriveKey(email, passphrase);
+      throw new Error('Account is missing its encryption envelope');
     }
     await kvStoreSession(email, emailHash, verifier, dataKey);
     persistLoginCookies(email, false);
     await _trustIfRemembered(email, emailHash, verifier, dataKey);
-    if (keyData.migrationDue) {
-      await runCryptoMigration(email, emailHash, verifier, passphrase, dataKey);
-      return;
-    }
     await postLoginWizardRoute();
   } catch (e) {
     toast('Sign-in failed after verification — please try again');
@@ -12913,14 +12865,9 @@ async function reauthWithPassphrase() {
       try {
         const keyRes  = await postKV(`${WORKER_URL}/key/get`, { emailHash: _kvEmailHash, verifier });
         const keyData = await keyRes.json();
-        if (keyRes.ok && keyData.envelope) {
-          if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
-            const wrapKey = await derivePassphraseWrapKeyV2(pass, _kvEmailHash, keyData.kdfSalt);
-            _kvKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
-          } else if (keyData.salt) {
-            const { wrapKey } = await derivePassphraseWrapKey(pass, _kvEmailHash, keyData.salt);
-            _kvKey = await unwrapDataKey(keyData.envelope, wrapKey);
-          }
+        if (keyRes.ok && keyData.envelope && keyData.kdfSalt) {
+          const wrapKey = await derivePassphraseWrapKeyV2(pass, _kvEmailHash, keyData.kdfSalt);
+          _kvKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
           if (_kvKey) {
             // Cache it
             const exported = await crypto.subtle.exportKey('raw', _kvKey);
@@ -13312,8 +13259,8 @@ async function recoveryStepCode() {
     const res = await postKV(`${WORKER_URL}/key/recover`, { emailHash, codeHash });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Invalid recovery code');
-    const wrapKey = await deriveRecoveryWrapKey(code, emailHash);
-    const dataKey = await unwrapDataKey(data.envelope, wrapKey);
+    const wrapKey = await deriveRecoveryWrapKeyV2(code, emailHash);
+    const dataKey = await unwrapDataKeyV2(data.envelope, wrapKey, true);
     _recoveryEmailHash = emailHash;
     _recoveryToken     = data.recoveryToken;
     _recoveryDataKey   = dataKey;
@@ -13386,15 +13333,24 @@ async function completeRecovery() {
   }
   if (btn) { btn.textContent = '⏳ Resetting…'; btn.disabled = true; }
   try {
-    const { wrapKey, saltB64 } = await derivePassphraseWrapKey(newPass, _recoveryEmailHash, null);
-    const newVerifier          = await kvMakeVerifier(newPass, _recoveryEmailHash);
-    const newEnvelope          = await wrapDataKey(_recoveryDataKey, wrapKey);
-    const res = await postKV(`${WORKER_URL}/recovery/reset`, { emailHash: _recoveryEmailHash, recoveryToken: _recoveryToken, newVerifier, newSalt: saltB64, newEnvelope });
+    const newKdfSalt   = generateKdfSalt();
+    const wrapKey      = await derivePassphraseWrapKeyV2(newPass, _recoveryEmailHash, newKdfSalt);
+    const saltB64      = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    const newVerifier  = await kvMakeVerifier(newPass, _recoveryEmailHash);
+    const newEnvelope  = await wrapDataKeyV2(_recoveryDataKey, wrapKey);
+    const res = await postKV(`${WORKER_URL}/recovery/reset`, {
+      emailHash: _recoveryEmailHash,
+      recoveryToken: _recoveryToken,
+      newVerifier,
+      newSalt: saltB64,
+      newEnvelope,
+      newKdfSalt,
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Reset failed');
     await kvStoreSession(_recoveryEmail, _recoveryEmailHash, newVerifier, _recoveryDataKey);
     const newCodes     = generateRecoveryCodes(10);
-    const newEnvelopes = await buildRecoveryEnvelopes(newCodes, _recoveryDataKey, _recoveryEmailHash);
+    const newEnvelopes = await buildRecoveryEnvelopesV2(newCodes, _recoveryDataKey, _recoveryEmailHash);
     await postKV(`${WORKER_URL}/key/update-recovery`, { emailHash: _recoveryEmailHash, verifier: newVerifier, recoveryEnvelopes: newEnvelopes });
     _recoveryEmail = _recoveryEmailHash = _recoveryToken = '';
     _recoveryDataKey = null;
@@ -13520,24 +13476,18 @@ async function dismissDecryptErrorAndReauth() {
       const keyRes  = await postKV(`${WORKER_URL}/key/get`, authBody);
       const keyData = await keyRes.json();
       if (keyRes.status === 401) { toast('Incorrect passphrase — try again'); showDecryptErrorBanner(); return; }
-      if (keyRes.ok && !keyData.legacy && keyData.envelope) {
-        // Try v2 unwrap first, fall back to v1
+      if (keyRes.ok && keyData.envelope && keyData.kdfSalt) {
         try {
-          if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
-            const wrapKey = await derivePassphraseWrapKeyV2(passphrase, _kvEmailHash, keyData.kdfSalt);
-            dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
-          } else {
-            const { wrapKey } = await derivePassphraseWrapKey(passphrase, _kvEmailHash, keyData.salt);
-            dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
-          }
+          const wrapKey = await derivePassphraseWrapKeyV2(passphrase, _kvEmailHash, keyData.kdfSalt);
+          dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
         } catch(unwrapErr) {
           console.warn('Key unwrap failed:', unwrapErr.message);
         }
       }
     } catch(e) { console.warn('Key fetch failed:', e.message); }
     if (!dataKey) {
-      // Last resort: v1 derive (legacy accounts only)
-      dataKey = await kvDeriveKey(_kvEmail, passphrase);
+      toast('Could not unlock — your envelope may be corrupted. Try recovery.');
+      return;
     }
     _kvKey = dataKey;
     // Re-cache as fresh 4-hour session
@@ -13558,123 +13508,6 @@ async function dismissDecryptErrorAndReauth() {
   }
 }
 
-// ── Crypto v1 → v2 migration ──────────────────────────────
-// Triggered on login when server reports migrationDue = true.
-// The user is already signed in with their v1 key in memory.
-// We re-encrypt the server ciphertext with a fresh v2 key and push.
-async function runCryptoMigration(email, emailHash, verifier, passphrase, v1DataKey) {
-  try {
-    // Show a non-dismissible progress overlay
-    const overlay = document.createElement('div');
-    overlay.id = 'crypto-migration-overlay';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:10000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:#fff;font-family:var(--sans)';
-    overlay.innerHTML = `
-      <div style="color:var(--accent)"><svg aria-hidden="true" style="width:40px;height:40px"><use href="#i-lock"></use></svg></div>
-      <div style="font-size:18px;font-weight:700">Upgrading your encryption</div>
-      <div id="crypto-migration-status" style="font-size:13px;color:rgba(255,255,255,0.7);text-align:center;max-width:300px;line-height:1.6">
-        Fetching your data…
-      </div>
-      <div style="width:200px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;overflow:hidden">
-        <div id="crypto-migration-bar" style="height:100%;width:0%;background:var(--accent,#e8a838);border-radius:2px;transition:width 0.4s"></div>
-      </div>`;
-    document.body.appendChild(overlay);
-
-    const setStatus = (msg, pct) => {
-      const s = document.getElementById('crypto-migration-status');
-      const b = document.getElementById('crypto-migration-bar');
-      if (s) s.textContent = msg;
-      if (b) b.style.width = pct + '%';
-    };
-
-    // 1. Pull current (v1) ciphertext from server
-    setStatus('Fetching your data…', 10);
-    const pullRes = await postKV(`${WORKER_URL}/data/pull`, { emailHash, verifier });
-    if (!pullRes.ok) throw new Error('Could not fetch data for migration');
-    const { ciphertext: v1Ciphertext } = await pullRes.json();
-
-    // 2. Decrypt with v1 key
-    setStatus('Decrypting with current key…', 25);
-    let plaintext;
-    if (v1Ciphertext) {
-      plaintext = await kvDecrypt(v1DataKey, v1Ciphertext);
-    }
-
-    // 3. Generate fresh v2 key material
-    setStatus('Generating new encryption key…', 40);
-    const kdfSalt         = generateKdfSalt();
-    const newVerifier     = verifier; // passphrase unchanged during migration
-    const wrapKey         = await derivePassphraseWrapKeyV2(passphrase, emailHash, kdfSalt);
-    const v2DataKey       = await generateDataKeyV2Extractable();
-    const passphraseEnv   = await wrapDataKeyV2(v2DataKey, wrapKey);
-    const saltB64         = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
-
-    // 4. Re-encrypt data with v2 key
-    setStatus('Re-encrypting your data…', 55);
-    const v2Ciphertext = plaintext ? await kvEncrypt(v2DataKey, plaintext) : null;
-
-    // 5. Generate fresh recovery envelopes with v2
-    setStatus('Updating recovery codes…', 70);
-    const recoveryCodes     = generateRecoveryCodes(10);
-    const recoveryEnvelopes = await buildRecoveryEnvelopesV2(recoveryCodes, v2DataKey, emailHash);
-
-    // 6. Push to server — atomically archives v1 and writes v2
-    setStatus('Saving to server…', 85);
-    const migrateRes = await postKV(`${WORKER_URL}/crypto/migrate`, {
-        emailHash,
-        verifier,
-        newVerifier,
-        newSalt:              saltB64,
-        newEnvelope:          passphraseEnv,
-        newKdfSalt:           kdfSalt,
-        newRecoveryEnvelopes: recoveryEnvelopes,
-        ciphertext:           v2Ciphertext,
-      });
-    if (!migrateRes.ok) {
-      const d = await migrateRes.json().catch(() => ({}));
-      throw new Error(d.error || 'Migration failed — your data is unchanged');
-    }
-
-    // 7. Update local session with v2 key
-    setStatus('Done! Finishing up…', 95);
-    _kvKey = v2DataKey;
-    await kvStoreSession(email, emailHash, verifier, v2DataKey);
-
-    // 8. Re-backup all share keys encrypted with the new v2 data key.
-    // The old backups were encrypted with the v1 key and are now unreadable.
-    // We also re-push shared data so guests get a fresh copy under the new owner key.
-    if (_shareTargets?.length) {
-      setStatus('Re-encrypting share keys…', 97);
-      for (const target of _shareTargets) {
-        try {
-          // Recover the share key — it may still be in localStorage cache from this session
-          const sk = await recoverShareKeyWithOldKey(target.code, v1DataKey);
-          if (sk) {
-            // Back up with new v2 key
-            await backupShareKey(target.code, sk);
-            // Re-push shared data (owner now has v2 key in _kvKey)
-            await pushSharedData(target.code, sk);
-          } else {
-            console.warn('Migration: could not recover share key for', target.code, '— share backup skipped');
-          }
-        } catch(e) {
-          console.warn('Migration: share key re-backup failed for', target.code, e.message);
-        }
-      }
-    }
-
-    overlay.remove();
-
-    // Show recovery codes — user must save new v2 codes
-    showProtectDataScreen(recoveryCodes, true /* isMigration */);
-
-  } catch(err) {
-    document.getElementById('crypto-migration-overlay')?.remove();
-    console.error('Migration failed:', err);
-    // Non-fatal — user can still use the app on v1; migration will retry next login
-    toast('Encryption upgrade failed — ' + err.message + '. Will retry next sign-in.');
-    await postLoginWizardRoute();
-  }
-}
 
 // ── Sync pill 5-tap debug trigger ─────────────────────────
 let _syncPillTaps = 0;
@@ -13717,7 +13550,7 @@ async function showMobileDiag() {
     try {
       const r = await postKV(`${WORKER_URL}/key/get`, { emailHash: _kvEmailHash, verifier: _kvVerifier });
       const d = await r.json();
-      lines.push(`key/get: ${r.status} cv=${d.cryptoVersion||'?'} env=${!!d.envelope} kdf=${!!d.kdfSalt} mig=${d.migrationDue}`);
+      lines.push(`key/get: ${r.status} env=${!!d.envelope} kdf=${!!d.kdfSalt}`);
     } catch(e) { lines.push(`key/get error: ${e.message}`); }
 
     try {
@@ -13822,22 +13655,17 @@ async function _getKeyViaPassphrase(emailHash, sessionToken, credentialId, errEl
     }
 
     let dataKey = null;
-    if (keyRes.ok && !keyData.legacy && keyData.envelope) {
+    if (keyRes.ok && keyData.envelope && keyData.kdfSalt) {
       try {
-        if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
-          const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
-          dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
-        } else {
-          const { wrapKey } = await derivePassphraseWrapKey(passphrase, emailHash, keyData.salt);
-          dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
-        }
+        const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
+        dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
       } catch(e) {
         if (errEl) { errEl.textContent = 'Incorrect passphrase — try again'; errEl.style.display = 'block'; }
         return null;
       }
     } else {
-      // Legacy: derive from passphrase directly
-      dataKey = await kvDeriveKey(_kvEmail || '', passphrase);
+      if (errEl) { errEl.textContent = 'Account is missing its encryption envelope'; errEl.style.display = 'block'; }
+      return null;
     }
 
     if (!dataKey) return null;
@@ -14103,7 +13931,7 @@ async function _doGenerateNewRecoveryCodes() {
   if (!confirm('Generate 10 new recovery codes?\n\nThis will invalidate all your existing recovery codes.')) return;
   try {
     const newCodes     = generateRecoveryCodes(10);
-    const newEnvelopes = await buildRecoveryEnvelopes(newCodes, _kvKey, _kvEmailHash);
+    const newEnvelopes = await buildRecoveryEnvelopesV2(newCodes, _kvKey, _kvEmailHash);
     const body = _kvSessionToken
       ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken, recoveryEnvelopes: newEnvelopes }
       : { emailHash: _kvEmailHash, verifier: _kvVerifier, recoveryEnvelopes: newEnvelopes };
@@ -14241,76 +14069,6 @@ async function initPasskeyUI() {
 }
 // ── Key Envelope System ───────────────────────────────────
 // DATA KEY = random 256-bit AES key (encrypts all user data)
-// Wrapped by passphrase key, recovery code keys, passkey sessions.
-
-async function generateDataKey() {
-  return crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
-}
-
-async function derivePassphraseWrapKey(passphrase, emailHash, saltB64) {
-  const salt    = saltB64
-    ? Uint8Array.from(atob(saltB64), c => c.charCodeAt(0))
-    : crypto.getRandomValues(new Uint8Array(32));
-  const raw     = new TextEncoder().encode(passphrase + ':' + emailHash);
-  const base    = await crypto.subtle.importKey('raw', raw, 'PBKDF2', false, ['deriveKey']);
-  const wrapKey = await crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: 200000, hash: 'SHA-256' },
-    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
-  );
-  return { wrapKey, saltB64: saltB64 || btoa(String.fromCharCode(...salt)) };
-}
-
-async function deriveRecoveryWrapKey(code, emailHash) {
-  const raw  = new TextEncoder().encode(code.replace(/-/g,'').toUpperCase() + ':' + emailHash);
-  const base = await crypto.subtle.importKey('raw', raw, 'PBKDF2', false, ['deriveKey']);
-  const salt = new TextEncoder().encode('stockroom-recovery-v1-' + emailHash);
-  return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
-    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
-  );
-}
-
-async function wrapDataKey(dataKey, wrapKey) {
-  const raw       = await crypto.subtle.exportKey('raw', dataKey);
-  const iv        = crypto.getRandomValues(new Uint8Array(12));
-  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, wrapKey, raw);
-  const combined  = new Uint8Array(iv.length + encrypted.byteLength);
-  combined.set(iv, 0); combined.set(new Uint8Array(encrypted), iv.length);
-  return btoa(String.fromCharCode(...combined));
-}
-
-async function unwrapDataKey(envelopeB64, wrapKey) {
-  const combined  = Uint8Array.from(atob(envelopeB64), c => c.charCodeAt(0));
-  const iv        = combined.slice(0, 12);
-  const encrypted = combined.slice(12);
-  const raw       = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wrapKey, encrypted);
-  return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
-}
-
-function generateRecoveryCodes(count = 10) {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  return Array.from({ length: count }, () => {
-    const bytes = crypto.getRandomValues(new Uint8Array(16));
-    return [0,4,8,12].map(s => Array.from(bytes.slice(s,s+4)).map(b => chars[b % chars.length]).join('')).join('-');
-  });
-}
-
-async function hashRecoveryCode(code, emailHash) {
-  const encoded = new TextEncoder().encode(code.replace(/-/g,'').toUpperCase() + ':' + emailHash);
-  const hash    = await crypto.subtle.digest('SHA-256', encoded);
-  return btoa(String.fromCharCode(...new Uint8Array(hash)));
-}
-
-async function buildRecoveryEnvelopes(codes, dataKey, emailHash) {
-  const envelopes = [];
-  for (const code of codes) {
-    const wrapKey  = await deriveRecoveryWrapKey(code, emailHash);
-    const envelope = await wrapDataKey(dataKey, wrapKey);
-    const codeHash = await hashRecoveryCode(code, emailHash);
-    envelopes.push(JSON.stringify({ envelope, codeHash }));
-  }
-  return envelopes;
-}
 
 // Uses IndexedDB to store a wrapped copy of the encryption key.
 // The wrapping key is device-specific (derived from a random device secret
@@ -14994,25 +14752,18 @@ async function kvEnsureKey() {
 
     if (keyRes.status === 401) { toast('Incorrect passphrase'); return false; }
 
-    if (keyRes.ok && !keyData.legacy && keyData.envelope) {
-      // Envelope exists — must unwrap it. Do NOT fall through to legacy derive
-      // if this fails, as that would set a wrong key and cause KvDecryptError.
+    if (keyRes.ok && keyData.envelope && keyData.kdfSalt) {
       try {
-        if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
-          const wrapKey = await derivePassphraseWrapKeyV2(passphrase, _kvEmailHash, keyData.kdfSalt);
-          dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
-        } else {
-          const { wrapKey } = await derivePassphraseWrapKey(passphrase, _kvEmailHash, keyData.salt);
-          dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
-        }
+        const wrapKey = await derivePassphraseWrapKeyV2(passphrase, _kvEmailHash, keyData.kdfSalt);
+        dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
       } catch(e) {
         toast('Incorrect passphrase');
         console.warn('kvEnsureKey: envelope unwrap failed —', e.message);
         return false;
       }
     } else {
-      // No envelope (pre-envelope legacy account) — derive key directly
-      dataKey = await kvDeriveKey(_kvEmail, passphrase);
+      toast('Account is missing its encryption envelope — try recovery');
+      return false;
     }
 
     _kvKey = dataKey;
@@ -15945,32 +15696,80 @@ function openChangePassphrase() {
   kvChangePassphrase(oldPass, newPass);
 }
 
+// Change passphrase. The v2 envelope architecture makes this a thin
+// operation: re-derive the wrap key from the new passphrase, re-wrap
+// the data-key envelope, push it. The DATA KEY itself doesn't change
+// — no data re-encryption, no per-household work, no share-key re-
+// backup. Existing shares with other users keep working transparently
+// because share keys are wrapped against the data key (unchanged), not
+// the passphrase. Recovery codes likewise survive unchanged.
 async function kvChangePassphrase(oldPass, newPass) {
+  if (!_kvEmail || !_kvEmailHash) { toast('Sign in first'); return; }
+  if (!newPass || newPass.length < 8) { toast('New passphrase too short'); return; }
+  if (oldPass === newPass) { toast('New passphrase must be different'); return; }
   try {
-    // Verify old passphrase
+    // Verify old passphrase against server-stored verifier (constant-time on server)
     const oldVerifier = await kvMakeVerifier(oldPass, _kvEmailHash);
     if (oldVerifier !== _kvVerifier) { toast('Current passphrase incorrect'); return; }
-    // Decrypt with old key, re-encrypt with new key
-    const oldKey    = await kvDeriveKey(_kvEmail, oldPass);
-    const newKey    = await kvDeriveKey(_kvEmail, newPass);
-    const newVerifier = await kvMakeVerifier(newPass, _kvEmailHash);
-    // Pull current ciphertext
-    const res = await postKV(`${WORKER_URL}/data/pull`, { emailHash: _kvEmailHash, verifier: _kvVerifier, household: activeProfile });
-    if (!res.ok) throw new Error('Could not fetch current data');
-    const { ciphertext } = await res.json();
-    if (ciphertext) {
-      const plain      = await kvDecrypt(oldKey, ciphertext);
-      const newCipher  = await kvEncrypt(newKey, plain);
-      // Push re-encrypted data with new verifier
-      await postKV(`${WORKER_URL}/data/push`, { emailHash: _kvEmailHash, verifier: newVerifier, household: activeProfile, ciphertext: newCipher });
+
+    // Fetch current envelope. Required — every account is v2.
+    const res = await postKV(`${WORKER_URL}/key/get`, _kvSessionToken
+      ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken }
+      : { emailHash: _kvEmailHash, verifier: _kvVerifier });
+    if (!res.ok) throw new Error('Could not fetch your encryption envelope');
+    const keyData = await res.json();
+    if (!keyData.envelope || !keyData.kdfSalt) {
+      throw new Error('Account has no passphrase envelope (passkey-only?). Add a passphrase from Account & Security first.');
     }
-    // Update session
-    _kvKey      = newKey;
+
+    // Unwrap the data key with the OLD passphrase, re-wrap with the new.
+    const oldWrapKey = await derivePassphraseWrapKeyV2(oldPass, _kvEmailHash, keyData.kdfSalt);
+    const dataKey    = await unwrapDataKeyV2(keyData.envelope, oldWrapKey, true);
+    if (!dataKey) throw new Error('Could not unwrap data key with current passphrase');
+
+    // Generate fresh wrap material for the new passphrase.
+    const newKdfSalt  = generateKdfSalt();
+    const newSaltB64  = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    const newWrapKey  = await derivePassphraseWrapKeyV2(newPass, _kvEmailHash, newKdfSalt);
+    const newEnv      = await wrapDataKeyV2(dataKey, newWrapKey);
+    const newVerifier = await kvMakeVerifier(newPass, _kvEmailHash);
+
+    // Push: server atomically updates verifier + salt + envelope + kdfSalt
+    const updateRes = await postKV(`${WORKER_URL}/key/update-passphrase`, {
+      emailHash:    _kvEmailHash,
+      ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
+      newVerifier,
+      newSalt:      newSaltB64,
+      newEnvelope:  newEnv,
+      newKdfSalt,
+    });
+    if (!updateRes.ok) {
+      const d = await updateRes.json().catch(() => ({}));
+      throw new Error(d.error || 'Server rejected the new envelope');
+    }
+
+    // Update local session — _kvKey is the data key, unchanged. Only
+    // the verifier rotates.
     _kvVerifier = newVerifier;
-    try { localStorage.setItem('stockroom_kv_session', JSON.stringify({ email: _kvEmail, emailHash: _kvEmailHash, verifier: newVerifier })); } catch(e) {}
+    try {
+      const raw = localStorage.getItem('stockroom_kv_session');
+      if (raw) {
+        const sess = JSON.parse(raw);
+        sess.verifier = newVerifier;
+        localStorage.setItem('stockroom_kv_session', JSON.stringify(sess));
+      }
+    } catch(_e) {}
+    // Re-trust the device with the rotated verifier so the trusted
+    // device cache continues to work after passphrase change.
+    try { await _trustIfRemembered(_kvEmail, _kvEmailHash, newVerifier, _kvKey); } catch(_e) {}
+
     toast('Passphrase changed ✓');
-  } catch(err) { toast('Could not change passphrase: ' + err.message); }
+  } catch(err) {
+    console.error('[passphrase] change failed:', err);
+    toast('Could not change passphrase: ' + (err?.message || 'unknown error'));
+  }
 }
+
 
 // ═══════════════════════════════════════════
 //  DROPBOX SYNC (kept for reference, disabled in KV build)
@@ -29114,7 +28913,16 @@ async function shareGateSignIn() {
     }
 
     if (!res.ok) throw new Error(d.error || 'Sign-in failed');
-    const key = await kvDeriveKey(email, pass);
+    // Fetch and unwrap the envelope — same v2 path as kvLogin. The share
+    // gate previously used kvDeriveKey (the legacy direct-derive helper)
+    // which produced a key that could not decrypt v2-encrypted blobs.
+    const keyRes  = await postKV(`${WORKER_URL}/key/get`, { emailHash, verifier });
+    const keyData = await keyRes.json();
+    if (!keyRes.ok || !keyData.envelope || !keyData.kdfSalt) {
+      throw new Error('Account is missing its encryption envelope');
+    }
+    const wrapKey = await derivePassphraseWrapKeyV2(pass, emailHash, keyData.kdfSalt);
+    const key     = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
     await kvStoreSession(email, emailHash, verifier, key);
     // Ensure ECDH keypair is ready BEFORE attempting join (required for key unwrapping)
     await ensureEcdhKeypair(emailHash).catch(e => console.warn('ensureEcdhKeypair:', e.message));
