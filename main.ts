@@ -4648,6 +4648,93 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
+  // ── Guest share envelope: store ────────────────────────
+  // The GUEST stores the share key wrapped under their own data key.
+  // This makes the share survive anything that survives the guest's
+  // own data — browser clear, new device, passphrase change. The
+  // ECDH-wrapped key from /share/ecdh-key/get is only used for the
+  // first-time handshake; once the guest has it, they immediately
+  // re-wrap with their data key and store under their own namespace.
+  //
+  // Auth is the GUEST's auth, not the owner's. The owner has no
+  // visibility into what the guest stores — this is the guest's
+  // own private cache of their share access, encrypted with their
+  // own data key. Server holds ciphertext only.
+  if (url.pathname === '/user/share-envelope/store' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, code, envelope } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken) || !code || !envelope) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      // Auth — accept either passphrase verifier or session token.
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      // Optional sanity check: the guest must actually be a member of
+      // this share. Without this we'd accept envelope writes from any
+      // authenticated user — not a security hole (the envelope is just
+      // their own ciphertext) but rejecting non-members keeps the data
+      // model tidy and surfaces logic errors early.
+      const share = await kvGet(['share', code.toUpperCase()]);
+      if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);
+      const target = JSON.parse(share.value);
+      if (!target.members?.includes(emailHash)) {
+        return json({ error: 'Not a member of this share' }, corsHeaders, 403);
+      }
+      await kvSet(['user', emailHash, 'share_envelope', code.toUpperCase()], envelope);
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Guest share envelope: get ──────────────────────────
+  // Called on fresh device / browser / login to recover the share key
+  // without needing the owner online. Returns the ciphertext blob; the
+  // client's data key is what unwraps it.
+  if (url.pathname === '/user/share-envelope/get' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, code } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken) || !code) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      const env = await kvGet(['user', emailHash, 'share_envelope', code.toUpperCase()]);
+      if (!env.value) return json({ ok: true, envelope: null }, corsHeaders);
+      return json({ ok: true, envelope: env.value }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Guest share envelope: delete ──────────────────────
+  // Called on leave-share or eviction. The envelope is also covered by
+  // _deleteAllUserData on full account deletion (prefix scan picks it
+  // up under ['user', emailHash, ...]).
+  if (url.pathname === '/user/share-envelope/delete' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, code } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken) || !code) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      await kvDel(['user', emailHash, 'share_envelope', code.toUpperCase()]);
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
   // ── Share: list (authenticated) ──────────────────────
   // Accepts both `verifier` (passphrase login) and `sessionToken` (passkey
   // login). Mismatched auth was a recurring bug — passkey sessions getting
