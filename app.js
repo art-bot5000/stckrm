@@ -14871,6 +14871,16 @@ async function kvPush() {
   // one rw section" before accepting the push — this client check is
   // for correctness, the server's is for security.
   if (_shareState) {
+    // Try recovering from the persistent share envelope first — same
+    // logic as the kvPull guest branch. This makes the very first
+    // push after a browser-clear succeed without needing the owner
+    // to come online.
+    if (!_shareKey && _kvKey) {
+      try {
+        const sk = await _loadGuestShareEnvelope(_shareState.code);
+        if (sk) _shareKey = sk;
+      } catch(e) { console.warn('kvPush (guest): envelope load failed:', e?.message); }
+    }
     if (!_shareKey) { console.warn('kvPush (guest): no share key in memory, skipping'); return; }
     return _kvPushAsGuest();
   }
@@ -15183,6 +15193,19 @@ async function kvPull() {
   // Guest pull — _shareState takes priority even if the guest also has their own account.
   // A user with both a personal account AND a share must pull from the share, not their own data.
   if (_shareState) {
+    // Try to recover the share key from the guest's server-stored
+    // envelope before declaring failure. This is what makes share
+    // access survive browser-clears and new devices: the envelope is
+    // wrapped under the guest's data key (which they just unlocked
+    // via passphrase), not the device-bound ECDH keypair. First
+    // successful recovery puts the key in _shareKey for the rest of
+    // the session.
+    if (!_shareKey && _kvKey) {
+      try {
+        const sk = await _loadGuestShareEnvelope(_shareState.code);
+        if (sk) _shareKey = sk;
+      } catch(e) { console.warn('kvPull (share): envelope load failed:', e?.message); }
+    }
     if (!_shareKey) { console.warn('kvPull (share): no share key in memory'); return null; }
     const res = await postKV(`${WORKER_URL}/share/data/pull`, { guestEmailHash: _kvEmailHash, guestVerifier: _kvVerifier, guestSessionToken: _kvSessionToken, code: _shareState.code, household: activeProfile });
     if (!res.ok) {
@@ -15226,6 +15249,12 @@ async function kvPull() {
           delete stored[code];
           await _setShareKeys(stored);
         } catch(e) {}
+        // Also delete the server-side guest envelope so a re-add by
+        // the owner triggers a fresh handshake instead of trying to
+        // recover with stale state.
+        _deleteGuestShareEnvelope(code).catch(e =>
+          console.warn('[share] envelope delete on eviction failed:', e?.message)
+        );
         // Same complete wipe as leaveShare — ensures the server-driven
         // eviction path leaves no shared data behind in IDB. Without
         // this, an evicted guest would retain a phantom copy of the
@@ -26332,6 +26361,14 @@ async function leaveShare() {
       delete stored[code];
       await _setShareKeys(stored);
     } catch(e) {}
+    // Also delete the server-side guest envelope. Without this, the
+    // next time this guest logs in (even after explicitly leaving)
+    // the envelope-load path would re-restore the share from server.
+    // We want explicit-leave to be final on this side; the owner
+    // can still re-invite.
+    _deleteGuestShareEnvelope(code).catch(e =>
+      console.warn('[share] envelope delete on leave failed:', e?.message)
+    );
     // Drop the absorption marker for this share so a rejoin doesn't
     // skip absorbing writes that arrived between leave and rejoin.
     try {
@@ -27126,6 +27163,98 @@ async function recoverShareKey(code) {
   } catch(e) {
     console.warn('recoverShareKey failed:', e.message);
     return null;
+  }
+}
+
+// ── Guest share envelope ────────────────────────────────────
+// A guest's persistent record of their own access to a share. The
+// share key is wrapped with the guest's data key (NOT their passphrase
+// directly — the data key is unwrapped at login time and lives only
+// in memory). Stored on the server under the guest's user-namespace.
+//
+// This is what makes share access survive: browser clears, new
+// devices, passphrase changes, sign-out-and-sign-back-in. The
+// ECDH-wrapped key from /share/ecdh-key/get is now only a one-time
+// handshake — once the guest has the share key, they immediately
+// re-wrap with their data key and store this envelope. Future
+// device-clears just refetch this envelope and unwrap with their
+// data key (which is itself recovered via passphrase + envelope).
+//
+// Trust model note: this means "anyone with the guest's passphrase"
+// can recover the share key. That's the same property already true
+// for the guest's own data, so we're not weakening the guest's
+// security posture — just unifying the recovery story for "things
+// the guest has access to."
+
+// Store the guest's share envelope. Called once after first-time
+// ECDH unwrap, and again whenever we have a fresh share key in
+// memory (rewrap after revocation, etc).
+async function _storeGuestShareEnvelope(code, shareKey) {
+  if (!_kvKey || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
+  if (!shareKey || !code) return;
+  try {
+    // Wrap the raw share key bytes with the guest's data key. We use
+    // the same kvEncrypt path as user data — AES-GCM with a random
+    // IV. The output is a base64 string we can hand to the server.
+    const raw  = await crypto.subtle.exportKey('raw', shareKey);
+    const b64  = btoa(String.fromCharCode(...new Uint8Array(raw)));
+    const env  = await kvEncrypt(_kvKey, b64);
+    const auth = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+    await postKV(`${WORKER_URL}/user/share-envelope/store`, {
+      emailHash: _kvEmailHash, ...auth, code, envelope: env,
+    });
+  } catch(e) {
+    console.warn('[share] _storeGuestShareEnvelope failed for', code, '—', e?.message);
+  }
+}
+
+// Load and unwrap the guest's share envelope. Returns a CryptoKey or
+// null. The null case is normal — first time on this share, no
+// envelope yet, fall back to ECDH path. After the first successful
+// unwrap-and-store cycle, subsequent calls succeed straight away.
+async function _loadGuestShareEnvelope(code) {
+  if (!_kvKey || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return null;
+  if (!code) return null;
+  try {
+    const auth = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+    const res  = await postKV(`${WORKER_URL}/user/share-envelope/get`, {
+      emailHash: _kvEmailHash, ...auth, code,
+    });
+    if (!res.ok) return null;
+    const { envelope } = await res.json();
+    if (!envelope) return null; // no envelope stored yet — caller falls back to ECDH
+    // Unwrap with the guest's data key
+    const b64 = await kvDecrypt(_kvKey, envelope);
+    const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    const sk  = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+    // Cache locally so subsequent in-session pushes/pulls don't need
+    // a round-trip. On next browser-clear the cache is gone but the
+    // server-side envelope persists.
+    try {
+      const stored = await _getShareKeys();
+      stored[code] = b64;
+      await _setShareKeys(stored);
+    } catch(_e) {}
+    return sk;
+  } catch(e) {
+    console.warn('[share] _loadGuestShareEnvelope failed for', code, '—', e?.message);
+    return null;
+  }
+}
+
+// Delete the guest's share envelope from the server. Called on
+// explicit leave-share, eviction by owner, or guest account
+// deletion (the prefix-scan in _deleteAllUserData also catches it
+// but explicit delete keeps things clean).
+async function _deleteGuestShareEnvelope(code) {
+  if (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken) || !code) return;
+  try {
+    const auth = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+    await postKV(`${WORKER_URL}/user/share-envelope/delete`, {
+      emailHash: _kvEmailHash, ...auth, code,
+    });
+  } catch(e) {
+    console.warn('[share] _deleteGuestShareEnvelope failed for', code, '—', e?.message);
   }
 }
 
@@ -29014,6 +29143,49 @@ async function completePendingJoin() {
     // Server returned 200 but with ok:false — means it needs auth (shouldn't happen here but guard it)
     if (data.requiresAuth) throw new Error('Authentication required — please sign in first');
 
+    // ── Fast path: try the guest's persistent share envelope first ──
+    // If pasmith984 has joined this share before from another device or
+    // browser session, the share key is wrapped under her data key and
+    // sitting on the server in her own namespace. We don't need to
+    // re-do the ECDH handshake (which depends on a device-bound
+    // keypair). Just unwrap the envelope and we're done.
+    //
+    // This is what makes the "I cleared my browser" experience seamless:
+    // login → unlock data key with passphrase → fetch envelope → unwrap
+    // share key → joined. No round-trip to the owner. No spinner. No
+    // "ask the owner to open STOCKROOM" message.
+    //
+    // Falls through to the ECDH path if there's no envelope (first-time
+    // join from any device).
+    if (_kvKey) {
+      try {
+        const cachedShareKey = await _loadGuestShareEnvelope(code);
+        if (cachedShareKey) {
+          step = 'finalising join (from cache)';
+          _shareState = { ...data, code };
+          _shareKey   = cachedShareKey;
+          saveShareState();
+          _pendingJoinCode  = null;
+          _pendingShareMeta = null;
+          localStorage.setItem('stockroom_seen', '1');
+          localStorage.setItem('stockroom_country_set', '1');
+          document.body.classList.remove('wizard-active');
+          document.getElementById('wizard').style.display = 'none';
+          applyTabPermissions();
+          updateSyncPill('syncing');
+          await kvSyncNow();
+          scheduleRender(...RENDER_REGIONS);
+          toast(`✓ Joined ${data.ownerName || 'household'}'s STOCKROOM`);
+          return;
+        }
+      } catch(envErr) {
+        // Non-fatal — fall through to the ECDH handshake which is the
+        // first-time path anyway. Log so we notice if this becomes a
+        // pattern.
+        console.warn('[share] envelope fast-path failed, falling back to ECDH:', envErr?.message);
+      }
+    }
+
     step = 'fetching wrapped share key';
     const ecdhRes = await postKV(`${WORKER_URL}/share/ecdh-key/get`, {
         guestEmailHash: _kvEmailHash,
@@ -29070,6 +29242,35 @@ async function completePendingJoin() {
       // time the owner syncs, they'll fulfil the request against our
       // current pubkey and a retry of this join will succeed.
       console.error('[share] ECDH unwrap failed:', unwrapErr);
+      // Last-ditch recovery: maybe a stored envelope from a previous
+      // successful handshake exists (the fast-path above didn't try
+      // because _kvKey was null at that moment, or the envelope only
+      // just became available). Worth one final check before giving
+      // up — saves the user the "ask the owner to come online" UX.
+      if (_kvKey) {
+        try {
+          const recovered = await _loadGuestShareEnvelope(code);
+          if (recovered) {
+            console.log('[share] ECDH unwrap failed but recovered via envelope');
+            step = 'finalising join (envelope recovery)';
+            _shareState = { ...data, code };
+            _shareKey   = recovered;
+            saveShareState();
+            _pendingJoinCode  = null;
+            _pendingShareMeta = null;
+            localStorage.setItem('stockroom_seen', '1');
+            localStorage.setItem('stockroom_country_set', '1');
+            document.body.classList.remove('wizard-active');
+            document.getElementById('wizard').style.display = 'none';
+            applyTabPermissions();
+            updateSyncPill('syncing');
+            await kvSyncNow();
+            scheduleRender(...RENDER_REGIONS);
+            toast(`✓ Joined ${data.ownerName || 'household'}'s STOCKROOM`);
+            return;
+          }
+        } catch(_e) {}
+      }
       try {
         await postKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, {
           guestEmailHash: _kvEmailHash,
@@ -29090,6 +29291,16 @@ async function completePendingJoin() {
       stored[code] = shareKeyB64;
       await _setShareKeys(stored);
     } catch(e) {}
+    // Persist the share key under the guest's own namespace, wrapped
+    // with their data key. From now on, fresh devices / browser
+    // clears can recover this share without needing the owner to
+    // come online — the only "owner online" moment is THIS first
+    // unwrap. Failure here is non-fatal (the user is still joined
+    // for this session); they'd just hit the slower ECDH path again
+    // next time, and could retry this storage on next sync.
+    _storeGuestShareEnvelope(code, shareKey).catch(e =>
+      console.warn('[share] post-join envelope store failed:', e?.message)
+    );
     step = 'finalising join';
     _shareState = { ...data, code };
     _shareKey   = shareKey;
