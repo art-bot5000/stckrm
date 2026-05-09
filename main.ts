@@ -4763,6 +4763,48 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
+  // ── Share: memberships (GUEST-side list) ───────────────
+  // Returns every share the calling user is a MEMBER of (not owner).
+  // Called on a fresh login to restore _shareState when the previous
+  // localStorage cache was wiped (browser clear, new device, sign-out
+  // and back in). Without this, the share-envelope mechanism has no
+  // way to know which envelopes to fetch — _shareState is the precondition.
+  //
+  // Returns the same shape as /share/list so the client can hydrate
+  // _shareState directly from a member entry. We don't include the
+  // members list of the share (privacy: guest A doesn't need to see
+  // guest B's emailHash). Just the metadata needed to identify the
+  // share and render the UI.
+  if (url.pathname === '/share/memberships' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      const memberships = [];
+      const entries = kv.list({ prefix: ['share'] });
+      for await (const entry of entries) {
+        if (entry.key.length !== 2) continue; // skip share_data entries
+        try {
+          const data = JSON.parse(entry.value);
+          if (data.ownerEmailHash === emailHash) continue; // they own it, not a member
+          if (!Array.isArray(data.members) || !data.members.includes(emailHash)) continue;
+          // Strip the members list — privacy. Other shape fields are
+          // already public knowledge to legitimate members (the share
+          // metadata is what /share/join returns to anyone with the code).
+          const { members, ...publicShape } = data;
+          memberships.push({ code: entry.key[1], ...publicShape });
+        } catch(e) {}
+      }
+      return json({ memberships }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
   // ── Share: join ───────────────────────────────────────
   if (url.pathname === '/share/join' && request.method === 'POST') {
     try {
