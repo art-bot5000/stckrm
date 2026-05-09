@@ -12562,7 +12562,50 @@ async function kvLogin() {
       const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
       dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
     } else {
-      throw new Error('Account is missing its encryption envelope');
+      // No envelope on the server. There are two cases:
+      //   (a) Half-formed account: /user/register succeeded but /key/store
+      //       never completed (e.g. crashed mid-signup, or hit the recent
+      //       generateRecoveryCodes regression). Heal it: derive fresh
+      //       envelope material from the passphrase the user just typed,
+      //       push to /key/store. Only safe when NO encrypted data exists
+      //       — otherwise we'd orphan data encrypted under a different key.
+      //   (b) Genuine corruption: envelope vanished but data exists. Can't
+      //       recover without the original data key — recommend recovery
+      //       codes (which are also missing in this scenario, so realistically
+      //       a fresh start is the only option).
+      let canHeal = false;
+      try {
+        const probe = await postKV(`${WORKER_URL}/data/pull`, { emailHash, verifier });
+        if (probe.ok) {
+          const probeData = await probe.json();
+          // Empty ciphertext => no data to lose => safe to heal
+          canHeal = !probeData.ciphertext;
+        }
+      } catch(_e) { /* fall through to error message */ }
+
+      if (canHeal) {
+        console.warn('[kvLogin] envelope missing but no data — healing in place');
+        const newKdfSalt   = generateKdfSalt();
+        const newWrapKey   = await derivePassphraseWrapKeyV2(passphrase, emailHash, newKdfSalt);
+        const newDataKey   = await generateDataKeyV2Extractable();
+        const newEnvelope  = await wrapDataKeyV2(newDataKey, newWrapKey);
+        const newSaltB64   = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+        const newCodes     = generateRecoveryCodes(10);
+        const newRecEnvs   = await buildRecoveryEnvelopesV2(newCodes, newDataKey, emailHash);
+        const storeRes = await postKV(`${WORKER_URL}/key/store`, {
+          emailHash, verifier, salt: newSaltB64,
+          passphraseEnvelope: newEnvelope, recoveryEnvelopes: newRecEnvs, kdfSalt: newKdfSalt,
+        });
+        if (!storeRes.ok) {
+          throw new Error('Account is in a recoverable state but the heal step failed — try again');
+        }
+        dataKey = newDataKey;
+        // Stash recovery codes so postLoginWizardRoute surfaces them on
+        // the protect-data screen — these are the user's only copy.
+        try { window._healedRecoveryCodes = newCodes; } catch(_e) {}
+      } else {
+        throw new Error('Account is missing its encryption envelope');
+      }
     }
 
     await kvStoreSession(email, emailHash, verifier, dataKey);
@@ -12571,7 +12614,11 @@ async function kvLogin() {
     persistLoginCookies(email, false);
     await _trustIfRemembered(email, emailHash, verifier, dataKey);
 
-    await postLoginWizardRoute();
+    // If we healed a half-formed account and have fresh recovery codes,
+    // route through the protect-data screen so the user actually sees them.
+    const healedCodes = window._healedRecoveryCodes || [];
+    try { delete window._healedRecoveryCodes; } catch(_e) {}
+    await postLoginWizardRoute(healedCodes);
   } catch(err) {
     if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
   } finally {
