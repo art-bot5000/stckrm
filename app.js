@@ -12990,6 +12990,12 @@ async function _enterStockroom() {
   document.getElementById('wizard').style.display = 'none';
   window.scrollTo(0, 0);
   localStorage.setItem('stockroom_seen', '1');
+  // If this user is a guest in any share but localStorage didn't carry
+  // _shareState (browser cleared, fresh device, or just signed out and
+  // back in), recover that membership from the server before the first
+  // sync runs. The share envelope mechanism then takes over and the
+  // user lands directly into their shared household.
+  try { await restoreShareFromServer(); } catch(e) { console.warn('[share] restore on enter failed:', e?.message); }
   const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
   if (stockTab) showView('stock', stockTab);
   scheduleRender(...RENDER_REGIONS);
@@ -26246,6 +26252,58 @@ async function loadShareState() {
   } catch(e) {}
 }
 
+// Restore _shareState from the server when localStorage is empty
+// (browser clear, new device, sign-out and back in). Without this,
+// the share-envelope mechanism has no idea which envelopes to fetch
+// because _shareState is the precondition that says "this user is
+// currently viewing share ABC."
+//
+// Idempotent: if _shareState is already set (loaded from localStorage),
+// this is a no-op. If the server says the user is a member of multiple
+// shares, picks the first one — multi-share-membership UI is a future
+// concern, today the model is "you're a guest in at most one share at
+// a time" mirroring _shareState's singleton shape.
+async function restoreShareFromServer() {
+  if (_shareState) return; // already restored from localStorage
+  if (!_kvEmailHash || !_kvKey || (!_kvVerifier && !_kvSessionToken)) return;
+  try {
+    const auth = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+    const res  = await postKV(`${WORKER_URL}/share/memberships`, {
+      emailHash: _kvEmailHash, ...auth,
+    });
+    if (!res.ok) return;
+    const { memberships } = await res.json();
+    if (!Array.isArray(memberships) || !memberships.length) return;
+    // Pick the first share. The share data shape from /share/memberships
+    // omits the members list (privacy), but otherwise matches what
+    // /share/join returns and what _shareState consumes.
+    const share = memberships[0];
+    // Wipe stale personal-account data from in-memory globals and IDB
+    // BEFORE setting _shareState, so the upcoming share pull populates
+    // a clean slate. Without this, items/budgets/etc. from the user's
+    // own (personal) profile that were just loaded by loadProfile()
+    // would persist alongside the shared data and appear as phantoms
+    // — including items the share considers deleted but the personal
+    // account never had a tombstone for. Concrete failure mode this
+    // fixes: "deleted items in your stockroom are back" after sign-in.
+    await _wipeGuestCachedData().catch(e =>
+      console.warn('[share] pre-restore wipe failed (continuing):', e?.message)
+    );
+    _shareState = { ...share };
+    saveShareState();
+    // Try the envelope right away so the share key is in memory before
+    // the first kvPull runs. If this fails the kvPull / kvPush hooks
+    // we already wired will retry on demand.
+    try {
+      const sk = await _loadGuestShareEnvelope(share.code);
+      if (sk) _shareKey = sk;
+    } catch(e) { console.warn('[share] envelope load on restore failed:', e?.message); }
+    console.log('[share] restored from server:', share.code, _shareKey ? '(key loaded)' : '(no envelope yet — first-time path)');
+  } catch(e) {
+    console.warn('[share] restoreShareFromServer failed:', e?.message);
+  }
+}
+
 function saveShareState() {
   try {
     if (_shareState) {
@@ -28386,6 +28444,13 @@ async function init() {
         requestAnimationFrame(() => { buildCountryGrid(); selectCountry(wizardCountry); });
       } else {
         showDataLoadingOverlay('Loading your Stockroom…');
+        // Same membership-restoration as _enterStockroom — covers the
+        // restored-session pathway where login was skipped (trusted
+        // device, cached session). Without this, signing back in to a
+        // browser-cleared device leaves _shareState null and the user
+        // sees their own (empty) account instead of the share they're
+        // a guest of.
+        try { await restoreShareFromServer(); } catch(e) { console.warn('[share] restore on init failed:', e?.message); }
         scheduleRender(...RENDER_REGIONS);
         try { await kvSyncNow(true); } catch(e) {}
         hideDataLoadingOverlay();
