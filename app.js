@@ -11402,6 +11402,23 @@ async function postKV(url, body) {
   });
 }
 
+// Read a Response body once and tolerate empty / non-JSON payloads.
+// Returns:
+//   - parsed object on a JSON body
+//   - { _raw: text } when the body is non-JSON text
+//   - null when the body is empty or unreadable
+// Why this exists: calling res.json() directly throws on empty bodies,
+// which masks the real HTTP status. Caddy returns a bodyless 405 when a
+// path falls through to file_server and the client sees only "Unexpected
+// end of JSON input" — see the May 2026 MFA outage. Use this helper in
+// any new endpoint call site that needs to inspect the response body.
+async function _readJsonSafe(res) {
+  let text = '';
+  try { text = await res.text(); } catch(_) { return null; }
+  if (!text || !text.trim()) return null;
+  try { return JSON.parse(text); } catch(_) { return { _raw: text }; }
+}
+
 
 // ── WebAuthn PRF constants ─────────────────────────────────────────────────
 // Fixed salt evaluated by the secure enclave to derive a deterministic key.
@@ -28294,7 +28311,11 @@ async function _sendNoteOtp() {
         emailHash: _kvEmailHash,
         ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
       });
-    if (!res.ok) { const d = await res.json(); errEl.textContent = d.error || 'Could not send code'; return; }
+    if (!res.ok) {
+      const d = await _readJsonSafe(res) || {};
+      errEl.textContent = d.error || `Could not send code (${res.status})`;
+      return;
+    }
     // Show OTP input
     document.getElementById('note-unlock-btn').style.display = 'none';
     document.getElementById('note-otp-section').style.display = 'flex';
@@ -28330,13 +28351,6 @@ async function resendNoteOtp() {
 
 async function _fetchAndUnlockNote(n) {
   const errEl = document.getElementById('note-lock-error');
-  // Helper — read response body once, attempt JSON parse, tolerate empty/non-JSON
-  async function _readJsonSafe(res) {
-    let text = '';
-    try { text = await res.text(); } catch(_) { return null; }
-    if (!text || !text.trim()) return null;
-    try { return JSON.parse(text); } catch(_) { return { _raw: text }; }
-  }
   try {
     if (!_kvSessionToken && !_kvVerifier) {
       errEl.textContent = 'Not signed in — please refresh and try again';
@@ -29217,12 +29231,7 @@ async function _mfaSendEmailOtp() {
   if (sendingEl) { sendingEl.textContent = 'Sending code…'; sendingEl.style.display = 'block'; }
   try {
     const res = await postKV(`${WORKER_URL}/mfa/otp/send`, { emailHash:_kvEmailHash, email: _kvEmail || settings.email || '', ..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier} });
-    // Read body as text first so empty / non-JSON error bodies (e.g. a
-    // Caddy 405 if a route handler regresses) don't crash JSON.parse and
-    // mask the real HTTP status.
-    const txt = await res.text();
-    let d = {};
-    try { d = txt ? JSON.parse(txt) : {}; } catch(_) { /* non-JSON body */ }
+    const d = await _readJsonSafe(res) || {};
     if (!res.ok) {
       if (errEl) errEl.textContent = d.error || `Could not send verification code (${res.status})`;
       if (sendingEl) sendingEl.style.display = 'none';
@@ -29251,9 +29260,7 @@ async function mfaVerifySubmit() {
 
   if (method === 'email') {
     const res = await postKV(`${WORKER_URL}/mfa/otp/verify`, { emailHash:_kvEmailHash, otp:code });
-    const txt = await res.text();
-    let d = {};
-    try { d = txt ? JSON.parse(txt) : {}; } catch(_) { /* non-JSON body */ }
+    const d = await _readJsonSafe(res) || {};
     if (!res.ok) { if(errEl) errEl.textContent = d.error || `Incorrect code (${res.status})`; return; }
   } else {
     // TOTP — find secret from any stored location
@@ -29523,11 +29530,7 @@ async function mfaSetupConfirm() {
       try {
         const res = await postKV(`${WORKER_URL}/mfa/otp/send`, { emailHash: _kvEmailHash, email: _kvEmail || settings.email || '',
             ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier } });
-        // Safe parse — see _mfaSendEmailOtp() for rationale (avoid masking
-        // real HTTP status when error body is empty/non-JSON).
-        const txt = await res.text();
-        let d = {};
-        try { d = txt ? JSON.parse(txt) : {}; } catch(_) { /* non-JSON body */ }
+        const d = await _readJsonSafe(res) || {};
         if (!res.ok) {
           if (errEl) errEl.textContent = d.error || `Could not send code — check your email address (${res.status})`;
           if (btn) { btn.disabled = false; btn.textContent = 'Send code to my email →'; }
@@ -29554,9 +29557,7 @@ async function mfaSetupConfirm() {
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Verifying…'; }
     try {
       const res = await postKV(`${WORKER_URL}/mfa/otp/verify`, { emailHash: _kvEmailHash, otp: code });
-      const txt = await res.text();
-      let d = {};
-      try { d = txt ? JSON.parse(txt) : {}; } catch(_) { /* non-JSON body */ }
+      const d = await _readJsonSafe(res) || {};
       if (!res.ok) {
         if (errEl) errEl.textContent = d.error || `Incorrect code — request a new one (${res.status})`;
         if (btn) { btn.disabled = false; btn.textContent = 'Enable email MFA ✓'; }
