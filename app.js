@@ -7857,60 +7857,6 @@ window.stockroomBilling = (function() {
   // Banner dismissal — per-session (resets on reload)
   let _bannerDismissed = false;
 
-  // ── Household Guest detection ────────────────────────────
-  // A user is a "Household Guest" if they have joined someone else's share
-  // AND have no personal data of their own (no items in any of their
-  // profiles). For these users we surface a different billing experience:
-  // no Pro/trial/Free plan card, no Refer-a-friend, just a "Household
-  // Guest" tile with a "Start personal trial" CTA that converts them to
-  // a normal Pro trial.
-  //
-  // Cached briefly because it needs an IndexedDB read (profiles) and we
-  // call it from several render paths. Refreshed when refresh() runs and
-  // when the user opens the Billing view.
-  let _hhGuestCache = { value: false, ts: 0 };
-  const HH_GUEST_TTL_MS = 30 * 1000;
-  async function _isHouseholdGuestOnly() {
-    // Must currently be joined to a share — no _shareState means owner.
-    if (!_shareState) return false;
-    const now = Date.now();
-    if ((now - _hhGuestCache.ts) < HH_GUEST_TTL_MS) return _hhGuestCache.value;
-    let hasOwnData = false;
-    try {
-      const profiles = await getProfiles();
-      // Scan every profile's items array. Guests sometimes don't even
-      // have profiles set up (signed up purely to accept a share), in
-      // which case getProfiles returns {} and the loop is a no-op.
-      for (const [, p] of Object.entries(profiles || {})) {
-        if (Array.isArray(p?.items) && p.items.some(it => !it._deletedAt)) {
-          hasOwnData = true; break;
-        }
-        // Also check grocery items, reminders, savings, notes —
-        // anything that signals personal use of the app.
-        if (Array.isArray(p?.groceryItems) && p.groceryItems.some(it => !it._deletedAt)) {
-          hasOwnData = true; break;
-        }
-        if (Array.isArray(p?.reminders) && p.reminders.some(it => !it._deletedAt)) {
-          hasOwnData = true; break;
-        }
-        if (Array.isArray(p?.notes) && p.notes.length > 0) {
-          hasOwnData = true; break;
-        }
-      }
-    } catch(_e) {
-      // On read failure, fail closed (treat as not guest-only) so we
-      // never accidentally suppress billing UI from a paying user.
-      hasOwnData = true;
-    }
-    _hhGuestCache = { value: !hasOwnData, ts: now };
-    return _hhGuestCache.value;
-  }
-
-  // Force-recompute the household-guest signal. Called when the user
-  // adds their first item, or starts a personal trial — both of which
-  // should immediately switch them out of guest-only mode.
-  function _invalidateHouseholdGuest() { _hhGuestCache = { value: false, ts: 0 }; }
-
   function _isAuthed() {
     return !!(_kvEmailHash && (_kvVerifier || _kvSessionToken));
   }
@@ -8067,62 +8013,6 @@ window.stockroomBilling = (function() {
       if (acctSec)  acctSec.style.display  = 'none';
       return;
     }
-
-    // ── Household Guest fast path ────────────────────────
-    // Users who joined a share and never created any personal data of
-    // their own get a dedicated "Household Guest" card instead of the
-    // Pro/Free/Trial flow. They have no trial clock and no billing
-    // surface. A "Start personal trial" CTA converts them into a normal
-    // Pro trial (which will then fall through to the standard branches
-    // on the next render). _isHouseholdGuestOnly() is async (IndexedDB
-    // read), so we kick it off and re-render when it resolves — the
-    // standard branches paint immediately as a fallback in case the
-    // user is not actually a household guest.
-    _isHouseholdGuestOnly().then(isHHGuest => {
-      if (!isHHGuest) return;
-      // Suppress promo + account sections — none apply to a guest.
-      if (promoSec) promoSec.style.display = 'none';
-      if (acctSec)  acctSec.style.display  = 'none';
-      // Suppress referral section visibility — handled in _renderReferralSection too.
-      const refSec = document.getElementById('billing-referral-section');
-      if (refSec) refSec.style.display = '';
-      planName.innerHTML = `<span class="billing-plan-badge free">Guest</span><br>${_escapeHtml('Household Guest')}`;
-      sub.textContent    = `You have access to ${_shareState?.ownerName || 'a household'}'s STOCKROOM as a ${_shareState?.type || 'guest'}. No subscription needed — your access stays free as long as the owner keeps you on the share.`;
-      acts.innerHTML = '';
-      const startBtn = document.createElement('button');
-      startBtn.className = 'btn btn-primary';
-      startBtn.textContent = 'Start personal trial';
-      startBtn.title = 'Create your own household and try Pro free for 14 days';
-      startBtn.onclick = () => startPersonalTrialFromGuest();
-      acts.appendChild(startBtn);
-      if (features) {
-        // Show what's included with the household-guest tier — emphasise
-        // it's framed by the owner's permissions, not by Free-plan limits.
-        const sections = ['stockroom','groceries','reminders','savings','report','budget'];
-        const grants   = [];
-        for (const sec of sections) {
-          const p = (_shareState?.households || {});
-          // Take the broadest perm across households — best-case display.
-          let best = 'none';
-          for (const hKey of Object.keys(p)) {
-            const v = p[hKey]?.[sec] || 'none';
-            if (v === 'rw') { best = 'rw'; break; }
-            if (v === 'r' && best === 'none') best = 'r';
-          }
-          if (best !== 'none') grants.push({ feat: SECTION_LABELS[sec] || sec, on: true, desc: best === 'rw' ? 'Edit access' : 'View access' });
-          else                 grants.push({ feat: SECTION_LABELS[sec] || sec, on: false });
-        }
-        // Add share-management perm + a note about Refer-a-friend
-        const mgmt = _shareState?.shareManagement || 'none';
-        grants.push({ feat:'Share management', on: mgmt !== 'none', desc: mgmt === 'edit' ? 'Edit access' : (mgmt === 'view' ? 'View access' : null) });
-        grants.push({ feat:'Refer a friend',   on: false, desc: 'Available with a paid plan' });
-        features.innerHTML = grants.map(it => `
-          <div class="billing-feature ${it.on ? '' : 'locked'}">
-            <svg class="icon" aria-hidden="true"><use href="#${it.on ? 'i-circle-check' : 'i-lock'}"></use></svg>
-            <div>${_escapeHtml(it.feat)}${it.desc ? `<small>${_escapeHtml(it.desc)}</small>` : ''}</div>
-          </div>`).join('');
-      }
-    }).catch(_e => { /* fall back to standard render below */ });
 
     // Plan name + subtitle + badge
     let badge, badgeClass, name, subtitle, ctas;
@@ -8355,31 +8245,6 @@ window.stockroomBilling = (function() {
   function _renderReferralSection() {
     const sec = document.getElementById('billing-referral-section');
     if (!sec) return;
-
-    // Household Guest path: show a single notice card explaining that
-    // referrals require a paid plan, with no "code" or stats UI. We fire
-    // the async check and re-render once it resolves, but render a sane
-    // default first so the section never flashes "Loading…" then locks.
-    _isHouseholdGuestOnly().then(isHHGuest => {
-      if (!isHHGuest) return;
-      sec.style.display = '';
-      const dest = document.getElementById('billing-referral-card');
-      if (!dest) return;
-      dest.innerHTML = `
-        <div class="acc-sec-row acc-sec-row-block" style="background:color-mix(in srgb,var(--accent) 6%,var(--bg));border-radius:8px;padding:14px">
-          <div class="acc-sec-label" style="width:100%">
-            <div class="acc-sec-h" style="display:flex;align-items:center;gap:8px">
-              <svg class="icon icon-sm" aria-hidden="true" style="color:var(--accent)"><use href="#i-lock"></use></svg>
-              Refer a friend is for paying members
-            </div>
-            <div class="acc-sec-p">You're using STOCKROOM as a household guest, which doesn't include referrals. Start a personal trial and become a paying member to share your code with friends.</div>
-          </div>
-          <div style="width:100%;margin-top:12px">
-            <button class="btn btn-primary" onclick="startPersonalTrialFromGuest()">Start personal trial</button>
-          </div>
-        </div>`;
-    }).catch(_e => {});
-
     if (!_referralState) {
       sec.style.display = '';
       const dest = document.getElementById('billing-referral-card');
@@ -8551,8 +8416,6 @@ window.stockroomBilling = (function() {
     getReferralState,
     copyReferralCode,
     shareReferralLink,
-    isHouseholdGuestOnly: _isHouseholdGuestOnly,
-    invalidateHouseholdGuest: _invalidateHouseholdGuest,
     _renderBillingPage,
     _renderReferralSection,
   };
@@ -8566,41 +8429,6 @@ function resumeSubscription()      { return stockroomBilling.resumeSubscription(
 function dismissBillingBanner()    { return stockroomBilling.dismissBanner(); }
 function copyReferralCode()        { return stockroomBilling.copyReferralCode(); }
 function shareReferralLink()       { return stockroomBilling.shareReferralLink(); }
-
-// Convert a Household Guest into a personal-trial user. The flow:
-// 1. Prompt them to name their first personal household.
-// 2. Create that household via the existing addProfile machinery.
-// 3. Switch to the new household so they're no longer viewing shared data.
-// 4. Invalidate the household-guest cache and refresh the billing view —
-//    /billing/status will report 'trial' and the standard branches take over.
-//
-// We deliberately do NOT call leaveShare() — the user keeps their share
-// access and gains a personal household alongside it.
-async function startPersonalTrialFromGuest() {
-  const name = (prompt('Name your personal household (you can rename later):', 'My Home') || '').trim();
-  if (!name) return;
-  // Reuse addProfile by writing the new name into the hidden input it reads.
-  const nameEl = document.getElementById('new-profile-name');
-  const previousVal = nameEl?.value || '';
-  if (nameEl) nameEl.value = name;
-  try {
-    await addProfile();
-  } catch(e) { console.warn('addProfile failed:', e.message); }
-  finally {
-    if (nameEl) nameEl.value = previousVal;
-  }
-  // Switch to the newly-created profile. addProfile auto-switches if it
-  // creates one, but we re-render to be safe.
-  if (typeof renderSettingsHouseholdList === 'function') renderSettingsHouseholdList();
-  // Invalidate guest cache + refresh billing so the standard tier UI paints.
-  if (window.stockroomBilling) {
-    stockroomBilling.invalidateHouseholdGuest();
-    await stockroomBilling.refresh(true).catch(() => {});
-    stockroomBilling._renderBillingPage();
-    stockroomBilling._renderReferralSection();
-  }
-  toast('Personal household created — your free trial has started ✓');
-}
 
 // ── Mobile menu (burger) ──
 // On mobile we hide the secondary nav items (Report/Billing/Settings/
@@ -11654,6 +11482,21 @@ async function _recoverySendOtp(emailHash) {
 
 // ── Crypto helpers (client-side) ───────────
 // ── Crypto version config ─────────────────────────────────
+// Must match CRYPTO_V2_SWITCHOVER in main.ts
+const CRYPTO_V2_SWITCHOVER = '2026-05-01';
+
+// v1 key derivation — kept for legacy login and migration decryption only
+async function kvDeriveKey(email, passphrase) {
+  const raw  = new TextEncoder().encode(email.toLowerCase().trim() + ':' + passphrase);
+  const base = await crypto.subtle.importKey('raw', raw, 'PBKDF2', false, ['deriveKey']);
+  const salt = new TextEncoder().encode('stockroom-kv-v1-' + email.toLowerCase().trim());
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 },
+    true, ['encrypt', 'decrypt']
+  );
+}
+
 // ── v2 crypto primitives ───────────────────────────────────
 // 600k PBKDF2 iterations, server-stored random KDF salt, AES-KW wrapping.
 
@@ -11708,26 +11551,6 @@ async function buildRecoveryEnvelopesV2(codes, dataKey, emailHash) {
     envelopes.push(JSON.stringify({ envelope, codeHash, version: 'v2' }));
   }
   return envelopes;
-}
-
-// ─── Recovery-code utilities ────────────────────────────────────────────
-// Format-only helpers — no crypto-version branching here. The same 16-char
-// human-readable code is used by both signup/recovery flows; v2 differs
-// only in how the resulting wrap key is derived (deriveRecoveryWrapKeyV2),
-// not in code generation or hashing.
-
-function generateRecoveryCodes(count = 10) {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  return Array.from({ length: count }, () => {
-    const bytes = crypto.getRandomValues(new Uint8Array(16));
-    return [0,4,8,12].map(s => Array.from(bytes.slice(s,s+4)).map(b => chars[b % chars.length]).join('')).join('-');
-  });
-}
-
-async function hashRecoveryCode(code, emailHash) {
-  const encoded = new TextEncoder().encode(code.replace(/-/g,'').toUpperCase() + ':' + emailHash);
-  const hash    = await crypto.subtle.digest('SHA-256', encoded);
-  return btoa(String.fromCharCode(...new Uint8Array(hash)));
 }
 
 // ─── Compression helpers ────────────────────────────────────────────────
@@ -11938,109 +11761,36 @@ async function ensureEcdhKeypair(emailHash) {
   if (!emailHash) return;
   try {
     let privateKey = await loadEcdhPrivateKey(emailHash);
-    let needsRegenerate = false;
+    let needsUpload = false;
 
     if (!privateKey) {
       // First time on this device — generate
       const kp = await generateEcdhKeypair();
       await storeEcdhPrivateKey(emailHash, kp.privateKey);
+      privateKey = kp.privateKey;
+      // Upload public key
       const pubJwk = await crypto.subtle.exportKey('jwk', kp.publicKey);
       await postKV(`${WORKER_URL}/user/ecdh-pubkey/store`, { emailHash, publicKeyJwk: pubJwk });
       console.log('ECDH keypair generated and public key uploaded');
       return;
     }
 
-    // Private key exists locally — verify the SERVER has the matching
-    // public key, not some other one from a previous account life or
-    // a different device. The JWK format includes `x` and `y` for the
-    // public coords even on a private-key JWK, so we can compare
-    // without re-exporting via Web Crypto. A mismatch here means our
-    // local private key is orphaned (its pair-mate isn't on the
-    // server, so wrapped keys created by other parties using the
-    // server's pubkey can't be unwrapped by us). Without this check,
-    // a stale keypair persists silently and every share-join fails
-    // with the WebCrypto OperationError that surfaces as "Unknown
-    // error" in toasts.
-    const localJwkStr = await _getEcdhPrivateJwkString(emailHash);
-    let localPub = null;
-    if (localJwkStr) {
-      try {
-        const j = JSON.parse(localJwkStr);
-        if (j && j.x && j.y) localPub = { x: j.x, y: j.y };
-      } catch(_e) {}
-    }
+    // Private key exists locally — check server has our public key
     const check = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash });
-    if (!check.ok) {
-      // Server has no pubkey for us — re-upload by regenerating (we can't
-      // re-export from the imported private key once it's been imported
-      // as non-extractable, so regen is the simplest path).
-      needsRegenerate = true;
-    } else {
-      try {
-        const { publicKeyJwk: serverPub } = await check.json();
-        if (!serverPub || !serverPub.x || !serverPub.y) {
-          needsRegenerate = true;
-        } else if (!localPub || serverPub.x !== localPub.x || serverPub.y !== localPub.y) {
-          // Mismatch — the local private key doesn't pair with the
-          // server's public key. Throw away local, regenerate, upload.
-          console.warn('[ecdh] local/server pubkey mismatch — regenerating');
-          needsRegenerate = true;
-        }
-      } catch(e) { console.warn('[ecdh] could not parse server pubkey:', e.message); needsRegenerate = true; }
-    }
+    if (!check.ok) needsUpload = true;
 
-    if (needsRegenerate) {
+    if (needsUpload) {
+      // Re-derive public key from stored private key isn't possible with Web Crypto
+      // (private key is non-extractable after import). Regenerate the pair.
       const kp = await generateEcdhKeypair();
       await storeEcdhPrivateKey(emailHash, kp.privateKey);
       const pubJwk = await crypto.subtle.exportKey('jwk', kp.publicKey);
       await postKV(`${WORKER_URL}/user/ecdh-pubkey/store`, { emailHash, publicKeyJwk: pubJwk });
-      console.log('ECDH keypair regenerated and public key re-uploaded');
-      // Any wrapped share keys on the server were wrapped against the
-      // OLD public key — they can't be unwrapped by the new private
-      // key. Request a rewrap from each share owner so they re-wrap
-      // against the freshly-uploaded pubkey on their next sync.
-      await _requestRewrapForActiveShare();
+      console.log('ECDH public key re-uploaded');
     }
   } catch(e) {
     console.warn('ensureEcdhKeypair failed (non-fatal):', e.message);
   }
-}
-
-// Load the raw JWK string for the locally-stored ECDH private key.
-// Used by ensureEcdhKeypair for pubkey comparison without going
-// through importKey (which would strip the extractable flag we need
-// for export). Returns null if no key is stored.
-async function _getEcdhPrivateJwkString(emailHash) {
-  try {
-    const db = await openEcdhDb();
-    return await new Promise((resolve, reject) => {
-      const tx  = db.transaction(ECDH_STORE_NAME, 'readonly');
-      const req = tx.objectStore(ECDH_STORE_NAME).get(emailHash);
-      req.onsuccess = () => resolve(req.result ?? null);
-      req.onerror   = () => reject(req.error);
-    });
-  } catch(_e) { return null; }
-}
-
-// After regenerating our ECDH keypair, any wrapped share keys stored
-// for us on the server are useless — they were wrapped against the
-// previous pubkey. Walk the user's joined share (if any) and post a
-// rewrap request so the owner re-wraps against the new pubkey on
-// their next sync. Best-effort — failures are logged but don't
-// surface to the user; they'll discover the missing rewrap when they
-// next try to read shared data and the OperationError handler in
-// completePendingJoin / kvPull surfaces the "ask owner to refresh"
-// message.
-async function _requestRewrapForActiveShare() {
-  if (!_shareState || !_shareState.code || !_kvEmailHash || !WORKER_URL) return;
-  try {
-    await postKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, {
-      guestEmailHash: _kvEmailHash,
-      ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
-      code: _shareState.code,
-    });
-    console.log('[ecdh] rewrap requested for', _shareState.code);
-  } catch(e) { console.warn('[ecdh] could not post rewrap request:', e.message); }
 }
 
 
@@ -12457,8 +12207,11 @@ async function kvRegister() {
   try {
     const emailHash = await kvHashEmail(email);
     const verifier  = await kvMakeVerifier(passphrase, emailHash);
+    // Always use v2 for new registrations — the switchover date only controls migration of
+    // existing v1 accounts, not the crypto version chosen for brand-new ones.
+    const useV2     = true;
 
-    // Register — send plaintext email so server can address operational mail.
+    // Register — send plaintext email so server can send migration notifications
     // Include referral code if one was captured at app load (from ?ref=) or
     // typed into the optional field on the signup form.
     const referralCode = (window._pendingReferralCode || document.getElementById('kv-ref')?.value || '').trim().toUpperCase();
@@ -12466,22 +12219,33 @@ async function kvRegister() {
     const data = await res.json();
     if (res.status === 409) { showDuplicateAccountScreen(email); return; }
     if (!res.ok) throw new Error(data.error || 'Registration failed');
+    // If referral was applied, surface a friendly toast after sign-in completes
     if (data.referralApplied) {
       window._referralAppliedAtSignup = true;
     }
 
-    // Build v2 envelope material: random data key, passphrase-wrapped envelope,
-    // recovery-code envelopes for offline restore.
-    const kdfSalt            = generateKdfSalt();
-    const wrapKey            = await derivePassphraseWrapKeyV2(passphrase, emailHash, kdfSalt);
-    const dataKey            = await generateDataKeyV2Extractable();
-    const passphraseEnvelope = await wrapDataKeyV2(dataKey, wrapKey);
-    const saltB64            = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
-    const recoveryCodes      = generateRecoveryCodes(10);
-    const recoveryEnvelopes  = await buildRecoveryEnvelopesV2(recoveryCodes, dataKey, emailHash);
+    let dataKey, passphraseEnvelope, saltB64, kdfSalt, recoveryCodes, recoveryEnvelopes;
+
+    if (useV2) {
+      kdfSalt            = generateKdfSalt();
+      const wrapKey      = await derivePassphraseWrapKeyV2(passphrase, emailHash, kdfSalt);
+      dataKey            = await generateDataKeyV2Extractable();
+      passphraseEnvelope = await wrapDataKeyV2(dataKey, wrapKey);
+      saltB64            = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+      recoveryCodes      = generateRecoveryCodes(10);
+      recoveryEnvelopes  = await buildRecoveryEnvelopesV2(recoveryCodes, dataKey, emailHash);
+    } else {
+      dataKey            = await generateDataKey();
+      const wrapped      = await derivePassphraseWrapKey(passphrase, emailHash, null);
+      passphraseEnvelope = await wrapDataKey(dataKey, wrapped.wrapKey);
+      saltB64            = wrapped.saltB64;
+      recoveryCodes      = generateRecoveryCodes(10);
+      recoveryEnvelopes  = await buildRecoveryEnvelopes(recoveryCodes, dataKey, emailHash);
+    }
 
     const storeRes = await postKV(`${WORKER_URL}/key/store`, {
-        emailHash, verifier, salt: saltB64, passphraseEnvelope, recoveryEnvelopes, kdfSalt,
+        emailHash, verifier, salt: saltB64, passphraseEnvelope, recoveryEnvelopes,
+        ...(useV2 ? { kdfSalt } : {}),
       });
     if (!storeRes.ok) throw new Error('Could not store key envelopes — try again');
 
@@ -12553,59 +12317,21 @@ async function kvLogin() {
     }
     if (!res.ok) throw new Error(data.error || 'Sign-in failed');
 
-    // Fetch key envelope and unwrap with passphrase
+    // Fetch key envelope — response carries cryptoVersion, kdfSalt, migrationDue
     let dataKey;
     const keyRes  = await postKV(`${WORKER_URL}/key/get`, { emailHash, verifier });
     const keyData = await keyRes.json();
 
-    if (keyRes.ok && keyData.envelope && keyData.kdfSalt) {
-      const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
-      dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
-    } else {
-      // No envelope on the server. There are two cases:
-      //   (a) Half-formed account: /user/register succeeded but /key/store
-      //       never completed (e.g. crashed mid-signup, or hit the recent
-      //       generateRecoveryCodes regression). Heal it: derive fresh
-      //       envelope material from the passphrase the user just typed,
-      //       push to /key/store. Only safe when NO encrypted data exists
-      //       — otherwise we'd orphan data encrypted under a different key.
-      //   (b) Genuine corruption: envelope vanished but data exists. Can't
-      //       recover without the original data key — recommend recovery
-      //       codes (which are also missing in this scenario, so realistically
-      //       a fresh start is the only option).
-      let canHeal = false;
-      try {
-        const probe = await postKV(`${WORKER_URL}/data/pull`, { emailHash, verifier });
-        if (probe.ok) {
-          const probeData = await probe.json();
-          // Empty ciphertext => no data to lose => safe to heal
-          canHeal = !probeData.ciphertext;
-        }
-      } catch(_e) { /* fall through to error message */ }
-
-      if (canHeal) {
-        console.warn('[kvLogin] envelope missing but no data — healing in place');
-        const newKdfSalt   = generateKdfSalt();
-        const newWrapKey   = await derivePassphraseWrapKeyV2(passphrase, emailHash, newKdfSalt);
-        const newDataKey   = await generateDataKeyV2Extractable();
-        const newEnvelope  = await wrapDataKeyV2(newDataKey, newWrapKey);
-        const newSaltB64   = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
-        const newCodes     = generateRecoveryCodes(10);
-        const newRecEnvs   = await buildRecoveryEnvelopesV2(newCodes, newDataKey, emailHash);
-        const storeRes = await postKV(`${WORKER_URL}/key/store`, {
-          emailHash, verifier, salt: newSaltB64,
-          passphraseEnvelope: newEnvelope, recoveryEnvelopes: newRecEnvs, kdfSalt: newKdfSalt,
-        });
-        if (!storeRes.ok) {
-          throw new Error('Account is in a recoverable state but the heal step failed — try again');
-        }
-        dataKey = newDataKey;
-        // Stash recovery codes so postLoginWizardRoute surfaces them on
-        // the protect-data screen — these are the user's only copy.
-        try { window._healedRecoveryCodes = newCodes; } catch(_e) {}
+    if (keyRes.ok && !keyData.legacy && keyData.envelope) {
+      if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
+        const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
+        dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
       } else {
-        throw new Error('Account is missing its encryption envelope');
+        const { wrapKey } = await derivePassphraseWrapKey(passphrase, emailHash, keyData.salt);
+        dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
       }
+    } else {
+      dataKey = await kvDeriveKey(email, passphrase);
     }
 
     await kvStoreSession(email, emailHash, verifier, dataKey);
@@ -12614,11 +12340,12 @@ async function kvLogin() {
     persistLoginCookies(email, false);
     await _trustIfRemembered(email, emailHash, verifier, dataKey);
 
-    // If we healed a half-formed account and have fresh recovery codes,
-    // route through the protect-data screen so the user actually sees them.
-    const healedCodes = window._healedRecoveryCodes || [];
-    try { delete window._healedRecoveryCodes; } catch(_e) {}
-    await postLoginWizardRoute(healedCodes);
+    // Trigger v1→v2 migration if server says it's due
+    if (keyData.migrationDue) {
+      await runCryptoMigration(email, emailHash, verifier, passphrase, dataKey);
+      return;
+    }
+    await postLoginWizardRoute();
   } catch(err) {
     if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
   } finally {
@@ -12706,15 +12433,24 @@ async function _completePendingUnverifiedLogin() {
     const keyRes  = await postKV(`${WORKER_URL}/key/get`, { emailHash, verifier });
     const keyData = await keyRes.json();
     let dataKey;
-    if (keyRes.ok && keyData.envelope && keyData.kdfSalt) {
-      const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
-      dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+    if (keyRes.ok && !keyData.legacy && keyData.envelope) {
+      if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
+        const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
+        dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+      } else {
+        const { wrapKey } = await derivePassphraseWrapKey(passphrase, emailHash, keyData.salt);
+        dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
+      }
     } else {
-      throw new Error('Account is missing its encryption envelope');
+      dataKey = await kvDeriveKey(email, passphrase);
     }
     await kvStoreSession(email, emailHash, verifier, dataKey);
     persistLoginCookies(email, false);
     await _trustIfRemembered(email, emailHash, verifier, dataKey);
+    if (keyData.migrationDue) {
+      await runCryptoMigration(email, emailHash, verifier, passphrase, dataKey);
+      return;
+    }
     await postLoginWizardRoute();
   } catch (e) {
     toast('Sign-in failed after verification — please try again');
@@ -12932,9 +12668,14 @@ async function reauthWithPassphrase() {
       try {
         const keyRes  = await postKV(`${WORKER_URL}/key/get`, { emailHash: _kvEmailHash, verifier });
         const keyData = await keyRes.json();
-        if (keyRes.ok && keyData.envelope && keyData.kdfSalt) {
-          const wrapKey = await derivePassphraseWrapKeyV2(pass, _kvEmailHash, keyData.kdfSalt);
-          _kvKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+        if (keyRes.ok && keyData.envelope) {
+          if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
+            const wrapKey = await derivePassphraseWrapKeyV2(pass, _kvEmailHash, keyData.kdfSalt);
+            _kvKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+          } else if (keyData.salt) {
+            const { wrapKey } = await derivePassphraseWrapKey(pass, _kvEmailHash, keyData.salt);
+            _kvKey = await unwrapDataKey(keyData.envelope, wrapKey);
+          }
           if (_kvKey) {
             // Cache it
             const exported = await crypto.subtle.exportKey('raw', _kvKey);
@@ -13057,12 +12798,6 @@ async function _enterStockroom() {
   document.getElementById('wizard').style.display = 'none';
   window.scrollTo(0, 0);
   localStorage.setItem('stockroom_seen', '1');
-  // If this user is a guest in any share but localStorage didn't carry
-  // _shareState (browser cleared, fresh device, or just signed out and
-  // back in), recover that membership from the server before the first
-  // sync runs. The share envelope mechanism then takes over and the
-  // user lands directly into their shared household.
-  try { await restoreShareFromServer(); } catch(e) { console.warn('[share] restore on enter failed:', e?.message); }
   const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
   if (stockTab) showView('stock', stockTab);
   scheduleRender(...RENDER_REGIONS);
@@ -13332,8 +13067,8 @@ async function recoveryStepCode() {
     const res = await postKV(`${WORKER_URL}/key/recover`, { emailHash, codeHash });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Invalid recovery code');
-    const wrapKey = await deriveRecoveryWrapKeyV2(code, emailHash);
-    const dataKey = await unwrapDataKeyV2(data.envelope, wrapKey, true);
+    const wrapKey = await deriveRecoveryWrapKey(code, emailHash);
+    const dataKey = await unwrapDataKey(data.envelope, wrapKey);
     _recoveryEmailHash = emailHash;
     _recoveryToken     = data.recoveryToken;
     _recoveryDataKey   = dataKey;
@@ -13406,24 +13141,15 @@ async function completeRecovery() {
   }
   if (btn) { btn.textContent = '⏳ Resetting…'; btn.disabled = true; }
   try {
-    const newKdfSalt   = generateKdfSalt();
-    const wrapKey      = await derivePassphraseWrapKeyV2(newPass, _recoveryEmailHash, newKdfSalt);
-    const saltB64      = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
-    const newVerifier  = await kvMakeVerifier(newPass, _recoveryEmailHash);
-    const newEnvelope  = await wrapDataKeyV2(_recoveryDataKey, wrapKey);
-    const res = await postKV(`${WORKER_URL}/recovery/reset`, {
-      emailHash: _recoveryEmailHash,
-      recoveryToken: _recoveryToken,
-      newVerifier,
-      newSalt: saltB64,
-      newEnvelope,
-      newKdfSalt,
-    });
+    const { wrapKey, saltB64 } = await derivePassphraseWrapKey(newPass, _recoveryEmailHash, null);
+    const newVerifier          = await kvMakeVerifier(newPass, _recoveryEmailHash);
+    const newEnvelope          = await wrapDataKey(_recoveryDataKey, wrapKey);
+    const res = await postKV(`${WORKER_URL}/recovery/reset`, { emailHash: _recoveryEmailHash, recoveryToken: _recoveryToken, newVerifier, newSalt: saltB64, newEnvelope });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Reset failed');
     await kvStoreSession(_recoveryEmail, _recoveryEmailHash, newVerifier, _recoveryDataKey);
     const newCodes     = generateRecoveryCodes(10);
-    const newEnvelopes = await buildRecoveryEnvelopesV2(newCodes, _recoveryDataKey, _recoveryEmailHash);
+    const newEnvelopes = await buildRecoveryEnvelopes(newCodes, _recoveryDataKey, _recoveryEmailHash);
     await postKV(`${WORKER_URL}/key/update-recovery`, { emailHash: _recoveryEmailHash, verifier: newVerifier, recoveryEnvelopes: newEnvelopes });
     _recoveryEmail = _recoveryEmailHash = _recoveryToken = '';
     _recoveryDataKey = null;
@@ -13549,18 +13275,24 @@ async function dismissDecryptErrorAndReauth() {
       const keyRes  = await postKV(`${WORKER_URL}/key/get`, authBody);
       const keyData = await keyRes.json();
       if (keyRes.status === 401) { toast('Incorrect passphrase — try again'); showDecryptErrorBanner(); return; }
-      if (keyRes.ok && keyData.envelope && keyData.kdfSalt) {
+      if (keyRes.ok && !keyData.legacy && keyData.envelope) {
+        // Try v2 unwrap first, fall back to v1
         try {
-          const wrapKey = await derivePassphraseWrapKeyV2(passphrase, _kvEmailHash, keyData.kdfSalt);
-          dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+          if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
+            const wrapKey = await derivePassphraseWrapKeyV2(passphrase, _kvEmailHash, keyData.kdfSalt);
+            dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+          } else {
+            const { wrapKey } = await derivePassphraseWrapKey(passphrase, _kvEmailHash, keyData.salt);
+            dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
+          }
         } catch(unwrapErr) {
           console.warn('Key unwrap failed:', unwrapErr.message);
         }
       }
     } catch(e) { console.warn('Key fetch failed:', e.message); }
     if (!dataKey) {
-      toast('Could not unlock — your envelope may be corrupted. Try recovery.');
-      return;
+      // Last resort: v1 derive (legacy accounts only)
+      dataKey = await kvDeriveKey(_kvEmail, passphrase);
     }
     _kvKey = dataKey;
     // Re-cache as fresh 4-hour session
@@ -13581,6 +13313,123 @@ async function dismissDecryptErrorAndReauth() {
   }
 }
 
+// ── Crypto v1 → v2 migration ──────────────────────────────
+// Triggered on login when server reports migrationDue = true.
+// The user is already signed in with their v1 key in memory.
+// We re-encrypt the server ciphertext with a fresh v2 key and push.
+async function runCryptoMigration(email, emailHash, verifier, passphrase, v1DataKey) {
+  try {
+    // Show a non-dismissible progress overlay
+    const overlay = document.createElement('div');
+    overlay.id = 'crypto-migration-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:10000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:#fff;font-family:var(--sans)';
+    overlay.innerHTML = `
+      <div style="color:var(--accent)"><svg aria-hidden="true" style="width:40px;height:40px"><use href="#i-lock"></use></svg></div>
+      <div style="font-size:18px;font-weight:700">Upgrading your encryption</div>
+      <div id="crypto-migration-status" style="font-size:13px;color:rgba(255,255,255,0.7);text-align:center;max-width:300px;line-height:1.6">
+        Fetching your data…
+      </div>
+      <div style="width:200px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;overflow:hidden">
+        <div id="crypto-migration-bar" style="height:100%;width:0%;background:var(--accent,#e8a838);border-radius:2px;transition:width 0.4s"></div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const setStatus = (msg, pct) => {
+      const s = document.getElementById('crypto-migration-status');
+      const b = document.getElementById('crypto-migration-bar');
+      if (s) s.textContent = msg;
+      if (b) b.style.width = pct + '%';
+    };
+
+    // 1. Pull current (v1) ciphertext from server
+    setStatus('Fetching your data…', 10);
+    const pullRes = await postKV(`${WORKER_URL}/data/pull`, { emailHash, verifier });
+    if (!pullRes.ok) throw new Error('Could not fetch data for migration');
+    const { ciphertext: v1Ciphertext } = await pullRes.json();
+
+    // 2. Decrypt with v1 key
+    setStatus('Decrypting with current key…', 25);
+    let plaintext;
+    if (v1Ciphertext) {
+      plaintext = await kvDecrypt(v1DataKey, v1Ciphertext);
+    }
+
+    // 3. Generate fresh v2 key material
+    setStatus('Generating new encryption key…', 40);
+    const kdfSalt         = generateKdfSalt();
+    const newVerifier     = verifier; // passphrase unchanged during migration
+    const wrapKey         = await derivePassphraseWrapKeyV2(passphrase, emailHash, kdfSalt);
+    const v2DataKey       = await generateDataKeyV2Extractable();
+    const passphraseEnv   = await wrapDataKeyV2(v2DataKey, wrapKey);
+    const saltB64         = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+
+    // 4. Re-encrypt data with v2 key
+    setStatus('Re-encrypting your data…', 55);
+    const v2Ciphertext = plaintext ? await kvEncrypt(v2DataKey, plaintext) : null;
+
+    // 5. Generate fresh recovery envelopes with v2
+    setStatus('Updating recovery codes…', 70);
+    const recoveryCodes     = generateRecoveryCodes(10);
+    const recoveryEnvelopes = await buildRecoveryEnvelopesV2(recoveryCodes, v2DataKey, emailHash);
+
+    // 6. Push to server — atomically archives v1 and writes v2
+    setStatus('Saving to server…', 85);
+    const migrateRes = await postKV(`${WORKER_URL}/crypto/migrate`, {
+        emailHash,
+        verifier,
+        newVerifier,
+        newSalt:              saltB64,
+        newEnvelope:          passphraseEnv,
+        newKdfSalt:           kdfSalt,
+        newRecoveryEnvelopes: recoveryEnvelopes,
+        ciphertext:           v2Ciphertext,
+      });
+    if (!migrateRes.ok) {
+      const d = await migrateRes.json().catch(() => ({}));
+      throw new Error(d.error || 'Migration failed — your data is unchanged');
+    }
+
+    // 7. Update local session with v2 key
+    setStatus('Done! Finishing up…', 95);
+    _kvKey = v2DataKey;
+    await kvStoreSession(email, emailHash, verifier, v2DataKey);
+
+    // 8. Re-backup all share keys encrypted with the new v2 data key.
+    // The old backups were encrypted with the v1 key and are now unreadable.
+    // We also re-push shared data so guests get a fresh copy under the new owner key.
+    if (_shareTargets?.length) {
+      setStatus('Re-encrypting share keys…', 97);
+      for (const target of _shareTargets) {
+        try {
+          // Recover the share key — it may still be in localStorage cache from this session
+          const sk = await recoverShareKeyWithOldKey(target.code, v1DataKey);
+          if (sk) {
+            // Back up with new v2 key
+            await backupShareKey(target.code, sk);
+            // Re-push shared data (owner now has v2 key in _kvKey)
+            await pushSharedData(target.code, sk);
+          } else {
+            console.warn('Migration: could not recover share key for', target.code, '— share backup skipped');
+          }
+        } catch(e) {
+          console.warn('Migration: share key re-backup failed for', target.code, e.message);
+        }
+      }
+    }
+
+    overlay.remove();
+
+    // Show recovery codes — user must save new v2 codes
+    showProtectDataScreen(recoveryCodes, true /* isMigration */);
+
+  } catch(err) {
+    document.getElementById('crypto-migration-overlay')?.remove();
+    console.error('Migration failed:', err);
+    // Non-fatal — user can still use the app on v1; migration will retry next login
+    toast('Encryption upgrade failed — ' + err.message + '. Will retry next sign-in.');
+    await postLoginWizardRoute();
+  }
+}
 
 // ── Sync pill 5-tap debug trigger ─────────────────────────
 let _syncPillTaps = 0;
@@ -13623,7 +13472,7 @@ async function showMobileDiag() {
     try {
       const r = await postKV(`${WORKER_URL}/key/get`, { emailHash: _kvEmailHash, verifier: _kvVerifier });
       const d = await r.json();
-      lines.push(`key/get: ${r.status} env=${!!d.envelope} kdf=${!!d.kdfSalt}`);
+      lines.push(`key/get: ${r.status} cv=${d.cryptoVersion||'?'} env=${!!d.envelope} kdf=${!!d.kdfSalt} mig=${d.migrationDue}`);
     } catch(e) { lines.push(`key/get error: ${e.message}`); }
 
     try {
@@ -13728,17 +13577,22 @@ async function _getKeyViaPassphrase(emailHash, sessionToken, credentialId, errEl
     }
 
     let dataKey = null;
-    if (keyRes.ok && keyData.envelope && keyData.kdfSalt) {
+    if (keyRes.ok && !keyData.legacy && keyData.envelope) {
       try {
-        const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
-        dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+        if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
+          const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
+          dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+        } else {
+          const { wrapKey } = await derivePassphraseWrapKey(passphrase, emailHash, keyData.salt);
+          dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
+        }
       } catch(e) {
         if (errEl) { errEl.textContent = 'Incorrect passphrase — try again'; errEl.style.display = 'block'; }
         return null;
       }
     } else {
-      if (errEl) { errEl.textContent = 'Account is missing its encryption envelope'; errEl.style.display = 'block'; }
-      return null;
+      // Legacy: derive from passphrase directly
+      dataKey = await kvDeriveKey(_kvEmail || '', passphrase);
     }
 
     if (!dataKey) return null;
@@ -14004,7 +13858,7 @@ async function _doGenerateNewRecoveryCodes() {
   if (!confirm('Generate 10 new recovery codes?\n\nThis will invalidate all your existing recovery codes.')) return;
   try {
     const newCodes     = generateRecoveryCodes(10);
-    const newEnvelopes = await buildRecoveryEnvelopesV2(newCodes, _kvKey, _kvEmailHash);
+    const newEnvelopes = await buildRecoveryEnvelopes(newCodes, _kvKey, _kvEmailHash);
     const body = _kvSessionToken
       ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken, recoveryEnvelopes: newEnvelopes }
       : { emailHash: _kvEmailHash, verifier: _kvVerifier, recoveryEnvelopes: newEnvelopes };
@@ -14142,6 +13996,76 @@ async function initPasskeyUI() {
 }
 // ── Key Envelope System ───────────────────────────────────
 // DATA KEY = random 256-bit AES key (encrypts all user data)
+// Wrapped by passphrase key, recovery code keys, passkey sessions.
+
+async function generateDataKey() {
+  return crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+}
+
+async function derivePassphraseWrapKey(passphrase, emailHash, saltB64) {
+  const salt    = saltB64
+    ? Uint8Array.from(atob(saltB64), c => c.charCodeAt(0))
+    : crypto.getRandomValues(new Uint8Array(32));
+  const raw     = new TextEncoder().encode(passphrase + ':' + emailHash);
+  const base    = await crypto.subtle.importKey('raw', raw, 'PBKDF2', false, ['deriveKey']);
+  const wrapKey = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 200000, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
+  );
+  return { wrapKey, saltB64: saltB64 || btoa(String.fromCharCode(...salt)) };
+}
+
+async function deriveRecoveryWrapKey(code, emailHash) {
+  const raw  = new TextEncoder().encode(code.replace(/-/g,'').toUpperCase() + ':' + emailHash);
+  const base = await crypto.subtle.importKey('raw', raw, 'PBKDF2', false, ['deriveKey']);
+  const salt = new TextEncoder().encode('stockroom-recovery-v1-' + emailHash);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
+  );
+}
+
+async function wrapDataKey(dataKey, wrapKey) {
+  const raw       = await crypto.subtle.exportKey('raw', dataKey);
+  const iv        = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, wrapKey, raw);
+  const combined  = new Uint8Array(iv.length + encrypted.byteLength);
+  combined.set(iv, 0); combined.set(new Uint8Array(encrypted), iv.length);
+  return btoa(String.fromCharCode(...combined));
+}
+
+async function unwrapDataKey(envelopeB64, wrapKey) {
+  const combined  = Uint8Array.from(atob(envelopeB64), c => c.charCodeAt(0));
+  const iv        = combined.slice(0, 12);
+  const encrypted = combined.slice(12);
+  const raw       = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wrapKey, encrypted);
+  return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+}
+
+function generateRecoveryCodes(count = 10) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({ length: count }, () => {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    return [0,4,8,12].map(s => Array.from(bytes.slice(s,s+4)).map(b => chars[b % chars.length]).join('')).join('-');
+  });
+}
+
+async function hashRecoveryCode(code, emailHash) {
+  const encoded = new TextEncoder().encode(code.replace(/-/g,'').toUpperCase() + ':' + emailHash);
+  const hash    = await crypto.subtle.digest('SHA-256', encoded);
+  return btoa(String.fromCharCode(...new Uint8Array(hash)));
+}
+
+async function buildRecoveryEnvelopes(codes, dataKey, emailHash) {
+  const envelopes = [];
+  for (const code of codes) {
+    const wrapKey  = await deriveRecoveryWrapKey(code, emailHash);
+    const envelope = await wrapDataKey(dataKey, wrapKey);
+    const codeHash = await hashRecoveryCode(code, emailHash);
+    envelopes.push(JSON.stringify({ envelope, codeHash }));
+  }
+  return envelopes;
+}
 
 // Uses IndexedDB to store a wrapped copy of the encryption key.
 // The wrapping key is device-specific (derived from a random device secret
@@ -14825,18 +14749,25 @@ async function kvEnsureKey() {
 
     if (keyRes.status === 401) { toast('Incorrect passphrase'); return false; }
 
-    if (keyRes.ok && keyData.envelope && keyData.kdfSalt) {
+    if (keyRes.ok && !keyData.legacy && keyData.envelope) {
+      // Envelope exists — must unwrap it. Do NOT fall through to legacy derive
+      // if this fails, as that would set a wrong key and cause KvDecryptError.
       try {
-        const wrapKey = await derivePassphraseWrapKeyV2(passphrase, _kvEmailHash, keyData.kdfSalt);
-        dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+        if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
+          const wrapKey = await derivePassphraseWrapKeyV2(passphrase, _kvEmailHash, keyData.kdfSalt);
+          dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+        } else {
+          const { wrapKey } = await derivePassphraseWrapKey(passphrase, _kvEmailHash, keyData.salt);
+          dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
+        }
       } catch(e) {
         toast('Incorrect passphrase');
         console.warn('kvEnsureKey: envelope unwrap failed —', e.message);
         return false;
       }
     } else {
-      toast('Account is missing its encryption envelope — try recovery');
-      return false;
+      // No envelope (pre-envelope legacy account) — derive key directly
+      dataKey = await kvDeriveKey(_kvEmail, passphrase);
     }
 
     _kvKey = dataKey;
@@ -14928,36 +14859,6 @@ async function kvPush() {
     console.warn('kvPush: missing credentials (no verifier or sessionToken), skipping');
     return;
   }
-
-  // ── Guest write path ───────────────────────────────
-  // When the user is a guest of someone else's share, all of `items`,
-  // `groceryItems`, etc. in memory reflect the SHARED data — kvPull
-  // wrote them in. So when the guest edits and we kvPush, what we push
-  // back must go to the share blob (encrypted with the share key),
-  // not to the guest's own /data/push endpoint (which would write to
-  // their unused personal blob and the owner would never see it).
-  //
-  // We respect per-section permissions: only sections the guest has
-  // 'rw' on are written; read-only sections are pulled fresh from the
-  // current shared blob so we don't overwrite owner-side updates the
-  // guest had no business changing. The server also enforces "at least
-  // one rw section" before accepting the push — this client check is
-  // for correctness, the server's is for security.
-  if (_shareState) {
-    // Try recovering from the persistent share envelope first — same
-    // logic as the kvPull guest branch. This makes the very first
-    // push after a browser-clear succeed without needing the owner
-    // to come online.
-    if (!_shareKey && _kvKey) {
-      try {
-        const sk = await _loadGuestShareEnvelope(_shareState.code);
-        if (sk) _shareKey = sk;
-      } catch(e) { console.warn('kvPush (guest): envelope load failed:', e?.message); }
-    }
-    if (!_shareKey) { console.warn('kvPush (guest): no share key in memory, skipping'); return; }
-    return _kvPushAsGuest();
-  }
-
   if (!await kvEnsureKey()) return;
   const allProfiles  = await getProfiles();
   const householdDir = Object.fromEntries(
@@ -15006,251 +14907,8 @@ async function kvPush() {
     }
     throw new Error(msg);
   }
-  // After successful push, re-encrypt for all active share targets.
-  // Owners only — guests already pushed via _kvPushAsGuest above and
-  // returned before reaching this block.
+  // After successful push, re-encrypt for all active share targets
   await pushAllSharedData().catch(e => console.warn('pushAllSharedData failed:', e.message));
-}
-
-// Guest-side push. Encrypts the current local state with the share key
-// and writes it to the share blob via /share/data/push-guest. We do
-// section-level permission filtering on the way out: only sections
-// the guest has 'rw' on are written from the in-memory state; read-
-// only sections are taken from the most recently pulled shared blob
-// so we don't accidentally clobber owner edits the guest's UI never
-// surfaced as editable. If we can't read the latest blob (network
-// blip), we fall back to skipping this push — better to lose the
-// guest's edit than to overwrite the owner's data with a stale view.
-async function _kvPushAsGuest() {
-  if (!_shareState || !_shareKey) return;
-  const code  = _shareState.code;
-  const hKey  = activeProfile && activeProfile !== 'default' ? activeProfile : 'default';
-  const perms = (_shareState.households && _shareState.households[hKey]) || {};
-  const canWriteStockroom = perms.stockroom === 'rw';
-  const canWriteGroceries = perms.groceries === 'rw';
-  const canWriteReminders = perms.reminders === 'rw';
-  const canWriteBudget    = perms.budget    === 'rw';
-  const hasAnyRw = canWriteStockroom || canWriteGroceries || canWriteReminders || canWriteBudget;
-  if (!hasAnyRw) {
-    console.log('[kvPushAsGuest] no rw permission on this household, skipping');
-    return;
-  }
-
-  // Pull the current shared blob so we can merge our writable sections
-  // into it without disturbing read-only sections. Best-effort — if
-  // the pull fails, fall back to a straight push of what's in memory.
-  let baseState = null;
-  try {
-    const pullRes = await postKV(`${WORKER_URL}/share/data/pull`, {
-      guestEmailHash: _kvEmailHash, guestVerifier: _kvVerifier, guestSessionToken: _kvSessionToken,
-      code, household: hKey,
-    });
-    if (pullRes.ok) {
-      const j = await pullRes.json();
-      if (j.ciphertext) {
-        try {
-          const plain = await decryptWithShareKey(_shareKey, j.ciphertext);
-          baseState = JSON.parse(plain);
-        } catch(e) { console.warn('[kvPushAsGuest] could not decrypt base state, falling back to in-memory state'); }
-      }
-    }
-  } catch(_e) { /* swallow — fall back below */ }
-
-  // Build the merged blob. For sections we have rw on, do a per-record
-  // merge against the freshly-pulled base state — this prevents two
-  // guests editing different records from clobbering each other when
-  // their writes arrive serially. For sections we don't have rw on,
-  // round-trip the base state unchanged (so we don't disturb owner-
-  // managed data we're not allowed to touch).
-  //
-  // If we couldn't read a base state (network blip, decrypt failure)
-  // we abort the push rather than risk overwriting unseen state.
-  if (!baseState) {
-    console.warn('[kvPushAsGuest] no base state available — skipping push to avoid clobber');
-    return;
-  }
-  const merged = { ...baseState };
-
-  if (canWriteStockroom && Array.isArray(items)) {
-    const baseItems = Array.isArray(baseState.items) ? baseState.items : [];
-    const m = _mergeArrayById(baseItems, items);
-    merged.items = m.list;
-    // Carry the guest's stockroom delete tombstones forward so a guest
-    // delete propagates back to the owner. Union with whatever was on
-    // the base (so we don't drop owner deletes the guest hasn't seen
-    // resolved yet).
-    try {
-      const guestTombs = await loadDeletedIds();
-      const baseArr = Array.isArray(baseState.deletedIds) ? baseState.deletedIds : [];
-      const out = new Set(baseArr);
-      if (guestTombs && typeof guestTombs.forEach === 'function') guestTombs.forEach(id => out.add(id));
-      merged.deletedIds = Array.from(out);
-    } catch(_e) {}
-  }
-  if (canWriteGroceries) {
-    if (Array.isArray(groceryItems)) {
-      const baseGroceries = Array.isArray(baseState.groceries) ? baseState.groceries : [];
-      const m = _mergeArrayById(baseGroceries, groceryItems);
-      merged.groceries = m.list;
-    }
-    if (Array.isArray(groceryDepts) && groceryDepts.length) {
-      // Departments are a small list — overwrite is fine; merging by
-      // name would risk duplicate entries.
-      merged.departments = groceryDepts;
-    }
-    // Named grocery lists — id-keyed merge so two guests creating
-    // different lists don't lose each other's, and edits to the same
-    // list (rename, store-attribute change) take the newer updatedAt.
-    if (Array.isArray(groceryLists)) {
-      const baseLists = Array.isArray(baseState.groceryLists) ? baseState.groceryLists : [];
-      merged.groceryLists = _mergeArrayById(baseLists, groceryLists).list;
-    }
-    // Grocery-list tombstones — same union pattern as stockroom above.
-    try {
-      const guestGLTombs = await loadGroceryListDeletedIds();
-      const baseArr = Array.isArray(baseState.groceryListDeletedIds) ? baseState.groceryListDeletedIds : [];
-      const out = new Set(baseArr);
-      if (guestGLTombs && typeof guestGLTombs.forEach === 'function') guestGLTombs.forEach(id => out.add(id));
-      merged.groceryListDeletedIds = Array.from(out);
-    } catch(_e) {}
-  }
-  if (canWriteReminders && Array.isArray(reminders)) {
-    const baseReminders = Array.isArray(baseState.reminders) ? baseState.reminders : [];
-    const m = _mergeArrayById(baseReminders, reminders);
-    merged.reminders = m.list;
-  }
-  if (canWriteBudget) {
-    if (Array.isArray(bills)) {
-      const baseBills = Array.isArray(baseState.bills) ? baseState.bills : [];
-      merged.bills = _mergeArrayById(baseBills, bills).list;
-    }
-    if (billInstances && typeof billInstances === 'object') {
-      merged.billInstances = { ...(baseState.billInstances || {}), ...billInstances };
-    }
-    if (budgetSettings && typeof budgetSettings === 'object') {
-      merged.budgetSettings = { ...(baseState.budgetSettings || {}), ...budgetSettings };
-    }
-    if (Array.isArray(budgetCategories)) {
-      const base = Array.isArray(baseState.budgetCategories) ? baseState.budgetCategories : [];
-      merged.budgetCategories = _mergeArrayById(base, budgetCategories).list;
-    }
-    if (transactions && typeof transactions === 'object') {
-      // transactions shape: { "2026-04": { txId: {...}, ... }, ... }
-      // Use the nested-month-map merge so two guests editing different
-      // transactions in the same month don't lose each other's writes.
-      merged.transactions = _mergeMonthMap(baseState.transactions || {}, transactions).map;
-    }
-    if (Array.isArray(budgetAccounts)) {
-      const base = Array.isArray(baseState.budgetAccounts) ? baseState.budgetAccounts : [];
-      merged.budgetAccounts = _mergeArrayById(base, budgetAccounts).list;
-    }
-    if (Array.isArray(incomeTemplates)) {
-      const base = Array.isArray(baseState.incomeTemplates) ? baseState.incomeTemplates : [];
-      merged.incomeTemplates = _mergeArrayById(base, incomeTemplates).list;
-    }
-    if (incomeEntries && typeof incomeEntries === 'object') {
-      // Same nested-month-map shape as transactions.
-      merged.incomeEntries = _mergeMonthMap(baseState.incomeEntries || {}, incomeEntries).map;
-    }
-    // Tombstones — union with base. A guest's deletion must survive
-    // round-trip; an owner's deletion previously propagated must not be
-    // un-deleted by a guest's stale view.
-    const _tombUnion = (k, localSet) => {
-      const baseArr = Array.isArray(baseState[k]) ? baseState[k] : [];
-      const out = new Set(baseArr);
-      if (localSet && typeof localSet.forEach === 'function') localSet.forEach(id => out.add(id));
-      merged[k] = Array.from(out);
-    };
-    _tombUnion('billsDeletedIds',                billsDeletedIds);
-    _tombUnion('budgetCategoryDeletedIds',       budgetCategoryDeletedIds);
-    _tombUnion('budgetTransactionDeletedIds',    budgetTransactionDeletedIds);
-    _tombUnion('budgetAccountDeletedIds',        budgetAccountDeletedIds);
-    _tombUnion('incomeTemplateDeletedIds',       incomeTemplateDeletedIds);
-    _tombUnion('incomeEntryDeletedIds',          incomeEntryDeletedIds);
-  }
-
-  // Sweep the merged blob to apply tombstones — otherwise we'd push
-  // records the local guest has just deleted (because _mergeArrayById
-  // and _mergeMonthMap inherit them from the freshly-pulled base
-  // state). The owner's absorb side ALSO sweeps, so this is belt-and-
-  // braces — but pushing a record we don't believe in is still wrong
-  // and would re-introduce it on other guests who pull before the
-  // owner has absorbed our tombstones.
-  if (canWriteStockroom) {
-    try {
-      const localTombs = await loadDeletedIds();
-      if (localTombs.size && Array.isArray(merged.items)) {
-        merged.items = merged.items.filter(i => !localTombs.has(i.id));
-      }
-    } catch(_e) {}
-  }
-  if (canWriteGroceries) {
-    try {
-      const localTombs = await loadGroceryDeletedIds();
-      if (localTombs.size && Array.isArray(merged.groceries)) {
-        merged.groceries = merged.groceries.filter(i => !localTombs.has(i.id));
-      }
-      const localListTombs = await loadGroceryListDeletedIds();
-      if (localListTombs.size && Array.isArray(merged.groceryLists)) {
-        merged.groceryLists = merged.groceryLists.filter(l => !localListTombs.has(l.id));
-      }
-    } catch(_e) {}
-  }
-  if (canWriteBudget) {
-    if (billsDeletedIds.size && Array.isArray(merged.bills)) {
-      merged.bills = merged.bills.filter(b => !billsDeletedIds.has(b.id));
-    }
-    if (budgetCategoryDeletedIds.size && Array.isArray(merged.budgetCategories)) {
-      merged.budgetCategories = merged.budgetCategories.filter(c => !budgetCategoryDeletedIds.has(c.id));
-    }
-    if (budgetTransactionDeletedIds.size && merged.transactions && typeof merged.transactions === 'object') {
-      for (const ym of Object.keys(merged.transactions)) {
-        for (const id of Object.keys(merged.transactions[ym])) {
-          if (budgetTransactionDeletedIds.has(id)) delete merged.transactions[ym][id];
-        }
-        if (Object.keys(merged.transactions[ym]).length === 0) delete merged.transactions[ym];
-      }
-    }
-    if (budgetAccountDeletedIds.size && Array.isArray(merged.budgetAccounts)) {
-      merged.budgetAccounts = merged.budgetAccounts.filter(a => !budgetAccountDeletedIds.has(a.id));
-    }
-    if (incomeTemplateDeletedIds.size && Array.isArray(merged.incomeTemplates)) {
-      merged.incomeTemplates = merged.incomeTemplates.filter(t => !incomeTemplateDeletedIds.has(t.id));
-    }
-    if (incomeEntryDeletedIds.size && merged.incomeEntries && typeof merged.incomeEntries === 'object') {
-      for (const ym of Object.keys(merged.incomeEntries)) {
-        for (const id of Object.keys(merged.incomeEntries[ym])) {
-          if (incomeEntryDeletedIds.has(id)) delete merged.incomeEntries[ym][id];
-        }
-        if (Object.keys(merged.incomeEntries[ym]).length === 0) delete merged.incomeEntries[ym];
-      }
-    }
-  }
-
-  // Always stamp lastSynced with our local clock — used for last-writer-wins
-  // tie-breaking on the receiving side.
-  merged.lastSynced = new Date().toISOString();
-
-  const ciphertext = await encryptWithShareKey(_shareKey, JSON.stringify(merged));
-  const res = await postKV(`${WORKER_URL}/share/data/push-guest`, {
-    guestEmailHash:    _kvEmailHash,
-    guestVerifier:     _kvVerifier,
-    guestSessionToken: _kvSessionToken,
-    code, household: hKey, ciphertext,
-  });
-  if (!res.ok) {
-    let body = null; try { body = await res.json(); } catch(_e) {}
-    if (res.status === 403 && body?.requiresEmailVerification) {
-      // Surface the same OTP gate as kvPull
-      console.warn('[kvPushAsGuest] verification required');
-      return;
-    }
-    if (res.status === 403 && body?.revoked) {
-      console.warn('[kvPushAsGuest] access revoked');
-      return;
-    }
-    throw new Error(body?.error || `Push failed (${res.status})`);
-  }
 }
 
 // ── Sync: pull and decrypt data from KV ────
@@ -15266,49 +14924,9 @@ async function kvPull() {
   // Guest pull — _shareState takes priority even if the guest also has their own account.
   // A user with both a personal account AND a share must pull from the share, not their own data.
   if (_shareState) {
-    // Try to recover the share key from the guest's server-stored
-    // envelope before declaring failure. This is what makes share
-    // access survive browser-clears and new devices: the envelope is
-    // wrapped under the guest's data key (which they just unlocked
-    // via passphrase), not the device-bound ECDH keypair. First
-    // successful recovery puts the key in _shareKey for the rest of
-    // the session.
-    if (!_shareKey && _kvKey) {
-      try {
-        const sk = await _loadGuestShareEnvelope(_shareState.code);
-        if (sk) _shareKey = sk;
-      } catch(e) { console.warn('kvPull (share): envelope load failed:', e?.message); }
-    }
     if (!_shareKey) { console.warn('kvPull (share): no share key in memory'); return null; }
     const res = await postKV(`${WORKER_URL}/share/data/pull`, { guestEmailHash: _kvEmailHash, guestVerifier: _kvVerifier, guestSessionToken: _kvSessionToken, code: _shareState.code, household: activeProfile });
     if (!res.ok) {
-      // Differentiate the 403 reasons. The server may return:
-      //   - { revoked: true } when the owner removed this member
-      //   - { requiresEmailVerification: true } when the guest's email
-      //     is unverified (e.g. they signed up but skipped OTP)
-      // Only the first should wipe local share state. The second should
-      // route to the OTP step and leave _shareState intact so the user
-      // can resume after verifying.
-      let body = null;
-      try { body = await res.clone().json(); } catch(_e) {}
-      if (res.status === 403 && body?.requiresEmailVerification) {
-        // Don't clear _shareState — they're a legitimate guest, just
-        // need to confirm their email. Show the OTP step (the existing
-        // _pendingUnverifiedRestore flow surfaces a Cancel button).
-        console.warn('kvPull (share): email verification required');
-        toast('Email verification required — check your inbox');
-        const verifyEmail = body.email || _kvEmail || '';
-        if (verifyEmail) {
-          _pendingUnverifiedRestore = { email: verifyEmail, emailHash: _kvEmailHash, verifier: _kvVerifier };
-          await showEmailVerification(verifyEmail, _kvEmailHash, async () => {
-            _pendingUnverifiedRestore = null;
-            // Re-trigger a sync so shared data flows in now that the
-            // gate has cleared.
-            if (kvConnected) setTimeout(() => kvSyncNow(true), 200);
-          });
-        }
-        return null;
-      }
       // Share has been deleted or guest removed — auto-clear local share state
       if (res.status === 404 || res.status === 403) {
         console.warn('kvPull (share): share gone from server, clearing local state');
@@ -15322,19 +14940,9 @@ async function kvPull() {
           delete stored[code];
           await _setShareKeys(stored);
         } catch(e) {}
-        // Also delete the server-side guest envelope so a re-add by
-        // the owner triggers a fresh handshake instead of trying to
-        // recover with stale state.
-        _deleteGuestShareEnvelope(code).catch(e =>
-          console.warn('[share] envelope delete on eviction failed:', e?.message)
-        );
-        // Same complete wipe as leaveShare — ensures the server-driven
-        // eviction path leaves no shared data behind in IDB. Without
-        // this, an evicted guest would retain a phantom copy of the
-        // owner's data in their global stores.
-        await _wipeGuestCachedData();
         applyTabPermissions();
-        await loadProfile('default');
+        items = [];
+        await saveData();
         scheduleRender(...RENDER_REGIONS);
         toast('Shared household access was removed — switching to your own account');
         if (kvConnected) setTimeout(() => kvSyncNow(true), 500);
@@ -15612,72 +15220,12 @@ async function kvSyncNow(silent = false) {
     await _saveSettings();
     const tombstones = await loadDeletedIds();
     await saveDeletedIds(tombstones);
-
-    // ── Owner: absorb guest writes from share blobs ────────
-    // After the owner has merged their own /data/pull and BEFORE
-    // pushing back, check each active share target for blobs whose
-    // last writer was a guest. Decrypt those, merge into local state.
-    // The subsequent kvPush will then push the merged result back to
-    // both the owner's own KV blob (via /data/push) AND every share
-    // blob (via pushAllSharedData inside kvPush). Net effect: a
-    // guest's edit propagates owner ↔ guest1 ↔ guest2 within one
-    // sync cycle on whichever device syncs next.
-    let absorbedGuestWrite = false;
-    if (kvConnected && !_shareState) {
-      // _shareTargets is normally populated when the user visits the
-      // Settings tab. For background syncs that fire before they've
-      // been there, lazy-load so absorption still runs.
-      if (!_shareTargets?.length && WORKER_URL) {
-        try { await loadShareTargets(); } catch(_e) {}
-      }
-      if (_shareTargets?.length) {
-        try { absorbedGuestWrite = await _absorbGuestWritesForOwner(); }
-        catch(e) { console.warn('absorb guest writes failed:', e.message); }
-
-        // Fulfil any pending rewrap requests that have piled up. This
-        // used to fire only from kvPush (i.e. only when the owner
-        // edited something), which meant a guest joining a stale share
-        // would sit blocked indefinitely while the owner's app was
-        // open-but-idle. Running it from kvSyncNow means just having
-        // the app open — focus events, the 15s tip-poll, manual sync,
-        // any restoration path — all give the owner's client a chance
-        // to process pending rewraps within seconds.
-        for (const target of _shareTargets) {
-          _fulfilPendingRewraps(target.code).catch(e =>
-            console.warn('rewrap fulfil failed for', target.code, e?.message)
-          );
-        }
-      }
-    }
-
-    // Push if we have any local data — items OR groceries OR reminders.
-    // Also push when we absorbed a guest write, so the merged result
-    // round-trips back to the share blob (giving other guests the
-    // converged view).
+    // Push if we have any local data — items OR groceries OR reminders
     const hasLocalData = items.length > 0 || groceryItems.length > 0 || reminders.length > 0;
-    if (kvConnected && !_shareState && (hasLocalData || absorbedGuestWrite)) {
+    if (kvConnected && !_shareState && hasLocalData) {
       await kvPush();
     } else if (kvConnected && !_shareState) {
       // Nothing local to push — pull was enough
-    }
-    // ── Guest: push edits back to the share blob ──────────
-    // Guests don't write to /data/push (the personal blob); they write
-    // to the share blob via _kvPushAsGuest (which kvPush dispatches to
-    // when _shareState is set). Without this branch, edits made by the
-    // guest only ever lived in the guest's local IDB until they
-    // happened to call kvPush directly via a tool action. _syncQueue
-    // funnels everything through kvSyncNow, so we have to invoke push
-    // here too — guarded on whether the guest has rw permission, since
-    // a read-only guest pushing would just bounce off the server's
-    // "no write access" check.
-    if (_shareState) {
-      const perms = (_shareState.households && _shareState.households[activeProfile || 'default']) || {};
-      const hasRw = perms.stockroom === 'rw' || perms.groceries === 'rw'
-                 || perms.reminders === 'rw' || perms.budget    === 'rw';
-      if (hasRw) {
-        try { await _kvPushAsGuest(); }
-        catch(e) { console.warn('guest push failed:', e.message); }
-      }
     }
     if (!_wasSilent) updateSyncPill('synced'); else updateSyncPill('connected');
     hideDataLoadingOverlay();
@@ -15812,80 +15360,32 @@ function openChangePassphrase() {
   kvChangePassphrase(oldPass, newPass);
 }
 
-// Change passphrase. The v2 envelope architecture makes this a thin
-// operation: re-derive the wrap key from the new passphrase, re-wrap
-// the data-key envelope, push it. The DATA KEY itself doesn't change
-// — no data re-encryption, no per-household work, no share-key re-
-// backup. Existing shares with other users keep working transparently
-// because share keys are wrapped against the data key (unchanged), not
-// the passphrase. Recovery codes likewise survive unchanged.
 async function kvChangePassphrase(oldPass, newPass) {
-  if (!_kvEmail || !_kvEmailHash) { toast('Sign in first'); return; }
-  if (!newPass || newPass.length < 8) { toast('New passphrase too short'); return; }
-  if (oldPass === newPass) { toast('New passphrase must be different'); return; }
   try {
-    // Verify old passphrase against server-stored verifier (constant-time on server)
+    // Verify old passphrase
     const oldVerifier = await kvMakeVerifier(oldPass, _kvEmailHash);
     if (oldVerifier !== _kvVerifier) { toast('Current passphrase incorrect'); return; }
-
-    // Fetch current envelope. Required — every account is v2.
-    const res = await postKV(`${WORKER_URL}/key/get`, _kvSessionToken
-      ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken }
-      : { emailHash: _kvEmailHash, verifier: _kvVerifier });
-    if (!res.ok) throw new Error('Could not fetch your encryption envelope');
-    const keyData = await res.json();
-    if (!keyData.envelope || !keyData.kdfSalt) {
-      throw new Error('Account has no passphrase envelope (passkey-only?). Add a passphrase from Account & Security first.');
-    }
-
-    // Unwrap the data key with the OLD passphrase, re-wrap with the new.
-    const oldWrapKey = await derivePassphraseWrapKeyV2(oldPass, _kvEmailHash, keyData.kdfSalt);
-    const dataKey    = await unwrapDataKeyV2(keyData.envelope, oldWrapKey, true);
-    if (!dataKey) throw new Error('Could not unwrap data key with current passphrase');
-
-    // Generate fresh wrap material for the new passphrase.
-    const newKdfSalt  = generateKdfSalt();
-    const newSaltB64  = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
-    const newWrapKey  = await derivePassphraseWrapKeyV2(newPass, _kvEmailHash, newKdfSalt);
-    const newEnv      = await wrapDataKeyV2(dataKey, newWrapKey);
+    // Decrypt with old key, re-encrypt with new key
+    const oldKey    = await kvDeriveKey(_kvEmail, oldPass);
+    const newKey    = await kvDeriveKey(_kvEmail, newPass);
     const newVerifier = await kvMakeVerifier(newPass, _kvEmailHash);
-
-    // Push: server atomically updates verifier + salt + envelope + kdfSalt
-    const updateRes = await postKV(`${WORKER_URL}/key/update-passphrase`, {
-      emailHash:    _kvEmailHash,
-      ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
-      newVerifier,
-      newSalt:      newSaltB64,
-      newEnvelope:  newEnv,
-      newKdfSalt,
-    });
-    if (!updateRes.ok) {
-      const d = await updateRes.json().catch(() => ({}));
-      throw new Error(d.error || 'Server rejected the new envelope');
+    // Pull current ciphertext
+    const res = await postKV(`${WORKER_URL}/data/pull`, { emailHash: _kvEmailHash, verifier: _kvVerifier, household: activeProfile });
+    if (!res.ok) throw new Error('Could not fetch current data');
+    const { ciphertext } = await res.json();
+    if (ciphertext) {
+      const plain      = await kvDecrypt(oldKey, ciphertext);
+      const newCipher  = await kvEncrypt(newKey, plain);
+      // Push re-encrypted data with new verifier
+      await postKV(`${WORKER_URL}/data/push`, { emailHash: _kvEmailHash, verifier: newVerifier, household: activeProfile, ciphertext: newCipher });
     }
-
-    // Update local session — _kvKey is the data key, unchanged. Only
-    // the verifier rotates.
+    // Update session
+    _kvKey      = newKey;
     _kvVerifier = newVerifier;
-    try {
-      const raw = localStorage.getItem('stockroom_kv_session');
-      if (raw) {
-        const sess = JSON.parse(raw);
-        sess.verifier = newVerifier;
-        localStorage.setItem('stockroom_kv_session', JSON.stringify(sess));
-      }
-    } catch(_e) {}
-    // Re-trust the device with the rotated verifier so the trusted
-    // device cache continues to work after passphrase change.
-    try { await _trustIfRemembered(_kvEmail, _kvEmailHash, newVerifier, _kvKey); } catch(_e) {}
-
+    try { localStorage.setItem('stockroom_kv_session', JSON.stringify({ email: _kvEmail, emailHash: _kvEmailHash, verifier: newVerifier })); } catch(e) {}
     toast('Passphrase changed ✓');
-  } catch(err) {
-    console.error('[passphrase] change failed:', err);
-    toast('Could not change passphrase: ' + (err?.message || 'unknown error'));
-  }
+  } catch(err) { toast('Could not change passphrase: ' + err.message); }
 }
-
 
 // ═══════════════════════════════════════════
 //  DROPBOX SYNC (kept for reference, disabled in KV build)
@@ -15954,185 +15454,6 @@ const _syncQueue = {
 
   _hide() {
     document.getElementById('sync-queue-bar')?.classList.remove('visible');
-  },
-};
-
-// ── Active-tab share-tip poll ───────────────────────────────────────────
-// Tiny 15s heartbeat that asks the server "did anything change in the
-// shares I care about?" and triggers the existing absorb/pull paths
-// only when the answer is yes. Runs ONLY while the tab is visible AND
-// focused — backgrounded tabs do nothing, no battery drain, no network
-// traffic when the user isn't looking.
-//
-// On return-to-active we fire one immediate check to catch up. Most of
-// the time the user comes back, blinks once, and the data is fresh.
-//
-// The poll is purely additive — it triggers the same `_absorbGuestWritesForOwner`
-// and `kvPull` paths that the existing 30s background timer + focus
-// handler already use. If the poll breaks for any reason the existing
-// paths still run; this just makes them more responsive.
-const _sharePoll = {
-  TICK_MS:           15000,         // poll cadence when active
-  WATCHDOG_MS:       30000,         // if no tick in 30s, treat as resumed-from-suspend
-  timer:             null,
-  lastTickAt:        0,
-  inFlight:          false,
-  consecutiveErrors: 0,
-
-  // Last seen tips per stamp ("CODE:HH"), so we know what's "new". For
-  // the owner we compare against `stockroom_share_absorbed` which is
-  // already maintained by `_absorbGuestWritesForOwner`. For the guest
-  // we use a small in-memory map (per-tab is enough — pulls are
-  // idempotent so worst case on tab-restore we pull once unnecessarily).
-  guestLastSeen:     {},
-
-  start() {
-    if (this.timer) return;
-    document.addEventListener('visibilitychange', () => this._onVisOrFocus());
-    window.addEventListener('focus',              () => this._onVisOrFocus());
-    window.addEventListener('blur',               () => this._maybeStop());
-    // Kick off the loop only if we're actually active right now.
-    this._onVisOrFocus();
-  },
-
-  // Called on visibilitychange / focus / blur. Decides whether the tab
-  // is "active enough" to poll, and if so kicks off an immediate tick
-  // followed by the regular cadence.
-  _onVisOrFocus() {
-    const active = (document.visibilityState === 'visible') && document.hasFocus();
-    if (active) {
-      // If we haven't ticked in WATCHDOG_MS, the OS probably suspended
-      // the timer (mobile lock screen, tab discarded etc.). Treat
-      // return-to-active as a "fresh start" and run an immediate tick.
-      const stale = (Date.now() - this.lastTickAt) > this.WATCHDOG_MS;
-      if (!this.timer || stale) {
-        this._scheduleNext(0); // immediate
-      }
-    } else {
-      this._maybeStop();
-    }
-  },
-
-  _maybeStop() {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
-  },
-
-  _scheduleNext(delay = this.TICK_MS) {
-    this._maybeStop();
-    // If the tab is no longer active, don't reschedule. Visibility/focus
-    // handlers will restart us on return.
-    const active = (document.visibilityState === 'visible') && document.hasFocus();
-    if (!active) return;
-    this.timer = setTimeout(() => this._tick(), delay);
-  },
-
-  async _tick() {
-    this.timer = null;
-    this.lastTickAt = Date.now();
-
-    // Skip silently if nothing's worth polling for.
-    if (this.inFlight) { this._scheduleNext(); return; }
-    if (!WORKER_URL || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) {
-      this._scheduleNext(); return;
-    }
-    // Build the list of codes we care about.
-    //   Owner: every share they have a target for.
-    //   Guest: their single _shareState code.
-    const codes = [];
-    if (_shareState && _shareState.code) codes.push(_shareState.code);
-    if (Array.isArray(_shareTargets)) {
-      for (const t of _shareTargets) if (t.code && !codes.includes(t.code)) codes.push(t.code);
-    }
-    if (!codes.length) { this._scheduleNext(); return; }
-
-    this.inFlight = true;
-    try {
-      const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
-      const res = await postKV(`${WORKER_URL}/share/tips`, {
-        emailHash: _kvEmailHash, ...authFields, codes,
-      });
-      if (!res.ok) {
-        // Don't spam the console on 401/403 (auth state changed mid-poll)
-        // — just back off. 5 errors in a row → exponential backoff.
-        if (res.status !== 401 && res.status !== 403) {
-          this.consecutiveErrors++;
-        }
-        return;
-      }
-      this.consecutiveErrors = 0;
-      const { tips } = await res.json();
-      if (!tips || typeof tips !== 'object') return;
-
-      await this._dispatch(tips);
-    } catch(e) {
-      this.consecutiveErrors++;
-      if (this.consecutiveErrors <= 3) console.warn('[sharePoll] tick failed:', e?.message);
-    } finally {
-      this.inFlight = false;
-      // Backoff schedule when erroring repeatedly so we don't hammer
-      // a broken endpoint. Resets to TICK_MS on first success.
-      const delay = this.consecutiveErrors >= 3
-        ? Math.min(this.TICK_MS * Math.pow(2, this.consecutiveErrors - 2), 5 * 60 * 1000)
-        : this.TICK_MS;
-      this._scheduleNext(delay);
-    }
-  },
-
-  // Compare the server's tip table against what we last saw / absorbed,
-  // and dispatch into the existing sync paths for any stamp that's
-  // genuinely newer. Doesn't block — fires the work and returns so
-  // the next tick can schedule.
-  async _dispatch(tips) {
-    // Owner-side: read absorbed-marker from localStorage so we agree
-    // with `_absorbGuestWritesForOwner` on what counts as "new".
-    let absorbed = {};
-    try { absorbed = JSON.parse(localStorage.getItem('stockroom_share_absorbed') || '{}') || {}; } catch(_e) {}
-
-    let ownerNeedsAbsorb = false;
-    let guestNeedsPull   = false;
-
-    for (const stamp of Object.keys(tips)) {
-      const tip = tips[stamp];
-      if (!tip || !tip.modified) continue;
-      const modifiedTs = new Date(tip.modified).getTime();
-      if (!modifiedTs) continue;
-
-      // Guest path — we're a member of this share.
-      if (_shareState && stamp.startsWith(`${_shareState.code}:`)) {
-        // Only pull if the writer is the OWNER (or unspecified —
-        // legacy data without a writer field). Don't pull on our own
-        // writes; we'd just re-receive what we just sent.
-        if (tip.writer === 'guest') continue;
-        const lastSeen = this.guestLastSeen[stamp] || 0;
-        if (modifiedTs > lastSeen) {
-          this.guestLastSeen[stamp] = modifiedTs;
-          guestNeedsPull = true;
-        }
-        continue;
-      }
-
-      // Owner path — we own this share. Absorb only if a guest wrote
-      // and we haven't absorbed THAT specific writer event yet. The
-      // absorb function uses a per-stamp marker keyed on writer.at,
-      // not _modified, but they're written together so they're
-      // monotonic with each other.
-      if (tip.writer !== 'guest') continue;
-      const absorbedAt = absorbed[stamp] ? new Date(absorbed[stamp]).getTime() : 0;
-      if (modifiedTs > absorbedAt) {
-        ownerNeedsAbsorb = true;
-      }
-    }
-
-    // Fire the appropriate sync path. We funnel through kvSyncNow so
-    // any ancillary work (last-synced timestamp, pill state, etc.)
-    // runs consistently with manual syncs. The silent flag suppresses
-    // the pill flash for these polled syncs.
-    if (ownerNeedsAbsorb || guestNeedsPull) {
-      kvSyncNow(true).catch(e => console.warn('[sharePoll] kvSyncNow failed:', e?.message));
-    }
   },
 };
 
@@ -26220,11 +25541,6 @@ let _pendingShareMeta = null; // share metadata awaiting auth
 let _inviteCode    = null;
 
 // Default permission sets per user type
-// `shareManagement` is a global (not per-household) permission that controls
-// whether a guest can see and/or modify the owner's Share Access section.
-// Default 'none' for every type — owners must explicitly grant it. Stored
-// per-target on the `shareManagement` field of the share record so it
-// survives sync without polluting per-household perms.
 const SHARE_TYPE_DEFAULTS = {
   family: {
     stockroom: 'rw', groceries: 'rw', reminders: 'rw', savings: 'rw', report: 'r', budget: 'rw'
@@ -26236,10 +25552,6 @@ const SHARE_TYPE_DEFAULTS = {
     stockroom: 'r', groceries: 'r', reminders: 'none', savings: 'none', report: 'r', budget: 'none'
   },
 };
-
-// Share-management permission values per type. Always 'none' by default —
-// the owner has to opt in explicitly.
-const SHARE_MGMT_DEFAULTS = { family: 'none', cleaner: 'none', guest: 'none' };
 
 const SECTION_LABELS = {
   stockroom: '📦 Stockroom', groceries: '🛒 Groceries',
@@ -26260,18 +25572,6 @@ function getSectionPerm(section) {
 function canView(section)  { const p = getSectionPerm(section); return p === 'rw' || p === 'r'; }
 function canWrite(section) { return getSectionPerm(section) === 'rw'; }
 function isOwner()         { return !_shareState; }
-
-// Share-management permission for the *current viewer*. Owners always have
-// 'edit'. Guests get whatever the owner granted them on the share record
-// (`_shareState.shareManagement`), defaulting to 'none'. The view-mode
-// shows the Share Access list as read-only — no add/edit/delete/sync/
-// refresh buttons. Edit-mode is identical to owner access for that section.
-function getShareMgmtPerm() {
-  if (!_shareState) return 'edit'; // owner
-  return _shareState.shareManagement || 'none';
-}
-function canViewShares()   { const p = getShareMgmtPerm(); return p === 'view' || p === 'edit'; }
-function canManageShares() { return getShareMgmtPerm() === 'edit'; }
 
 // Apply permission state to the tab bar — lock inaccessible sections
 function applyTabPermissions() {
@@ -26333,58 +25633,6 @@ async function loadShareState() {
   } catch(e) {}
 }
 
-// Restore _shareState from the server when localStorage is empty
-// (browser clear, new device, sign-out and back in). Without this,
-// the share-envelope mechanism has no idea which envelopes to fetch
-// because _shareState is the precondition that says "this user is
-// currently viewing share ABC."
-//
-// Idempotent: if _shareState is already set (loaded from localStorage),
-// this is a no-op. If the server says the user is a member of multiple
-// shares, picks the first one — multi-share-membership UI is a future
-// concern, today the model is "you're a guest in at most one share at
-// a time" mirroring _shareState's singleton shape.
-async function restoreShareFromServer() {
-  if (_shareState) return; // already restored from localStorage
-  if (!_kvEmailHash || !_kvKey || (!_kvVerifier && !_kvSessionToken)) return;
-  try {
-    const auth = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
-    const res  = await postKV(`${WORKER_URL}/share/memberships`, {
-      emailHash: _kvEmailHash, ...auth,
-    });
-    if (!res.ok) return;
-    const { memberships } = await res.json();
-    if (!Array.isArray(memberships) || !memberships.length) return;
-    // Pick the first share. The share data shape from /share/memberships
-    // omits the members list (privacy), but otherwise matches what
-    // /share/join returns and what _shareState consumes.
-    const share = memberships[0];
-    // Wipe stale personal-account data from in-memory globals and IDB
-    // BEFORE setting _shareState, so the upcoming share pull populates
-    // a clean slate. Without this, items/budgets/etc. from the user's
-    // own (personal) profile that were just loaded by loadProfile()
-    // would persist alongside the shared data and appear as phantoms
-    // — including items the share considers deleted but the personal
-    // account never had a tombstone for. Concrete failure mode this
-    // fixes: "deleted items in your stockroom are back" after sign-in.
-    await _wipeGuestCachedData().catch(e =>
-      console.warn('[share] pre-restore wipe failed (continuing):', e?.message)
-    );
-    _shareState = { ...share };
-    saveShareState();
-    // Try the envelope right away so the share key is in memory before
-    // the first kvPull runs. If this fails the kvPull / kvPush hooks
-    // we already wired will retry on demand.
-    try {
-      const sk = await _loadGuestShareEnvelope(share.code);
-      if (sk) _shareKey = sk;
-    } catch(e) { console.warn('[share] envelope load on restore failed:', e?.message); }
-    console.log('[share] restored from server:', share.code, _shareKey ? '(key loaded)' : '(no envelope yet — first-time path)');
-  } catch(e) {
-    console.warn('[share] restoreShareFromServer failed:', e?.message);
-  }
-}
-
 function saveShareState() {
   try {
     if (_shareState) {
@@ -26433,112 +25681,25 @@ async function joinViaShareCode(code) {
   if (typeof handleShareJoinLink === 'function') await handleShareJoinLink(code);
 }
 
-// Wipe all guest-cached shared data from in-memory variables and IDB
-// global stores. Used by both the explicit "Leave shared household"
-// path AND the server-driven eviction path (share deleted, guest
-// removed, access revoked) so the cleanup is consistent. Does NOT
-// touch _shareState/_shareKey — caller is responsible for that and
-// for triggering loadProfile('default') / kvSyncNow afterwards.
-async function _wipeGuestCachedData() {
-  items                       = [];
-  groceryItems                = [];
-  groceryDepts                = [];
-  groceryLists                = [];
-  reminders                   = [];
-  notes                       = [];
-  bills                       = [];
-  billInstances               = {};
-  budgetCategories            = [];
-  transactions                = {};
-  budgetAccounts              = [];
-  incomeTemplates             = [];
-  incomeEntries               = {};
-  billsDeletedIds.clear();
-  budgetCategoryDeletedIds.clear();
-  budgetTransactionDeletedIds.clear();
-  budgetAccountDeletedIds.clear();
-  incomeTemplateDeletedIds.clear();
-  incomeEntryDeletedIds.clear();
-  try {
-    await dbPut('items',                       'items',                       []);
-    await dbPut('groceries',                   'groceries',                   []);
-    await dbPut('departments',                 'departments',                 []);
-    await dbPut('groceryLists',                'groceryLists',                []);
-    await dbPut('reminders',                   'reminders',                   []);
-    await dbPut('bills',                       'bills',                       []);
-    await dbPut('billInstances',               'billInstances',               {});
-    await dbPut('budgetCategories',            'budgetCategories',            []);
-    await dbPut('transactions',                'transactions',                {});
-    await dbPut('budgetAccounts',              'budgetAccounts',              []);
-    await dbPut('incomeTemplates',             'incomeTemplates',             []);
-    await dbPut('incomeEntries',               'incomeEntries',               {});
-    await dbPut('billsDeletedIds',             'billsDeletedIds',             []);
-    await dbPut('budgetCategoryDeletedIds',    'budgetCategoryDeletedIds',    []);
-    await dbPut('budgetTransactionDeletedIds', 'budgetTransactionDeletedIds', []);
-    await dbPut('budgetAccountDeletedIds',     'budgetAccountDeletedIds',     []);
-    await dbPut('incomeTemplateDeletedIds',    'incomeTemplateDeletedIds',    []);
-    await dbPut('incomeEntryDeletedIds',       'incomeEntryDeletedIds',       []);
-  } catch(e) { console.warn('_wipeGuestCachedData: IDB clear failed:', e.message); }
-}
-
 async function leaveShare() {
-  if (!confirm('Leave this shared household?\n\nYour view of the shared data will clear immediately. Your own households are unaffected. You can rejoin with the same link.')) return;
+  if (!confirm('Leave this shared household?\n\nYou can rejoin with the same link. Your own households are unaffected.')) return;
   const code = _shareState?.code;
-
-  // Drop share session state first — this stops any in-flight syncs from
-  // pushing the about-to-be-wiped state back to the share blob.
   _shareState   = null;
   _sharedFileId = null;
   _shareKey     = null;
   saveShareState();
-
-  // Clear cached share key so a future rejoin is forced through the
-  // ECDH unwrap path again (which is the source of truth).
+  // Clear cached share key
   if (code) {
     try {
       const stored = await _getShareKeys();
       delete stored[code];
       await _setShareKeys(stored);
     } catch(e) {}
-    // Also delete the server-side guest envelope. Without this, the
-    // next time this guest logs in (even after explicitly leaving)
-    // the envelope-load path would re-restore the share from server.
-    // We want explicit-leave to be final on this side; the owner
-    // can still re-invite.
-    _deleteGuestShareEnvelope(code).catch(e =>
-      console.warn('[share] envelope delete on leave failed:', e?.message)
-    );
-    // Drop the absorption marker for this share so a rejoin doesn't
-    // skip absorbing writes that arrived between leave and rejoin.
-    try {
-      const absorbed = JSON.parse(localStorage.getItem('stockroom_share_absorbed') || '{}');
-      const cleaned  = {};
-      for (const k of Object.keys(absorbed)) {
-        if (!k.startsWith(`${code}:`)) cleaned[k] = absorbed[k];
-      }
-      localStorage.setItem('stockroom_share_absorbed', JSON.stringify(cleaned));
-    } catch(_e) {}
   }
-
-  // Wipe guest-cached shared data from the global IDB stores. While the
-  // user was a guest, every edit went into both `items`/`groceryItems`/
-  // `transactions`/etc. AND into the active profile — that's how the
-  // UI rendered. On leave we want their UI to reflect ONLY their own
-  // data, so we clear the live in-memory variables and wipe the global
-  // IDB stores; loadProfile('default') below repopulates from the
-  // profile blob, which is the user's actual personal data (often
-  // empty for users who only ever used the app as a guest).
-  await _wipeGuestCachedData();
-
   applyTabPermissions();
-  // Switch to own default profile and reload own data — loadProfile
-  // replaces in-memory state from the profile blob, so anything the
-  // user actually owns will reappear here.
-  await loadProfile('default');
-  scheduleRender(...RENDER_REGIONS);
-  toast('Left shared household — your view has been cleared');
-  // A sync now pulls the user's own /data blob and lets pushShared
-  // flow nothing (no _shareState, no targets unless they're an owner).
+  toast('Left shared household');
+  // Switch to own default profile and reload own data
+  loadProfile('default');
   kvSyncNow().catch(() => {});
 }
 
@@ -26671,7 +25832,6 @@ let _shareTargetType  = 'family';
 let _shareTargetPerms = {}; // { householdKey: { stockroom, groceries, reminders, savings, report } }
 let _shareTargetColour = HOUSEHOLD_COLOURS[0];
 let _shareTargetDone   = false; // true after link is generated — btn becomes Done
-let _shareTargetMgmt  = 'none'; // 'none' | 'view' | 'edit' — share-management perm for the target being edited
 
 function handleShareTargetBtn() {
   if (_shareTargetDone) {
@@ -26682,62 +25842,20 @@ function handleShareTargetBtn() {
 }
 
 async function loadShareTargets() {
-  if (!WORKER_URL || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
-  // Owners hit /share/list directly. Guests with view/edit shareManagement
-  // get a synthesised single-entry list built from their own membership
-  // record in _shareState — the server doesn't expose other members'
-  // contact info to non-owners, but their own share record (with the
-  // members array) is already in _shareState from the join handshake.
-  if (isOwner()) {
-    try {
-      const res  = await postKV(`${WORKER_URL}/share/list`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken });
-      const data = await res.json();
-      _shareTargets = data.targets || [];
-      renderShareTargetsList();
-    } catch(e) { console.warn('Could not load share targets:', e); }
-    return;
-  }
-  // Guest path: only populate if shareManagement permission allows.
-  if (canViewShares() && _shareState) {
-    _shareTargets = [{
-      code: _shareState.code,
-      name: _shareState.name || _shareState.ownerName || 'Shared household',
-      type: _shareState.type || 'guest',
-      colour: _shareState.colour || '#e8a838',
-      ownerName: _shareState.ownerName,
-      households: _shareState.households || {},
-      members: _shareState.members || [],
-      memberDetails: _shareState.memberDetails || {},
-      expiresAt: _shareState.expiresAt || null,
-      shareManagement: _shareState.shareManagement || 'none',
-    }];
+  if (!WORKER_URL || !isOwner() || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
+  try {
+    const res  = await postKV(`${WORKER_URL}/share/list`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken });
+    const data = await res.json();
+    _shareTargets = data.targets || [];
     renderShareTargetsList();
-  } else {
-    _shareTargets = [];
-    renderShareTargetsList();
-  }
+  } catch(e) { console.warn('Could not load share targets:', e); }
 }
 
 function renderShareTargetsList() {
   const list = document.getElementById('share-targets-list');
   const btn  = document.getElementById('add-share-target-btn');
-  const section = document.getElementById('share-targets-section');
   if (!list) return;
-
-  // Visibility gate: owners always see this; guests see it only if their
-  // shareManagement permission is 'view' or 'edit'. View-only hides all
-  // mutation buttons. Edit-mode is functionally identical to owner.
-  const viewable = canViewShares();
-  if (!viewable) {
-    if (section) section.style.display = 'none';
-    return;
-  }
-  if (section) section.style.display = '';
-
-  const editable = canManageShares();
-
-  // Add-person button is hidden in view-only mode
-  if (btn) btn.style.display = (editable && _shareTargets.length < 5) ? 'inline-flex' : 'none';
+  if (!isOwner()) { list.closest('#share-targets-section')?.style && (list.closest('#share-targets-section').style.display = 'none'); return; }
 
   const typeEmoji = { family: '👨‍👩‍👧', cleaner: '🧹', guest: '👤' };
   if (!_shareTargets.length) {
@@ -26747,139 +25865,28 @@ function renderShareTargetsList() {
       const colour    = t.colour || '#e8a838';
       const members   = t.members?.length || 0;
       const expired   = t.expiresAt && Date.now() > new Date(t.expiresAt).getTime();
-      // Show "Link valid until 13:42" when the expiry is on the same calendar
-      // day (the common case for a 1-hour window), or include the date when
-      // it spans into tomorrow (e.g. created at 23:30). Also append a short
-      // relative hint like "(45m left)" so it's obvious how much window
-      // remains without doing the maths.
-      const expiryStr = (() => {
-        if (!t.expiresAt) return '';
-        if (expired)      return '<svg class="icon" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> Link expired';
-        const exp        = new Date(t.expiresAt);
-        const now        = new Date();
-        const sameDay    = exp.toDateString() === now.toDateString();
-        const timeStr    = exp.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
-        const dateStr    = sameDay ? '' : ' ' + exp.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
-        const msLeft     = exp.getTime() - now.getTime();
-        const minsLeft   = Math.max(0, Math.round(msLeft / 60000));
-        const hintStr    = minsLeft < 60
-          ? ` (${minsLeft}m left)`
-          : ` (${Math.floor(minsLeft/60)}h ${minsLeft%60}m left)`;
-        return `Link valid until ${timeStr}${dateStr}${hintStr}`;
-      })();
-      const isExpanded = !!_expandedShareCodes[t.code];
-      const memberDetails = t.memberDetails || {};
-
-      // Member sub-rows — only meaningful when there are joined members.
-      // Each row shows the member's email-hash prefix (we don't store the
-      // raw email server-side for privacy), last-active relative time,
-      // and a "Remove" button (mgmt-edit only).
-      const memberRows = members ? `
-        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:${isExpanded?'block':'none'}" id="share-members-${t.code}">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Members</div>
-          ${(t.members||[]).map(memberHash => {
-            const md = memberDetails[memberHash] || {};
-            const lastActive = md.lastActiveAt ? _relTime(md.lastActiveAt) : 'Not yet active';
-            const firstSeen  = md.firstSeenAt  ? new Date(md.firstSeenAt).toLocaleDateString() : '—';
-            const pulls      = md.pullCount || 0;
-            return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--bg);border-radius:8px;margin-bottom:4px">
-              <svg class="icon icon-sm" aria-hidden="true" style="color:var(--muted);flex-shrink:0"><use href="#i-user"></use></svg>
-              <div style="flex:1;min-width:0">
-                <div style="font-size:11px;font-family:var(--mono);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(memberHash.slice(0,12))}…</div>
-                <div style="font-size:10px;color:var(--muted);margin-top:1px">
-                  <svg class="icon" aria-hidden="true" style="width:10px;height:10px;vertical-align:-1px"><use href="#i-clock"></use></svg>
-                  ${esc(lastActive)} · joined ${esc(firstSeen)}${pulls>0?` · ${pulls} sync${pulls===1?'':'s'}`:''}
-                </div>
-              </div>
-              ${editable ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:4px 8px;font-size:11px" onclick="removeShareMember('${t.code}','${memberHash}')" title="Remove this member"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>` : ''}
-            </div>`;
-          }).join('')}
-        </div>` : '';
-
-      // Action buttons — full set for owners/edit, none for view-only
-      const actionsHtml = editable ? `
+      const expiryStr = t.expiresAt ? (expired ? '<svg class="icon" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> Link expired' : `Link valid until ${new Date(t.expiresAt).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`) : '';
+      return `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border:1px solid ${expired?'var(--danger)':'var(--border)'};border-radius:10px">
+        <div style="width:12px;height:12px;border-radius:50%;background:${colour};flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:700">${typeEmoji[t.type]||'👤'} ${esc(t.name)}</div>
+          <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${t.type}${members?' · '+members+' member'+(members!==1?'s':''):''}</div>
+          ${expiryStr?`<div style="font-size:10px;color:${expired?'var(--danger)':'var(--muted)'};margin-top:2px">${expiryStr}</div>`:''}
+        </div>
         <button class="btn btn-ghost btn-sm" onclick="openEditShareTarget('${t.code}')" title="Edit"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
         ${expired
-          ? `<button class="btn btn-ghost btn-sm" onclick="refreshShareLink('${t.code}')" title="Refresh link (new 1h window)"><svg class="icon" aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>`
+          ? `<button class="btn btn-ghost btn-sm" onclick="refreshShareLink('${t.code}')" title="Refresh link (new 24h window)"><svg class="icon" aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>`
           : `<button class="btn btn-ghost btn-sm" onclick="copyShareTargetLink('${t.code}')" title="Copy invite link">🔗</button>`
         }
         <button class="btn btn-ghost btn-sm" onclick="resyncSharedData('${t.code}')" title="Re-sync data to guest"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg></button>
-        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteShareTarget('${t.code}')" title="Remove share"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
-      ` : '';
-
-      // Expand/collapse chevron — always present when there are members so
-      // viewers can audit who has access even in view-only mode.
-      const expandBtn = members ? `<button class="btn btn-ghost btn-sm" onclick="toggleShareMembers('${t.code}')" title="${isExpanded?'Hide':'Show'} members" aria-expanded="${isExpanded}"><svg class="icon" aria-hidden="true" style="transform:rotate(${isExpanded?180:0}deg);transition:transform 0.15s"><use href="#i-chevron-down"></use></svg></button>` : '';
-
-      return `
-      <div style="display:flex;flex-direction:column;padding:10px 12px;background:var(--surface2);border:1px solid ${expired?'var(--danger)':'var(--border)'};border-radius:10px">
-        <div style="display:flex;align-items:center;gap:10px">
-          <div style="width:12px;height:12px;border-radius:50%;background:${colour};flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:13px;font-weight:700">${typeEmoji[t.type]||'👤'} ${esc(t.name)}</div>
-            <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${t.type}${members?' · '+members+' member'+(members!==1?'s':''):''}${t.shareManagement && t.shareManagement !== 'none' ? ' · share-'+t.shareManagement : ''}</div>
-            ${t.pendingInvite ? `<div style="font-size:10px;color:var(--accent);margin-top:2px"><svg class="icon" aria-hidden="true" style="width:10px;height:10px;vertical-align:-1px"><use href="#i-clock"></use></svg> Awaiting signup${t.pendingInvite.guestEmail?` from ${esc(t.pendingInvite.guestEmail)}`:''}</div>` : ''}
-            ${expiryStr?`<div style="font-size:10px;color:${expired?'var(--danger)':'var(--muted)'};margin-top:2px">${expiryStr}</div>`:''}
-          </div>
-          ${expandBtn}
-          ${actionsHtml}
-        </div>
-        ${memberRows}
+        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteShareTarget('${t.code}')"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
       </div>`;
     }).join('');
   }
+  if (btn) btn.style.display = _shareTargets.length >= 5 ? 'none' : 'inline-flex';
   const clearBtn = document.getElementById('clear-all-shares-btn');
-  if (clearBtn) clearBtn.style.display = (editable && _shareTargets.length > 0) ? 'inline-flex' : 'none';
-}
-
-// Tracks which share rows are expanded to show member details. Survives
-// re-renders within a session but resets on page reload.
-const _expandedShareCodes = {};
-function toggleShareMembers(code) {
-  _expandedShareCodes[code] = !_expandedShareCodes[code];
-  renderShareTargetsList();
-}
-
-// Human-readable relative time ("3 mins ago", "2 hours ago", etc).
-// Used for last-active timestamps in the member list.
-function _relTime(iso) {
-  if (!iso) return '—';
-  const ms = Date.now() - new Date(iso).getTime();
-  if (ms < 0) return 'just now';
-  const s = Math.floor(ms/1000);
-  if (s < 60)   return 'just now';
-  const m = Math.floor(s/60);
-  if (m < 60)   return `${m} min${m===1?'':'s'} ago`;
-  const h = Math.floor(m/60);
-  if (h < 24)   return `${h} hour${h===1?'':'s'} ago`;
-  const d = Math.floor(h/24);
-  if (d < 30)   return `${d} day${d===1?'':'s'} ago`;
-  return new Date(iso).toLocaleDateString();
-}
-
-// Surgically remove a single member from a share. Calls the new
-// /share/member/remove endpoint which evicts them, drops their wrapped
-// share key, and writes a 7-day revocation marker so their next pull
-// returns 403 fast and they self-clean.
-async function removeShareMember(code, memberHash) {
-  const target = _shareTargets.find(t => t.code === code);
-  if (!target) return;
-  const memberLabel = memberHash.slice(0, 12) + '…';
-  if (!confirm(`Remove this member (${memberLabel}) from "${target.name}"?\n\nThey'll lose access immediately on their next sync, and their copy of the shared data will clear from their device. Other members of this share are unaffected.`)) return;
-  try {
-    const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
-    const res = await postKV(`${WORKER_URL}/share/member/remove`, {
-      ownerEmailHash: _kvEmailHash, ...authFields, code, guestEmailHash: memberHash,
-    });
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      throw new Error(d.error || 'Could not remove member');
-    }
-    toast('Member removed ✓');
-    await loadShareTargets();
-  } catch(err) {
-    toast('Could not remove member: ' + err.message);
-  }
+  if (clearBtn) clearBtn.style.display = _shareTargets.length > 0 ? 'inline-flex' : 'none';
 }
 
 function renderShareTargetColourPicker(selectedColour) {
@@ -26914,41 +25921,7 @@ function selectShareType(type, btn) {
     const defaults = SHARE_TYPE_DEFAULTS[type] || SHARE_TYPE_DEFAULTS.guest;
     _shareTargetPerms[hKey] = { ...defaults };
   });
-  // Reset share-management permission to type default (always 'none' today —
-  // there's no per-type override yet, but keeping the indirection makes
-  // future tweaks one-line).
-  _shareTargetMgmt = SHARE_MGMT_DEFAULTS[type] || 'none';
-  renderShareMgmtPicker();
   renderShareHouseholdPerms();
-}
-
-// Render the three-button None / View / Edit selector for share-management.
-// Lives in a dedicated region above the per-household perms grid.
-function renderShareMgmtPicker() {
-  const el = document.getElementById('share-mgmt-perm');
-  if (!el) return;
-  const opts = [
-    { v: 'none', label: '🔒 None', hint: 'Cannot see share access' },
-    { v: 'view', label: '👁 View', hint: 'Can see who has access (read-only)' },
-    { v: 'edit', label: '✏️ Edit', hint: 'Can add, edit, remove share access' },
-  ];
-  el.innerHTML = opts.map(o => {
-    const active = o.v === _shareTargetMgmt;
-    return `<button onclick="setShareMgmt('${o.v}')" type="button"
-      style="flex:1;min-width:90px;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:12px;
-             border:1px solid ${active?'var(--accent)':'var(--border)'};
-             background:${active?'rgba(232,168,56,0.15)':'transparent'};
-             color:${active?'var(--accent)':'var(--muted)'};transition:all 0.15s;
-             display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left">
-      <span style="font-weight:600">${o.label}</span>
-      <span style="font-size:10px;color:var(--muted);font-weight:400">${o.hint}</span>
-    </button>`;
-  }).join('');
-}
-
-function setShareMgmt(v) {
-  _shareTargetMgmt = v;
-  renderShareMgmtPicker();
 }
 
 async function renderShareHouseholdPerms() {
@@ -27012,7 +25985,6 @@ async function openAddShareTarget() {
   _shareTargetType   = 'family';
   _shareTargetPerms  = {};
   _shareTargetColour = HOUSEHOLD_COLOURS[_shareTargets.length % HOUSEHOLD_COLOURS.length];
-  _shareTargetMgmt   = SHARE_MGMT_DEFAULTS.family;
   const profiles     = await getProfiles();
   const defaults     = SHARE_TYPE_DEFAULTS.family;
   // Always include at least the default household
@@ -27031,7 +26003,6 @@ async function openAddShareTarget() {
   document.getElementById('share-target-save-btn').textContent = 'Create & get link';
   selectShareType('family', document.querySelector('.share-type-btn[data-type="family"]'));
   renderShareTargetColourPicker(_shareTargetColour);
-  renderShareMgmtPicker();
   await renderShareHouseholdPerms();
   openModal('share-target-modal');
 }
@@ -27042,7 +26013,6 @@ async function openEditShareTarget(code) {
   _shareTargetType   = target.type || 'family';
   _shareTargetPerms  = JSON.parse(JSON.stringify(target.households || {}));
   _shareTargetColour = target.colour || HOUSEHOLD_COLOURS[0];
-  _shareTargetMgmt   = target.shareManagement || 'none';
   _shareTargetDone   = false;
 
   document.getElementById('share-target-modal-title').innerHTML = '<svg class="icon icon-md" aria-hidden="true" style="color:var(--accent);vertical-align:-3px"><use href="#i-pencil"></use></svg> Edit Access';
@@ -27055,7 +26025,7 @@ async function openEditShareTarget(code) {
   const emailLabel = document.querySelector('#share-target-email-group label');
   if (emailLabel) emailLabel.textContent = 'Their email address';
   const emailHint = document.querySelector('#share-target-email-group p');
-  if (emailHint) emailHint.textContent = "If they don't have a STOCKROOM account, the link will let them sign up with this email. Their email is used to encrypt the share key — it never leaves your device.";
+  if (emailHint) emailHint.textContent = 'Their email is used to encrypt the share key — it never leaves your device.';
   // Pre-fill saved email
   document.getElementById('share-target-email').value = target.guestEmail || '';
 
@@ -27068,11 +26038,7 @@ async function openEditShareTarget(code) {
   document.getElementById('share-link-section').style.display = 'none';
   document.getElementById('share-target-save-btn').textContent = 'Save changes';
   selectShareType(_shareTargetType, document.querySelector(`.share-type-btn[data-type="${_shareTargetType}"]`));
-  // selectShareType resets _shareTargetMgmt to type default; restore the
-  // saved value AFTER so the editor shows what's actually stored.
-  _shareTargetMgmt = target.shareManagement || 'none';
   renderShareTargetColourPicker(_shareTargetColour);
-  renderShareMgmtPicker();
   await renderShareHouseholdPerms();
   openModal('share-target-modal');
 }
@@ -27090,7 +26056,7 @@ async function saveShareTarget() {
   try {
     if (code) {
       // Update existing — re-use existing share key
-      const res = await postKV(`${WORKER_URL}/share/update`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code, name, type: _shareTargetType, colour, households: _shareTargetPerms, shareManagement: _shareTargetMgmt });
+      const res = await postKV(`${WORKER_URL}/share/update`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code, name, type: _shareTargetType, colour, households: _shareTargetPerms });
       if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || 'Update failed'); }
       await pushSharedData(code);
 
@@ -27112,30 +26078,14 @@ async function saveShareTarget() {
       const guestEmail = document.getElementById('share-target-email')?.value.trim();
       if (!guestEmail) throw new Error('Enter their email address so their share key can be encrypted for them');
 
-      // 1. Hash guest email → fetch their ECDH public key.
-      // A 404 here means they don't have a STOCKROOM account yet. That's
-      // fine: we create the share anyway and record `pendingInvite` on
-      // the share record. When they sign up using this link and join,
-      // their app calls /share/ecdh-key/request-rewrap, the owner picks
-      // up the request on next sync, wraps the key, and the guest
-      // unwraps on the following sync. End-to-end with no synchronous
-      // dependency on the guest having pre-existed.
+      // 1. Hash guest email → fetch their ECDH public key
       const guestEmailHash = await kvHashEmail(guestEmail);
       const pubRes = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: guestEmailHash });
-      let guestPubKeyJwk = null;
-      let guestHasAccount = false;
-      if (pubRes.ok) {
-        const pubData = await pubRes.json();
-        guestPubKeyJwk = pubData.publicKeyJwk;
-        guestHasAccount = true;
-      } else if (pubRes.status !== 404) {
-        // Real network/server error — bail. Only 404 is a known "no account" signal.
-        throw new Error('Could not fetch their encryption key — try again');
-      }
+      if (pubRes.status === 404) throw new Error(`${guestEmail} doesn't have a STOCKROOM account yet — they need to sign up first`);
+      if (!pubRes.ok) throw new Error('Could not fetch their encryption key — try again');
+      const { publicKeyJwk: guestPubKeyJwk } = await pubRes.json();
 
-      // 2. Load our own ECDH private key (always needed if guest exists; for
-      //    pending invites we still want it loaded so that if they sign up
-      //    in the next few seconds we can fulfil the rewrap immediately).
+      // 2. Load our own ECDH private key
       const ownerPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
       if (!ownerPrivKey) throw new Error('Your encryption key is missing — try signing out and back in');
 
@@ -27143,53 +26093,39 @@ async function saveShareTarget() {
       const shareKey    = await generateShareKey();
       const shareKeyB64 = await exportShareKey(shareKey);
 
-      // 4. ECDH-wrap the share key for the guest (only if they exist).
-      //    For pending invites the wrap happens later via the rewrap flow.
-      let wrappedKey = null;
-      let ownerPubKeyJwk = null;
-      if (guestHasAccount) {
-        wrappedKey = await ecdhWrapShareKey(ownerPrivKey, guestPubKeyJwk, shareKey);
-        // 5. Export our own public key JWK so the guest can unwrap.
-        const ownerPubRes = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: _kvEmailHash });
-        if (!ownerPubRes.ok) throw new Error('Could not fetch your encryption key — try again');
-        ({ publicKeyJwk: ownerPubKeyJwk } = await ownerPubRes.json());
-      }
+      // 4. ECDH-wrap the share key for the guest
+      const wrappedKey = await ecdhWrapShareKey(ownerPrivKey, guestPubKeyJwk, shareKey);
 
-      // 6. Create share on server. Records pendingInvite so the owner UI
-      //    can show "awaiting signup" status and so this server-side
-      //    knowledge survives across the owner's devices.
+      // 5. Export our own public key JWK to send alongside (guest needs it to unwrap)
+      const ownerPubRes = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: _kvEmailHash });
+      if (!ownerPubRes.ok) throw new Error('Could not fetch your encryption key — try again');
+      const { publicKeyJwk: ownerPubKeyJwk } = await ownerPubRes.json();
+
+      // 6. Create share on server
       const res = await postKV(`${WORKER_URL}/share/create`, {
           ownerEmailHash: _kvEmailHash,
           ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
           name, type: _shareTargetType, colour, ownerName,
           households: _shareTargetPerms,
-          shareManagement: _shareTargetMgmt,
           householdNames: Object.fromEntries(
             Object.entries(profiles).map(([k,p]) => [k, p.name||(k==='default'?'Home':k)])
           ),
-          ...(guestHasAccount
-            ? { guestEmail }
-            : { pendingInvite: { guestEmailHash, guestEmail } }),
         });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed');
 
-      // 7. Store ECDH-wrapped key on server — only if we have one.
-      if (guestHasAccount && wrappedKey && ownerPubKeyJwk) {
-        const ecdhStoreRes = await postKV(`${WORKER_URL}/share/ecdh-key/store`, {
-            ownerEmailHash: _kvEmailHash,
-            ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
-            code: data.code,
-            guestEmailHash,
-            wrappedKey,
-            ownerPublicKeyJwk: ownerPubKeyJwk,
-          });
-        if (!ecdhStoreRes.ok) throw new Error('Could not store encrypted share key — try again');
-      }
+      // 7. Store ECDH-wrapped key on server for the guest
+      const ecdhStoreRes = await postKV(`${WORKER_URL}/share/ecdh-key/store`, {
+          ownerEmailHash: _kvEmailHash,
+          ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+          code: data.code,
+          guestEmailHash,
+          wrappedKey,
+          ownerPublicKeyJwk: ownerPubKeyJwk,
+        });
+      if (!ecdhStoreRes.ok) throw new Error('Could not store encrypted share key — try again');
 
-      // 8. Cache share key locally and back it up — this MUST happen for
-      //    pending invites too, otherwise when the guest later requests
-      //    a rewrap we won't have the share key to wrap.
+      // 8. Cache share key locally and back it up (for owner cross-device recovery)
       try {
         const stored = await _getShareKeys();
         stored[data.code] = shareKeyB64;
@@ -27218,7 +26154,6 @@ async function saveShareTarget() {
         await _sendShareEmail(createEmailVal, {
           code: data.code, name, type: _shareTargetType,
           households: _shareTargetPerms, isUpdate: false, inviteLink,
-          guestHasAccount,
         }).catch(() => {});
       }
 
@@ -27226,14 +26161,7 @@ async function saveShareTarget() {
       closeModal('share-target-modal');
       _shareTargetDone = false; // reset for next use
 
-      // Different toast depending on whether the guest has an account.
-      // For pending invites we want the owner to know that the link is
-      // valid but the guest still needs to sign up before access kicks in.
-      if (guestHasAccount) {
-        toast(`✓ Share created — link copied! Send it to ${name}`);
-      } else {
-        toast(`✓ Link created for ${name} — they'll need to sign up with ${guestEmail} to access. Link copied to clipboard.`);
-      }
+      toast(`✓ Share created — link copied! Send it to ${name}`);
       if (kvConnected) setTimeout(syncAll, 600);
     }
   } catch(err) {
@@ -27305,98 +26233,6 @@ async function recoverShareKey(code) {
   }
 }
 
-// ── Guest share envelope ────────────────────────────────────
-// A guest's persistent record of their own access to a share. The
-// share key is wrapped with the guest's data key (NOT their passphrase
-// directly — the data key is unwrapped at login time and lives only
-// in memory). Stored on the server under the guest's user-namespace.
-//
-// This is what makes share access survive: browser clears, new
-// devices, passphrase changes, sign-out-and-sign-back-in. The
-// ECDH-wrapped key from /share/ecdh-key/get is now only a one-time
-// handshake — once the guest has the share key, they immediately
-// re-wrap with their data key and store this envelope. Future
-// device-clears just refetch this envelope and unwrap with their
-// data key (which is itself recovered via passphrase + envelope).
-//
-// Trust model note: this means "anyone with the guest's passphrase"
-// can recover the share key. That's the same property already true
-// for the guest's own data, so we're not weakening the guest's
-// security posture — just unifying the recovery story for "things
-// the guest has access to."
-
-// Store the guest's share envelope. Called once after first-time
-// ECDH unwrap, and again whenever we have a fresh share key in
-// memory (rewrap after revocation, etc).
-async function _storeGuestShareEnvelope(code, shareKey) {
-  if (!_kvKey || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
-  if (!shareKey || !code) return;
-  try {
-    // Wrap the raw share key bytes with the guest's data key. We use
-    // the same kvEncrypt path as user data — AES-GCM with a random
-    // IV. The output is a base64 string we can hand to the server.
-    const raw  = await crypto.subtle.exportKey('raw', shareKey);
-    const b64  = btoa(String.fromCharCode(...new Uint8Array(raw)));
-    const env  = await kvEncrypt(_kvKey, b64);
-    const auth = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
-    await postKV(`${WORKER_URL}/user/share-envelope/store`, {
-      emailHash: _kvEmailHash, ...auth, code, envelope: env,
-    });
-  } catch(e) {
-    console.warn('[share] _storeGuestShareEnvelope failed for', code, '—', e?.message);
-  }
-}
-
-// Load and unwrap the guest's share envelope. Returns a CryptoKey or
-// null. The null case is normal — first time on this share, no
-// envelope yet, fall back to ECDH path. After the first successful
-// unwrap-and-store cycle, subsequent calls succeed straight away.
-async function _loadGuestShareEnvelope(code) {
-  if (!_kvKey || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return null;
-  if (!code) return null;
-  try {
-    const auth = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
-    const res  = await postKV(`${WORKER_URL}/user/share-envelope/get`, {
-      emailHash: _kvEmailHash, ...auth, code,
-    });
-    if (!res.ok) return null;
-    const { envelope } = await res.json();
-    if (!envelope) return null; // no envelope stored yet — caller falls back to ECDH
-    // Unwrap with the guest's data key
-    const b64 = await kvDecrypt(_kvKey, envelope);
-    const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-    const sk  = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
-    // Cache locally so subsequent in-session pushes/pulls don't need
-    // a round-trip. On next browser-clear the cache is gone but the
-    // server-side envelope persists.
-    try {
-      const stored = await _getShareKeys();
-      stored[code] = b64;
-      await _setShareKeys(stored);
-    } catch(_e) {}
-    return sk;
-  } catch(e) {
-    console.warn('[share] _loadGuestShareEnvelope failed for', code, '—', e?.message);
-    return null;
-  }
-}
-
-// Delete the guest's share envelope from the server. Called on
-// explicit leave-share, eviction by owner, or guest account
-// deletion (the prefix-scan in _deleteAllUserData also catches it
-// but explicit delete keeps things clean).
-async function _deleteGuestShareEnvelope(code) {
-  if (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken) || !code) return;
-  try {
-    const auth = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
-    await postKV(`${WORKER_URL}/user/share-envelope/delete`, {
-      emailHash: _kvEmailHash, ...auth, code,
-    });
-  } catch(e) {
-    console.warn('[share] _deleteGuestShareEnvelope failed for', code, '—', e?.message);
-  }
-}
-
 // Push owner's data re-encrypted with the share key for a specific share code
 async function pushSharedData(code, shareKey) {
   if (!_kvKey) return;
@@ -27443,31 +26279,15 @@ async function pushSharedData(code, shareKey) {
       const canSeeReminders  = perms.reminders  && perms.reminders  !== 'none';
       const canSeeBudget     = perms.budget     && perms.budget     !== 'none';
 
-      // Stockroom and grocery-list tombstones — needed so guests
-      // honour the owner's deletes for items and named grocery lists.
-      // These were previously missing from the share payload, which
-      // meant a deleted owner item could resurrect on the guest side.
-      const stockroomTombstones = canSeeStockroom ? await loadDeletedIds() : new Set();
-      const groceryListTombs    = canSeeGroceries ? await loadGroceryListDeletedIds() : new Set();
-      const billsDeletedTombs   = canSeeBudget    ? billsDeletedIds : new Set();
-
       const payload = JSON.stringify({
         items:       canSeeStockroom ? hItems     : [],
-        deletedIds:  [...stockroomTombstones],
         settings:    hSettings,
         groceries:   canSeeGroceries ? hGroceries : [],
-        // Named grocery lists (per-store) — guests with grocery rw need
-        // these to render the list picker and add items to specific lists.
-        groceryLists: canSeeGroceries ? groceryLists : [],
         reminders:   canSeeReminders ? hReminders : [],
         departments: canSeeGroceries ? hDepts     : [],
-        // Grocery-list tombstones — fixes a parallel resurrection bug
-        // for named grocery lists that mirrored the items one above.
-        groceryListDeletedIds: [...groceryListTombs],
         // Budget — Phase 1 (bills) + Phase 2 (categories, transactions) + Phase 3 (accounts, income).
         // Lives at user-level (not per-household), so the same data goes to every share with budget perm.
         bills:                       canSeeBudget ? bills           : [],
-        billsDeletedIds:             [...billsDeletedTombs],
         billInstances:               canSeeBudget ? billInstances   : {},
         budgetSettings:              canSeeBudget ? budgetSettings  : {},
         budgetCategories:            canSeeBudget ? budgetCategories: [],
@@ -27497,400 +26317,6 @@ async function pushAllSharedData() {
     // Also fulfil any pending rewrap requests from new guests
     await _fulfilPendingRewraps(target.code).catch(e => console.warn('rewrap failed for', target.code, e.message));
   }
-}
-
-// Owner-side absorption of guest writes — called from kvSyncNow before
-// the owner's kvPush. Returns true if any guest write was merged in,
-// in which case the caller should kvPush so the merged state round-
-// trips back to the share blob (and thence to other guests). Tracks
-// per-(code, household) "last absorbed at" markers in localStorage so
-// we never absorb the same guest write twice (which would re-issue
-// its changes after the owner has already pushed them).
-async function _absorbGuestWritesForOwner() {
-  if (!_shareTargets?.length) return false;
-  let anyAbsorbed = false;
-  const absorbedKey = 'stockroom_share_absorbed';
-  let absorbed = {};
-  try { absorbed = JSON.parse(localStorage.getItem(absorbedKey) || '{}') || {}; } catch(_e) { absorbed = {}; }
-  const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
-
-  for (const target of _shareTargets) {
-    const code      = target.code;
-    const households = Object.keys(target.households || {});
-    if (!households.length) households.push('default');
-
-    // Locate the share key for this code — same recovery chain as pushSharedData
-    let sk = null;
-    try {
-      const stored = await _getShareKeys();
-      const b64 = stored[code];
-      if (b64) {
-        const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-        sk = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
-      }
-    } catch(_e) {}
-    if (!sk) {
-      try { sk = await recoverShareKey(code); } catch(_e) {}
-    }
-    if (!sk) { console.warn('[absorb] no share key for', code, '— skipping'); continue; }
-
-    for (const hKey of households) {
-      try {
-        const res = await postKV(`${WORKER_URL}/share/data/pull-owner`, {
-          ownerEmailHash: _kvEmailHash, ...authFields, code, household: hKey,
-        });
-        if (!res.ok) continue;
-        const j = await res.json();
-        if (!j.ciphertext || !j.writer) continue;
-        // Only absorb writes that came from a guest. Owner writes are
-        // already in our own state — re-absorbing them would just
-        // reverse any local edits made since.
-        if (j.writer.kind !== 'guest') continue;
-        const writerAt = j.writer.at ? new Date(j.writer.at).getTime() : 0;
-        if (!writerAt) continue;
-        const stamp = `${code}:${hKey}`;
-        const lastAbsorbed = absorbed[stamp] ? new Date(absorbed[stamp]).getTime() : 0;
-        if (writerAt <= lastAbsorbed) continue; // already absorbed
-
-        let parsed;
-        try {
-          const plain = await decryptWithShareKey(sk, j.ciphertext);
-          parsed = JSON.parse(plain);
-        } catch(e) { console.warn('[absorb] decrypt failed for', stamp, e.message); continue; }
-
-        // Merge into local state. We respect per-section permissions
-        // here too — if a guest somehow pushed a section they had no
-        // rw on (defensive against client tampering), we ignore that
-        // section and trust our local view.
-        const perms = target.households?.[hKey] || {};
-        const mergedSomething = await _absorbGuestPayloadIntoLocal(parsed, perms, hKey);
-        if (mergedSomething) {
-          anyAbsorbed = true;
-          console.log('[absorb] merged guest write from', stamp, 'writer:', j.writer.emailHash?.slice(0,8));
-        }
-        // Stamp regardless of mergedSomething — we've processed this writer event.
-        absorbed[stamp] = j.writer.at;
-      } catch(e) { console.warn('[absorb] failed for', code, hKey, e.message); }
-    }
-  }
-  try { localStorage.setItem(absorbedKey, JSON.stringify(absorbed)); } catch(_e) {}
-  return anyAbsorbed;
-}
-
-// Merge a guest's pushed share-blob payload into the owner's in-memory
-// state for one household. Returns true if anything actually changed.
-// Section-level permission gating is applied: a section the guest
-// didn't have rw on is skipped (we don't trust that part of the blob).
-async function _absorbGuestPayloadIntoLocal(payload, perms, hKey) {
-  if (!payload || typeof payload !== 'object') return false;
-  // For now, absorption only applies to the active profile. Cross-profile
-  // absorption would require switching profile context to merge into
-  // their stored items, which is a bigger refactor — and in practice
-  // owners are usually on the same profile they're sharing.
-  const isActiveProfile = hKey === activeProfile || (hKey === 'default' && (!activeProfile || activeProfile === 'default'));
-  if (!isActiveProfile) {
-    // Fold into the stored profile via getProfiles/saveProfiles. This is
-    // less surgical than the active-profile path but covers the case of
-    // an owner on profile A receiving a guest write to profile B.
-    return _absorbGuestPayloadIntoStoredProfile(payload, perms, hKey);
-  }
-  let changed = false;
-
-  // Stockroom tombstones — apply BEFORE merging items so mergeItems can
-  // filter newly-deleted ids out of both sides. Adding tombstones after
-  // the merge means mergeItems used the old tombstone set and may have
-  // re-introduced items the guest just deleted.
-  if (perms.stockroom === 'rw' && Array.isArray(payload.deletedIds) && payload.deletedIds.length) {
-    try {
-      const local = await loadDeletedIds();
-      const before = local.size;
-      payload.deletedIds.forEach(id => local.add(id));
-      if (local.size !== before) {
-        await saveDeletedIds(local);
-        // Sweep local items array — mergeItems will also filter, but
-        // sweeping here makes the change visible even on the path
-        // where payload.items isn't present (e.g. tombstone-only push).
-        const beforeLen = items.length;
-        items = items.filter(i => !local.has(i.id));
-        if (items.length !== beforeLen) await saveData();
-        changed = true;
-      }
-    } catch(_e) {}
-  }
-
-  // Stockroom items — use existing mergeItems logic (last-edit-wins
-  // per record via _modifiedAt). The "remoteWins" flag here is true:
-  // we're absorbing a guest write that's *newer than our last absorb*,
-  // so prefer the guest's per-record timestamps. mergeItems internally
-  // filters on the (now-updated) deletedIds set so a record the guest
-  // just tombstoned won't be resurrected by an older copy in our state.
-  if (perms.stockroom === 'rw' && Array.isArray(payload.items)) {
-    items = await mergeItems(items, payload.items, true);
-    await saveData();
-    changed = true;
-  }
-
-  // Grocery tombstones — same pattern: apply before the merge, sweep
-  // local list so a guest delete propagates even when the items array
-  // isn't in the payload.
-  if (perms.groceries === 'rw' && Array.isArray(payload.groceryListDeletedIds) && payload.groceryListDeletedIds.length) {
-    try {
-      const local = await loadGroceryListDeletedIds();
-      const before = local.size;
-      payload.groceryListDeletedIds.forEach(id => local.add(id));
-      if (local.size !== before) {
-        await dbPut('groceryLists', '_deletedIds', [...local]);
-        const beforeLen = groceryLists.length;
-        groceryLists = groceryLists.filter(l => !local.has(l.id));
-        if (groceryLists.length !== beforeLen) await _saveGroceryLists();
-        changed = true;
-      }
-    } catch(_e) {}
-  }
-
-  // Groceries — same merge pattern as kvSyncNow's standard path
-  if (perms.groceries === 'rw' && Array.isArray(payload.groceries)) {
-    const tombstones = await loadGroceryDeletedIds();
-    const incoming   = payload.groceries.filter(i => !tombstones.has(i.id));
-    // Also filter local for newly-added tombstones before merge.
-    const localFiltered = groceryItems.filter(i => !tombstones.has(i.id));
-    const merged = _mergeArrayById(localFiltered, incoming);
-    if (merged.changed || localFiltered.length !== groceryItems.length) {
-      groceryItems = merged.list;
-      await _saveGroceryLocal();
-      changed = true;
-    }
-  }
-  // Named grocery lists — same id-merge as the guest push side.
-  if (perms.groceries === 'rw' && Array.isArray(payload.groceryLists)) {
-    const m = _mergeArrayById(groceryLists, payload.groceryLists);
-    if (m.changed) { groceryLists = m.list; await _saveGroceryLists(); changed = true; }
-  }
-
-  // Reminders — append-style merge by id
-  if (perms.reminders === 'rw' && Array.isArray(payload.reminders)) {
-    const merged = _mergeArrayById(reminders, payload.reminders);
-    if (merged.changed) { reminders = merged.list; await saveReminders(); changed = true; }
-  }
-
-  // Budget — bills, transactions, categories, accounts, income.
-  // These all use last-write-wins per record with explicit deletedIds
-  // tombstones already maintained on both sides. We merge by id and
-  // prefer the side with the newer per-record timestamp. Local
-  // persistence is split across saveBudgetLocal (bills + bill instances
-  // + bills tombstones), saveBudgetSpendLocal (categories + transactions
-  // + their tombstones) and saveBudgetAccountsAndIncomeLocal (accounts
-  // + income + their tombstones), so we track which group needs
-  // re-saving with three flags rather than calling each piece's save.
-  if (perms.budget === 'rw') {
-    let budgetTouched = false;
-    let spendTouched  = false;
-    let accIncTouched = false;
-
-    if (Array.isArray(payload.bills)) {
-      const merged = _mergeArrayById(bills, payload.bills);
-      if (merged.changed) { bills = merged.list; budgetTouched = true; }
-    }
-    if (payload.billInstances && typeof payload.billInstances === 'object') {
-      const before = JSON.stringify(billInstances);
-      billInstances = { ...billInstances, ...payload.billInstances };
-      if (JSON.stringify(billInstances) !== before) budgetTouched = true;
-    }
-    if (Array.isArray(payload.budgetCategories)) {
-      const merged = _mergeArrayById(budgetCategories, payload.budgetCategories);
-      if (merged.changed) { budgetCategories = merged.list; spendTouched = true; }
-    }
-    if (payload.transactions && typeof payload.transactions === 'object') {
-      // transactions: { "yyyymm": { txId: {...}, ... }, ... }
-      const m = _mergeMonthMap(transactions, payload.transactions);
-      if (m.changed) { transactions = m.map; spendTouched = true; }
-    }
-    if (Array.isArray(payload.budgetAccounts)) {
-      const merged = _mergeArrayById(budgetAccounts, payload.budgetAccounts);
-      if (merged.changed) { budgetAccounts = merged.list; accIncTouched = true; }
-    }
-    if (Array.isArray(payload.incomeTemplates)) {
-      const merged = _mergeArrayById(incomeTemplates, payload.incomeTemplates);
-      if (merged.changed) { incomeTemplates = merged.list; accIncTouched = true; }
-    }
-    if (payload.incomeEntries && typeof payload.incomeEntries === 'object') {
-      // incomeEntries: same yyyymm-keyed nested-map shape as transactions
-      const m = _mergeMonthMap(incomeEntries, payload.incomeEntries);
-      if (m.changed) { incomeEntries = m.map; accIncTouched = true; }
-    }
-    // Tombstones — union with local. A guest's "deleted X" must propagate.
-    // Also actively sweep the corresponding live record from local state:
-    // adding an id to the tombstone set is necessary but not sufficient
-    // — without sweeping, the record we've already merged in (e.g. from
-    // an earlier guest "add" that then got "deleted") survives because
-    // _mergeMonthMap and _mergeArrayById only iterate the remote payload.
-    // A delete is communicated by the id appearing in the deletedIds
-    // array but NOT in the records list of the same payload.
-    if (Array.isArray(payload.billsDeletedIds)) {
-      const before = billsDeletedIds.size;
-      payload.billsDeletedIds.forEach(id => billsDeletedIds.add(id));
-      if (billsDeletedIds.size !== before) {
-        // Sweep matching bills out of live state.
-        const beforeLen = bills.length;
-        bills = bills.filter(b => !billsDeletedIds.has(b.id));
-        if (bills.length !== beforeLen) budgetTouched = true;
-        budgetTouched = true;
-      }
-    }
-    if (Array.isArray(payload.budgetCategoryDeletedIds)) {
-      const before = budgetCategoryDeletedIds.size;
-      payload.budgetCategoryDeletedIds.forEach(id => budgetCategoryDeletedIds.add(id));
-      if (budgetCategoryDeletedIds.size !== before) {
-        const beforeLen = budgetCategories.length;
-        budgetCategories = budgetCategories.filter(c => !budgetCategoryDeletedIds.has(c.id));
-        if (budgetCategories.length !== beforeLen) spendTouched = true;
-        spendTouched = true;
-      }
-    }
-    if (Array.isArray(payload.budgetTransactionDeletedIds)) {
-      const before = budgetTransactionDeletedIds.size;
-      payload.budgetTransactionDeletedIds.forEach(id => budgetTransactionDeletedIds.add(id));
-      if (budgetTransactionDeletedIds.size !== before) {
-        // Walk every yyyymm bucket and drop tombstoned transactions.
-        // Empty buckets are pruned to match the rest of the codebase.
-        for (const ym of Object.keys(transactions)) {
-          for (const id of Object.keys(transactions[ym])) {
-            if (budgetTransactionDeletedIds.has(id)) {
-              delete transactions[ym][id];
-              spendTouched = true;
-            }
-          }
-          if (Object.keys(transactions[ym]).length === 0) delete transactions[ym];
-        }
-        spendTouched = true;
-      }
-    }
-    if (Array.isArray(payload.budgetAccountDeletedIds)) {
-      const before = budgetAccountDeletedIds.size;
-      payload.budgetAccountDeletedIds.forEach(id => budgetAccountDeletedIds.add(id));
-      if (budgetAccountDeletedIds.size !== before) {
-        const beforeLen = budgetAccounts.length;
-        budgetAccounts = budgetAccounts.filter(a => !budgetAccountDeletedIds.has(a.id));
-        if (budgetAccounts.length !== beforeLen) accIncTouched = true;
-        accIncTouched = true;
-      }
-    }
-    if (Array.isArray(payload.incomeTemplateDeletedIds)) {
-      const before = incomeTemplateDeletedIds.size;
-      payload.incomeTemplateDeletedIds.forEach(id => incomeTemplateDeletedIds.add(id));
-      if (incomeTemplateDeletedIds.size !== before) {
-        const beforeLen = incomeTemplates.length;
-        incomeTemplates = incomeTemplates.filter(t => !incomeTemplateDeletedIds.has(t.id));
-        if (incomeTemplates.length !== beforeLen) accIncTouched = true;
-        accIncTouched = true;
-      }
-    }
-    if (Array.isArray(payload.incomeEntryDeletedIds)) {
-      const before = incomeEntryDeletedIds.size;
-      payload.incomeEntryDeletedIds.forEach(id => incomeEntryDeletedIds.add(id));
-      if (incomeEntryDeletedIds.size !== before) {
-        for (const ym of Object.keys(incomeEntries)) {
-          for (const id of Object.keys(incomeEntries[ym])) {
-            if (incomeEntryDeletedIds.has(id)) {
-              delete incomeEntries[ym][id];
-              accIncTouched = true;
-            }
-          }
-          if (Object.keys(incomeEntries[ym]).length === 0) delete incomeEntries[ym];
-        }
-        accIncTouched = true;
-      }
-    }
-
-    if (budgetTouched) { await saveBudgetLocal(); changed = true; }
-    if (spendTouched)  { await saveBudgetSpendLocal(); changed = true; }
-    if (accIncTouched) { await saveBudgetAccountsAndIncomeLocal(); changed = true; }
-  }
-
-  if (changed) scheduleRender(...RENDER_REGIONS);
-  return changed;
-}
-
-// Lightweight merge helper for arrays of records keyed by `id`. Newer
-// timestamp wins per-record (using updatedAt or _modifiedAt or
-// modifiedAt). Returns { list, changed }.
-function _mergeArrayById(local, remote) {
-  if (!Array.isArray(remote) || !remote.length) return { list: local, changed: false };
-  const byId = new Map((local || []).map(it => [it.id, it]));
-  let changed = false;
-  for (const r of remote) {
-    if (!r || !r.id) continue;
-    const l = byId.get(r.id);
-    if (!l) { byId.set(r.id, r); changed = true; continue; }
-    const lTs = l.updatedAt || l._modifiedAt || l.modifiedAt;
-    const rTs = r.updatedAt || r._modifiedAt || r.modifiedAt;
-    if (rTs && (!lTs || new Date(rTs).getTime() > new Date(lTs).getTime())) {
-      byId.set(r.id, r);
-      changed = true;
-    }
-  }
-  return { list: Array.from(byId.values()), changed };
-}
-
-// Merge helper for the nested map shape used by `transactions` and
-// `incomeEntries`: { "yyyymm": { recordId: record, ... }, ... }
-// Per-record last-write-wins on updatedAt. Returns { map, changed }.
-// Empty months (those that lose all their records) are pruned to match
-// the rest of the codebase's convention (see updateTransaction at
-// ~18915 — it deletes empty yyyymm keys after a record moves out).
-function _mergeMonthMap(local, remote) {
-  if (!remote || typeof remote !== 'object') return { map: local || {}, changed: false };
-  const out = { ...(local || {}) };
-  let changed = false;
-  for (const ym of Object.keys(remote)) {
-    const localMonth  = out[ym] || {};
-    const remoteMonth = remote[ym] || {};
-    const mergedMonth = { ...localMonth };
-    for (const id of Object.keys(remoteMonth)) {
-      const r = remoteMonth[id];
-      if (!r) continue;
-      const l = localMonth[id];
-      if (!l) { mergedMonth[id] = r; changed = true; continue; }
-      const lTs = l.updatedAt || l._modifiedAt || l.modifiedAt;
-      const rTs = r.updatedAt || r._modifiedAt || r.modifiedAt;
-      if (rTs && (!lTs || new Date(rTs).getTime() > new Date(lTs).getTime())) {
-        mergedMonth[id] = r; changed = true;
-      }
-    }
-    if (Object.keys(mergedMonth).length === 0) {
-      if (out[ym]) { delete out[ym]; changed = true; }
-    } else {
-      out[ym] = mergedMonth;
-    }
-  }
-  return { map: out, changed };
-}
-
-// Inactive-profile absorption — fold guest write into stored profile data
-// without disturbing the owner's currently-active profile in memory.
-async function _absorbGuestPayloadIntoStoredProfile(payload, perms, hKey) {
-  try {
-    const profiles = await getProfiles();
-    const p = profiles[hKey] || {};
-    let changed = false;
-    if (perms.stockroom === 'rw' && Array.isArray(payload.items)) {
-      const merged = _mergeArrayById(p.items || [], payload.items);
-      if (merged.changed) { p.items = merged.list; changed = true; }
-    }
-    if (perms.groceries === 'rw' && Array.isArray(payload.groceries)) {
-      const merged = _mergeArrayById(p.groceries || [], payload.groceries);
-      if (merged.changed) { p.groceries = merged.list; changed = true; }
-    }
-    if (perms.reminders === 'rw' && Array.isArray(payload.reminders)) {
-      const merged = _mergeArrayById(p.reminders || [], payload.reminders);
-      if (merged.changed) { p.reminders = merged.list; changed = true; }
-    }
-    if (changed) {
-      profiles[hKey] = p;
-      await saveProfiles(profiles);
-    }
-    return changed;
-  } catch(e) { console.warn('[absorb] stored-profile merge failed:', e.message); return false; }
 }
 
 // When a new guest accepts an invite before the owner had their ECDH pubkey,
@@ -28040,7 +26466,7 @@ async function refreshShareLink(code) {
     if (!res.ok) throw new Error('Could not refresh');
     const baseLink = `${location.origin}${location.pathname}?join=${code}`;
     await navigator.clipboard.writeText(baseLink).catch(()=>{});
-    toast('New link copied ✓ (valid 1h)');
+    toast('New link copied ✓ (valid 24h)');
     await loadShareTargets();
   } catch(err) { toast('Could not refresh link: ' + err.message); }
 }
@@ -28109,28 +26535,12 @@ function copyShareTargetLink(code) {
 function updateHouseholdShareUI() {
   const joinedSection = document.getElementById('household-joined-section');
   if (!joinedSection) return;
-  // Defence-in-depth: only show the "Joined Household" panel when the user
-  // is genuinely a guest of someone else's share. If `_shareState` is null
-  // (owner) OR the share's owner is the current signed-in user (stale state
-  // from a self-join during testing), keep the section hidden so the
-  // "Leave shared household" button doesn't appear when there's nothing to
-  // leave. Without this guard, a stale localStorage entry left over from
-  // a test join can make the button persistently visible.
-  const isGenuineGuest = !!_shareState
-    && (!_shareState.ownerEmailHash || !_kvEmailHash || _shareState.ownerEmailHash !== _kvEmailHash);
-  if (isGenuineGuest) {
+  if (_shareState) {
     joinedSection.style.display = 'block';
     const statusEl = document.getElementById('joined-status-text');
     if (statusEl) statusEl.textContent = `✓ Joined ${_shareState.ownerName || 'a household'}'s STOCKROOM as ${_shareState.type || 'guest'}`;
   } else {
     joinedSection.style.display = 'none';
-    // If we have stale state (own share), clear it so it doesn't keep
-    // tripping things like the lock banners or tab disabling.
-    if (_shareState && _shareState.ownerEmailHash && _kvEmailHash && _shareState.ownerEmailHash === _kvEmailHash) {
-      _shareState = null;
-      _shareKey   = null;
-      saveShareState();
-    }
   }
 }
 
@@ -28179,10 +26589,7 @@ function initHouseholdSettingsUI() {
   if (_householdEnabled) connectPresence();
   applyTabPermissions();
   renderSettingsHouseholdList();
-  // Owners always load. Guests with shareManagement view/edit also load
-  // (loadShareTargets is now permission-aware and synthesises a list from
-  // their own _shareState membership).
-  if (WORKER_URL && (isOwner() || canViewShares())) loadShareTargets();
+  if (isOwner() && WORKER_URL) loadShareTargets();
 }
 
 // ── User ID ───────────────────────────────────────────────
@@ -28525,13 +26932,6 @@ async function init() {
         requestAnimationFrame(() => { buildCountryGrid(); selectCountry(wizardCountry); });
       } else {
         showDataLoadingOverlay('Loading your Stockroom…');
-        // Same membership-restoration as _enterStockroom — covers the
-        // restored-session pathway where login was skipped (trusted
-        // device, cached session). Without this, signing back in to a
-        // browser-cleared device leaves _shareState null and the user
-        // sees their own (empty) account instead of the share they're
-        // a guest of.
-        try { await restoreShareFromServer(); } catch(e) { console.warn('[share] restore on init failed:', e?.message); }
         scheduleRender(...RENDER_REGIONS);
         try { await kvSyncNow(true); } catch(e) {}
         hideDataLoadingOverlay();
@@ -28595,13 +26995,6 @@ async function init() {
   await purgeExpiredGroceryLists();
   await checkGroceryRecurring();
   renderReminders(); // pre-render for badge count
-
-  // Active-tab share-tip poll — 15s heartbeat that triggers a real
-  // sync only when the server says something actually changed in a
-  // share we care about. Pauses cleanly when the tab is hidden or
-  // unfocused, resumes on return. Idempotent — start() guards
-  // against double-init.
-  try { _sharePoll.start(); } catch(e) { console.warn('[sharePoll] start failed:', e?.message); }
 
   setTimeout(() => { lastAutoSync = Date.now(); checkCloudAhead(); }, 1500);
   checkPendingSWSync();
@@ -29093,37 +27486,14 @@ async function handleShareJoinLink(code) {
   updateSyncPill('syncing');
   try {
     const probe = await postKV(`${WORKER_URL}/share/join`, { code });
-    let probeData = {};
-    try { probeData = await probe.json(); } catch(_e) {}
+    const probeData = await probe.json();
     if (probe.status === 410) { toast('This invite link has expired — ask the owner for a new one'); updateSyncPill('error'); return; }
-    if (probe.status === 404) { toast('Invalid invite link — it may have been deleted'); updateSyncPill('error'); return; }
-    if (!probe.ok && !probeData.requiresAuth) {
-      throw new Error(probeData.error || `Probe failed (HTTP ${probe.status})`);
-    }
-    // Owner-clicks-own-invite check. If the currently signed-in user
-    // is the owner of this share, the join flow doesn't make sense
-    // (they'd hit /share/ecdh-key/get looking for a key wrapped for
-    // themselves, which doesn't exist, and 404 with the misleading
-    // "ask the owner to open STOCKROOM" toast — confusing because they
-    // ARE the owner). Route them home instead with a friendly note.
-    if (kvConnected && _kvEmailHash && probeData.ownerEmailHash === _kvEmailHash) {
-      toast("That's your own invite — sharing is set up in Settings → Household sharing");
-      // Dismiss any "Joining household…" overlay that init may have shown
-      document.body.classList.remove('wizard-active');
-      const wiz = document.getElementById('wizard');
-      if (wiz) wiz.style.display = 'none';
-      updateSyncPill('idle');
-      return;
-    }
+    if (!probe.ok && !probeData.requiresAuth) throw new Error(probeData.error || 'Invalid link');
     _pendingJoinCode  = code.toUpperCase();
     _pendingShareMeta = probeData;
     if (kvConnected && _kvEmailHash && (_kvVerifier || _kvSessionToken)) { await completePendingJoin(); return; }
     showShareAuthGate(probeData);
-  } catch(err) {
-    console.error('[share] handleShareJoinLink failed:', err);
-    updateSyncPill('error');
-    toast('Invalid invite link — ' + (err?.message || 'Network error'));
-  }
+  } catch(err) { updateSyncPill('error'); toast('Invalid invite link — ' + err.message); }
 }
 
 function showShareAuthGate(meta) {
@@ -29134,13 +27504,6 @@ function showShareAuthGate(meta) {
   if (!step1) return;
   const hCount = Object.keys(meta.households || {}).length;
   const groupName = meta.name ? `the <strong>${esc(meta.name)}</strong> group` : 'this household';
-  // If the share was created with a pendingInvite for a specific email,
-  // pre-fill it. The user CAN override — that's fine, they'll just join
-  // under their actual emailHash and the existing rewrap flow handles
-  // it. But pre-filling guides them to the email the owner expects.
-  const prefillEmail = (meta.pendingInvite && typeof meta.pendingInvite.guestEmail === 'string')
-    ? meta.pendingInvite.guestEmail : '';
-  const isPending = !!meta.pendingInvite;
   step1.innerHTML = `
     <div style="margin-bottom:12px;color:var(--accent)"><svg aria-hidden="true" style="width:44px;height:44px"><use href="#i-home"></use></svg></div>
     <h1 style="font-size:22px;font-weight:700;margin-bottom:6px">You're invited!</h1>
@@ -29148,14 +27511,10 @@ function showShareAuthGate(meta) {
       <strong style="color:var(--text)">${esc(meta.ownerName||'Someone')}</strong> has invited you
       to access ${hCount} household${hCount!==1?'s':''} as a member of ${groupName}.
     </p>
-    ${isPending ? `<p style="color:var(--muted);font-size:12px;line-height:1.5;margin-bottom:12px;background:var(--surface2);border-radius:8px;padding:8px 10px">
-      <svg class="icon" aria-hidden="true" style="width:12px;height:12px;vertical-align:-1px"><use href="#i-info"></use></svg>
-      No account yet? Use <strong style="color:var(--text)">Create new account</strong> below — sign up with the email this invite was sent to.
-    </p>` : ''}
     <div style="text-align:left;margin-bottom:12px">
       <div class="form-group" style="margin-bottom:10px">
         <label class="form-label">Email address</label>
-        <input class="form-input" id="share-gate-email" type="email" placeholder="you@example.com" autocomplete="email"${prefillEmail ? ` value="${esc(prefillEmail)}"` : ''}>
+        <input class="form-input" id="share-gate-email" type="email" placeholder="you@example.com" autocomplete="email">
       </div>
       <div class="form-group" style="margin-bottom:8px">
         <label class="form-label">Passphrase</label>
@@ -29180,39 +27539,8 @@ async function shareGateSignIn() {
     const res = await postKV(`${WORKER_URL}/user/verify`, { emailHash, verifier });
     const d = await res.json();
     if (res.status === 404) throw new Error('Account not found — use Create new account');
-
-    // Email verification gate. Server returns 403 with requiresEmailVerification
-    // when the passphrase matches but the email has never been confirmed.
-    // Mirror the kvLogin handling: derive the data key, stash it as a
-    // pending unverified login (so _completePendingUnverifiedLogin can
-    // finish the sign-in after OTP succeeds), and route to wizard-step-1f.
-    // We deliberately do NOT call kvStoreSession or completePendingJoin
-    // before verification — backing out of the OTP screen must not leave
-    // a usable session or a joined share behind.
-    if (res.status === 403 && d.requiresEmailVerification) {
-      const verifyEmail = d.email || email;
-      _pendingUnverifiedLogin = { email: verifyEmail, emailHash, verifier, passphrase: pass };
-      await showEmailVerification(verifyEmail, emailHash, async () => {
-        await _completePendingUnverifiedLogin();
-        // _completePendingUnverifiedLogin lands the user in their normal
-        // post-login flow; in the share-gate context we want to also
-        // accept the pending share invite that brought them here.
-        await completePendingJoin();
-      });
-      return;
-    }
-
     if (!res.ok) throw new Error(d.error || 'Sign-in failed');
-    // Fetch and unwrap the envelope — same v2 path as kvLogin. The share
-    // gate previously used kvDeriveKey (the legacy direct-derive helper)
-    // which produced a key that could not decrypt v2-encrypted blobs.
-    const keyRes  = await postKV(`${WORKER_URL}/key/get`, { emailHash, verifier });
-    const keyData = await keyRes.json();
-    if (!keyRes.ok || !keyData.envelope || !keyData.kdfSalt) {
-      throw new Error('Account is missing its encryption envelope');
-    }
-    const wrapKey = await derivePassphraseWrapKeyV2(pass, emailHash, keyData.kdfSalt);
-    const key     = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+    const key = await kvDeriveKey(email, pass);
     await kvStoreSession(email, emailHash, verifier, key);
     // Ensure ECDH keypair is ready BEFORE attempting join (required for key unwrapping)
     await ensureEcdhKeypair(emailHash).catch(e => console.warn('ensureEcdhKeypair:', e.message));
@@ -29244,14 +27572,6 @@ async function shareGateRegister() {
     if (!storeRes.ok) throw new Error('Could not store key envelopes — try again');
     _kvKey = dataKey;
     await kvStoreSession(email, emailHash, verifier, dataKey);
-    // Generate the user's ECDH keypair NOW, before they get into the
-    // share-join flow. completePendingJoin will need to unwrap a share
-    // key with this keypair (or signal pending-rewrap if the owner
-    // hadn't pre-wrapped one) — without it we'd hit "Your encryption
-    // key is missing" and the join would fail silently after OTP.
-    // ensureEcdhKeypair is idempotent, safe to call from anywhere.
-    try { await ensureEcdhKeypair(emailHash); }
-    catch(e) { console.warn('ensureEcdhKeypair failed during share-gate register:', e.message); }
     // Mark as fresh registration so the verification screen shows a Cancel
     // button — share-gate users hit the same Resend-failure path as the
     // main signup wizard, and need an exit if their email won't deliver.
@@ -29267,87 +27587,17 @@ async function shareGateRegister() {
 async function completePendingJoin() {
   if (!_pendingJoinCode) return;
   const code = _pendingJoinCode;
-  // Track which step we're on so the catch can produce a useful message
-  // even when the underlying error has an empty `.message` (the WebCrypto
-  // OperationError that ecdhUnwrapShareKey can throw is the canonical
-  // example — it surfaces as "Unknown error" in the toast otherwise).
-  let step = 'starting';
   try {
-    step = 'calling /share/join';
     const res  = await postKV(`${WORKER_URL}/share/join`, {
         code,
         guestEmailHash:    _kvEmailHash,
         ...(_kvSessionToken ? { guestSessionToken: _kvSessionToken } : { guestVerifier: _kvVerifier }),
       });
     const data = await res.json();
-
-    // If the guest's email is unverified, /share/join refuses with 403 —
-    // route them through the OTP step before retrying. This catches
-    // already-signed-in users who land on an invite link without ever
-    // having confirmed their email (e.g. backed out of OTP at signup
-    // and somehow established a session). After OTP succeeds the
-    // callback re-enters completePendingJoin to finish the join.
-    if (res.status === 403 && data.requiresEmailVerification) {
-      const verifyEmail = data.email || _kvEmail || '';
-      // Re-use _pendingUnverifiedRestore so the verify screen surfaces
-      // the Cancel button (this user has a session but no verified email
-      // — letting them bail out is safer than locking them in a loop).
-      _pendingUnverifiedRestore = { email: verifyEmail, emailHash: _kvEmailHash, verifier: _kvVerifier };
-      await showEmailVerification(verifyEmail, _kvEmailHash, async () => {
-        _pendingUnverifiedRestore = null;
-        await completePendingJoin();
-      });
-      return;
-    }
-
-    if (!res.ok) throw new Error(data.error || `Join failed (HTTP ${res.status})`);
+    if (!res.ok) throw new Error(data.error || 'Invalid invite link — it may have expired');
     // Server returned 200 but with ok:false — means it needs auth (shouldn't happen here but guard it)
     if (data.requiresAuth) throw new Error('Authentication required — please sign in first');
 
-    // ── Fast path: try the guest's persistent share envelope first ──
-    // If pasmith984 has joined this share before from another device or
-    // browser session, the share key is wrapped under her data key and
-    // sitting on the server in her own namespace. We don't need to
-    // re-do the ECDH handshake (which depends on a device-bound
-    // keypair). Just unwrap the envelope and we're done.
-    //
-    // This is what makes the "I cleared my browser" experience seamless:
-    // login → unlock data key with passphrase → fetch envelope → unwrap
-    // share key → joined. No round-trip to the owner. No spinner. No
-    // "ask the owner to open STOCKROOM" message.
-    //
-    // Falls through to the ECDH path if there's no envelope (first-time
-    // join from any device).
-    if (_kvKey) {
-      try {
-        const cachedShareKey = await _loadGuestShareEnvelope(code);
-        if (cachedShareKey) {
-          step = 'finalising join (from cache)';
-          _shareState = { ...data, code };
-          _shareKey   = cachedShareKey;
-          saveShareState();
-          _pendingJoinCode  = null;
-          _pendingShareMeta = null;
-          localStorage.setItem('stockroom_seen', '1');
-          localStorage.setItem('stockroom_country_set', '1');
-          document.body.classList.remove('wizard-active');
-          document.getElementById('wizard').style.display = 'none';
-          applyTabPermissions();
-          updateSyncPill('syncing');
-          await kvSyncNow();
-          scheduleRender(...RENDER_REGIONS);
-          toast(`✓ Joined ${data.ownerName || 'household'}'s STOCKROOM`);
-          return;
-        }
-      } catch(envErr) {
-        // Non-fatal — fall through to the ECDH handshake which is the
-        // first-time path anyway. Log so we notice if this becomes a
-        // pattern.
-        console.warn('[share] envelope fast-path failed, falling back to ECDH:', envErr?.message);
-      }
-    }
-
-    step = 'fetching wrapped share key';
     const ecdhRes = await postKV(`${WORKER_URL}/share/ecdh-key/get`, {
         guestEmailHash: _kvEmailHash,
         ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
@@ -29367,102 +27617,18 @@ async function completePendingJoin() {
 
     if (!ecdhRes.ok) {
       const ed = await ecdhRes.json().catch(() => ({}));
-      throw new Error(ed.error || `Could not retrieve your share key (HTTP ${ecdhRes.status}) — ask the owner to re-send the invite`);
+      throw new Error(ed.error || 'Could not retrieve your share key — ask the owner to re-send the invite');
     }
-    step = 'parsing wrapped key response';
     const { wrappedKey, ownerPublicKeyJwk } = await ecdhRes.json();
-    if (!wrappedKey)        throw new Error('Server returned no wrapped share key — ask the owner to re-send the invite');
-    if (!ownerPublicKeyJwk) throw new Error("Server returned no owner public key — ask the owner to open STOCKROOM and re-sync");
-
-    step = 'loading your encryption key';
     const guestPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
-    if (!guestPrivKey) {
-      // Try generating one on the fly — this hits the case where a
-      // share-gate registration somehow skipped ECDH provisioning.
-      // ensureEcdhKeypair is idempotent so this is safe to retry.
-      try { await ensureEcdhKeypair(_kvEmailHash); } catch(_e) {}
-      const retry = await loadEcdhPrivateKey(_kvEmailHash);
-      if (!retry) throw new Error('Your encryption key is missing — sign out and back in to regenerate it');
-    }
-
-    step = 'unwrapping share key (ECDH)';
-    const privKey = guestPrivKey || await loadEcdhPrivateKey(_kvEmailHash);
-    let shareKey;
-    try {
-      shareKey = await ecdhUnwrapShareKey(privKey, ownerPublicKeyJwk, wrappedKey);
-    } catch(unwrapErr) {
-      // WebCrypto's OperationError surfaces with an empty .message which
-      // bubbles up as "Unknown error" in the toast. Wrap it so the user
-      // sees something actionable. The most common cause: the wrapped
-      // key on the server was wrapped against a different ECDH keypair
-      // than the one this guest currently holds (e.g. they deleted and
-      // recreated the account, or signed up on a different browser).
-      //
-      // Self-heal: post a rewrap request now and force-regenerate our
-      // local keypair if it doesn't match the server's pubkey. Next
-      // time the owner syncs, they'll fulfil the request against our
-      // current pubkey and a retry of this join will succeed.
-      console.error('[share] ECDH unwrap failed:', unwrapErr);
-      // Last-ditch recovery: maybe a stored envelope from a previous
-      // successful handshake exists (the fast-path above didn't try
-      // because _kvKey was null at that moment, or the envelope only
-      // just became available). Worth one final check before giving
-      // up — saves the user the "ask the owner to come online" UX.
-      if (_kvKey) {
-        try {
-          const recovered = await _loadGuestShareEnvelope(code);
-          if (recovered) {
-            console.log('[share] ECDH unwrap failed but recovered via envelope');
-            step = 'finalising join (envelope recovery)';
-            _shareState = { ...data, code };
-            _shareKey   = recovered;
-            saveShareState();
-            _pendingJoinCode  = null;
-            _pendingShareMeta = null;
-            localStorage.setItem('stockroom_seen', '1');
-            localStorage.setItem('stockroom_country_set', '1');
-            document.body.classList.remove('wizard-active');
-            document.getElementById('wizard').style.display = 'none';
-            applyTabPermissions();
-            updateSyncPill('syncing');
-            await kvSyncNow();
-            scheduleRender(...RENDER_REGIONS);
-            toast(`✓ Joined ${data.ownerName || 'household'}'s STOCKROOM`);
-            return;
-          }
-        } catch(_e) {}
-      }
-      try {
-        await postKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, {
-          guestEmailHash: _kvEmailHash,
-          ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
-          code,
-        });
-      } catch(_e) {}
-      // Run ensureEcdhKeypair again — its mismatch detector will catch
-      // the bad local keypair and regenerate. If our keypair was fine
-      // (and the issue was the owner wrapping with stale key data),
-      // this is a no-op.
-      try { await ensureEcdhKeypair(_kvEmailHash); } catch(_e) {}
-      throw new Error('Could not decrypt your share key — your keys have been refreshed. Ask the owner to open STOCKROOM, then tap this link again.');
-    }
+    if (!guestPrivKey) throw new Error('Your encryption key is missing — sign out and back in to regenerate it');
+    const shareKey    = await ecdhUnwrapShareKey(guestPrivKey, ownerPublicKeyJwk, wrappedKey);
     const shareKeyB64 = await exportShareKey(shareKey);
     try {
       const stored = await _getShareKeys();
       stored[code] = shareKeyB64;
       await _setShareKeys(stored);
     } catch(e) {}
-    // Persist the share key under the guest's own namespace, wrapped
-    // with their data key. From now on, fresh devices / browser
-    // clears can recover this share without needing the owner to
-    // come online — the only "owner online" moment is THIS first
-    // unwrap. Failure here is non-fatal (the user is still joined
-    // for this session); they'd just hit the slower ECDH path again
-    // next time, and could retry this storage on next sync.
-    _storeGuestShareEnvelope(code, shareKey).catch(e =>
-      console.warn('[share] post-join envelope store failed:', e?.message)
-    );
-    step = 'finalising join';
     _shareState = { ...data, code };
     _shareKey   = shareKey;
     saveShareState();
@@ -29478,29 +27644,9 @@ async function completePendingJoin() {
     scheduleRender(...RENDER_REGIONS);
     toast(`✓ Joined ${data.ownerName || 'household'}'s STOCKROOM`);
   } catch(err) {
-    // Always log the full error to console — the toast is necessarily
-    // short, but the console gives you stack + step context to diagnose.
-    console.error('[share] completePendingJoin failed at step:', step, err);
-    const msg = err?.message || `Could not join (failed at ${step})`;
+    const msg = err.message || 'Unknown error — please try again';
     toast('Could not join: ' + msg);
     updateSyncPill('error');
-    // Dismiss the "Joining household…" overlay so the user isn't stranded
-    // there. We replace its contents with a clear failure card + Retry
-    // and Cancel buttons. Without this dismissal users couldn't get out
-    // — the wizard step has no inherent close affordance and the toast
-    // alone leaves them staring at a permanent loading screen.
-    const _step1b = document.getElementById('wizard-step-1b');
-    if (_step1b) {
-      _step1b.innerHTML = `
-        <div style="font-size:52px;margin-bottom:16px">⚠️</div>
-        <h1 style="font-size:22px;font-weight:700;margin-bottom:8px">Couldn't join the household</h1>
-        <p style="color:var(--muted);font-size:14px;line-height:1.5;margin-bottom:24px;max-width:340px;margin-left:auto;margin-right:auto">${esc(msg)}</p>
-        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-          <button class="btn btn-primary btn-xl" onclick="completePendingJoin()">Try again</button>
-          <button class="btn btn-ghost btn-xl" onclick="(function(){ _pendingJoinCode=null; _pendingShareMeta=null; document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display='none'; })()">Cancel</button>
-        </div>
-      `;
-    }
   }
 }
 
@@ -31071,9 +29217,14 @@ async function _mfaSendEmailOtp() {
   if (sendingEl) { sendingEl.textContent = 'Sending code…'; sendingEl.style.display = 'block'; }
   try {
     const res = await postKV(`${WORKER_URL}/mfa/otp/send`, { emailHash:_kvEmailHash, email: _kvEmail || settings.email || '', ..._kvSessionToken?{sessionToken:_kvSessionToken}:{verifier:_kvVerifier} });
-    const d = await res.json();
+    // Read body as text first so empty / non-JSON error bodies (e.g. a
+    // Caddy 405 if a route handler regresses) don't crash JSON.parse and
+    // mask the real HTTP status.
+    const txt = await res.text();
+    let d = {};
+    try { d = txt ? JSON.parse(txt) : {}; } catch(_) { /* non-JSON body */ }
     if (!res.ok) {
-      if (errEl) errEl.textContent = d.error || 'Could not send verification code';
+      if (errEl) errEl.textContent = d.error || `Could not send verification code (${res.status})`;
       if (sendingEl) sendingEl.style.display = 'none';
       return;
     }
@@ -31100,8 +29251,10 @@ async function mfaVerifySubmit() {
 
   if (method === 'email') {
     const res = await postKV(`${WORKER_URL}/mfa/otp/verify`, { emailHash:_kvEmailHash, otp:code });
-    const d = await res.json();
-    if (!res.ok) { if(errEl) errEl.textContent = d.error || 'Incorrect code'; return; }
+    const txt = await res.text();
+    let d = {};
+    try { d = txt ? JSON.parse(txt) : {}; } catch(_) { /* non-JSON body */ }
+    if (!res.ok) { if(errEl) errEl.textContent = d.error || `Incorrect code (${res.status})`; return; }
   } else {
     // TOTP — find secret from any stored location
     const methods    = _mfaMethods();
@@ -31370,9 +29523,13 @@ async function mfaSetupConfirm() {
       try {
         const res = await postKV(`${WORKER_URL}/mfa/otp/send`, { emailHash: _kvEmailHash, email: _kvEmail || settings.email || '',
             ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier } });
-        const d = await res.json();
+        // Safe parse — see _mfaSendEmailOtp() for rationale (avoid masking
+        // real HTTP status when error body is empty/non-JSON).
+        const txt = await res.text();
+        let d = {};
+        try { d = txt ? JSON.parse(txt) : {}; } catch(_) { /* non-JSON body */ }
         if (!res.ok) {
-          if (errEl) errEl.textContent = d.error || 'Could not send code — check your email address';
+          if (errEl) errEl.textContent = d.error || `Could not send code — check your email address (${res.status})`;
           if (btn) { btn.disabled = false; btn.textContent = 'Send code to my email →'; }
           return;
         }
@@ -31397,9 +29554,11 @@ async function mfaSetupConfirm() {
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Verifying…'; }
     try {
       const res = await postKV(`${WORKER_URL}/mfa/otp/verify`, { emailHash: _kvEmailHash, otp: code });
-      const d = await res.json();
+      const txt = await res.text();
+      let d = {};
+      try { d = txt ? JSON.parse(txt) : {}; } catch(_) { /* non-JSON body */ }
       if (!res.ok) {
-        if (errEl) errEl.textContent = d.error || 'Incorrect code — request a new one';
+        if (errEl) errEl.textContent = d.error || `Incorrect code — request a new one (${res.status})`;
         if (btn) { btn.disabled = false; btn.textContent = 'Enable email MFA ✓'; }
         return;
       }
