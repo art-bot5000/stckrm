@@ -20107,9 +20107,15 @@ function _eventsOnDay(account, dayIso) {
     if (entry.date !== dayIso) continue;
     if (entry.templateId) materialisedIncomeFromTplIds.add(entry.templateId);
     if (entry.accountId !== account.id) continue;
+    // Already received → not a future event. The receipt is already
+    // incorporated in the user's balance (either directly via a balance
+    // update, or via _applyHistoricalEvents during catch-up). Mirrors
+    // the bill instance skip at section 1 above — without this, confirmed
+    // income gets double-counted in the cash flow projection.
+    if (entry.paidAt) continue;
     // Defensive: skip phantom unpaid entries whose template was deleted
     // or archived (they're stale ghosts in the materialised store).
-    if (entry.templateId && !entry.paidAt) {
+    if (entry.templateId) {
       const tpl = getIncomeTemplateById(entry.templateId);
       if (!tpl || tpl.archived) continue;
     }
@@ -21441,11 +21447,20 @@ _eventsOnDay = function(account, dayIso) {
     }
     if (entry.accountId !== account.id) continue;
 
+    // Already received → not a future projection event. The receipt is
+    // already in the user's balance (either via direct balance update or
+    // via _applyHistoricalEvents catch-up). Without this skip, confirmed
+    // income gets double-counted — see bug report May 2026 where pete's
+    // confirmed child benefit kept showing as upcoming income on top of
+    // the already-updated joint account balance. Mirrors the bill instance
+    // skip at section 1 above.
+    if (entry.paidAt) continue;
+
     // Defensive: skip phantom entries from a template that has been
-    // deleted or archived. Once paid (paidAt set), the entry is real
-    // money and we keep it regardless. Unpaid template-instances whose
-    // template no longer exists are stale ghosts.
-    if (entry.templateId && !entry.paidAt) {
+    // deleted or archived. We've already filtered out paid entries above,
+    // so this only fires for unpaid template-instances whose template no
+    // longer exists — stale ghosts.
+    if (entry.templateId) {
       const tpl = getIncomeTemplateById(entry.templateId);
       if (!tpl || tpl.archived) continue;
     }
