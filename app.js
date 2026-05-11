@@ -26239,12 +26239,16 @@ async function saveShareTarget() {
       const guestEmail = document.getElementById('share-target-email')?.value.trim();
       if (!guestEmail) throw new Error('Enter their email address so their share key can be encrypted for them');
 
-      // 1. Hash guest email → fetch their ECDH public key
+      // 1. Hash guest email → fetch their ECDH public key. A 404 means the
+      //    recipient hasn't signed up yet — that's a supported case via
+      //    pendingInvite (server stores the invite; owner's rewrap queue
+      //    finishes the ECDH wrap once the recipient registers and uploads
+      //    their pubkey).
       const guestEmailHash = await kvHashEmail(guestEmail);
-      const pubRes = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: guestEmailHash });
-      if (pubRes.status === 404) throw new Error(`${guestEmail} doesn't have a STOCKROOM account yet — they need to sign up first`);
-      if (!pubRes.ok) throw new Error('Could not fetch their encryption key — try again');
-      const { publicKeyJwk: guestPubKeyJwk } = await pubRes.json();
+      const pubRes         = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: guestEmailHash });
+      const guestExists    = pubRes.ok;
+      if (!pubRes.ok && pubRes.status !== 404) throw new Error('Could not fetch their encryption key — try again');
+      const guestPubKeyJwk = guestExists ? (await pubRes.json()).publicKeyJwk : null;
 
       // 2. Load our own ECDH private key
       const ownerPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
@@ -26254,15 +26258,20 @@ async function saveShareTarget() {
       const shareKey    = await generateShareKey();
       const shareKeyB64 = await exportShareKey(shareKey);
 
-      // 4. ECDH-wrap the share key for the guest
-      const wrappedKey = await ecdhWrapShareKey(ownerPrivKey, guestPubKeyJwk, shareKey);
+      // 4. ECDH-wrap the share key for the guest — only if they exist now.
+      //    If they don't exist yet, the wrap happens later (see rewrap queue).
+      const wrappedKey = guestExists
+        ? await ecdhWrapShareKey(ownerPrivKey, guestPubKeyJwk, shareKey)
+        : null;
 
       // 5. Export our own public key JWK to send alongside (guest needs it to unwrap)
       const ownerPubRes = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: _kvEmailHash });
       if (!ownerPubRes.ok) throw new Error('Could not fetch your encryption key — try again');
       const { publicKeyJwk: ownerPubKeyJwk } = await ownerPubRes.json();
 
-      // 6. Create share on server
+      // 6. Create share on server. Include pendingInvite when the recipient
+      //    doesn't have an account yet, so the share-join flow and owner UI
+      //    can show "awaiting signup" state for this entry.
       const res = await postKV(`${WORKER_URL}/share/create`, {
           ownerEmailHash: _kvEmailHash,
           ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
@@ -26271,20 +26280,25 @@ async function saveShareTarget() {
           householdNames: Object.fromEntries(
             Object.entries(profiles).map(([k,p]) => [k, p.name||(k==='default'?'Home':k)])
           ),
+          ...(guestExists ? {} : { pendingInvite: { guestEmailHash, guestEmail } }),
         });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed');
 
-      // 7. Store ECDH-wrapped key on server for the guest
-      const ecdhStoreRes = await postKV(`${WORKER_URL}/share/ecdh-key/store`, {
-          ownerEmailHash: _kvEmailHash,
-          ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
-          code: data.code,
-          guestEmailHash,
-          wrappedKey,
-          ownerPublicKeyJwk: ownerPubKeyJwk,
-        });
-      if (!ecdhStoreRes.ok) throw new Error('Could not store encrypted share key — try again');
+      // 7. Store ECDH-wrapped key on server for the guest — only if we
+      //    actually wrapped one. For pending invites, the wrapped key is
+      //    deferred until the guest signs up and the rewrap queue runs.
+      if (wrappedKey) {
+        const ecdhStoreRes = await postKV(`${WORKER_URL}/share/ecdh-key/store`, {
+            ownerEmailHash: _kvEmailHash,
+            ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+            code: data.code,
+            guestEmailHash,
+            wrappedKey,
+            ownerPublicKeyJwk: ownerPubKeyJwk,
+          });
+        if (!ecdhStoreRes.ok) throw new Error('Could not store encrypted share key — try again');
+      }
 
       // 8. Cache share key locally and back it up (for owner cross-device recovery)
       try {
@@ -27977,6 +27991,12 @@ async function shareGateRegister() {
     if (!storeRes.ok) throw new Error('Could not store key envelopes — try again');
     _kvKey = dataKey;
     await kvStoreSession(email, emailHash, verifier, dataKey);
+    // Generate the ECDH keypair NOW so the rewrap-request fired from
+    // completePendingJoin's 404 branch has a usable pubkey on the server.
+    // Without this, the rewrap request stores `guestPublicKeyJwk: null` and
+    // the owner's rewrap loop has nothing to wrap against — guest stays
+    // stuck on "Your invite is being set up" forever.
+    await ensureEcdhKeypair(emailHash).catch(e => console.warn('ensureEcdhKeypair:', e.message));
     // Mark as fresh registration so the verification screen shows a Cancel
     // button — share-gate users hit the same Resend-failure path as the
     // main signup wizard, and need an exit if their email won't deliver.
@@ -28037,11 +28057,26 @@ async function completePendingJoin() {
     } catch(unwrapErr) {
       // OperationError from Web Crypto carries an empty message — without
       // this wrapper, the user sees "Could not join: " (no detail). The
-      // most common cause is a key mismatch: the owner wrapped against an
-      // older public key for this email than the one in local IDB now.
-      // Re-issuing the invite (owner re-wraps with the current pubkey) fixes it.
+      // most common cause is a key mismatch: the wrappedKey was created
+      // against an older ECDH public key for this guest than the one in
+      // local IDB now. This can happen if either side regenerated their
+      // ECDH keypair (e.g. after account deletion + recreation) since the
+      // share was created.
+      //
+      // Self-heal: ask the server to queue a rewrap-request with the guest's
+      // CURRENT public key. Owner's next sync runs _fulfilPendingRewraps and
+      // overwrites the stale wrappedKey with one wrapped against the current
+      // guest pubkey. Next time the guest clicks the link, unwrap succeeds.
       console.error('ecdhUnwrapShareKey failed:', unwrapErr.name, unwrapErr.message);
-      throw new Error('Could not unwrap your share key — your encryption key may have changed since the invite was issued. Ask the owner to re-send the link.');
+      try {
+        await postKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, {
+          guestEmailHash: _kvEmailHash,
+          ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
+          code,
+        });
+        console.log('Requested rewrap for stale share key — owner will re-issue on next sync');
+      } catch(reqErr) { console.warn('rewrap request failed:', reqErr.message); }
+      throw new Error('Your invite is being refreshed — ask the owner to open STOCKROOM, then tap this link again');
     }
     const shareKeyB64 = await exportShareKey(shareKey);
     try {
