@@ -5095,6 +5095,19 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+// Focus listener pairs with visibilitychange — covers the case where the tab
+// stays visible but the window loses + regains focus (e.g. alt-tab between
+// browser windows, or returning from another app on the same screen). Same
+// AUTO_SYNC_COOLDOWN gate so rapid focus events don't sync-spam.
+window.addEventListener('focus', () => {
+  if (document.visibilityState !== 'visible') return;
+  const now = Date.now();
+  if (now - lastAutoSync > AUTO_SYNC_COOLDOWN) {
+    lastAutoSync = now;
+    checkCloudAhead();
+  }
+});
+
 // ── Service Worker message handler ───────────────────────
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', event => {
@@ -5193,12 +5206,29 @@ async function checkPendingSWSync() {
 }
 
 // Poll every 5 minutes as a backstop
-setInterval(() => {
-  if (document.visibilityState === 'visible') {
-    lastAutoSync = Date.now();
-    checkCloudAhead();
-  }
-}, 5 * 60 * 1000);
+// Adaptive polling — 30s when share state is active (either own a share or
+// are a guest in one), 5min otherwise. The cheaper modified-time check makes
+// 30s a fine cadence for users who aren't actively sharing; for users with
+// shares, 30s gives a sensible worst-case latency for cross-account changes
+// without overwhelming the server (one /share/tips call per tick, ~50 bytes
+// down per share). The visibility/focus triggers below give near-instant
+// updates for the common case of switching tabs/windows.
+function _sharePollIntervalMs() {
+  const hasShareState = !!_shareState || (_shareTargets?.length > 0);
+  return hasShareState ? 30 * 1000 : 5 * 60 * 1000;
+}
+let _sharePollTimer = null;
+function _scheduleNextSharePoll() {
+  clearTimeout(_sharePollTimer);
+  _sharePollTimer = setTimeout(() => {
+    if (document.visibilityState === 'visible') {
+      lastAutoSync = Date.now();
+      checkCloudAhead();
+    }
+    _scheduleNextSharePoll(); // re-arm with current interval (may have changed)
+  }, _sharePollIntervalMs());
+}
+_scheduleNextSharePoll();
 
 // Check if cloud is ahead of local — if so, sync silently
 async function checkCloudAhead() {
@@ -5218,6 +5248,40 @@ async function checkCloudAhead() {
         body: JSON.stringify({ path: DROPBOX_FILE }),
       });
       if (res.ok) remoteModified = (await res.json()).server_modified;
+    }
+
+    // Owner-side share-blob check: if we own any shares, ALSO check whether
+    // a guest has written since our last absorb. Triggers a full sync even
+    // when the owner's own blob hasn't moved. Without this, guest writes
+    // would only be picked up on the 5-minute polling cycle.
+    let shareNeedsAbsorb = false;
+    if (kvConnected && !_shareState && _shareTargets?.length) {
+      try {
+        const codes = _shareTargets.map(t => t.code);
+        const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+        const tipsRes = await postKV(`${WORKER_URL}/share/tips`, { emailHash: _kvEmailHash, ...authFields, codes });
+        if (tipsRes.ok) {
+          const body = await _readJsonSafe(tipsRes) || {};
+          const tips = body.tips || {};
+          for (const target of _shareTargets) {
+            if (!target.households) continue;
+            for (const hKey of Object.keys(target.households)) {
+              const tip = tips[`${target.code}:${hKey}`];
+              if (!tip || !tip.modified) continue;
+              if (tip.writer === 'owner') continue;
+              const last = _getAbsorbStamp(target.code, hKey);
+              if (!last || last !== tip.modified) { shareNeedsAbsorb = true; break; }
+            }
+            if (shareNeedsAbsorb) break;
+          }
+        }
+      } catch(e) { /* network blip — fall through */ }
+    }
+
+    if (shareNeedsAbsorb) {
+      await syncAll();
+      hideSyncBanner();
+      return;
     }
 
     if (!remoteModified) return;
@@ -15027,6 +15091,16 @@ async function kvSyncNow(silent = false) {
   if (!silent) updateSyncPill('syncing');
   const _wasSilent = silent;
   try {
+    // Owner-side: absorb any guest writes from shares we own BEFORE pulling
+    // our own data. This way the subsequent push reflects both owner and
+    // guest changes. Without this step, guest writes would be invisible AND
+    // the owner's push would overwrite them in the share blob.
+    if (kvConnected && !_shareState && _shareTargets?.length) {
+      try {
+        const absorbed = await absorbAllSharedData();
+        if (absorbed && !silent) scheduleRender(...RENDER_REGIONS);
+      } catch(e) { console.warn('absorb step failed (continuing sync):', e.message); }
+    }
     const remote = await kvPull();
     if (remote && Array.isArray(remote.items)) {
       const localLastSynced  = settings.lastSynced ? new Date(settings.lastSynced).getTime() : 0;
@@ -15267,6 +15341,13 @@ async function kvSyncNow(silent = false) {
       await kvPush();
     } else if (kvConnected && !_shareState) {
       // Nothing local to push — pull was enough
+    } else if (_shareState && hasLocalData) {
+      // Guest push — send our changes to the owner's share blob via
+      // /share/data/push-guest. Without this, guest writes never leave the
+      // device. The owner picks them up via absorbAllSharedData on their
+      // next sync. Permission-aware: only sections the guest has rw on
+      // are included in the payload (see pushGuestSharedData).
+      await pushGuestSharedData().catch(e => console.warn('guest push failed:', e.message));
     }
     if (!_wasSilent) updateSyncPill('synced'); else updateSyncPill('connected');
     hideDataLoadingOverlay();
@@ -15383,12 +15464,18 @@ async function kvSignOut() {
   _kvSessionToken = '';
   _kvKey          = null;
   _shareState     = null;
-  // Show login screen
+  // Show login screen (fallback — full reload happens below)
   document.body.classList.add('wizard-active'); document.getElementById('wizard').style.display = 'flex';
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   showKvLogin();
   updateSyncUI();
   toast('Signed out');
+  // Full reload after a short delay so the toast is visible and any
+  // un-awaited promises above (e.g. dbPut on stockroom_kv_session) finish.
+  // Without this, residual rendered state (nav, dashboard, modals, mid-
+  // flight async work) could linger and make the app look still-signed-in
+  // until the user manually refreshes. Mirrors _doDeleteAccount's pattern.
+  setTimeout(() => location.reload(), 1500);
 }
 
 function openChangePassphrase() {
@@ -26366,12 +26453,256 @@ async function pushSharedData(code, shareKey) {
 }
 
 // Push shared data for ALL active share targets (called from kvPush)
+//
+// Race window note: there's a short window (typically <1s) between absorb
+// and push during which a guest's new write could land in the share blob.
+// The owner's push then overwrites that write with stale state. The next
+// sync cycle catches it (the guest's write gets re-absorbed and the owner
+// re-pushes). For v1 we accept this trade-off rather than adding a compare-
+// and-swap on the share blob. If real users hit this, the closing move is
+// to re-check /share/tips inside this loop and skip pushes for any blob
+// whose modified time changed since absorb.
 async function pushAllSharedData() {
   if (!_shareTargets?.length) return;
   for (const target of _shareTargets) {
     await pushSharedData(target.code).catch(e => console.warn('pushAllSharedData failed for', target.code, e.message));
     // Also fulfil any pending rewrap requests from new guests
     await _fulfilPendingRewraps(target.code).catch(e => console.warn('rewrap failed for', target.code, e.message));
+  }
+}
+
+// ── Owner-side share absorb ────────────────────────────────────────────────
+//
+// When a guest writes via /share/data/push-guest, their changes land in the
+// share blob's KV slot but DO NOT make it into the owner's own data blob.
+// Without this absorb step, guest writes are invisible to the owner forever,
+// and worse, the next owner push overwrites the share blob with the owner's
+// stale data — silently losing the guest's changes.
+//
+// absorbSharedData runs BEFORE the owner pushes. It pulls each share blob via
+// /share/data/pull-owner, decrypts with the share key, and merges guest writes
+// into the owner's in-memory state using the standard mergeItems / mergeGroceries
+// helpers (field-level LWW via _fieldTs handles conflicts). After absorption
+// the owner's local state is up-to-date, and the subsequent push reflects
+// both their own and the guest's changes.
+//
+// Per-share lastAbsorbed timestamps are kept in localStorage to skip work
+// when nothing has changed since last absorb.
+const _ABSORB_STAMPS_KEY = 'stockroom_share_absorbed_modified';
+
+function _getAbsorbStamps() {
+  try { return JSON.parse(localStorage.getItem(_ABSORB_STAMPS_KEY) || '{}'); }
+  catch(_) { return {}; }
+}
+function _setAbsorbStamp(code, hKey, isoTime) {
+  const all = _getAbsorbStamps();
+  all[`${code}:${hKey}`] = isoTime;
+  try { localStorage.setItem(_ABSORB_STAMPS_KEY, JSON.stringify(all)); } catch(_) {}
+}
+function _getAbsorbStamp(code, hKey) {
+  return _getAbsorbStamps()[`${code}:${hKey}`] || null;
+}
+
+// Returns true if anything was absorbed (caller may want to re-render).
+async function absorbAllSharedData() {
+  if (!kvConnected || !_shareTargets?.length) return false;
+  // Cheap multi-tip check first — avoid pulling blobs whose modified time
+  // matches what we've already absorbed.
+  const codes = _shareTargets.map(t => t.code);
+  let tips = {};
+  try {
+    const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+    const tipsRes = await postKV(`${WORKER_URL}/share/tips`, { emailHash: _kvEmailHash, ...authFields, codes });
+    if (tipsRes.ok) {
+      const body = await _readJsonSafe(tipsRes) || {};
+      tips = body.tips || {};
+    }
+  } catch(e) { console.warn('absorbAllSharedData: tips fetch failed', e.message); }
+
+  let anyAbsorbed = false;
+  for (const target of _shareTargets) {
+    if (!target.households) continue;
+    for (const hKey of Object.keys(target.households)) {
+      const tipKey = `${target.code}:${hKey}`;
+      const tip = tips[tipKey];
+      // If tips were unavailable (network blip etc), fall through and try
+      // the absorb anyway — we'd rather over-pull than miss writes.
+      if (tip) {
+        // Skip if last writer was us — no guest changes since our own push.
+        if (tip.writer === 'owner') continue;
+        // Skip if modified time matches what we already absorbed.
+        const last = _getAbsorbStamp(target.code, hKey);
+        if (last && tip.modified && last === tip.modified) continue;
+      }
+      try {
+        const absorbed = await absorbSharedData(target.code, hKey);
+        if (absorbed) anyAbsorbed = true;
+      } catch(e) {
+        console.warn('absorbSharedData failed for', target.code, hKey, e.message);
+      }
+    }
+  }
+  return anyAbsorbed;
+}
+
+// Absorb a single (code, household) share blob — pull, decrypt, merge.
+async function absorbSharedData(code, hKey) {
+  // Need the share key (same one used to push to this share).
+  let sk = null;
+  try {
+    const stored = await _getShareKeys();
+    const keyB64 = stored[code];
+    if (keyB64) {
+      const raw = Uint8Array.from(atob(keyB64), c => c.charCodeAt(0));
+      sk = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+    }
+  } catch(_) {}
+  if (!sk) sk = await recoverShareKey(code);
+  if (!sk) { console.warn('absorbSharedData: no share key for', code); return false; }
+
+  const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+  const res = await postKV(`${WORKER_URL}/share/data/pull-owner`, {
+    ownerEmailHash: _kvEmailHash, ...authFields, code, household: hKey,
+  });
+  if (!res.ok) return false;
+  const body = await _readJsonSafe(res) || {};
+  if (!body.ciphertext) return false;
+  // If the last writer was the owner (us), there's nothing to absorb — the
+  // share blob is our own re-pushed data. Bail before doing crypto + merge work.
+  if (body.writer?.kind === 'owner') {
+    if (body.modified) _setAbsorbStamp(code, hKey, body.modified);
+    return false;
+  }
+
+  let payload;
+  try {
+    const plain = await decryptWithShareKey(sk, body.ciphertext);
+    payload = JSON.parse(plain);
+  } catch(e) {
+    console.warn('absorbSharedData: decrypt failed for', code, hKey, e.message);
+    return false;
+  }
+
+  // Merge into local state for this household. If hKey === activeProfile,
+  // merging hits the live in-memory arrays; otherwise we merge into the
+  // stored profile in IDB. v1: focus on activeProfile — non-active household
+  // absorbs are a less common case and would need more wiring to do safely.
+  if (hKey !== activeProfile) {
+    // For now, skip non-active households — the data will be absorbed when
+    // the owner next switches to that household and syncs.
+    return false;
+  }
+
+  // Reuse the same merge logic kvSyncNow uses on the owner's own pull.
+  const target = _shareTargets.find(t => t.code === code);
+  const perms  = target?.households?.[hKey] || {};
+
+  if (Array.isArray(payload.items) && perms.stockroom === 'rw') {
+    items = await mergeItems(items, payload.items, false);
+    await saveData();
+  }
+  if (Array.isArray(payload.groceries) && perms.groceries === 'rw') {
+    const groceryTombstones = await loadGroceryDeletedIds();
+    const incoming = payload.groceries.filter(i => !groceryTombstones.has(i.id));
+    groceryItems = _preserveLocalDeletes(incoming, groceryItems);
+    if (Array.isArray(payload.departments)) {
+      // Merge departments (lower priority — owner-defined order wins)
+      const existingIds = new Set(groceryDepts.map(d => d.id));
+      for (const d of payload.departments) {
+        if (!existingIds.has(d.id)) groceryDepts.push(d);
+      }
+    }
+    await _saveGroceryLocal();
+  }
+  if (Array.isArray(payload.reminders) && perms.reminders === 'rw') {
+    reminders = _preserveLocalDeletes(payload.reminders, reminders);
+    await dbPut('reminders', 'reminders', reminders);
+  }
+  if (perms.budget === 'rw') {
+    // Budget data is user-level (not per-household), so any household's
+    // share blob with budget perms may carry the latest budget state.
+    // Merge bills, categories, transactions, accounts, income.
+    if (Array.isArray(payload.bills))             bills            = mergeBills(bills, payload.bills);
+    if (payload.billInstances)                    billInstances    = mergeBillInstances(billInstances, payload.billInstances);
+    if (Array.isArray(payload.budgetCategories))  budgetCategories = mergeBudgetCategories(budgetCategories, payload.budgetCategories);
+    if (payload.transactions)                     transactions     = mergeTransactions(transactions, payload.transactions);
+    if (Array.isArray(payload.budgetAccounts))    budgetAccounts   = mergeBudgetAccounts(budgetAccounts, payload.budgetAccounts);
+    if (Array.isArray(payload.incomeTemplates))   incomeTemplates  = mergeIncomeTemplates(incomeTemplates, payload.incomeTemplates);
+    if (payload.incomeEntries)                    incomeEntries    = mergeIncomeEntries(incomeEntries, payload.incomeEntries);
+    await saveBudgetLocal().catch(() => {});
+  }
+
+  if (body.modified) _setAbsorbStamp(code, hKey, body.modified);
+  return true;
+}
+
+// ── Guest-side share push ──────────────────────────────────────────────────
+//
+// When a guest makes a change, the change MUST be sent to the owner's share
+// blob via /share/data/push-guest. Previously the guest's _syncQueue.enqueue
+// called kvSyncNow which did nothing useful for guests (no own-account push),
+// so guest writes never left the device. This function fixes that.
+//
+// Permission-aware: only sections the guest has rw access to are included
+// in the push. Pushing sections they only have ro on would either be rejected
+// server-side or — worse — silently overwrite owner data with stale local
+// state, which would be a permissions escape.
+async function pushGuestSharedData() {
+  if (!_shareState || !_shareKey) return;
+  const code  = _shareState.code;
+  const hKey  = activeProfile === 'default' ? 'default' : activeProfile;
+  const perms = _shareState.households?.[hKey];
+  if (!perms) { console.warn('pushGuestSharedData: no perms for household', hKey); return; }
+
+  const hasAnyRw = Object.values(perms).some(p => p === 'rw');
+  if (!hasAnyRw) return; // read-only guest — nothing to push
+
+  // Build payload — only include sections the guest has rw on. Sections
+  // they only have ro on get the owner's last value (which we pulled).
+  const canWriteStockroom = perms.stockroom  === 'rw';
+  const canWriteGroceries = perms.groceries  === 'rw';
+  const canWriteReminders = perms.reminders  === 'rw';
+  const canWriteBudget    = perms.budget     === 'rw';
+
+  // For sections the guest can't write, we need to NOT include them in
+  // the payload (else the server stores our possibly-stale local copy as
+  // the new share state). The owner's last write to those sections stays
+  // untouched by sending an empty array / object that the merger ignores.
+  // mergeItems et al treat missing-on-remote as "no change", but they DO
+  // overwrite when an explicit empty array is sent. So we omit entirely.
+  const payload = {
+    lastSynced: new Date().toISOString(),
+  };
+  if (canWriteStockroom) payload.items     = items;
+  if (canWriteGroceries) { payload.groceries = groceryItems; payload.departments = groceryDepts; }
+  if (canWriteReminders) payload.reminders = reminders;
+  if (canWriteBudget) {
+    payload.bills             = bills;
+    payload.billInstances     = billInstances;
+    payload.budgetSettings    = budgetSettings;
+    payload.budgetCategories  = budgetCategories;
+    payload.transactions      = transactions;
+    payload.budgetAccounts    = budgetAccounts;
+    payload.incomeTemplates   = incomeTemplates;
+    payload.incomeEntries     = incomeEntries;
+  }
+  // Always include settings — UI prefs etc travel with the user.
+  payload.settings = settings;
+
+  try {
+    const ciphertext = await encryptWithShareKey(_shareKey, JSON.stringify(payload));
+    const res = await postKV(`${WORKER_URL}/share/data/push-guest`, {
+      guestEmailHash: _kvEmailHash,
+      guestVerifier:  _kvVerifier,
+      guestSessionToken: _kvSessionToken,
+      code, household: hKey, ciphertext,
+    });
+    if (!res.ok) {
+      const body = await _readJsonSafe(res) || {};
+      console.warn('pushGuestSharedData failed:', res.status, body.error || '');
+    }
+  } catch(e) {
+    console.warn('pushGuestSharedData threw:', e.message);
   }
 }
 
