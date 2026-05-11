@@ -1942,6 +1942,8 @@ async function _wipeStaleUserDataForSwitch(newEmailHash) {
   // Tombstone stores — wipe so previous user's deletes don't haunt new user
   await dbPut('deletedIds',                  'deletedIds',                  []);
   await dbPut('groceryDeletedIds',           'groceryDeletedIds',           []);
+  await dbPut('groceryListDeletedIds',       'groceryListDeletedIds',       []);
+  await dbPut('groceryLists',                '_deletedIds',                 []);
   await dbPut('reminderDeletedIds',          'reminderDeletedIds',          []);
   await dbPut('budgetCategoryDeletedIds',    'budgetCategoryDeletedIds',    []);
   await dbPut('budgetTransactionDeletedIds', 'budgetTransactionDeletedIds', []);
@@ -12340,13 +12342,7 @@ async function kvLogin() {
     const keyData = await keyRes.json();
 
     if (keyRes.ok && !keyData.legacy && keyData.envelope) {
-      if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
-        const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
-        dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
-      } else {
-        const { wrapKey } = await derivePassphraseWrapKey(passphrase, emailHash, keyData.salt);
-        dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
-      }
+      dataKey = await unwrapPassphraseDataKey(passphrase, emailHash, keyData);
     } else {
       dataKey = await kvDeriveKey(email, passphrase);
     }
@@ -12451,13 +12447,7 @@ async function _completePendingUnverifiedLogin() {
     const keyData = await keyRes.json();
     let dataKey;
     if (keyRes.ok && !keyData.legacy && keyData.envelope) {
-      if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
-        const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
-        dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
-      } else {
-        const { wrapKey } = await derivePassphraseWrapKey(passphrase, emailHash, keyData.salt);
-        dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
-      }
+      dataKey = await unwrapPassphraseDataKey(passphrase, emailHash, keyData);
     } else {
       dataKey = await kvDeriveKey(email, passphrase);
     }
@@ -12686,12 +12676,10 @@ async function reauthWithPassphrase() {
         const keyRes  = await postKV(`${WORKER_URL}/key/get`, { emailHash: _kvEmailHash, verifier });
         const keyData = await keyRes.json();
         if (keyRes.ok && keyData.envelope) {
-          if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
-            const wrapKey = await derivePassphraseWrapKeyV2(pass, _kvEmailHash, keyData.kdfSalt);
-            _kvKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
-          } else if (keyData.salt) {
-            const { wrapKey } = await derivePassphraseWrapKey(pass, _kvEmailHash, keyData.salt);
-            _kvKey = await unwrapDataKey(keyData.envelope, wrapKey);
+          // Only attempt unwrap if we have at least one salt — v2 needs kdfSalt,
+          // v1 needs salt. Without either, leave _kvKey null and let the warn fire.
+          if (keyData.kdfSalt || keyData.salt) {
+            _kvKey = await unwrapPassphraseDataKey(pass, _kvEmailHash, keyData);
           }
           if (_kvKey) {
             // Cache it
@@ -13293,15 +13281,8 @@ async function dismissDecryptErrorAndReauth() {
       const keyData = await keyRes.json();
       if (keyRes.status === 401) { toast('Incorrect passphrase — try again'); showDecryptErrorBanner(); return; }
       if (keyRes.ok && !keyData.legacy && keyData.envelope) {
-        // Try v2 unwrap first, fall back to v1
         try {
-          if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
-            const wrapKey = await derivePassphraseWrapKeyV2(passphrase, _kvEmailHash, keyData.kdfSalt);
-            dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
-          } else {
-            const { wrapKey } = await derivePassphraseWrapKey(passphrase, _kvEmailHash, keyData.salt);
-            dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
-          }
+          dataKey = await unwrapPassphraseDataKey(passphrase, _kvEmailHash, keyData);
         } catch(unwrapErr) {
           console.warn('Key unwrap failed:', unwrapErr.message);
         }
@@ -13596,13 +13577,7 @@ async function _getKeyViaPassphrase(emailHash, sessionToken, credentialId, errEl
     let dataKey = null;
     if (keyRes.ok && !keyData.legacy && keyData.envelope) {
       try {
-        if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
-          const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
-          dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
-        } else {
-          const { wrapKey } = await derivePassphraseWrapKey(passphrase, emailHash, keyData.salt);
-          dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
-        }
+        dataKey = await unwrapPassphraseDataKey(passphrase, emailHash, keyData);
       } catch(e) {
         if (errEl) { errEl.textContent = 'Incorrect passphrase — try again'; errEl.style.display = 'block'; }
         return null;
@@ -13696,6 +13671,22 @@ async function kvRestorePasskeySession(session) {
   } catch(e) {
     // Network error — try to restore from cached key
   }
+  // ── User-switch detection ─────────────────────────────────────────────
+  // If the IDB-stamped owner differs from the session being restored, wipe
+  // stale local data BEFORE setting credentials. Without this, page reload
+  // (or app return) after switching accounts can leave the previous user's
+  // items, notes, and trash entries in memory + IDB — they then re-merge
+  // back via sync as if they belonged to the new account. See kvStoreSession
+  // for the equivalent logic on fresh sign-in.
+  try {
+    const prevHash = await dbGet('settings', '_activeUserHash');
+    if (prevHash && prevHash !== emailHash) {
+      await _wipeStaleUserDataForSwitch(emailHash);
+    } else if (!prevHash) {
+      await dbPut('settings', '_activeUserHash', emailHash);
+    }
+  } catch(e) { console.warn('[kvRestorePasskeySession] user-switch wipe failed (non-fatal):', e.message); }
+
   _kvEmail        = email;
   _kvEmailHash    = emailHash;
   _kvSessionToken = sessionToken;
@@ -14057,6 +14048,29 @@ async function unwrapDataKey(envelopeB64, wrapKey) {
   const encrypted = combined.slice(12);
   const raw       = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wrapKey, encrypted);
   return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+}
+
+// Unwrap a passphrase-protected data key, dispatching to v1 or v2 based on
+// the envelope's crypto version. The presence of kdfSalt is the unambiguous
+// v2 marker — the server stamps it that way (see main.ts: cryptoVersion =
+// kdfSalt ? 'v2' : 'v1'). We use the same rule here so the client tolerates
+// older server deploys that don't include the cryptoVersion field in /key/get
+// responses. Without this fallback, a v2 account fails to unwrap with an
+// OperationError carrying an empty message string — see the May 2026 login
+// regression where pete@ couldn't sign in because the deployed server pre-
+// dated the cryptoVersion field addition.
+//
+// `keyData` must come from /key/get and carry { salt, envelope, kdfSalt?,
+// cryptoVersion? }. The returned dataKey is extractable so it can be cached.
+async function unwrapPassphraseDataKey(passphrase, emailHash, keyData) {
+  const isV2 = keyData.cryptoVersion === 'v2' || (!keyData.cryptoVersion && !!keyData.kdfSalt);
+  if (isV2) {
+    if (!keyData.kdfSalt) throw new Error('v2 account missing kdfSalt');
+    const wrapKey = await derivePassphraseWrapKeyV2(passphrase, emailHash, keyData.kdfSalt);
+    return await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
+  }
+  const { wrapKey } = await derivePassphraseWrapKey(passphrase, emailHash, keyData.salt);
+  return await unwrapDataKey(keyData.envelope, wrapKey);
 }
 
 function generateRecoveryCodes(count = 10) {
@@ -14559,6 +14573,22 @@ async function kvRestoreSession() {
 
     if (!verifier) return false;
 
+    // ── User-switch detection ───────────────────────────────────────────
+    // Same rationale as in kvStoreSession / kvRestorePasskeySession. If the
+    // IDB-stamped owner differs from the session we're restoring, wipe
+    // stale data BEFORE any path returns success. Without this, the May
+    // 2026 cross-account leak: previous user's items, notes, and trash
+    // entries persisted in IDB across sign-out + sign-in via session
+    // restore, because kvRestoreSession bypassed kvStoreSession entirely.
+    try {
+      const prevHash = await dbGet('settings', '_activeUserHash');
+      if (prevHash && prevHash !== emailHash) {
+        await _wipeStaleUserDataForSwitch(emailHash);
+      } else if (!prevHash) {
+        await dbPut('settings', '_activeUserHash', emailHash);
+      }
+    } catch(e) { console.warn('[kvRestoreSession] user-switch wipe failed (non-fatal):', e.message); }
+
     // Helper to fully restore session once key is found
     const restoreWith = async (key, source) => {
       _kvEmail     = email;
@@ -14770,13 +14800,7 @@ async function kvEnsureKey() {
       // Envelope exists — must unwrap it. Do NOT fall through to legacy derive
       // if this fails, as that would set a wrong key and cause KvDecryptError.
       try {
-        if (keyData.cryptoVersion === 'v2' && keyData.kdfSalt) {
-          const wrapKey = await derivePassphraseWrapKeyV2(passphrase, _kvEmailHash, keyData.kdfSalt);
-          dataKey = await unwrapDataKeyV2(keyData.envelope, wrapKey, true);
-        } else {
-          const { wrapKey } = await derivePassphraseWrapKey(passphrase, _kvEmailHash, keyData.salt);
-          dataKey = await unwrapDataKey(keyData.envelope, wrapKey);
-        }
+        dataKey = await unwrapPassphraseDataKey(passphrase, _kvEmailHash, keyData);
       } catch(e) {
         toast('Incorrect passphrase');
         console.warn('kvEnsureKey: envelope unwrap failed —', e.message);
@@ -15339,26 +15363,26 @@ async function kvSignOut() {
   // Note: keep stockroom_protect_seen and stockroom_country_set — they are permanent
   // one-time setup flags, not session data. Removing them causes the protect/country
   // screens to re-appear on every login, which is wrong.
-  // Clear local app data (encrypted copy stays on server)
-  items        = [];
-  settings     = {};
-  groceryItems = [];
-  groceryDepts = [];
-  reminders    = [];
-  await saveData();
-  await _saveSettings();
-  // Explicitly clear groceries and reminders from their own IDB stores
-  // (saveData only updates items/settings; grocery and reminder stores are separate)
-  await dbPut('groceries',  'items',     []);
-  await dbPut('reminders',  'reminders', []);
-  await dbPut('departments','departments', []);
-  // Reset in-memory state
-  kvConnected  = false;
-  _kvEmail     = '';
-  _kvEmailHash = '';
-  _kvVerifier  = '';
-  _kvKey       = null;
-  _shareState  = null;
+  // ── Wipe ALL local user data ─────────────────────────────────────────
+  // Delegate to the shared wipe so sign-out covers exactly the same stores
+  // as the user-switch wipe. Without this, signing out left notes, budget
+  // data, profiles, and tombstone stores in IDB — a cross-account data
+  // leak surfaced as "recently deleted items follow you to a new account"
+  // in May 2026. Pass null so _activeUserHash is NOT re-stamped — we also
+  // clear it explicitly below so the next sign-in stamps fresh.
+  await _wipeStaleUserDataForSwitch(null);
+  // Clear the active-user stamp so the next sign-in is treated as a fresh
+  // start rather than a "switch from the previous user" (the wipe above
+  // already happened, so we don't need the switch path to wipe again).
+  try { await dbPut('settings', '_activeUserHash', null); } catch(e) {}
+  // Reset in-memory auth state (data state was already reset by the wipe)
+  kvConnected     = false;
+  _kvEmail        = '';
+  _kvEmailHash    = '';
+  _kvVerifier     = '';
+  _kvSessionToken = '';
+  _kvKey          = null;
+  _shareState     = null;
   // Show login screen
   document.body.classList.add('wizard-active'); document.getElementById('wizard').style.display = 'flex';
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
