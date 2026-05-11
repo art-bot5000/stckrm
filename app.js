@@ -27891,14 +27891,14 @@ async function handleShareJoinLink(code) {
   updateSyncPill('syncing');
   try {
     const probe = await postKV(`${WORKER_URL}/share/join`, { code });
-    const probeData = await probe.json();
+    const probeData = (await _readJsonSafe(probe)) || {};
     if (probe.status === 410) { toast('This invite link has expired — ask the owner for a new one'); updateSyncPill('error'); return; }
-    if (!probe.ok && !probeData.requiresAuth) throw new Error(probeData.error || 'Invalid link');
+    if (!probe.ok && !probeData.requiresAuth) throw new Error(probeData.error || `Invalid link (${probe.status})`);
     _pendingJoinCode  = code.toUpperCase();
     _pendingShareMeta = probeData;
     if (kvConnected && _kvEmailHash && (_kvVerifier || _kvSessionToken)) { await completePendingJoin(); return; }
     showShareAuthGate(probeData);
-  } catch(err) { updateSyncPill('error'); toast('Invalid invite link — ' + err.message); }
+  } catch(err) { updateSyncPill('error'); toast('Invalid invite link — ' + (err.message || `network error`)); }
 }
 
 function showShareAuthGate(meta) {
@@ -27998,8 +27998,8 @@ async function completePendingJoin() {
         guestEmailHash:    _kvEmailHash,
         ...(_kvSessionToken ? { guestSessionToken: _kvSessionToken } : { guestVerifier: _kvVerifier }),
       });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Invalid invite link — it may have expired');
+    const data = (await _readJsonSafe(res)) || {};
+    if (!res.ok) throw new Error(data.error || `Invalid invite link (${res.status}) — it may have expired`);
     // Server returned 200 but with ok:false — means it needs auth (shouldn't happen here but guard it)
     if (data.requiresAuth) throw new Error('Authentication required — please sign in first');
 
@@ -28021,13 +28021,28 @@ async function completePendingJoin() {
     }
 
     if (!ecdhRes.ok) {
-      const ed = await ecdhRes.json().catch(() => ({}));
-      throw new Error(ed.error || 'Could not retrieve your share key — ask the owner to re-send the invite');
+      const ed = (await _readJsonSafe(ecdhRes)) || {};
+      throw new Error(ed.error || `Could not retrieve your share key (${ecdhRes.status}) — ask the owner to re-send the invite`);
     }
-    const { wrappedKey, ownerPublicKeyJwk } = await ecdhRes.json();
+    const ecdhData = (await _readJsonSafe(ecdhRes)) || {};
+    const { wrappedKey, ownerPublicKeyJwk } = ecdhData;
+    if (!wrappedKey || !ownerPublicKeyJwk) {
+      throw new Error('Share key response is missing — ask the owner to re-send the invite');
+    }
     const guestPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
     if (!guestPrivKey) throw new Error('Your encryption key is missing — sign out and back in to regenerate it');
-    const shareKey    = await ecdhUnwrapShareKey(guestPrivKey, ownerPublicKeyJwk, wrappedKey);
+    let shareKey;
+    try {
+      shareKey = await ecdhUnwrapShareKey(guestPrivKey, ownerPublicKeyJwk, wrappedKey);
+    } catch(unwrapErr) {
+      // OperationError from Web Crypto carries an empty message — without
+      // this wrapper, the user sees "Could not join: " (no detail). The
+      // most common cause is a key mismatch: the owner wrapped against an
+      // older public key for this email than the one in local IDB now.
+      // Re-issuing the invite (owner re-wraps with the current pubkey) fixes it.
+      console.error('ecdhUnwrapShareKey failed:', unwrapErr.name, unwrapErr.message);
+      throw new Error('Could not unwrap your share key — your encryption key may have changed since the invite was issued. Ask the owner to re-send the link.');
+    }
     const shareKeyB64 = await exportShareKey(shareKey);
     try {
       const stored = await _getShareKeys();
