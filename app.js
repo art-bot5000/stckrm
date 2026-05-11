@@ -5205,7 +5205,6 @@ async function checkPendingSWSync() {
   } catch(e) {}
 }
 
-// Poll every 5 minutes as a backstop
 // Adaptive polling — 30s when share state is active (either own a share or
 // are a guest in one), 5min otherwise. The cheaper modified-time check makes
 // 30s a fine cadence for users who aren't actively sharing; for users with
@@ -5213,8 +5212,19 @@ async function checkPendingSWSync() {
 // without overwhelming the server (one /share/tips call per tick, ~50 bytes
 // down per share). The visibility/focus triggers below give near-instant
 // updates for the common case of switching tabs/windows.
+//
+// TDZ note: _shareState and _shareTargets are declared with `let` MUCH later
+// in this file (~line 25600). At module-load time they're in the temporal
+// dead zone, so any direct reference here throws ReferenceError. The typeof
+// guard below is the canonical way to probe for TDZ-bound bindings without
+// triggering the access error — typeof on an uninitialised let returns the
+// string 'undefined' rather than throwing.
 function _sharePollIntervalMs() {
-  const hasShareState = !!_shareState || (_shareTargets?.length > 0);
+  let hasShareState = false;
+  try {
+    hasShareState = (typeof _shareState !== 'undefined' && !!_shareState)
+                 || (typeof _shareTargets !== 'undefined' && _shareTargets?.length > 0);
+  } catch(_) { /* state vars not yet initialised — treat as no share */ }
   return hasShareState ? 30 * 1000 : 5 * 60 * 1000;
 }
 let _sharePollTimer = null;
@@ -5228,7 +5238,15 @@ function _scheduleNextSharePoll() {
     _scheduleNextSharePoll(); // re-arm with current interval (may have changed)
   }, _sharePollIntervalMs());
 }
-_scheduleNextSharePoll();
+// Defer the first schedule so module evaluation completes — this avoids
+// any TDZ access for `let` bindings declared later in the file, and lines
+// up with the existing init() pattern of running heavy work after DOM is
+// ready. If DOMContentLoaded already fired, the microtask still works.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _scheduleNextSharePoll, { once: true });
+} else {
+  setTimeout(_scheduleNextSharePoll, 0);
+}
 
 // Check if cloud is ahead of local — if so, sync silently
 async function checkCloudAhead() {
