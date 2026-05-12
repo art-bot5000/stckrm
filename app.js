@@ -26440,6 +26440,10 @@ async function pushSharedData(code, shareKey) {
   const target = _shareTargets.find(t => t.code === code);
   const households = target?.households ? Object.keys(target.households) : ['default'];
 
+  // Grocery list tombstones live at user-level (not per-household), so load
+  // once outside the per-household loop and reuse for each share payload.
+  const groceryListTombstones = await loadGroceryListDeletedIds();
+
   for (const hKey of households) {
     try {
       // Build full payload for this household (same shape as kvPush so guest merge works)
@@ -26464,6 +26468,12 @@ async function pushSharedData(code, shareKey) {
         groceries:   canSeeGroceries ? hGroceries : [],
         reminders:   canSeeReminders ? hReminders : [],
         departments: canSeeGroceries ? hDepts     : [],
+        // Grocery lists (named lists like "Tesco" / "Costco") + their
+        // tombstones live at user-level, not per-household. Without these
+        // a guest pulling the share blob would see grocery ITEMS but no
+        // named-list structure, leaving items orphaned in the default list.
+        groceryLists:            canSeeGroceries ? groceryLists : [],
+        groceryListDeletedIds:   canSeeGroceries ? [...groceryListTombstones] : [],
         // Budget — Phase 1 (bills) + Phase 2 (categories, transactions) + Phase 3 (accounts, income).
         // Lives at user-level (not per-household), so the same data goes to every share with budget perm.
         bills:                       canSeeBudget ? bills           : [],
@@ -26666,6 +26676,34 @@ async function absorbSharedData(code, hKey) {
         if (!existingIds.has(d.id)) groceryDepts.push(d);
       }
     }
+    // Merge grocery LISTS (named lists like "Tesco") + their tombstones.
+    // Mirrors the kvSyncNow own-data merge — without it, a guest's newly-
+    // created list never reaches the owner's device.
+    if (Array.isArray(payload.groceryLists)) {
+      const localGLTombstones = await loadGroceryListDeletedIds();
+      if (Array.isArray(payload.groceryListDeletedIds)) {
+        payload.groceryListDeletedIds.forEach(id => localGLTombstones.add(id));
+        await dbPut('groceryLists', '_deletedIds', [...localGLTombstones]);
+      }
+      const remoteFiltered = payload.groceryLists.filter(l => !localGLTombstones.has(l.id));
+      const localListsEmpty = groceryLists.length <= 1 && groceryLists[0]?.id === 'default';
+      if (remoteWins || localListsEmpty) {
+        groceryLists = remoteFiltered;
+        await _saveGroceryLists();
+      } else {
+        const localListIds = new Set(groceryLists.map(l => l.id));
+        const newLists = remoteFiltered.filter(l => !localListIds.has(l.id));
+        if (newLists.length) {
+          groceryLists = [...groceryLists, ...newLists];
+          await _saveGroceryLists();
+        }
+      }
+      // Prune any local lists matching a tombstone (covers the case where
+      // a list was rebuilt from a remote pull before the tombstone arrived).
+      const before = groceryLists.length;
+      groceryLists = groceryLists.filter(l => !localGLTombstones.has(l.id));
+      if (groceryLists.length !== before) await _saveGroceryLists();
+    }
     await _saveGroceryLocal();
   }
   if (Array.isArray(payload.reminders) && perms.reminders === 'rw') {
@@ -26728,7 +26766,15 @@ async function pushGuestSharedData() {
     lastSynced: new Date().toISOString(),
   };
   if (canWriteStockroom) payload.items     = items;
-  if (canWriteGroceries) { payload.groceries = groceryItems; payload.departments = groceryDepts; }
+  if (canWriteGroceries) {
+    payload.groceries   = groceryItems;
+    payload.departments = groceryDepts;
+    // Include named-list state — without these, a guest creating a new
+    // list (e.g. "Tesco") would push grocery ITEMS but the list itself
+    // would never reach the owner.
+    payload.groceryLists          = groceryLists;
+    payload.groceryListDeletedIds = [...(await loadGroceryListDeletedIds())];
+  }
   if (canWriteReminders) payload.reminders = reminders;
   if (canWriteBudget) {
     payload.bills             = bills;
@@ -28263,6 +28309,30 @@ async function renderNotes() {
   const grid  = document.getElementById('notes-grid');
   const empty = document.getElementById('notes-empty');
   if (!grid) return;
+
+  // Show a heads-up banner for guests in shared households — notes are
+  // intentionally not part of household sharing (they're more personal),
+  // and per-note granular sharing is the planned future model. Without
+  // this, a guest might assume their notes will sync to the owner like
+  // groceries / reminders do. Banner is injected before the search bar
+  // for visibility; removed cleanly when the user is no longer a guest.
+  let banner = document.getElementById('notes-share-info-banner');
+  if (_shareState) {
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'notes-share-info-banner';
+      banner.style.cssText = 'background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.3);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--text);display:flex;gap:8px;align-items:flex-start';
+      banner.innerHTML = '<svg class="icon" aria-hidden="true" style="color:var(--accent);flex-shrink:0;margin-top:1px"><use href="#i-info"></use></svg><div><strong>Notes aren’t synced across households yet.</strong><br><span style="color:var(--muted)">These notes are personal to your own account. Per-note sharing is coming soon.</span></div>';
+      const header = document.getElementById('notes-header');
+      if (header && header.parentNode) {
+        header.parentNode.insertBefore(banner, header.nextSibling);
+      } else {
+        grid.parentNode.insertBefore(banner, grid);
+      }
+    }
+  } else if (banner) {
+    banner.remove();
+  }
 
   const q = (_notesSearch || '').toLowerCase().trim();
   const now = Date.now();
