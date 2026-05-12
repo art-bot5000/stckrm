@@ -1601,19 +1601,22 @@
     <button class="app-nav-link"        data-view="budget"     onclick="navTo('budget')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
   </div>
   <div class="app-nav-bottom">
+    <div id="app-nav-sync" class="sync-pill pending app-nav-sync-pill" onclick="handleSyncPillTap()">
+      <div class="sync-dot"></div>
+      <span class="sync-label-nav">Syncing…</span>
+    </div>
     <!-- Notifications — opens the same dropdown panel that the header bell
          opens. On desktop the header is hidden, so without this entry there
          is no way to reach notifications. The badge mirrors the one in the
-         header bell — both are kept in sync via _renderNotificationBellBadge. -->
+         header bell — both are kept in sync via _renderNotificationBellBadge.
+         Placed under the Connected sync pill so the bottom of the sidebar
+         reads as: status (Connected) → utility actions (Notifications) →
+         secondary nav (Billing / Account / Settings). -->
     <button id="notif-sidebar-btn" class="app-nav-link" type="button" onclick="toggleNotificationPanel()" aria-label="Notifications">
       <svg class="icon icon-tab" aria-hidden="true"><use href="#i-bell"></use></svg>
       <span>Notifications</span>
       <span id="notif-sidebar-badge" class="notif-sidebar-badge" style="display:none">0</span>
     </button>
-    <div id="app-nav-sync" class="sync-pill pending app-nav-sync-pill" onclick="handleSyncPillTap()">
-      <div class="sync-dot"></div>
-      <span class="sync-label-nav">Syncing…</span>
-    </div>
     <button class="app-nav-link" data-view="billing" onclick="navTo('billing')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg> <span>Billing</span></button>
     <button class="app-nav-link" data-view="account-security" onclick="navTo('account-security')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shield"></use></svg> <span>Account &amp; Security</span></button>
     <button class="app-nav-link" data-view="settings" onclick="navTo('settings')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg> <span>Settings</span></button>

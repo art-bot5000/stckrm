@@ -5304,10 +5304,50 @@ async function installPWA() {
 }
 
 // ── Amazon Order History Import banner ───────────────────────────────────────
+// Behaviour: shows ONCE per account, ever. The first time the user is
+// signed in and the flag is unset, the banner appears; the flag is then
+// persisted to settings (which syncs to the server) so the next sign-in
+// on any device sees the flag set and skips the banner entirely.
+//
+// Why persist on show (not on dismiss): users often just look at the
+// banner and scroll past without clicking X. They've still seen the
+// nudge — re-showing it on every device login would be noise. The
+// dismiss X button is kept for users who want to hide it immediately
+// before the auto-persist fires.
+//
+// Race protection: on a fresh device, _showAmazonBanners runs BEFORE the
+// initial kvSyncNow has pulled settings down. To avoid a flash, we also
+// re-call this function after kvSyncNow completes (see syncSettled hook).
 function _showAmazonBanners() {
   if (settings._amazonBannerDismissed) return;
+  // Require a valid signed-in user blob before persisting — otherwise we'd
+  // mark the banner seen against a guest/local profile and never show it
+  // on the user's real account. _kvEmailHash being set means kvSyncNow can
+  // push the flag to the server on next sync.
+  if (!_kvEmailHash) {
+    // Not signed in yet — don't render the banner at all. It'll be shown
+    // after the user signs in and the post-sync hook re-evaluates.
+    return;
+  }
   const banner = document.getElementById('amazon-banner-mobile');
   if (banner) banner.style.display = 'block';
+  // Mark seen so subsequent loads / other devices don't show it again.
+  settings._amazonBannerDismissed = true;
+  _saveSettings()
+    .then(() => activeProfile ? saveCurrentProfile() : null)
+    .then(() => { if (kvConnected) kvPush().catch(() => {}); })
+    .catch(() => {});
+}
+
+// Hide the banner if a sync brought down a dismissed flag that wasn't
+// present locally when _showAmazonBanners first ran. Called from kvSyncNow
+// after settings are merged. Idempotent — safe to call multiple times.
+function _refreshAmazonBannerVisibility() {
+  const banner = document.getElementById('amazon-banner-mobile');
+  if (!banner) return;
+  if (settings._amazonBannerDismissed) {
+    banner.style.display = 'none';
+  }
 }
 
 function dismissAmazonBanner() {
@@ -12882,7 +12922,15 @@ async function kvRegister() {
     await kvStoreSession(email, emailHash, verifier, dataKey);
     if(errEl) errEl.style.display = 'none';
     // Clear any stale device setup flags from a previous account on this device
-    // so the protect screen shows correctly with the new recovery codes
+    // so the protect screen shows correctly with the new recovery codes.
+    // Critical for the "recreated account" scenario: when a user deletes their
+    // account (via admin panel or in-app) and re-registers with the same
+    // email, the local IDB still has the OLD account's settings — including
+    // settings._setupProtectSeen=true. Without clearing here, a refresh of
+    // the protect screen during this fresh registration would land in init()
+    // and call showProtectDataScreen([]) with empty codes, surfacing the
+    // confusing "Recovery codes already set up" message even though the
+    // server-side recovery envelopes belong to a fresh account.
     localStorage.removeItem('stockroom_protect_seen');
     localStorage.removeItem('stockroom_country_set');
     try {
@@ -12890,6 +12938,11 @@ async function kvRegister() {
       await dbPut('settings', `device_setup_${devId}_protect_seen`, null);
       await dbPut('settings', `device_setup_${devId}_country_set`, null);
     } catch(e) {}
+    // Wipe the in-memory + IDB settings flags too — these are the values
+    // getProtectSeenForDevice() and getCountrySetForDevice() actually read.
+    settings._setupProtectSeen = false;
+    settings._setupCountrySet  = false;
+    try { await dbPut('settings', 'settings', settings); } catch(e) {}
     // ── Demo → real account: convert the in-memory demo data into this
     // account's starting state. This must run AFTER kvStoreSession (so the
     // session is durable) but BEFORE the email-verification step writes
@@ -13480,11 +13533,42 @@ function showProtectDataScreen(recoveryCodes, isMigration = false) {
     document.getElementById('protect-continue-btn').disabled          = true;
     document.getElementById('protect-continue-btn').style.opacity     = '0.5';
   } else {
-    document.getElementById('protect-codes-hidden').innerHTML = '<p style="font-size:12px;color:var(--ok);line-height:1.5">✓ Recovery codes already set up. Generate new ones in Settings → Account if needed.</p>';
-    // Tick the checkbox so updateProtectContinueBtn() doesn't re-disable the button
-    document.getElementById('protect-codes-checkbox').checked         = true;
+    // No codes in hand. Two sub-cases:
+    //   1. User completed registration earlier (codes already on server,
+    //      saved on a previous session). Showing them again would require
+    //      re-deriving — impossible without the original code list. The
+    //      "already set up" message is correct here.
+    //   2. User registered just now but refreshed the page during the
+    //      protect screen — server has recovery envelopes from the fresh
+    //      register, but the plaintext codes are gone from memory. Without
+    //      intervention the user sees "already set up" for codes they
+    //      never actually saw. Worse: for a recreated account, the codes
+    //      on the server are brand new but the message implies they're
+    //      old.
+    //
+    // Heuristic: if the user is fully authenticated (data key in memory)
+    // AND settings._setupProtectSeen is false (i.e. they're being shown
+    // this screen because protect hasn't been completed yet), regenerate
+    // fresh codes server-side and present them. This covers (2) cleanly.
+    // For (1) the flag would normally be true, but if a user actually
+    // reaches this screen with the flag false and codes already saved
+    // elsewhere, regenerating is a safe no-op from their perspective —
+    // they get a fresh set to save.
+    const codesContainer = document.getElementById('protect-codes-hidden');
+    if (codesContainer) {
+      codesContainer.innerHTML = '<p style="font-size:12px;color:var(--muted);line-height:1.5">⏳ Preparing recovery codes…</p>';
+    }
+    document.getElementById('protect-codes-checkbox').checked = true;
     document.getElementById('protect-continue-btn').disabled  = false;
     document.getElementById('protect-continue-btn').style.opacity = '1';
+    // Fire the regen attempt — async; the UI updates when it completes.
+    _protectRegenerateCodesIfPossible().catch(err => {
+      console.warn('protect: code regen failed:', err.message);
+      // Fall back to the existing "already set up" copy on any error.
+      if (codesContainer) {
+        codesContainer.innerHTML = '<p style="font-size:12px;color:var(--ok);line-height:1.5">✓ Recovery codes already set up. Generate new ones in Settings → Account if needed.</p>';
+      }
+    });
   }
   // Hide passkey option if not supported; show as done if already registered on this device
   passkeyPlatformSupported().then(supported => {
@@ -13500,6 +13584,65 @@ function showProtectDataScreen(recoveryCodes, isMigration = false) {
       if (doneEl) doneEl.textContent = '✓ Passkey already registered on this device';
     }
   });
+}
+
+// Generate fresh recovery codes server-side and refresh the protect screen
+// UI to show them. Called when the user lands on the protect screen with
+// no codes in memory (typically: refresh during fresh-registration protect
+// step, or a re-entry path on a recreated account). Detects v1 vs v2 from
+// /key/get and uses the matching envelope builder.
+//
+// Side effects:
+//   - Overwrites the server's recovery_envelopes for this account. ANY
+//     codes from a previous run (including a previous account at this same
+//     emailHash) are invalidated.
+//   - Updates settings.recoveryCount and persists.
+//   - Mutates _protectRecoveryCodes and re-renders the protect UI in the
+//     "hasCodes" mode.
+async function _protectRegenerateCodesIfPossible() {
+  if (!_kvKey || !_kvEmailHash) {
+    throw new Error('Not authenticated — cannot regenerate codes');
+  }
+  // Detect v1 vs v2 via /key/get
+  const keyRes = await postKV(`${WORKER_URL}/key/get`, { emailHash: _kvEmailHash });
+  if (!keyRes.ok) throw new Error('Could not fetch key metadata');
+  const keyData = await keyRes.json();
+  const isV2 = keyData.cryptoVersion === 'v2' || (!keyData.cryptoVersion && !!keyData.kdfSalt);
+  // Generate fresh codes and matching envelopes
+  const newCodes = generateRecoveryCodes(10);
+  const newEnvelopes = isV2
+    ? await buildRecoveryEnvelopesV2(newCodes, _kvKey, _kvEmailHash)
+    : await buildRecoveryEnvelopes(newCodes, _kvKey, _kvEmailHash);
+  // Push to server. Both auth modes (passphrase verifier, passkey session)
+  // are supported by /key/update-recovery — fall back to whichever we have.
+  const body = _kvSessionToken
+    ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken, recoveryEnvelopes: newEnvelopes }
+    : { emailHash: _kvEmailHash, verifier: _kvVerifier, recoveryEnvelopes: newEnvelopes };
+  const upRes = await postKV(`${WORKER_URL}/key/update-recovery`, body);
+  if (!upRes.ok) {
+    const d = await upRes.json().catch(() => ({}));
+    throw new Error(d.error || 'Could not save recovery codes to server');
+  }
+  // Restore the protect UI to the "hasCodes" rendering. We can't re-call
+  // showProtectDataScreen because that would reset state we already
+  // mutated (passkey checkbox etc); instead we update only the codes
+  // section in place.
+  _protectRecoveryCodes = newCodes;
+  const codesContainer = document.getElementById('protect-codes-hidden');
+  if (codesContainer) {
+    codesContainer.innerHTML = '';
+    codesContainer.style.display = '';
+  }
+  // Re-disable Continue until the user reveals + confirms — the new codes
+  // are critical and must be acknowledged, not silently skipped.
+  const cb = document.getElementById('protect-codes-checkbox');
+  if (cb) cb.checked = false;
+  const continueBtn = document.getElementById('protect-continue-btn');
+  if (continueBtn) {
+    continueBtn.disabled = true;
+    continueBtn.style.opacity = '0.5';
+  }
+  console.log('[protect] regenerated', newCodes.length, 'fresh recovery codes (v' + (isV2 ? '2' : '1') + ')');
 }
 
 function revealRecoveryCodes() {
@@ -15720,6 +15863,11 @@ async function kvSyncNow(silent = false) {
           settings.customTags = (localTags||[]).filter(t=>t&&t.trim()).length >= remoteTags.filter(t=>t&&t.trim()).length ? (localTags||[]) : remoteTags;
         }
         await _saveSettings();
+        // After remote settings merge, the _amazonBannerDismissed flag may
+        // have just arrived from another device. Re-check banner visibility
+        // so a fresh-device login doesn't keep the banner showing despite
+        // the user having dismissed it elsewhere.
+        try { _refreshAmazonBannerVisibility(); } catch(_) {}
       }
       if (remote.groceries) {
         const localEmpty = groceryItems.length === 0;
