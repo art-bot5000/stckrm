@@ -25757,6 +25757,26 @@ const SECTION_LABELS = {
   budget:    '💷 Budget',
 };
 
+// Share-management permission values per type. Always 'none' by default —
+// the owner has to opt in explicitly. `shareManagement` is a global (not
+// per-household) permission that controls whether a guest can see and/or
+// modify the owner's Share Access section. Stored per-target on the
+// `shareManagement` field of the share record so it survives sync without
+// polluting per-household perms.
+const SHARE_MGMT_DEFAULTS = { family: 'none', cleaner: 'none', guest: 'none' };
+
+// Share-management permission for the *current viewer*. Owners always have
+// 'edit'. Guests get whatever the owner granted them on the share record
+// (`_shareState.shareManagement`), defaulting to 'none'. The view-mode
+// shows the Share Access list as read-only — no add/edit/delete/sync/
+// refresh buttons. Edit-mode is identical to owner access for that section.
+function getShareMgmtPerm() {
+  if (!_shareState) return 'edit'; // owner
+  return _shareState.shareManagement || 'none';
+}
+function canViewShares()   { const p = getShareMgmtPerm(); return p === 'view' || p === 'edit'; }
+function canManageShares() { return getShareMgmtPerm() === 'edit'; }
+
 // Get permission for a section in the current household
 // Returns 'rw', 'r', or 'none'. Returns 'rw' for owners.
 function getSectionPerm(section) {
@@ -26030,6 +26050,11 @@ let _shareTargetType  = 'family';
 let _shareTargetPerms = {}; // { householdKey: { stockroom, groceries, reminders, savings, report } }
 let _shareTargetColour = HOUSEHOLD_COLOURS[0];
 let _shareTargetDone   = false; // true after link is generated — btn becomes Done
+let _shareTargetMgmt   = 'none'; // 'none' | 'view' | 'edit' — share-management perm for the target being edited
+
+// Tracks which share rows are expanded to show member details. Survives
+// re-renders within a session but resets on page reload.
+const _expandedShareCodes = {};
 
 function handleShareTargetBtn() {
   if (_shareTargetDone) {
@@ -26040,7 +26065,11 @@ function handleShareTargetBtn() {
 }
 
 async function loadShareTargets() {
-  if (!WORKER_URL || !isOwner() || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
+  if (!WORKER_URL || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
+  // Owners hit /share/list directly. Guests with view/edit shareManagement
+  // permission also load — the server returns the same list for them so
+  // they can see/manage the owner's Share Access section.
+  if (!isOwner() && !canViewShares()) return;
   try {
     const res  = await postKV(`${WORKER_URL}/share/list`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken });
     const data = await res.json();
@@ -26052,8 +26081,23 @@ async function loadShareTargets() {
 function renderShareTargetsList() {
   const list = document.getElementById('share-targets-list');
   const btn  = document.getElementById('add-share-target-btn');
+  const section = document.getElementById('share-targets-section');
   if (!list) return;
-  if (!isOwner()) { list.closest('#share-targets-section')?.style && (list.closest('#share-targets-section').style.display = 'none'); return; }
+
+  // Visibility gate: owners always see this; guests see it only if their
+  // shareManagement permission is 'view' or 'edit'. View-only hides all
+  // mutation buttons. Edit-mode is functionally identical to owner.
+  const viewable = canViewShares();
+  if (!viewable) {
+    if (section) section.style.display = 'none';
+    return;
+  }
+  if (section) section.style.display = '';
+
+  const editable = canManageShares();
+
+  // Add-person button is hidden in view-only mode
+  if (btn) btn.style.display = (editable && _shareTargets.length < 5) ? 'inline-flex' : 'none';
 
   const typeEmoji = { family: '👨‍👩‍👧', cleaner: '🧹', guest: '👤' };
   if (!_shareTargets.length) {
@@ -26064,27 +26108,159 @@ function renderShareTargetsList() {
       const members   = t.members?.length || 0;
       const expired   = t.expiresAt && Date.now() > new Date(t.expiresAt).getTime();
       const expiryStr = t.expiresAt ? (expired ? '<svg class="icon" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> Link expired' : `Link valid until ${new Date(t.expiresAt).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`) : '';
-      return `
-      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border:1px solid ${expired?'var(--danger)':'var(--border)'};border-radius:10px">
-        <div style="width:12px;height:12px;border-radius:50%;background:${colour};flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:700">${typeEmoji[t.type]||'👤'} ${esc(t.name)}</div>
-          <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${t.type}${members?' · '+members+' member'+(members!==1?'s':''):''}</div>
-          ${expiryStr?`<div style="font-size:10px;color:${expired?'var(--danger)':'var(--muted)'};margin-top:2px">${expiryStr}</div>`:''}
-        </div>
+      const isExpanded = !!_expandedShareCodes[t.code];
+      const memberDetails = t.memberDetails || {};
+
+      // Member sub-rows — only meaningful when there are joined members.
+      // Each row shows the member's email-hash prefix (we don't store the
+      // raw email server-side for privacy), last-active relative time,
+      // and a "Remove" button (mgmt-edit only).
+      const memberRows = members ? `
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:${isExpanded?'block':'none'}" id="share-members-${t.code}">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Members</div>
+          ${(t.members||[]).map(memberHash => {
+            const md = memberDetails[memberHash] || {};
+            const lastActive = md.lastActiveAt ? _relTime(md.lastActiveAt) : 'Not yet active';
+            const firstSeen  = md.firstSeenAt  ? new Date(md.firstSeenAt).toLocaleDateString() : '—';
+            const pulls      = md.pullCount || 0;
+            return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--bg);border-radius:8px;margin-bottom:4px">
+              <svg class="icon icon-sm" aria-hidden="true" style="color:var(--muted);flex-shrink:0"><use href="#i-user"></use></svg>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:11px;font-family:var(--mono);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(memberHash.slice(0,12))}…</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:1px">
+                  <svg class="icon" aria-hidden="true" style="width:10px;height:10px;vertical-align:-1px"><use href="#i-clock"></use></svg>
+                  ${esc(lastActive)} · joined ${esc(firstSeen)}${pulls>0?` · ${pulls} sync${pulls===1?'':'s'}`:''}
+                </div>
+              </div>
+              ${editable ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:4px 8px;font-size:11px" onclick="removeShareMember('${t.code}','${memberHash}')" title="Remove this member"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>` : ''}
+            </div>`;
+          }).join('')}
+        </div>` : '';
+
+      // Action buttons — full set for owners/edit, none for view-only
+      const actionsHtml = editable ? `
         <button class="btn btn-ghost btn-sm" onclick="openEditShareTarget('${t.code}')" title="Edit"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
         ${expired
           ? `<button class="btn btn-ghost btn-sm" onclick="refreshShareLink('${t.code}')" title="Refresh link (new 24h window)"><svg class="icon" aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>`
           : `<button class="btn btn-ghost btn-sm" onclick="copyShareTargetLink('${t.code}')" title="Copy invite link">🔗</button>`
         }
         <button class="btn btn-ghost btn-sm" onclick="resyncSharedData('${t.code}')" title="Re-sync data to guest"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg></button>
-        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteShareTarget('${t.code}')"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
+        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteShareTarget('${t.code}')" title="Remove share"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
+      ` : '';
+
+      // Expand/collapse chevron — always present when there are members so
+      // viewers can audit who has access even in view-only mode.
+      const expandBtn = members ? `<button class="btn btn-ghost btn-sm" onclick="toggleShareMembers('${t.code}')" title="${isExpanded?'Hide':'Show'} members" aria-expanded="${isExpanded}"><svg class="icon" aria-hidden="true" style="transform:rotate(${isExpanded?180:0}deg);transition:transform 0.15s"><use href="#i-chevron-down"></use></svg></button>` : '';
+
+      return `
+      <div style="display:flex;flex-direction:column;padding:10px 12px;background:var(--surface2);border:1px solid ${expired?'var(--danger)':'var(--border)'};border-radius:10px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:12px;height:12px;border-radius:50%;background:${colour};flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:700">${typeEmoji[t.type]||'👤'} ${esc(t.name)}</div>
+            <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${t.type}${members?' · '+members+' member'+(members!==1?'s':''):''}${t.shareManagement && t.shareManagement !== 'none' ? ' · share-'+t.shareManagement : ''}</div>
+            ${expiryStr?`<div style="font-size:10px;color:${expired?'var(--danger)':'var(--muted)'};margin-top:2px">${expiryStr}</div>`:''}
+          </div>
+          ${expandBtn}
+          ${actionsHtml}
+        </div>
+        ${memberRows}
       </div>`;
     }).join('');
   }
-  if (btn) btn.style.display = _shareTargets.length >= 5 ? 'none' : 'inline-flex';
   const clearBtn = document.getElementById('clear-all-shares-btn');
-  if (clearBtn) clearBtn.style.display = _shareTargets.length > 0 ? 'inline-flex' : 'none';
+  if (clearBtn) clearBtn.style.display = (editable && _shareTargets.length > 0) ? 'inline-flex' : 'none';
+}
+
+// Toggle expand/collapse for a share row's member list. Survives
+// re-renders within a session but resets on page reload.
+function toggleShareMembers(code) {
+  _expandedShareCodes[code] = !_expandedShareCodes[code];
+  renderShareTargetsList();
+}
+
+// Human-readable relative time ("3 mins ago", "2 hours ago", etc).
+// Used for last-active timestamps in the member list.
+function _relTime(iso) {
+  if (!iso) return '—';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0) return 'just now';
+  const s = Math.floor(ms/1000);
+  if (s < 60)   return 'just now';
+  const m = Math.floor(s/60);
+  if (m < 60)   return `${m} min${m===1?'':'s'} ago`;
+  const h = Math.floor(m/60);
+  if (h < 24)   return `${h} hour${h===1?'':'s'} ago`;
+  const d = Math.floor(h/24);
+  if (d < 30)   return `${d} day${d===1?'':'s'} ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+// Surgically remove a single member from a share. Calls the
+// /share/member/remove endpoint which evicts them, drops their wrapped
+// share key, and writes a 7-day revocation marker so their next pull
+// returns 403 fast and they self-clean.
+async function removeShareMember(code, memberHash) {
+  const target = _shareTargets.find(t => t.code === code);
+  if (!target) return;
+  const memberLabel = memberHash.slice(0, 12) + '…';
+  if (!confirm(`Remove this member (${memberLabel}) from "${target.name}"?\n\nThey'll lose access immediately on their next sync, and their copy of the shared data will clear from their device. Other members of this share are unaffected.`)) return;
+  try {
+    const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+    const res = await postKV(`${WORKER_URL}/share/member/remove`, {
+      ownerEmailHash: _kvEmailHash, ...authFields, code, guestEmailHash: memberHash,
+    });
+    if (!res.ok) {
+      const d = await _readJsonSafe(res) || {};
+      throw new Error(d.error || 'Could not remove member');
+    }
+    toast('Member removed ✓');
+    await loadShareTargets();
+  } catch(err) {
+    toast('Could not remove member: ' + err.message);
+  }
+}
+
+// Render the three-button None / View / Edit selector for share-management.
+// Lives in a dedicated region above the per-household perms grid. If the
+// host HTML doesn't include a #share-mgmt-perm element, this auto-injects
+// one above #share-household-perms so the picker still renders.
+function renderShareMgmtPicker() {
+  let el = document.getElementById('share-mgmt-perm');
+  if (!el) {
+    const anchor = document.getElementById('share-household-perms');
+    if (!anchor || !anchor.parentNode) return;
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'margin-bottom:10px';
+    wrap.innerHTML = `
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Share-access management</div>
+      <div id="share-mgmt-perm" style="display:flex;gap:6px;flex-wrap:wrap"></div>`;
+    anchor.parentNode.insertBefore(wrap, anchor);
+    el = document.getElementById('share-mgmt-perm');
+    if (!el) return;
+  }
+  const opts = [
+    { v: 'none', label: '🔒 None', hint: 'Cannot see share access' },
+    { v: 'view', label: '👁 View', hint: 'Can see who has access (read-only)' },
+    { v: 'edit', label: '✏️ Edit', hint: 'Can add, edit, remove share access' },
+  ];
+  el.innerHTML = opts.map(o => {
+    const active = o.v === _shareTargetMgmt;
+    return `<button onclick="setShareMgmt('${o.v}')" type="button"
+      style="flex:1;min-width:90px;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:12px;
+             border:1px solid ${active?'var(--accent)':'var(--border)'};
+             background:${active?'rgba(232,168,56,0.15)':'transparent'};
+             color:${active?'var(--accent)':'var(--muted)'};transition:all 0.15s;
+             display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left">
+      <span style="font-weight:600">${o.label}</span>
+      <span style="font-size:10px;color:var(--muted);font-weight:400">${o.hint}</span>
+    </button>`;
+  }).join('');
+}
+
+function setShareMgmt(v) {
+  _shareTargetMgmt = v;
+  renderShareMgmtPicker();
 }
 
 function renderShareTargetColourPicker(selectedColour) {
@@ -26119,6 +26295,11 @@ function selectShareType(type, btn) {
     const defaults = SHARE_TYPE_DEFAULTS[type] || SHARE_TYPE_DEFAULTS.guest;
     _shareTargetPerms[hKey] = { ...defaults };
   });
+  // Reset share-management permission to type default (always 'none' today —
+  // there's no per-type override yet, but keeping the indirection makes
+  // future tweaks one-line).
+  _shareTargetMgmt = SHARE_MGMT_DEFAULTS[type] || 'none';
+  renderShareMgmtPicker();
   renderShareHouseholdPerms();
 }
 
@@ -26178,11 +26359,12 @@ function setSharePerm(hKey, section, value) {
 }
 
 async function openAddShareTarget() {
-  if (!isOwner()) { toast('Only the household owner can manage share access'); return; }
+  if (!isOwner() && !canManageShares()) { toast('Only the household owner can manage share access'); return; }
   if (_shareTargets.length >= 5) { toast('Maximum 5 share targets reached'); return; }
   _shareTargetType   = 'family';
   _shareTargetPerms  = {};
   _shareTargetColour = HOUSEHOLD_COLOURS[_shareTargets.length % HOUSEHOLD_COLOURS.length];
+  _shareTargetMgmt   = SHARE_MGMT_DEFAULTS.family;
   const profiles     = await getProfiles();
   const defaults     = SHARE_TYPE_DEFAULTS.family;
   // Always include at least the default household
@@ -26201,6 +26383,7 @@ async function openAddShareTarget() {
   document.getElementById('share-target-save-btn').textContent = 'Create & get link';
   selectShareType('family', document.querySelector('.share-type-btn[data-type="family"]'));
   renderShareTargetColourPicker(_shareTargetColour);
+  renderShareMgmtPicker();
   await renderShareHouseholdPerms();
   openModal('share-target-modal');
 }
@@ -26211,6 +26394,7 @@ async function openEditShareTarget(code) {
   _shareTargetType   = target.type || 'family';
   _shareTargetPerms  = JSON.parse(JSON.stringify(target.households || {}));
   _shareTargetColour = target.colour || HOUSEHOLD_COLOURS[0];
+  _shareTargetMgmt   = target.shareManagement || 'none';
   _shareTargetDone   = false;
 
   document.getElementById('share-target-modal-title').innerHTML = '<svg class="icon icon-md" aria-hidden="true" style="color:var(--accent);vertical-align:-3px"><use href="#i-pencil"></use></svg> Edit Access';
@@ -26236,7 +26420,11 @@ async function openEditShareTarget(code) {
   document.getElementById('share-link-section').style.display = 'none';
   document.getElementById('share-target-save-btn').textContent = 'Save changes';
   selectShareType(_shareTargetType, document.querySelector(`.share-type-btn[data-type="${_shareTargetType}"]`));
+  // selectShareType resets _shareTargetMgmt to type default; restore the
+  // saved value AFTER so the editor shows what's actually stored.
+  _shareTargetMgmt = target.shareManagement || 'none';
   renderShareTargetColourPicker(_shareTargetColour);
+  renderShareMgmtPicker();
   await renderShareHouseholdPerms();
   openModal('share-target-modal');
 }
@@ -26254,7 +26442,7 @@ async function saveShareTarget() {
   try {
     if (code) {
       // Update existing — re-use existing share key
-      const res = await postKV(`${WORKER_URL}/share/update`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code, name, type: _shareTargetType, colour, households: _shareTargetPerms });
+      const res = await postKV(`${WORKER_URL}/share/update`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code, name, type: _shareTargetType, colour, households: _shareTargetPerms, shareManagement: _shareTargetMgmt });
       if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || 'Update failed'); }
       await pushSharedData(code);
 
@@ -26314,6 +26502,7 @@ async function saveShareTarget() {
           ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
           name, type: _shareTargetType, colour, ownerName,
           households: _shareTargetPerms,
+          shareManagement: _shareTargetMgmt,
           householdNames: Object.fromEntries(
             Object.entries(profiles).map(([k,p]) => [k, p.name||(k==='default'?'Home':k)])
           ),
@@ -27109,7 +27298,7 @@ function initHouseholdSettingsUI() {
   if (_householdEnabled) connectPresence();
   applyTabPermissions();
   renderSettingsHouseholdList();
-  if (isOwner() && WORKER_URL) loadShareTargets();
+  if (WORKER_URL && (isOwner() || canViewShares())) loadShareTargets();
 }
 
 // ── User ID ───────────────────────────────────────────────
