@@ -15312,8 +15312,12 @@ async function kvSyncNow(silent = false) {
           await dbPut('reminderDeletedIds', 'reminderDeletedIds', arr);
         } catch(_) {}
       }
-      // Merge notes
-      if (remote.notes && Array.isArray(remote.notes)) {
+      // Merge notes — only for own-account sync, never from share blobs.
+      // Notes are intentionally excluded from household sharing; this guard
+      // prevents any stale share blob (from a previous deploy that included
+      // notes in the share payload) from cross-contaminating guest accounts
+      // until owners re-push with the new code.
+      if (!_shareState && remote.notes && Array.isArray(remote.notes)) {
         if (remoteWins || notes.length === 0) {
           notes = remote.notes;
         } else {
@@ -26634,9 +26638,27 @@ async function absorbSharedData(code, hKey) {
     await saveData();
   }
   if (Array.isArray(payload.groceries) && perms.groceries === 'rw') {
+    // Mirror the own-data merge in kvSyncNow: take guest's items as the base
+    // (filtered by local tombstones), preserve local soft-deletes, then add
+    // any local items not in the guest's set. This is a basic union with
+    // local-deletes-win — proper field-level LWW would need updatedAt on
+    // every grocery field, which we don't have yet. Matches existing
+    // behaviour for owner own-data sync.
     const groceryTombstones = await loadGroceryDeletedIds();
     const incoming = payload.groceries.filter(i => !groceryTombstones.has(i.id));
-    groceryItems = _preserveLocalDeletes(incoming, groceryItems);
+    // Determine if remote (guest write) should win wholesale based on
+    // lastSynced timestamp. If guest's payload is newer than local's last
+    // save, take their version; otherwise add new-from-remote into local.
+    const localLastSynced  = settings.lastSynced  ? new Date(settings.lastSynced).getTime()  : 0;
+    const remoteLastSynced = payload.lastSynced   ? new Date(payload.lastSynced).getTime()   : 0;
+    const remoteWins = remoteLastSynced > localLastSynced;
+    if (remoteWins || groceryItems.length === 0) {
+      groceryItems = _preserveLocalDeletes(incoming, groceryItems);
+    } else {
+      const localIds = new Set(groceryItems.map(i => i.id));
+      const newFromRemote = incoming.filter(i => !localIds.has(i.id));
+      if (newFromRemote.length) groceryItems = [...groceryItems, ...newFromRemote];
+    }
     if (Array.isArray(payload.departments)) {
       // Merge departments (lower priority — owner-defined order wins)
       const existingIds = new Set(groceryDepts.map(d => d.id));
