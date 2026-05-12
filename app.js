@@ -9229,6 +9229,13 @@ function showView(name, btn) {
     if (kvConnected) { loadTrustedDevices(); loadPasskeys(); }
     initSettingsCollapsibles();
     _refreshBudgetWeekStartRadio();
+    // Lazy-refresh the Share Access section every time the user opens
+    // Settings. Without this, the list reflects whatever state was loaded
+    // at app init — which can be stale if (a) another device created/
+    // removed a share, or (b) loadShareTargets early-returned at init
+    // because credentials weren't ready yet. Cheap network call; the user
+    // will be looking at the section a moment from now anyway.
+    if (WORKER_URL && _kvEmailHash) loadShareTargets();
   }
   _currentView = name;
   // Notes view sits OUTSIDE #main (it's a body-level sibling, for reasons related
@@ -26653,10 +26660,14 @@ function handleShareTargetBtn() {
 
 async function loadShareTargets() {
   if (!WORKER_URL || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
-  // Owners hit /share/list directly. Guests with view/edit shareManagement
-  // permission also load — the server returns the same list for them so
-  // they can see/manage the owner's Share Access section.
-  if (!isOwner() && !canViewShares()) return;
+  // /share/list returns shares owned by the calling user — including the case
+  // where the user is also a guest in someone else's share (_shareState is
+  // set but they still own shares of their own). The previous gate
+  // `if (!isOwner() && !canViewShares()) return` was wrong because it
+  // conflated "in guest mode" with "is a guest" — a user can be both an
+  // owner and a guest simultaneously. Removing the gate makes the call
+  // always run; the server returns [] for a true guest with no owned shares
+  // so no harm done.
   try {
     const res  = await postKV(`${WORKER_URL}/share/list`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken });
     const data = await res.json();
@@ -26671,17 +26682,28 @@ function renderShareTargetsList() {
   const section = document.getElementById('share-targets-section');
   if (!list) return;
 
-  // Visibility gate: owners always see this; guests see it only if their
-  // shareManagement permission is 'view' or 'edit'. View-only hides all
-  // mutation buttons. Edit-mode is functionally identical to owner.
-  const viewable = canViewShares();
+  // Visibility gate: show the section if the user has any owned shares OR
+  // has view/edit shareManagement permission on a share they joined as a
+  // guest. The previous check (canViewShares alone) hid the entire section
+  // for users who own shares AND are also a guest in another household,
+  // which is a normal multi-tenant scenario. The owned-shares list comes
+  // from _shareTargets (populated by loadShareTargets — the server only
+  // returns shares the caller owns), so its non-emptiness is a reliable
+  // signal of ownership.
+  const hasOwnedShares = Array.isArray(_shareTargets) && _shareTargets.length > 0;
+  const viewable = hasOwnedShares || canViewShares();
   if (!viewable) {
     if (section) section.style.display = 'none';
     return;
   }
   if (section) section.style.display = '';
 
-  const editable = canManageShares();
+  // Treat the user as effective owner of the Share Access section if they
+  // either are not in guest mode at all, OR they have at least one owned
+  // share. Without this, an owner-who-also-joined-another-share would see
+  // their own shares but with all action buttons hidden (canManageShares
+  // returns false because canViewShares only checks guest permissions).
+  const editable = hasOwnedShares || canManageShares();
 
   // Add-person button is hidden in view-only mode
   if (btn) btn.style.display = (editable && _shareTargets.length < 5) ? 'inline-flex' : 'none';
@@ -26946,7 +26968,18 @@ function setSharePerm(hKey, section, value) {
 }
 
 async function openAddShareTarget() {
-  if (!isOwner() && !canManageShares()) { toast('Only the household owner can manage share access'); return; }
+  // Owners (not in guest mode at all) can always add. Users in guest mode
+  // can add IF they have shareManagement edit permission on the share they
+  // joined, OR they already own shares of their own (the typical case for a
+  // returning user who's a tenant on another household and also runs their
+  // own). Without the hasOwnedShares clause, an owner who happened to join
+  // another share would see their own Share Access section but be unable
+  // to add new entries to it.
+  const hasOwnedShares = Array.isArray(_shareTargets) && _shareTargets.length > 0;
+  if (!isOwner() && !canManageShares() && !hasOwnedShares) {
+    toast('Only the household owner can manage share access');
+    return;
+  }
   if (_shareTargets.length >= 5) { toast('Maximum 5 share targets reached'); return; }
   _shareTargetType   = 'family';
   _shareTargetPerms  = {};
