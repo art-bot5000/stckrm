@@ -23341,7 +23341,7 @@ function openQuickList() {
       <div id="quick-list-preview" style="display:flex;flex-wrap:wrap;gap:6px;min-height:28px;margin-bottom:14px"></div>
       <div style="display:flex;gap:10px">
         <button onclick="document.getElementById('quick-list-overlay').remove()" style="flex:1;padding:13px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:16px;font-weight:600;cursor:pointer">Cancel</button>
-        <button onclick="_saveQuickList()" style="flex:2;padding:13px;border-radius:10px;border:none;background:var(--accent);color:#111;font-size:16px;font-weight:700;cursor:pointer">Save list →</button>
+        <button id="ql-save-btn" onclick="_saveQuickList()" style="flex:2;padding:13px;border-radius:10px;border:none;background:var(--accent);color:#111;font-size:16px;font-weight:700;cursor:pointer">Save list →</button>
       </div>
     </div>`;
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
@@ -23412,6 +23412,19 @@ async function _saveQuickList() {
   const names = val.split(',').map(s => s.trim()).filter(Boolean);
   if (!names.length) { toast('Type at least one item'); return; }
 
+  // Guard against double-tap on the Save button — if a save is already in
+  // flight, ignore subsequent clicks until it resolves.
+  const saveBtn   = document.getElementById('ql-save-btn');
+  const cancelBtn = saveBtn?.previousElementSibling;
+  if (saveBtn?.disabled) return;
+  if (saveBtn) {
+    saveBtn.disabled    = true;
+    saveBtn.textContent = 'Saving…';
+    saveBtn.style.opacity = '0.7';
+    saveBtn.style.cursor  = 'wait';
+  }
+  if (cancelBtn) { cancelBtn.disabled = true; cancelBtn.style.opacity = '0.5'; cancelBtn.style.cursor = 'not-allowed'; }
+
   const listNameVal  = document.getElementById('ql-list-name')?.value.trim();
   const storeNameVal = document.getElementById('ql-store-name')?.value.trim();
   const depts = groceryDepts.length ? groceryDepts : DEFAULT_DEPTS;
@@ -23447,9 +23460,29 @@ async function _saveQuickList() {
   activeGroceryListId = newListId;
   try { localStorage.setItem('stockroom_active_grocery_list', newListId); } catch(e) {}
 
+  // Persist BEFORE dismissing the overlay. Reordered from the previous
+  // remove-then-save pattern because that left a race window: between the
+  // overlay removal and the awaited save completing, any user tap (e.g.
+  // "← All lists") that mutated groceryLists/groceryItems could race the
+  // in-flight IDB write. Saving first means by the time the modal goes
+  // away, the new list is durable on disk.
+  try {
+    await _saveGroceryLists();
+    await saveGrocery();
+  } catch(e) {
+    console.error('_saveQuickList: persist failed', e);
+    if (saveBtn) {
+      saveBtn.disabled    = false;
+      saveBtn.textContent = 'Save list →';
+      saveBtn.style.opacity = '';
+      saveBtn.style.cursor  = 'pointer';
+    }
+    if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.style.opacity = ''; cancelBtn.style.cursor = 'pointer'; }
+    toast('Could not save list — please try again');
+    return;
+  }
+
   document.getElementById('quick-list-overlay')?.remove();
-  await _saveGroceryLists();
-  await saveGrocery();
   renderGrocery();
   toast(`✓ Created "${newListName}" with ${names.length} item${names.length!==1?'s':''}`);
 }
