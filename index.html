@@ -1601,6 +1601,15 @@
     <button class="app-nav-link"        data-view="budget"     onclick="navTo('budget')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
   </div>
   <div class="app-nav-bottom">
+    <!-- Notifications — opens the same dropdown panel that the header bell
+         opens. On desktop the header is hidden, so without this entry there
+         is no way to reach notifications. The badge mirrors the one in the
+         header bell — both are kept in sync via _renderNotificationBellBadge. -->
+    <button id="notif-sidebar-btn" class="app-nav-link" type="button" onclick="toggleNotificationPanel()" aria-label="Notifications">
+      <svg class="icon icon-tab" aria-hidden="true"><use href="#i-bell"></use></svg>
+      <span>Notifications</span>
+      <span id="notif-sidebar-badge" class="notif-sidebar-badge" style="display:none">0</span>
+    </button>
     <div id="app-nav-sync" class="sync-pill pending app-nav-sync-pill" onclick="handleSyncPillTap()">
       <div class="sync-dot"></div>
       <span class="sync-label-nav">Syncing…</span>

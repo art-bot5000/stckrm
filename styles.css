@@ -3509,3 +3509,66 @@ body.has-demo-banner #view-notes #notes-header {
   .notif-title { font-size: 14px; }
   .notif-body  { font-size: 13px; }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   NOTIFICATION SIDEBAR BUTTON — desktop entry point
+   ═══════════════════════════════════════════════════════════
+   On desktop (≥900px) the header is hidden, so the sidebar bell is the
+   only way to reach notifications. The button reuses the existing
+   .app-nav-link styling for hover/active states; the badge is pushed to
+   the right end via margin-left:auto so it sits in the same spot as a
+   notification dot in macOS/iOS sidebars. */
+.notif-sidebar-badge {
+  margin-left: auto;
+  background: var(--danger);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 99px;
+  min-width: 18px;
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+/* Pulse the badge briefly when its content changes (handled via JS by
+   toggling a class). For now we just style the steady state. */
+#notif-sidebar-btn { position: relative; }
+
+/* ═══════════════════════════════════════════════════════════
+   NOTIFICATION PANEL — desktop positioning override
+   ═══════════════════════════════════════════════════════════
+   On desktop (≥900px) the header is hidden and the panel is triggered
+   from the sidebar. Anchoring top-right (the base style) would leave the
+   panel detached from its trigger. Anchor near the sidebar instead so
+   the visual connection is clear. The sidebar is fixed at left:0 width
+   220px, so we anchor at left:224px (just past the sidebar's right edge)
+   with a top offset that places it level with the bottom of the sidebar
+   nav items.
+
+   The mobile bottom-sheet rule below (max-width:600px) is unchanged. */
+@media (min-width: 900px) {
+  .notif-panel {
+    top: auto;
+    bottom: 16px;
+    left: 224px;
+    right: auto;
+    width: 380px;
+    max-height: calc(100vh - 32px);
+    box-shadow: 0 12px 36px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.35);
+    /* Slide-in direction is left-to-right on desktop to feel anchored to
+       the sidebar; override the base translateY-from-top animation. */
+    transform: translateX(-8px) scale(0.98);
+  }
+  .notif-panel.open {
+    transform: translateX(0) scale(1);
+  }
+  /* Header bell badge is invisible on desktop because the header itself
+     is display:none, but make it explicit so the inline display=inline-flex
+     applied by JS doesn't accidentally show it. */
+  #app-header #notif-bell-badge { display: none !important; }
+}

@@ -3373,14 +3373,28 @@ function _unreadNotificationCount() {
 }
 
 function _renderNotificationBellBadge() {
-  const badge = document.getElementById('notif-bell-badge');
-  if (!badge) return;
   const n = _unreadNotificationCount();
-  if (n > 0) {
-    badge.textContent = n > 99 ? '99+' : String(n);
-    badge.style.display = 'inline-flex';
-  } else {
-    badge.style.display = 'none';
+  // Header bell badge (mobile/medium screens)
+  const headerBadge = document.getElementById('notif-bell-badge');
+  if (headerBadge) {
+    if (n > 0) {
+      headerBadge.textContent = n > 99 ? '99+' : String(n);
+      headerBadge.style.display = 'inline-flex';
+    } else {
+      headerBadge.style.display = 'none';
+    }
+  }
+  // Sidebar bell badge (desktop). Kept in sync with the header bell so the
+  // unread count appears wherever the user is most likely to look on each
+  // viewport size.
+  const sidebarBadge = document.getElementById('notif-sidebar-badge');
+  if (sidebarBadge) {
+    if (n > 0) {
+      sidebarBadge.textContent = n > 99 ? '99+' : String(n);
+      sidebarBadge.style.display = 'inline-flex';
+    } else {
+      sidebarBadge.style.display = 'none';
+    }
   }
 }
 
@@ -3413,10 +3427,16 @@ function toggleNotificationPanel() {
 }
 
 function _notifPanelOutsideClick(e) {
-  const panel = document.getElementById('notif-panel');
-  const bell  = document.getElementById('notif-bell-btn');
+  const panel    = document.getElementById('notif-panel');
+  const bell     = document.getElementById('notif-bell-btn');
+  const sideBell = document.getElementById('notif-sidebar-btn');
   if (!panel) return;
-  if (panel.contains(e.target) || (bell && bell.contains(e.target))) return;
+  // Don't close if the click landed on the panel itself or on either of the
+  // bell buttons (mobile/medium header bell OR desktop sidebar bell) — those
+  // toggle the panel on their own.
+  if (panel.contains(e.target)) return;
+  if (bell && bell.contains(e.target)) return;
+  if (sideBell && sideBell.contains(e.target)) return;
   closeNotificationPanel();
 }
 function _notifPanelKeyDown(e) {
@@ -15624,6 +15644,18 @@ async function kvSyncNow(silent = false) {
         const absorbed = await absorbAllSharedData();
         if (absorbed && !silent) scheduleRender(...RENDER_REGIONS);
       } catch(e) { console.warn('absorb step failed (continuing sync):', e.message); }
+      // Owner-side: fulfil pending ECDH rewrap requests from guests on every
+      // sync — not just after a kvPush. Previously this only ran inside
+      // pushAllSharedData (called at the END of kvPush), which meant an owner
+      // who opened the app without making changes never fulfilled rewrap
+      // requests, leaving guests stuck on "Your invite is being refreshed".
+      // Running here makes the self-heal automatic: opening STOCKROOM is
+      // enough to unblock a recreated guest account.
+      try {
+        for (const target of _shareTargets) {
+          await _fulfilPendingRewraps(target.code).catch(e => console.warn('rewrap failed for', target.code, e.message));
+        }
+      } catch(e) { console.warn('rewrap fulfilment step failed (continuing sync):', e.message); }
     }
     const remote = await kvPull();
     if (remote && Array.isArray(remote.items)) {
@@ -28888,6 +28920,95 @@ async function shareGateRegister() {
   } catch(err) { if(errEl){errEl.textContent=err.message;errEl.style.display='block';} }
 }
 
+// Attempt to fetch + unwrap the ECDH-wrapped share key for the current code.
+// Returns a CryptoKey on success, null if we exhausted retries.
+//
+// On the first failure (404 or unwrap OperationError) this:
+//   1. Posts a rewrap-request to the server with the guest's CURRENT pubkey
+//   2. Updates the UI to "Waiting for owner to refresh your invite…"
+//   3. Polls /share/ecdh-key/get every 5s for up to ~30s. Each polled
+//      response is unwrapped against the current local private key — once
+//      we get a wrappedKey whose payload was wrapped against our current
+//      pubkey, the unwrap succeeds.
+//
+// This automates the "ask the owner to open STOCKROOM" loop: as soon as the
+// owner's app fires kvSyncNow (which now calls _fulfilPendingRewraps even
+// on a pull-only sync), the new wrappedKey is stored and the guest's poll
+// picks it up without any further user action.
+async function _tryUnwrapWithRewrapRetry(code) {
+  const guestPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
+  if (!guestPrivKey) throw new Error('Your encryption key is missing — sign out and back in to regenerate it');
+
+  const fetchAndUnwrap = async () => {
+    const ecdhRes = await postKV(`${WORKER_URL}/share/ecdh-key/get`, {
+        guestEmailHash: _kvEmailHash,
+        ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
+        code,
+      });
+    if (ecdhRes.status === 404) return { ok: false, reason: 'missing' };
+    if (!ecdhRes.ok) {
+      const ed = (await _readJsonSafe(ecdhRes)) || {};
+      return { ok: false, reason: 'server', error: ed.error || `HTTP ${ecdhRes.status}` };
+    }
+    const { wrappedKey, ownerPublicKeyJwk } = (await _readJsonSafe(ecdhRes)) || {};
+    if (!wrappedKey || !ownerPublicKeyJwk) return { ok: false, reason: 'incomplete' };
+    try {
+      const key = await ecdhUnwrapShareKey(guestPrivKey, ownerPublicKeyJwk, wrappedKey);
+      return { ok: true, key };
+    } catch(unwrapErr) {
+      return { ok: false, reason: 'unwrap', error: unwrapErr };
+    }
+  };
+
+  // First attempt — fast path. If unwrap succeeds, done.
+  const first = await fetchAndUnwrap();
+  if (first.ok) return first.key;
+
+  // If the server returned a non-recoverable error (server/incomplete that
+  // isn't going to be fixed by waiting), bail.
+  if (first.reason === 'server') throw new Error(first.error);
+  if (first.reason === 'incomplete') throw new Error('Share key response is missing — ask the owner to re-send the invite');
+
+  // missing (404) or unwrap (stale wrap) → trigger rewrap request, then poll.
+  console.warn(first.reason === 'missing'
+    ? 'No wrapped key on server — requesting rewrap'
+    : 'Stale wrapped key — requesting rewrap');
+  if (first.reason === 'unwrap') {
+    console.error('ecdhUnwrapShareKey failed:', first.error?.name, first.error?.message);
+  }
+  try {
+    await postKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, {
+      guestEmailHash: _kvEmailHash,
+      ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
+      code,
+    });
+  } catch(reqErr) { console.warn('rewrap request failed:', reqErr.message); }
+
+  // Update the joining UI to reflect the wait
+  try {
+    const lbl = document.querySelector('.joining-subtitle, [data-joining-subtitle]');
+    if (lbl) lbl.textContent = 'Waiting for owner to refresh your invite…';
+  } catch(_) {}
+  toast('Refreshing invite — this can take up to 30 seconds');
+
+  // Poll: 5s, 10s, 15s, 20s, 25s, 30s
+  const POLL_INTERVALS_MS = [5000, 5000, 5000, 5000, 5000, 5000];
+  for (const wait of POLL_INTERVALS_MS) {
+    await new Promise(r => setTimeout(r, wait));
+    const result = await fetchAndUnwrap();
+    if (result.ok) {
+      console.log('[share] poll succeeded — rewrap fulfilled by owner');
+      return result.key;
+    }
+    // missing/unwrap → keep polling. server/incomplete → bail.
+    if (result.reason === 'server' || result.reason === 'incomplete') {
+      throw new Error(result.reason === 'server' ? result.error : 'Share key response is missing');
+    }
+  }
+  // Exhausted retries
+  return null;
+}
+
 async function completePendingJoin() {
   if (!_pendingJoinCode) return;
   const code = _pendingJoinCode;
@@ -28902,61 +29023,17 @@ async function completePendingJoin() {
     // Server returned 200 but with ok:false — means it needs auth (shouldn't happen here but guard it)
     if (data.requiresAuth) throw new Error('Authentication required — please sign in first');
 
-    const ecdhRes = await postKV(`${WORKER_URL}/share/ecdh-key/get`, {
-        guestEmailHash: _kvEmailHash,
-        ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
-        code,
-      });
-
-    // If no wrapped key exists yet, request the owner to re-wrap on their next sync
-    if (ecdhRes.status === 404) {
-      // Store a pending-rewrap request on the server so owner's app picks it up
-      await postKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, {
-          guestEmailHash: _kvEmailHash,
-          ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
-          code,
-        }).catch(() => {}); // non-blocking
-      throw new Error('Your invite is being set up — ask the owner to open STOCKROOM, then tap this link again');
-    }
-
-    if (!ecdhRes.ok) {
-      const ed = (await _readJsonSafe(ecdhRes)) || {};
-      throw new Error(ed.error || `Could not retrieve your share key (${ecdhRes.status}) — ask the owner to re-send the invite`);
-    }
-    const ecdhData = (await _readJsonSafe(ecdhRes)) || {};
-    const { wrappedKey, ownerPublicKeyJwk } = ecdhData;
-    if (!wrappedKey || !ownerPublicKeyJwk) {
-      throw new Error('Share key response is missing — ask the owner to re-send the invite');
-    }
-    const guestPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
-    if (!guestPrivKey) throw new Error('Your encryption key is missing — sign out and back in to regenerate it');
-    let shareKey;
-    try {
-      shareKey = await ecdhUnwrapShareKey(guestPrivKey, ownerPublicKeyJwk, wrappedKey);
-    } catch(unwrapErr) {
-      // OperationError from Web Crypto carries an empty message — without
-      // this wrapper, the user sees "Could not join: " (no detail). The
-      // most common cause is a key mismatch: the wrappedKey was created
-      // against an older ECDH public key for this guest than the one in
-      // local IDB now. This can happen if either side regenerated their
-      // ECDH keypair (e.g. after account deletion + recreation) since the
-      // share was created.
-      //
-      // Self-heal: ask the server to queue a rewrap-request with the guest's
-      // CURRENT public key. Owner's next sync runs _fulfilPendingRewraps and
-      // overwrites the stale wrappedKey with one wrapped against the current
-      // guest pubkey. Next time the guest clicks the link, unwrap succeeds.
-      console.error('ecdhUnwrapShareKey failed:', unwrapErr.name, unwrapErr.message);
-      try {
-        await postKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, {
-          guestEmailHash: _kvEmailHash,
-          ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
-          code,
-        });
-        console.log('Requested rewrap for stale share key — owner will re-issue on next sync');
-      } catch(reqErr) { console.warn('rewrap request failed:', reqErr.message); }
+    // Attempt the unwrap. If it fails because of stale wrap, request a rewrap
+    // and poll for up to ~30s for the owner's app to fulfil it. This avoids
+    // forcing the user to manually click the invite link a second time.
+    const shareKey = await _tryUnwrapWithRewrapRetry(code);
+    if (!shareKey) {
+      // Couldn't unwrap even after waiting — leave the rewrap request queued
+      // and instruct the user. _tryUnwrapWithRewrapRetry already triggered
+      // the request-rewrap call on the first failure.
       throw new Error('Your invite is being refreshed — ask the owner to open STOCKROOM, then tap this link again');
     }
+
     const shareKeyB64 = await exportShareKey(shareKey);
     try {
       const stored = await _getShareKeys();
