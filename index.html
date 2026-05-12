@@ -1537,13 +1537,13 @@
     <svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg>
     <span>Billing</span>
   </button>
-  <button class="mobile-menu-item" data-view="settings" onclick="navFromMobileMenu('settings')">
-    <svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg>
-    <span>Settings</span>
-  </button>
   <button class="mobile-menu-item" data-view="account-security" onclick="navFromMobileMenu('account-security')">
     <svg class="icon icon-tab" aria-hidden="true"><use href="#i-shield"></use></svg>
     <span>Account &amp; Security</span>
+  </button>
+  <button class="mobile-menu-item" data-view="settings" onclick="navFromMobileMenu('settings')">
+    <svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg>
+    <span>Settings</span>
   </button>
 </nav>
 
@@ -1569,8 +1569,8 @@
       <div class="sync-dot"></div>
       <span class="sync-label-nav">Syncing…</span>
     </div>
-    <button class="app-nav-link" data-view="account-security" onclick="navTo('account-security')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shield"></use></svg> <span>Account &amp; Security</span></button>
     <button class="app-nav-link" data-view="billing" onclick="navTo('billing')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg> <span>Billing</span></button>
+    <button class="app-nav-link" data-view="account-security" onclick="navTo('account-security')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shield"></use></svg> <span>Account &amp; Security</span></button>
     <button class="app-nav-link" data-view="settings" onclick="navTo('settings')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg> <span>Settings</span></button>
   </div>
 </nav>
@@ -1589,12 +1589,12 @@
   <div id="tabs-sticky-wrap">
   <div id="tabs">
     <button class="tab active" onclick="showView('stock',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-package"></use></svg> <span>Stockroom</span></button>
-    <button class="tab" onclick="showView('grocery',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> <span>Groceries</span></button>
+    <button class="tab" onclick="showView('budget',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
     <button class="tab" onclick="showView('notes',this)" id="notes-tab"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> <span>Notes</span></button>
+    <button class="tab" onclick="showView('grocery',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> <span>Groceries</span></button>
     <button class="tab" onclick="showView('reminders',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-bell"></use></svg> <span>Reminders</span></button>
     <button class="tab" onclick="showView('savings',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-piggy-bank"></use></svg> <span>Savings</span></button>
     <button class="tab" onclick="showView('report',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> <span>Report</span></button>
-    <button class="tab" onclick="showView('budget',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
     <button class="tab" onclick="showView('billing',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg> <span>Billing</span></button>
     <button class="tab" onclick="showView('settings',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg> <span>Settings</span></button>
   </div>

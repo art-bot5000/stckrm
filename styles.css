@@ -502,7 +502,7 @@
     #main { padding: 16px 12px; }
 
     /* ── TABS: 3×2 grid on mobile (icon above label) ──
-       Stockroom + Groceries + Notes on row 1, Reminders + Savings + Budget
+       Stockroom + Budget + Notes on row 1, Groceries + Reminders + Savings
        on row 2. Burger-menu items are hidden by the wider 899px rule. */
     #tabs {
       width: 100%;
