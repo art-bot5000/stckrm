@@ -3463,6 +3463,150 @@ function _notifRelativeTime(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
+// ── Context-aware action buttons for notification rows ────────────────────
+// Returns an HTML strip of buttons appropriate to the notification type and
+// current state of its underlying source object. Returns '' if no actions
+// apply (e.g. share notifications, or sources that can no longer be resolved).
+//
+// Supported types:
+//   low-stock  → Order now / Log Order / Mark Delivered (depending on url + ordered)
+//   expiring   → Mark used (reuses replacement-log flow)
+//   reminder   → Mark {template name} replaced  /  Mark replaced
+//   pending    → Mark Delivered / Still waiting  (for future "delivery nudge" type)
+//
+// Each button calls a global handler via inline onclick with event.stopPropagation
+// so clicking a button doesn't also trigger the row's click-to-navigate.
+function _buildNotifContextButtons(n) {
+  if (!n || !n.sourceRef) return '';
+  try {
+    if (n.type === 'low-stock' || n.type === 'expiring') {
+      // sourceRef format: "lowstock:<itemId>"  (also used for expiring)
+      const itemId = n.sourceRef.split(':')[1];
+      const item = items.find(i => i.id === itemId);
+      if (!item || item._deletedAt) return '';
+
+      if (n.type === 'expiring') {
+        return `
+          <div class="notif-ctx-actions">
+            <button class="notif-ctx-btn primary" onclick="event.stopPropagation();notifAction_markUsed('${n.id}','${item.id}')">
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-check-check"></use></svg> Mark used
+            </button>
+          </div>`;
+      }
+
+      // low-stock
+      if (item.ordered) {
+        return `
+          <div class="notif-ctx-actions">
+            <button class="notif-ctx-btn primary" onclick="event.stopPropagation();notifAction_markDelivered('${n.id}','${item.id}')">
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-truck"></use></svg> Mark Delivered
+            </button>
+          </div>`;
+      }
+
+      const hasUrl = !!(item.url && item.url.trim());
+      const orderNowBtn = hasUrl
+        ? `<button class="notif-ctx-btn primary" onclick="event.stopPropagation();notifAction_orderNow('${n.id}','${item.id}')">
+             <svg class="icon icon-sm" aria-hidden="true"><use href="#i-external-link"></use></svg> Order now
+           </button>`
+        : '';
+      const logOrderBtn = `<button class="notif-ctx-btn" onclick="event.stopPropagation();notifAction_logOrder('${n.id}','${item.id}')">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-clipboard-check"></use></svg> Log Order
+        </button>`;
+      return `<div class="notif-ctx-actions">${orderNowBtn}${logOrderBtn}</div>`;
+    }
+
+    if (n.type === 'reminder') {
+      // sourceRef format: "reminder:<id>" where id may be standalone or item_xxx_yyy
+      const rid = n.sourceRef.slice('reminder:'.length);
+      const resolved = _resolveReminderId(rid);
+      if (!resolved) return '';
+      const tmplName = resolved.r.reminderName || '';
+      const label = tmplName ? `Mark ${tmplName} replaced` : 'Mark replaced';
+      return `
+        <div class="notif-ctx-actions">
+          <button class="notif-ctx-btn primary" onclick="event.stopPropagation();notifAction_markReplaced('${n.id}','${rid.replace(/'/g, "\\'")}')">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-check-check"></use></svg> ${esc(label)}
+          </button>
+        </div>`;
+    }
+
+    if (n.type === 'pending') {
+      // Reserved for future "you ordered this N days ago, still waiting?" nudge.
+      // sourceRef format: "pending:<itemId>"
+      const itemId = n.sourceRef.split(':')[1];
+      const item = items.find(i => i.id === itemId);
+      if (!item || item._deletedAt) return '';
+      return `
+        <div class="notif-ctx-actions">
+          <button class="notif-ctx-btn primary" onclick="event.stopPropagation();notifAction_markDelivered('${n.id}','${item.id}')">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-truck"></use></svg> Mark Delivered
+          </button>
+          <button class="notif-ctx-btn" onclick="event.stopPropagation();notifAction_snoozePending('${n.id}')">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-clock"></use></svg> Still waiting
+          </button>
+        </div>`;
+    }
+  } catch(e) { /* never let a bad source break the row */ }
+  return '';
+}
+
+// ── Notification action handlers ──────────────────────────────────────────
+// Each takes the notification id (so the notification can be dismissed/refreshed
+// after the action) plus whatever entity id the action needs.
+
+async function notifAction_orderNow(notifId, itemId) {
+  const item = items.find(i => i.id === itemId);
+  if (!item?.url) { toast('No URL on this item'); return; }
+  window.open(item.url, '_blank', 'noopener');
+  // Open in new tab but don't auto-mark ordered — user might just be browsing.
+  // The Log Order button is right there if they do place an order.
+}
+
+async function notifAction_logOrder(notifId, itemId) {
+  if (typeof markOrdered === 'function') {
+    await markOrdered(itemId);
+    await dismissNotification(notifId);
+  }
+}
+
+async function notifAction_markDelivered(notifId, itemId) {
+  if (typeof openDeliveredModal === 'function') {
+    closeNotificationPanel?.();
+    openDeliveredModal(itemId);
+    await dismissNotification(notifId);
+  }
+}
+
+async function notifAction_markReplaced(notifId, reminderId) {
+  if (typeof _applyReplacedLocally === 'function') {
+    await _applyReplacedLocally(reminderId, today());
+    await dismissNotification(notifId);
+  }
+}
+
+async function notifAction_markUsed(notifId, itemId) {
+  // Treat "used" as a replacement log on the item itself
+  if (typeof _applyReplacedLocally === 'function') {
+    await _applyReplacedLocally(`item_${itemId}`, today());
+    await dismissNotification(notifId);
+  }
+}
+
+async function notifAction_snoozePending(notifId) {
+  const n = notifications.find(x => x.id === notifId);
+  if (!n) return;
+  // Push createdAt forward 3 days so the dedupe window keeps it suppressed,
+  // and mark read so the badge clears.
+  const future = Date.now() + 3 * 24 * 60 * 60 * 1000;
+  n.createdAt = new Date(future).toISOString();
+  n.readAt = new Date().toISOString();
+  await saveNotificationsLocal();
+  _renderNotificationBellBadge();
+  _renderNotificationPanel();
+  toast('Snoozed for 3 days');
+}
+
 function _renderNotificationPanel() {
   const body = document.getElementById('notif-panel-body');
   if (!body) return;
@@ -3494,6 +3638,7 @@ function _renderNotificationPanel() {
     const unread = !n.readAt;
     const pinTitle = n.pinned ? 'Unpin' : (pinCount >= NOTIFICATIONS_PINNED_MAX && !n.pinned ? 'Pin limit reached (3)' : 'Pin to top');
     const pinDisabled = !n.pinned && pinCount >= NOTIFICATIONS_PINNED_MAX;
+    const ctxButtons = _buildNotifContextButtons(n);
     return `
       <div class="notif-row${unread ? ' unread' : ''}${n.pinned ? ' pinned' : ''}" data-id="${n.id}">
         <div class="notif-icon"><svg class="icon" aria-hidden="true"><use href="#${icon}"></use></svg></div>
@@ -3504,6 +3649,7 @@ function _renderNotificationPanel() {
             <span>${_notifRelativeTime(n.createdAt)}</span>
             ${n.sharedFromName ? `<span class="notif-source">· ${esc(n.sharedFromName)}</span>` : ''}
           </div>
+          ${ctxButtons}
         </div>
         <div class="notif-actions">
           <button class="notif-pin-btn${n.pinned ? ' active' : ''}" title="${pinTitle}"
