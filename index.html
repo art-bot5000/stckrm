@@ -1484,6 +1484,15 @@
   </div>
   <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
     <div id="presence-bar" style="display:none"></div>
+    <!-- Notification bell — anchors the notification panel dropdown. The
+         badge is a small counter element that's hidden when there are no
+         unread items. See _renderNotificationBellBadge in app.js. -->
+    <button id="notif-bell-btn" type="button" onclick="toggleNotificationPanel()"
+      aria-label="Notifications" title="Notifications"
+      style="background:none;border:none;cursor:pointer;padding:4px 6px;position:relative;display:flex;align-items:center;color:var(--muted);border-radius:8px">
+      <svg class="icon icon-lg" aria-hidden="true"><use href="#i-bell"></use></svg>
+      <span id="notif-bell-badge" class="notif-bell-badge" style="display:none">0</span>
+    </button>
     <button id="header-shield-btn" onclick="navTo('account-security')"
       title="Account &amp; Security"
       style="background:none;border:none;cursor:pointer;padding:4px 2px;display:flex;align-items:center;color:var(--muted)"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-shield"></use></svg></button>
@@ -1546,6 +1555,33 @@
     <span>Settings</span>
   </button>
 </nav>
+
+<!-- ═══ NOTIFICATION PANEL ═══ -->
+<!-- Anchored top-right under the header on desktop (similar to the mobile
+     menu dropdown). On mobile (≤600px) it switches to a bottom-sheet via
+     CSS. Tap-outside-to-close and Escape are wired up in JS. -->
+<aside id="notif-panel" class="notif-panel" aria-hidden="true" aria-label="Notifications">
+  <div class="notif-panel-header">
+    <div class="notif-panel-title">
+      <svg class="icon icon-md" aria-hidden="true"><use href="#i-bell"></use></svg>
+      <span>Notifications</span>
+    </div>
+    <div class="notif-panel-header-actions">
+      <button class="notif-panel-action-btn" onclick="markAllNotificationsRead()" title="Mark all as read">
+        <svg class="icon icon-sm" aria-hidden="true"><use href="#i-check"></use></svg>
+        <span>Mark read</span>
+      </button>
+      <button class="notif-panel-action-btn" onclick="clearNotificationHistory()" title="Clear history (keeps pinned)">
+        <svg class="icon icon-sm" aria-hidden="true"><use href="#i-trash-2"></use></svg>
+        <span>Clear</span>
+      </button>
+      <button class="notif-panel-close" onclick="closeNotificationPanel()" aria-label="Close">
+        <svg class="icon icon-sm" aria-hidden="true"><use href="#i-x"></use></svg>
+      </button>
+    </div>
+  </div>
+  <div id="notif-panel-body" class="notif-panel-body"></div>
+</aside>
 
 <!-- ═══ APP SIDEBAR (desktop only) ═══ -->
 <nav id="app-nav">

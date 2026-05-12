@@ -114,8 +114,8 @@ function getStores(code) { return STORES_BY_COUNTRY[code] || STORES_BY_COUNTRY.O
 // ═══════════════════════════════════════════
 
 const DB_NAME    = 'stockroom';
-const DB_VERSION = 5;
-const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists','reminderDeletedIds','bills','billInstances','budgetSettings','budgetCategories','transactions','budgetCategoryDeletedIds','budgetTransactionDeletedIds','budgetAccounts','incomeTemplates','incomeEntries','budgetAccountDeletedIds','incomeTemplateDeletedIds','incomeEntryDeletedIds','billsDeletedIds'];
+const DB_VERSION = 6;
+const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists','reminderDeletedIds','bills','billInstances','budgetSettings','budgetCategories','transactions','budgetCategoryDeletedIds','budgetTransactionDeletedIds','budgetAccounts','incomeTemplates','incomeEntries','budgetAccountDeletedIds','incomeTemplateDeletedIds','incomeEntryDeletedIds','billsDeletedIds','notifications'];
 
 let _db = null;
 
@@ -235,6 +235,7 @@ async function _switchDemoPersona(persona) {
   if (typeof loadGrocery    === 'function') await loadGrocery();
   if (typeof loadReminders  === 'function') await loadReminders();
   if (typeof loadNotes      === 'function') await loadNotes();
+  if (typeof loadNotifications === 'function') await loadNotifications();
   if (typeof loadBudget     === 'function') await loadBudget();
   if (typeof loadBudgetSpend === 'function') await loadBudgetSpend();
   if (typeof loadBudgetAccountsAndIncome === 'function') await loadBudgetAccountsAndIncome();
@@ -3258,6 +3259,455 @@ async function saveNotes() {
   await dbPut('items', 'notes', notes);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  NOTIFICATION SYSTEM — in-app notification inbox
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// A persistent inbox of notifications surfaced via a bell icon in the header.
+// Sources:
+//   1. Reminder firing       — hooked into checkReminderNotifications()
+//   2. Item alerts (low/exp) — hooked into checkLowStockNotifications()
+//   3. Shared items changed  — diffed inside absorbSharedData() (owner side)
+//                              and inside kvSyncNow share-pull (guest side)
+//
+// Each notification:
+//   { id, type, title, body, sourceRef, createdAt, readAt, pinned, sharedFromCode, sharedFromName }
+//
+// Cap: 50 live + history total, FIFO eviction. Up to 3 pinned items stay at
+// the top of the list (immune to FIFO eviction).
+//
+// Scope: notifications are stored in the user's OWN encrypted blob via
+// kvPush/kvPull — they sync across the user's devices but NEVER cross share
+// boundaries. A notification ("Sarah added milk") that lives on Pete's device
+// must not appear in Sarah's notification list. Each device generates its own
+// notifications from local diffs.
+const NOTIFICATIONS_CAP        = 50;
+const NOTIFICATIONS_PINNED_MAX = 3;
+
+let notifications = []; // global state, mirrors dbPut('notifications','notifications', ...)
+
+async function loadNotifications() {
+  try {
+    const stored = await dbGet('notifications', 'notifications');
+    if (Array.isArray(stored)) notifications = stored;
+  } catch(e) { /* fresh install — no store yet */ }
+}
+
+async function saveNotificationsLocal() {
+  try { await dbPut('notifications', 'notifications', notifications); } catch(_) {}
+}
+
+// Add a notification. Dedupes by sourceRef+type within a 24h window so we
+// don't get 30 "milk is low" entries from repeated low-stock checks.
+async function addNotification({ type, title, body, sourceRef, sharedFromCode, sharedFromName, dedupeWindowMs }) {
+  if (!type || !title) return null;
+  const now = Date.now();
+  const dwin = dedupeWindowMs ?? (24 * 60 * 60 * 1000); // 24h default
+  if (sourceRef) {
+    const existing = notifications.find(n =>
+      n.sourceRef === sourceRef && n.type === type &&
+      (now - new Date(n.createdAt).getTime()) < dwin
+    );
+    if (existing) {
+      // Refresh body and bump createdAt so the dedupe window slides forward
+      existing.body = body || existing.body;
+      existing.title = title;
+      existing.createdAt = new Date(now).toISOString();
+      existing.readAt = null; // un-read it on re-trigger
+      await saveNotificationsLocal();
+      _renderNotificationBellBadge();
+      return existing;
+    }
+  }
+  const entry = {
+    id: uid(),
+    type,
+    title,
+    body: body || '',
+    sourceRef: sourceRef || null,
+    createdAt: new Date(now).toISOString(),
+    readAt: null,
+    pinned: false,
+    sharedFromCode: sharedFromCode || null,
+    sharedFromName: sharedFromName || null,
+  };
+  notifications.unshift(entry);
+  _enforceNotificationCap();
+  await saveNotificationsLocal();
+  _renderNotificationBellBadge();
+  // If the panel is open, re-render it
+  if (document.getElementById('notif-panel')?.classList.contains('open')) {
+    _renderNotificationPanel();
+  }
+  return entry;
+}
+
+// Cap enforcement: keep all pinned (up to NOTIFICATIONS_PINNED_MAX), and
+// trim the unpinned tail so total never exceeds NOTIFICATIONS_CAP. Pinned
+// items beyond the max are demoted to unpinned (oldest pin first), so a
+// user can never get into a state with more than 3 pins.
+function _enforceNotificationCap() {
+  // First: trim pins to at most NOTIFICATIONS_PINNED_MAX
+  const pinned = notifications.filter(n => n.pinned);
+  if (pinned.length > NOTIFICATIONS_PINNED_MAX) {
+    // Sort pinned by createdAt desc; the OLDEST ones get demoted
+    pinned.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    pinned.slice(NOTIFICATIONS_PINNED_MAX).forEach(n => { n.pinned = false; });
+  }
+  // Then: enforce total cap — keep all pinned plus newest unpinned
+  if (notifications.length <= NOTIFICATIONS_CAP) return;
+  const kept = [];
+  const ordered = [...notifications].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  // Keep all pinned first
+  ordered.forEach(n => { if (n.pinned) kept.push(n); });
+  // Then add newest unpinned until cap
+  for (const n of ordered) {
+    if (kept.length >= NOTIFICATIONS_CAP) break;
+    if (!n.pinned) kept.push(n);
+  }
+  notifications = kept;
+}
+
+function _unreadNotificationCount() {
+  return notifications.filter(n => !n.readAt).length;
+}
+
+function _renderNotificationBellBadge() {
+  const badge = document.getElementById('notif-bell-badge');
+  if (!badge) return;
+  const n = _unreadNotificationCount();
+  if (n > 0) {
+    badge.textContent = n > 99 ? '99+' : String(n);
+    badge.style.display = 'inline-flex';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function openNotificationPanel() {
+  const panel = document.getElementById('notif-panel');
+  if (!panel) return;
+  _renderNotificationPanel();
+  panel.classList.add('open');
+  panel.setAttribute('aria-hidden', 'false');
+  setTimeout(() => {
+    document.addEventListener('click', _notifPanelOutsideClick, true);
+    document.addEventListener('keydown', _notifPanelKeyDown);
+  }, 0);
+}
+
+function closeNotificationPanel() {
+  const panel = document.getElementById('notif-panel');
+  if (!panel) return;
+  panel.classList.remove('open');
+  panel.setAttribute('aria-hidden', 'true');
+  document.removeEventListener('click', _notifPanelOutsideClick, true);
+  document.removeEventListener('keydown', _notifPanelKeyDown);
+}
+
+function toggleNotificationPanel() {
+  const panel = document.getElementById('notif-panel');
+  if (!panel) return;
+  if (panel.classList.contains('open')) closeNotificationPanel();
+  else openNotificationPanel();
+}
+
+function _notifPanelOutsideClick(e) {
+  const panel = document.getElementById('notif-panel');
+  const bell  = document.getElementById('notif-bell-btn');
+  if (!panel) return;
+  if (panel.contains(e.target) || (bell && bell.contains(e.target))) return;
+  closeNotificationPanel();
+}
+function _notifPanelKeyDown(e) {
+  if (e.key === 'Escape') closeNotificationPanel();
+}
+
+function _notifTypeIcon(type) {
+  switch (type) {
+    case 'reminder':  return 'i-bell';
+    case 'low-stock': return 'i-alert-triangle';
+    case 'expiring':  return 'i-alert-triangle';
+    case 'share':     return 'i-users';
+    default:          return 'i-circle';
+  }
+}
+
+function _notifRelativeTime(iso) {
+  if (!iso) return '';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60 * 1000)        return 'just now';
+  if (ms < 60 * 60 * 1000)   return Math.floor(ms / 60000) + 'm ago';
+  if (ms < 24 * 3600 * 1000) return Math.floor(ms / 3600000) + 'h ago';
+  if (ms < 7 * 86400 * 1000) return Math.floor(ms / 86400000) + 'd ago';
+  return new Date(iso).toLocaleDateString();
+}
+
+function _renderNotificationPanel() {
+  const body = document.getElementById('notif-panel-body');
+  if (!body) return;
+
+  if (!notifications.length) {
+    body.innerHTML = `
+      <div class="notif-empty">
+        <div style="color:var(--muted);margin-bottom:8px"><svg aria-hidden="true" style="width:32px;height:32px"><use href="#i-bell-off"></use></svg></div>
+        <div style="font-weight:600;font-size:14px;color:var(--text)">No notifications yet</div>
+        <p style="font-size:12px;color:var(--muted);margin-top:6px;line-height:1.5">Updates from shared households, due reminders, and low-stock alerts will appear here.</p>
+      </div>`;
+    return;
+  }
+
+  // Sort: pinned (newest first) → unpinned (newest first)
+  const sorted = [...notifications].sort((a, b) => {
+    if (!!b.pinned - !!a.pinned !== 0) return !!b.pinned - !!a.pinned;
+    return new Date(b.createdAt) - new Date(a.createdAt);
+  });
+
+  const pinned   = sorted.filter(n => n.pinned).slice(0, NOTIFICATIONS_PINNED_MAX);
+  const unpinned = sorted.filter(n => !n.pinned);
+
+  // Plain JS list of pin counts so we can grey out the pin toggle when at cap
+  const pinCount = pinned.length;
+
+  const rowHTML = n => {
+    const icon = _notifTypeIcon(n.type);
+    const unread = !n.readAt;
+    const pinTitle = n.pinned ? 'Unpin' : (pinCount >= NOTIFICATIONS_PINNED_MAX && !n.pinned ? 'Pin limit reached (3)' : 'Pin to top');
+    const pinDisabled = !n.pinned && pinCount >= NOTIFICATIONS_PINNED_MAX;
+    return `
+      <div class="notif-row${unread ? ' unread' : ''}${n.pinned ? ' pinned' : ''}" data-id="${n.id}">
+        <div class="notif-icon"><svg class="icon" aria-hidden="true"><use href="#${icon}"></use></svg></div>
+        <div class="notif-content" onclick="onNotificationRowClick('${n.id}')">
+          <div class="notif-title">${esc(n.title)}</div>
+          ${n.body ? `<div class="notif-body">${esc(n.body)}</div>` : ''}
+          <div class="notif-meta">
+            <span>${_notifRelativeTime(n.createdAt)}</span>
+            ${n.sharedFromName ? `<span class="notif-source">· ${esc(n.sharedFromName)}</span>` : ''}
+          </div>
+        </div>
+        <div class="notif-actions">
+          <button class="notif-pin-btn${n.pinned ? ' active' : ''}" title="${pinTitle}"
+                  onclick="event.stopPropagation();toggleNotificationPin('${n.id}')"
+                  ${pinDisabled ? 'disabled' : ''}>
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-pin"></use></svg>
+          </button>
+          <button class="notif-dismiss-btn" title="Dismiss"
+                  onclick="event.stopPropagation();dismissNotification('${n.id}')">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-x"></use></svg>
+          </button>
+        </div>
+      </div>`;
+  };
+
+  let html = '';
+  if (pinned.length) {
+    html += `<div class="notif-section-label"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-pin"></use></svg> Pinned</div>`;
+    html += pinned.map(rowHTML).join('');
+  }
+  if (unpinned.length) {
+    if (pinned.length) html += `<div class="notif-section-label">Recent</div>`;
+    html += unpinned.map(rowHTML).join('');
+  }
+  body.innerHTML = html;
+}
+
+async function onNotificationRowClick(id) {
+  const n = notifications.find(x => x.id === id);
+  if (!n) return;
+  // Mark as read
+  if (!n.readAt) {
+    n.readAt = new Date().toISOString();
+    await saveNotificationsLocal();
+    _renderNotificationBellBadge();
+    _renderNotificationPanel();
+  }
+  // Jump to source
+  if (n.type === 'reminder') {
+    closeNotificationPanel();
+    try { navTo('reminders'); } catch(_) {}
+  } else if (n.type === 'low-stock' || n.type === 'expiring') {
+    closeNotificationPanel();
+    try { navTo('stock'); } catch(_) {}
+    if (n.sourceRef) {
+      // Try to scroll to / open the item
+      setTimeout(() => {
+        const el = document.querySelector(`.item-card[data-id="${n.sourceRef}"]`);
+        if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 300);
+    }
+  } else if (n.type === 'share') {
+    closeNotificationPanel();
+    // Navigation depends on the section that changed — default to stock view
+    try { navTo('stock'); } catch(_) {}
+  }
+}
+
+async function toggleNotificationPin(id) {
+  const n = notifications.find(x => x.id === id);
+  if (!n) return;
+  if (!n.pinned) {
+    const currentPins = notifications.filter(x => x.pinned).length;
+    if (currentPins >= NOTIFICATIONS_PINNED_MAX) {
+      toast(`Max ${NOTIFICATIONS_PINNED_MAX} pinned — unpin one first`);
+      return;
+    }
+  }
+  n.pinned = !n.pinned;
+  await saveNotificationsLocal();
+  _renderNotificationPanel();
+}
+
+async function dismissNotification(id) {
+  const idx = notifications.findIndex(x => x.id === id);
+  if (idx === -1) return;
+  notifications.splice(idx, 1);
+  await saveNotificationsLocal();
+  _renderNotificationBellBadge();
+  _renderNotificationPanel();
+}
+
+async function markAllNotificationsRead() {
+  const now = new Date().toISOString();
+  let changed = false;
+  notifications.forEach(n => { if (!n.readAt) { n.readAt = now; changed = true; } });
+  if (changed) {
+    await saveNotificationsLocal();
+    _renderNotificationBellBadge();
+    _renderNotificationPanel();
+  }
+}
+
+async function clearNotificationHistory() {
+  // Keep pinned, drop everything else
+  const before = notifications.length;
+  notifications = notifications.filter(n => n.pinned);
+  if (notifications.length !== before) {
+    await saveNotificationsLocal();
+    _renderNotificationBellBadge();
+    _renderNotificationPanel();
+    toast(`Cleared ${before - notifications.length} notification${before - notifications.length !== 1 ? 's' : ''}`);
+  }
+}
+
+// Lightweight snapshot used for diffing items[] across share-blob absorbs.
+// Captures only what we need to detect added/removed/changed for the UI:
+// id, name, and a few hot fields that signal "meaningful" change.
+function _snapshotItemsForDiff(arr) {
+  const map = new Map();
+  if (!Array.isArray(arr)) return map;
+  for (const it of arr) {
+    if (!it || !it.id) continue;
+    map.set(it.id, {
+      id: it.id,
+      name: it.name || '',
+      qty: it.qty,
+      ordered: !!it.ordered,
+      stockCount: it.stockCount,
+      lastReplaced: it.lastReplaced,
+      _deletedAt: it._deletedAt,
+    });
+  }
+  return map;
+}
+
+// Diff two item snapshots and emit notifications for the differences.
+// `who` is the human label (e.g. "Sarah" or "household name") that gets
+// shown in the notification body. We batch heavy diffs into a single
+// summary notification rather than spamming.
+async function _emitShareDiffNotifications(beforeMap, afterMap, { code, who }) {
+  if (!beforeMap || !afterMap) return;
+  const added   = [];
+  const removed = [];
+  const changed = [];
+  for (const [id, after] of afterMap.entries()) {
+    const before = beforeMap.get(id);
+    if (!before) {
+      // Truly new (not just absent because we hadn't seen it). Skip on first
+      // ever sync to avoid flooding — beforeMap empty signal handled by caller.
+      added.push(after);
+    } else if (after._deletedAt && !before._deletedAt) {
+      removed.push(after);
+    } else if (
+      before.name !== after.name ||
+      before.qty !== after.qty ||
+      before.ordered !== after.ordered ||
+      before.stockCount !== after.stockCount ||
+      before.lastReplaced !== after.lastReplaced
+    ) {
+      changed.push(after);
+    }
+  }
+  // First-ever absorb (beforeMap empty): suppress add notifications to avoid
+  // a 50-entry flood when a new device joins an existing share.
+  if (beforeMap.size === 0) return;
+
+  // Batch threshold: if more than 3 items changed in any category, summarise.
+  const summarise = (added.length + removed.length + changed.length) > 5;
+  const sharedFromName = who || null;
+  const sharedFromCode = code || null;
+
+  if (summarise) {
+    const bits = [];
+    if (added.length)   bits.push(`${added.length} added`);
+    if (changed.length) bits.push(`${changed.length} updated`);
+    if (removed.length) bits.push(`${removed.length} removed`);
+    await addNotification({
+      type: 'share',
+      title: `Updates in ${who || 'shared household'}`,
+      body: bits.join(', '),
+      sourceRef: `share:${code}:bulk:${Date.now()}`,
+      sharedFromCode, sharedFromName,
+      dedupeWindowMs: 5 * 60 * 1000, // 5 min dedupe for bulk
+    });
+    return;
+  }
+
+  for (const it of added.slice(0, 5)) {
+    await addNotification({
+      type: 'share',
+      title: who ? `${who} added "${it.name}"` : `Added: ${it.name}`,
+      body: '',
+      sourceRef: `share:${code}:add:${it.id}`,
+      sharedFromCode, sharedFromName,
+    });
+  }
+  for (const it of removed.slice(0, 5)) {
+    await addNotification({
+      type: 'share',
+      title: who ? `${who} removed "${it.name}"` : `Removed: ${it.name}`,
+      body: '',
+      sourceRef: `share:${code}:remove:${it.id}`,
+      sharedFromCode, sharedFromName,
+    });
+  }
+  for (const it of changed.slice(0, 5)) {
+    let body = '';
+    const before = beforeMap.get(it.id);
+    if (before) {
+      if (before.ordered !== it.ordered) {
+        body = it.ordered ? 'marked as ordered' : 'unmarked as ordered';
+      } else if (before.lastReplaced !== it.lastReplaced) {
+        body = 'marked as replaced';
+      } else if (before.qty !== it.qty) {
+        body = `qty: ${before.qty} → ${it.qty}`;
+      } else if (before.stockCount !== it.stockCount) {
+        body = `stock: ${before.stockCount ?? '?'} → ${it.stockCount ?? '?'}`;
+      } else if (before.name !== it.name) {
+        body = `renamed from "${before.name}"`;
+      } else {
+        body = 'updated';
+      }
+    }
+    await addNotification({
+      type: 'share',
+      title: who ? `${who} updated "${it.name}"` : `Updated: ${it.name}`,
+      body,
+      sourceRef: `share:${code}:edit:${it.id}`,
+      sharedFromCode, sharedFromName,
+    });
+  }
+}
+
 // ── Calculations ──────────────────────────
 function getReminderIntervalDays(reminder) {
   const n = reminder.interval || 1;
@@ -4070,8 +4520,9 @@ async function pollReminderReplacements() {
 
 // ── In-app notification check ─────────────
 async function checkReminderNotifications() {
-  if (!notifEnabled || Notification.permission !== 'granted') return;
-
+  // Compute due/overdue regardless of notifEnabled — the in-app inbox
+  // should populate even when push notifications are disabled. Push is a
+  // separate channel below.
   const allReminders = [
     ...reminders.filter(r => !r._deletedAt),
     ...items.filter(i => !i._deletedAt).flatMap(i => {
@@ -4093,6 +4544,26 @@ async function checkReminderNotifications() {
   const dueToday = allReminders.filter(r => getReminderDaysUntil(r) === 0);
 
   if (!overdue.length && !dueToday.length) return;
+
+  // Always populate the in-app inbox — this is independent of the push
+  // notification channel. Dedupe by sourceRef inside addNotification.
+  for (const r of [...overdue, ...dueToday]) {
+    const days = getReminderDaysUntil(r);
+    const body = getReminderStatus(r) === 'overdue'
+      ? `Overdue by ${Math.abs(days)} day${Math.abs(days) !== 1 ? 's' : ''}`
+      : 'Due today';
+    try {
+      await addNotification({
+        type: 'reminder',
+        title: r.name,
+        body,
+        sourceRef: `reminder:${r.id}`,
+      });
+    } catch(e) { /* never let inbox errors block reminder push */ }
+  }
+
+  // Below: existing push-notification path (gated on notifEnabled)
+  if (!notifEnabled || Notification.permission !== 'granted') return;
 
   const today2 = new Date().toISOString().slice(0,10);
   if (localStorage.getItem('stockroom_last_reminder_notif') === today2) return;
@@ -4249,6 +4720,11 @@ async function loadProfile(key) {
   }
   // Sweep expired items from the 30-day recycle bin
   await purgeExpiredFromBins();
+  // Notifications are user-scoped (not per-profile), so we always load them
+  // here too — they survive profile switches. The bell badge updates as a
+  // side-effect of loadNotifications via _renderNotificationBellBadge.
+  await loadNotifications();
+  _renderNotificationBellBadge();
   updateProfileLabel();
   scheduleRender(...RENDER_REGIONS);
   updateSyncUI();
@@ -4987,13 +5463,38 @@ function sendLocalNotification(title, body, tag) {
 }
 
 async function checkLowStockNotifications() {
-  if (!notifEnabled || Notification.permission !== 'granted') return;
+  // Compute due items regardless of push notifEnabled — the in-app inbox
+  // should still populate so users can see low-stock alerts in the bell.
   const days = parseInt(document.getElementById('notif-days')?.value || '14');
   const due  = items
     .map(item => { const s = calcStock(item); return s && s.daysLeft <= days ? { item, daysLeft: s.daysLeft } : null; })
     .filter(Boolean)
     .sort((a, b) => a.daysLeft - b.daysLeft);
   if (!due.length) return;
+
+  // Populate in-app inbox first (independent of push). Dedupe is handled
+  // inside addNotification by sourceRef within a 24h window — so the same
+  // item won't generate 30 inbox entries across repeated checks.
+  for (const d of due) {
+    const isCritical = d.daysLeft <= 7;
+    const title = isCritical
+      ? `${d.item.name} — critically low`
+      : `${d.item.name} — running low`;
+    const body = d.daysLeft <= 0
+      ? 'Out of stock'
+      : `~${d.daysLeft} day${d.daysLeft !== 1 ? 's' : ''} left`;
+    try {
+      await addNotification({
+        type: 'low-stock',
+        title,
+        body,
+        sourceRef: `lowstock:${d.item.id}`,
+      });
+    } catch(e) { /* don't let inbox errors block push */ }
+  }
+
+  // Below: existing push-notification path (gated on notifEnabled)
+  if (!notifEnabled || Notification.permission !== 'granted') return;
 
   const today = new Date().toISOString().slice(0, 10);
   if (localStorage.getItem('stockroom_last_notif') === today) return;
@@ -15008,6 +15509,11 @@ async function kvPush() {
     budgetAccountDeletedIds:   [...budgetAccountDeletedIds],
     incomeTemplateDeletedIds:  [...incomeTemplateDeletedIds],
     incomeEntryDeletedIds:     [...incomeEntryDeletedIds],
+    // Notifications live in the user's OWN blob only — they sync across the
+    // user's devices but MUST NOT be included in share blobs (see
+    // pushSharedData / pushGuestSharedData — neither references this field).
+    // Each device generates its own notifications from sync diffs.
+    notifications,
   });
   _keyFingerprint(_kvKey).then(fp => console.log('[key] kvPush: encrypting with key fingerprint:', fp));
   const ciphertext = await kvEncrypt(_kvKey, payload);
@@ -15124,8 +15630,28 @@ async function kvSyncNow(silent = false) {
       const localLastSynced  = settings.lastSynced ? new Date(settings.lastSynced).getTime() : 0;
       const remoteLastSynced = remote.lastSynced   ? new Date(remote.lastSynced).getTime()   : 0;
       const remoteWins       = remoteLastSynced > localLastSynced;
+      // ── Guest-side share diff snapshot ──
+      // When this pull is coming from a share blob (i.e. we're a guest),
+      // snapshot items BEFORE the merge so we can emit notifications for
+      // owner edits afterwards. _shareState being truthy is the signal.
+      // Owners pulling their own data don't take this path — they use
+      // absorbSharedData for share diffs and don't notify themselves about
+      // their own writes here.
+      const _guestNotifSnapshot = _shareState
+        ? _snapshotItemsForDiff(items)
+        : null;
       items = await mergeItems(items, remote.items, remoteWins);
       await saveData();
+      if (_guestNotifSnapshot) {
+        try {
+          const afterMap = _snapshotItemsForDiff(items);
+          const who = _shareState?.ownerName || _shareState?.name || 'owner';
+          await _emitShareDiffNotifications(_guestNotifSnapshot, afterMap, {
+            code: _shareState.code,
+            who,
+          });
+        } catch(e) { console.warn('guest share diff notification failed:', e.message); }
+      }
       if (remote.settings) {
         const localTags = settings.customTags;
         const localTagsTs  = settings.customTagsUpdatedAt;
@@ -15297,6 +15823,35 @@ async function kvSyncNow(silent = false) {
           const localRIds = new Set(reminders.map(r => r.id));
           const newR = remote.reminders.filter(r => !localRIds.has(r.id) && !rTombstones.has(r.id));
           if (newR.length) { reminders = [...reminders, ...newR]; await saveReminders(); }
+        }
+      }
+      // ── Notifications merge ──
+      // Union by id, preferring earliest readAt (read is sticky) and OR'd
+      // pinned flag. Cap enforcement after merge keeps total ≤50 and pins
+      // ≤3, demoting oldest pins if a merge from another device would
+      // otherwise exceed the limit.
+      // Only own-account pulls carry notifications — share blobs never do,
+      // so this branch only runs for the owner pulling their own data.
+      if (Array.isArray(remote.notifications)) {
+        const byId = new Map();
+        for (const n of notifications) byId.set(n.id, n);
+        for (const rn of remote.notifications) {
+          if (!rn || !rn.id) continue;
+          const ln = byId.get(rn.id);
+          if (!ln) { byId.set(rn.id, rn); continue; }
+          const merged = { ...ln };
+          if (rn.readAt && (!ln.readAt || new Date(rn.readAt) < new Date(ln.readAt))) {
+            merged.readAt = rn.readAt;
+          }
+          merged.pinned = !!(ln.pinned || rn.pinned);
+          byId.set(rn.id, merged);
+        }
+        notifications = Array.from(byId.values());
+        _enforceNotificationCap();
+        await saveNotificationsLocal();
+        _renderNotificationBellBadge();
+        if (document.getElementById('notif-panel')?.classList.contains('open')) {
+          _renderNotificationPanel();
         }
       }
       if (remote.deletedIds && Array.isArray(remote.deletedIds)) {
@@ -26865,9 +27420,41 @@ async function absorbSharedData(code, hKey) {
   const target = _shareTargets.find(t => t.code === code);
   const perms  = target?.households?.[hKey] || {};
 
+  // ── Notification diff (owner side) ──
+  // Snapshot the local items BEFORE we merge in the guest's writes so we can
+  // emit "Sarah added milk" type notifications afterwards. We only diff
+  // items[] for now since that's the most user-visible. Guest identity is
+  // taken from body.writer (the server stamps it on every guest push).
+  const _shareNotifSnapshot = (Array.isArray(payload.items) && perms.stockroom === 'rw')
+    ? _snapshotItemsForDiff(items)
+    : null;
+  const _shareNotifWho = (() => {
+    if (body.writer?.kind !== 'guest') return null;
+    // Try to resolve a friendly name from memberDetails on the share target
+    const eh = body.writer.emailHash;
+    const md = target?.memberDetails?.[eh];
+    if (md?.name) return md.name;
+    if (md?.email) return md.email.split('@')[0];
+    // Fall back to a generic label
+    return 'a household member';
+  })();
+  const _shareNotifLabel = target?.name || null;
+
   if (Array.isArray(payload.items) && perms.stockroom === 'rw') {
     items = await mergeItems(items, payload.items, false);
     await saveData();
+    // Diff and emit notifications after the merge. Wrapped in try/catch so
+    // any notification failure never blocks the absorb (which is critical
+    // for share data integrity).
+    if (_shareNotifSnapshot) {
+      try {
+        const afterMap = _snapshotItemsForDiff(items);
+        await _emitShareDiffNotifications(_shareNotifSnapshot, afterMap, {
+          code,
+          who: _shareNotifWho || _shareNotifLabel,
+        });
+      } catch(e) { console.warn('share diff notification failed:', e.message); }
+    }
   }
   if (Array.isArray(payload.groceries) && perms.groceries === 'rw') {
     // Mirror the own-data merge in kvSyncNow: take guest's items as the base
@@ -27698,6 +28285,8 @@ async function init() {
   await loadBudget();
   await loadBudgetSpend();
   await loadBudgetAccountsAndIncome();
+  await loadNotifications();
+  _renderNotificationBellBadge();
   // Sweep any expired items from the 30-day recycle bin (no-op if loadProfile already did it)
   await purgeExpiredFromBins();
   // Same for soft-deleted grocery lists older than 30 days
