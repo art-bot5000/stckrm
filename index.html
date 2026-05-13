@@ -2564,6 +2564,69 @@
             <button class="btn btn-primary btn-sm" onclick="addProfileFromSettings()">+ Add</button>
           </div>
         </div>
+        <!-- ── SHARE ACCESS CONTROL (Part A of granular permissions) ──
+             A small "who can / cannot be added to a share" panel that lives
+             at the top of the Share Access area. Two semantics:
+               • Open mode (default): anyone can be added except entries on
+                 the deny list.
+               • Allowlist mode: only entries on the allow list can be added
+                 (still minus deny).
+             Lists are checked client-side in the share-create modal. No
+             server-side enforcement — the lists exist to protect the owner
+             from themselves (accidental shares to ex-partners, former
+             cleaners), not from a malicious owner. See checkShareAccess-
+             Control + renderShareAccessControl in app.js. -->
+        <div class="acc-sec-row acc-sec-row-block" id="share-access-control-row">
+          <div class="acc-sec-label" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer" onclick="toggleShareAccessControlPanel()">
+            <div>
+              <div class="acc-sec-h"><svg class="icon icon-md" aria-hidden="true"><use href="#i-shield"></use></svg> Sharing access control</div>
+              <div class="acc-sec-p" id="sac-summary">Open mode · 0 blocked</div>
+            </div>
+            <svg class="icon" aria-hidden="true" id="sac-chevron" style="transition:transform 0.15s"><use href="#i-chevron-down"></use></svg>
+          </div>
+          <div id="share-access-control-body" style="display:none;width:100%;margin-top:14px">
+            <!-- Mode toggle -->
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+                <input type="radio" name="sac-mode" id="sac-mode-open" value="open" onchange="setShareAccessControlMode('open')" style="accent-color:var(--accent);cursor:pointer">
+                <span>Open</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+                <input type="radio" name="sac-mode" id="sac-mode-allowlist" value="allowlist" onchange="setShareAccessControlMode('allowlist')" style="accent-color:var(--accent);cursor:pointer">
+                <span>Allowlist only</span>
+              </label>
+              <span id="sac-mode-help" style="font-size:11px;color:var(--muted);flex:1;min-width:200px;line-height:1.4"></span>
+            </div>
+            <!-- Deny list (always visible) -->
+            <div style="margin-bottom:14px">
+              <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">Never share with</div>
+              <div id="sac-deny-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
+              <div style="display:flex;gap:8px">
+                <input type="email" id="sac-deny-input" placeholder="email@example.com"
+                  onkeydown="onShareAccessInputKey(event, 'deny')"
+                  autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+                  style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none">
+                <button class="btn btn-ghost btn-sm" onclick="addShareAccessEntry('deny')" style="flex-shrink:0">+ Add</button>
+              </div>
+              <div id="sac-deny-error" style="font-size:11px;color:var(--danger);margin-top:4px;min-height:14px"></div>
+            </div>
+            <!-- Allow list (only visible in allowlist mode) -->
+            <div id="sac-allow-section" style="display:none">
+              <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">Allowed emails</div>
+              <div id="sac-allow-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
+              <div style="display:flex;gap:8px">
+                <input type="email" id="sac-allow-input" placeholder="email@example.com"
+                  onkeydown="onShareAccessInputKey(event, 'allow')"
+                  autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+                  style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none">
+                <button class="btn btn-ghost btn-sm" onclick="addShareAccessEntry('allow')" style="flex-shrink:0">+ Add</button>
+              </div>
+              <div id="sac-allow-error" style="font-size:11px;color:var(--danger);margin-top:4px;min-height:14px"></div>
+            </div>
+            <!-- Conflict hint — shown if any existing share's email is on the deny list. -->
+            <div id="sac-conflict-hint" style="display:none;margin-top:12px;padding:10px 12px;border-radius:8px;background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.3);font-size:12px;line-height:1.5"></div>
+          </div>
+        </div>
         <div class="acc-sec-row acc-sec-row-block">
           <div class="acc-sec-label" style="width:100%">
             <div class="acc-sec-h"><svg class="icon icon-md" aria-hidden="true"><use href="#i-link"></use></svg> Share Access</div>
@@ -3651,8 +3714,11 @@
     </div>
     <div id="share-target-email-group" class="form-group" style="margin-bottom:12px">
       <label class="form-label">Their email address</label>
-      <input class="form-input" id="share-target-email" type="email" placeholder="their@email.com" autocomplete="off">
+      <input class="form-input" id="share-target-email" type="email" placeholder="their@email.com" autocomplete="off" oninput="onShareTargetEmailInput()" onblur="onShareTargetEmailInput()">
       <p style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">If they don't have a STOCKROOM account, the link will let them sign up with this email. Their email is used to encrypt the share key — it never leaves your device.</p>
+      <!-- Live access-control feedback — shows when the typed email is
+           on the deny list / missing from the allow list. Empty otherwise. -->
+      <p id="share-target-email-sac-error" style="font-size:11px;color:var(--danger);margin-top:4px;min-height:14px;line-height:1.4"></p>
     </div>
     <!-- Email notification checkbox — shown only in edit mode -->
     <div id="share-send-email-row" class="form-group" style="display:none;margin-bottom:12px">

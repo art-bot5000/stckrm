@@ -1661,6 +1661,60 @@ const DROPBOX_FILE    = '';
 // ═══════════════════════════════════════════
 let items = [];
 let settings = { threshold: 20, country: 'GB' };
+
+// ─── Share Access Control (Part A of granular permissions) ────────────────
+// User-defined allow / deny lists checked client-side when creating or
+// editing a share. The lists live inside `settings` (so they ride the
+// existing encrypted-blob sync to every device of the owner). Enforcement
+// is forward-only — adding someone to the deny list after a share already
+// exists does NOT auto-delete the share; instead the Household Sharing UI
+// surfaces a "X is on your deny list — remove their share?" hint.
+//
+// Mode semantics:
+//   'open'      → anyone can be added except entries on deny
+//   'allowlist' → only entries on allow can be added (still minus deny)
+//
+// Server-side enforcement deliberately skipped: the lists protect the
+// owner from themselves (accidentally sharing with an ex-partner / former
+// cleaner), not from a malicious owner. The server has no security gain
+// from enforcing this.
+function _ensureShareAccessControl() {
+  if (!settings.shareAccessControl) {
+    settings.shareAccessControl = { mode: 'open', deny: [], allow: [], updatedAt: '' };
+  }
+  // Defensive: previous saves may have stored partial shapes
+  const sac = settings.shareAccessControl;
+  if (sac.mode !== 'open' && sac.mode !== 'allowlist') sac.mode = 'open';
+  if (!Array.isArray(sac.deny))  sac.deny  = [];
+  if (!Array.isArray(sac.allow)) sac.allow = [];
+  return sac;
+}
+
+// Normalise an email for comparison — same rule both lists use. Lowercase
+// + trimmed. We intentionally don't strip Gmail-style "+suffix" or dots
+// because two users on the same Gmail account using different aliases is
+// a legitimate use case (e.g. me+work@gmail.com vs me+personal@gmail.com).
+function _normEmail(email) {
+  return (email || '').trim().toLowerCase();
+}
+
+// Check whether `email` is permitted by the current shareAccessControl
+// rules. Returns { ok: bool, reason: string | null }. The reason is a
+// human-readable string suitable for inline display next to the share-
+// create email input.
+function checkShareAccessControl(email) {
+  const norm = _normEmail(email);
+  if (!norm) return { ok: false, reason: 'Enter an email address' };
+  const sac = _ensureShareAccessControl();
+  const denyHit = sac.deny.map(_normEmail).includes(norm);
+  if (denyHit) return { ok: false, reason: `${email} is on your deny list — remove it from settings to share with them.` };
+  if (sac.mode === 'allowlist') {
+    const allowHit = sac.allow.map(_normEmail).includes(norm);
+    if (!allowHit) return { ok: false, reason: `${email} is not on your allow list — add it in settings to share with them.` };
+  }
+  return { ok: true, reason: null };
+}
+
 let editingId = null;
 let loggingId = null;
 let tempStorePrices = []; // also declared in scanner.js; declared here so openAddModal works before scanner.js loads
@@ -28767,6 +28821,177 @@ async function loadShareTargets() {
   } catch(e) { console.warn('Could not load share targets:', e); }
 }
 
+// ─── Share Access Control panel UI ────────────────────────────────────────
+// Renders the panel that lives at the top of Household Sharing — mode
+// toggle + deny / allow list editors. See checkShareAccessControl in the
+// helpers near settings/_ensureShareAccessControl for the enforcement
+// check itself; this function just paints the panel and reflects state.
+function renderShareAccessControl() {
+  const sac = _ensureShareAccessControl();
+  const summary = document.getElementById('sac-summary');
+  if (summary) {
+    const denyCount  = sac.deny.length;
+    const allowCount = sac.allow.length;
+    if (sac.mode === 'allowlist') {
+      summary.textContent = `Allowlist mode · ${allowCount} allowed · ${denyCount} blocked`;
+    } else {
+      summary.textContent = `Open mode · ${denyCount} blocked`;
+    }
+  }
+  // Mode radios
+  const openRadio  = document.getElementById('sac-mode-open');
+  const alistRadio = document.getElementById('sac-mode-allowlist');
+  if (openRadio)  openRadio.checked  = (sac.mode === 'open');
+  if (alistRadio) alistRadio.checked = (sac.mode === 'allowlist');
+  // Mode help text
+  const helpEl = document.getElementById('sac-mode-help');
+  if (helpEl) {
+    helpEl.textContent = sac.mode === 'allowlist'
+      ? 'Only emails on the allow list can be added to a share.'
+      : 'Anyone can be added except entries on the deny list.';
+  }
+  // Allow section visibility
+  const allowSec = document.getElementById('sac-allow-section');
+  if (allowSec) allowSec.style.display = (sac.mode === 'allowlist') ? '' : 'none';
+  // Deny chips
+  _renderShareAccessChips('deny', sac.deny);
+  // Allow chips
+  _renderShareAccessChips('allow', sac.allow);
+  // Existing-share conflict hint — list any current share targets whose
+  // email is on the deny list. Helps the owner clean up after adding
+  // someone to deny *after* an existing share was created (forward-only
+  // enforcement, see plan doc).
+  const hintEl = document.getElementById('sac-conflict-hint');
+  if (hintEl && Array.isArray(_shareTargets) && _shareTargets.length) {
+    const denySet = new Set(sac.deny.map(_normEmail));
+    const conflicts = _shareTargets.filter(t => t.guestEmail && denySet.has(_normEmail(t.guestEmail)));
+    if (conflicts.length) {
+      const names = conflicts.map(t => esc(t.name || t.guestEmail)).join(', ');
+      hintEl.innerHTML = `<strong>⚠ ${conflicts.length} existing share${conflicts.length===1?'':'s'}</strong> use an email that's on your deny list (${names}). The share${conflicts.length===1?'':'s'} will keep working until you remove them manually below.`;
+      hintEl.style.display = '';
+    } else {
+      hintEl.style.display = 'none';
+    }
+  } else if (hintEl) {
+    hintEl.style.display = 'none';
+  }
+}
+
+function _renderShareAccessChips(listKey, entries) {
+  const slot = document.getElementById(`sac-${listKey}-chips`);
+  if (!slot) return;
+  if (!entries.length) {
+    slot.innerHTML = `<div style="font-size:11px;color:var(--muted);font-style:italic">No entries yet.</div>`;
+    return;
+  }
+  slot.innerHTML = entries.map(email => `
+    <div style="display:inline-flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:99px;padding:4px 4px 4px 10px;font-size:12px">
+      <span>${esc(email)}</span>
+      <button onclick="removeShareAccessEntry('${listKey}', '${esc(email).replace(/'/g, "\\'")}')"
+        aria-label="Remove ${esc(email)}"
+        style="background:transparent;border:none;cursor:pointer;color:var(--muted);padding:2px 6px;border-radius:99px;display:flex;align-items:center"
+        onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--muted)'">
+        <svg class="icon icon-sm" aria-hidden="true"><use href="#i-x"></use></svg>
+      </button>
+    </div>
+  `).join('');
+}
+
+function toggleShareAccessControlPanel() {
+  const body = document.getElementById('share-access-control-body');
+  const chev = document.getElementById('sac-chevron');
+  if (!body) return;
+  const open = body.style.display === 'none' || !body.style.display;
+  body.style.display = open ? '' : 'none';
+  if (chev) chev.style.transform = open ? 'rotate(180deg)' : '';
+  if (open) renderShareAccessControl();
+}
+
+async function setShareAccessControlMode(mode) {
+  const sac = _ensureShareAccessControl();
+  sac.mode = (mode === 'allowlist') ? 'allowlist' : 'open';
+  sac.updatedAt = new Date().toISOString();
+  await _saveSettings();
+  renderShareAccessControl();
+}
+
+function onShareAccessInputKey(e, listKey) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    addShareAccessEntry(listKey);
+  }
+}
+
+async function addShareAccessEntry(listKey) {
+  const input = document.getElementById(`sac-${listKey}-input`);
+  const errEl = document.getElementById(`sac-${listKey}-error`);
+  if (!input) return;
+  const raw = input.value;
+  const email = _normEmail(raw);
+  // Basic validation. The same regex pattern the share-create modal uses
+  // implicitly via type="email" + form-validation — kept loose deliberately
+  // (proper RFC 5322 validation is famously not worth doing).
+  const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  if (!emailLooksValid) {
+    if (errEl) errEl.textContent = 'Not a valid email address';
+    return;
+  }
+  const sac = _ensureShareAccessControl();
+  const list = listKey === 'allow' ? sac.allow : sac.deny;
+  // Duplicate detection — case-insensitive
+  if (list.map(_normEmail).includes(email)) {
+    if (errEl) errEl.textContent = 'Already on this list';
+    return;
+  }
+  // Cross-list conflict — same email can't sit on both deny AND allow.
+  // Deny always wins, so if we're adding to allow but it's on deny, refuse.
+  const otherKey = listKey === 'allow' ? 'deny' : 'allow';
+  const otherList = listKey === 'allow' ? sac.deny : sac.allow;
+  if (otherList.map(_normEmail).includes(email)) {
+    if (errEl) errEl.textContent = `Already on the ${otherKey} list — remove it from there first`;
+    return;
+  }
+  list.push(email);
+  sac.updatedAt = new Date().toISOString();
+  input.value = '';
+  if (errEl) errEl.textContent = '';
+  await _saveSettings();
+  renderShareAccessControl();
+}
+
+async function removeShareAccessEntry(listKey, email) {
+  const sac = _ensureShareAccessControl();
+  const list = listKey === 'allow' ? sac.allow : sac.deny;
+  const targetNorm = _normEmail(email);
+  const before = list.length;
+  if (listKey === 'allow') {
+    sac.allow = list.filter(e => _normEmail(e) !== targetNorm);
+  } else {
+    sac.deny = list.filter(e => _normEmail(e) !== targetNorm);
+  }
+  if (sac.allow.length === before && sac.deny.length === before) return;
+  sac.updatedAt = new Date().toISOString();
+  await _saveSettings();
+  renderShareAccessControl();
+}
+
+// Live access-control feedback inside the share-create / share-edit modal.
+// Wired on the email input's `oninput` + `onblur`. Renders the deny/allow
+// reason inline so the user sees the error before clicking Save.
+function onShareTargetEmailInput() {
+  const input  = document.getElementById('share-target-email');
+  const errEl  = document.getElementById('share-target-email-sac-error');
+  if (!input || !errEl) return;
+  const val = (input.value || '').trim();
+  if (!val) { errEl.textContent = ''; return; }
+  // Only check once it looks like a complete email — partial typing
+  // ("alice@" etc.) shouldn't flash an error before they've finished.
+  const looksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
+  if (!looksValid) { errEl.textContent = ''; return; }
+  const check = checkShareAccessControl(val);
+  errEl.textContent = check.ok ? '' : check.reason;
+}
+
 function renderShareTargetsList() {
   const list = document.getElementById('share-targets-list');
   const btn  = document.getElementById('add-share-target-btn');
@@ -28870,6 +29095,10 @@ function renderShareTargetsList() {
   }
   const clearBtn = document.getElementById('clear-all-shares-btn');
   if (clearBtn) clearBtn.style.display = (editable && _shareTargets.length > 0) ? 'inline-flex' : 'none';
+  // Refresh the Share Access Control summary alongside — it lives in the
+  // same Settings → Household Sharing section, and its conflict hint
+  // depends on the share-targets list we just refreshed above.
+  try { renderShareAccessControl(); } catch (_) {}
 }
 
 // Toggle expand/collapse for a share row's member list. Survives
@@ -29087,6 +29316,9 @@ async function openAddShareTarget() {
   document.getElementById('share-target-code').value = '';
   document.getElementById('share-target-name').value = '';
   document.getElementById('share-target-email').value = '';
+  // Clear any lingering deny/allow inline error from a previous open
+  const _sacErr = document.getElementById('share-target-email-sac-error');
+  if (_sacErr) _sacErr.textContent = '';
   // Hide the "send notification" checkbox — only relevant on edit
   const sendEmailRow = document.getElementById('share-send-email-row');
   if (sendEmailRow) sendEmailRow.style.display = 'none';
@@ -29152,6 +29384,20 @@ async function saveShareTarget() {
 
   try {
     if (code) {
+      // Update existing — re-use existing share key.
+      // Deny / allow check: only fires if the email is being CHANGED to a
+      // newly-restricted value. Editing other fields on an existing share
+      // whose email is already denied is fine — the share exists, the
+      // owner is allowed to keep it (forward-only enforcement). The
+      // renderShareAccessControl conflict hint already nudges them to
+      // remove these shares manually if they want.
+      const _currentTgt    = _shareTargets.find(t => t.code === code);
+      const _existingEmail = _normEmail(_currentTgt?.guestEmail || '');
+      const _editingEmail  = _normEmail(document.getElementById('share-target-email')?.value || '');
+      if (_editingEmail && _editingEmail !== _existingEmail) {
+        const sacCheck = checkShareAccessControl(_editingEmail);
+        if (!sacCheck.ok) { if (btn) { btn.textContent = 'Save changes'; btn.disabled = false; } toast(sacCheck.reason); return; }
+      }
       // Update existing — re-use existing share key
       const res = await postKV(`${WORKER_URL}/share/update`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code, name, type: _shareTargetType, colour, households: _shareTargetPerms, shareManagement: _shareTargetMgmt });
       if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || 'Update failed'); }
@@ -29174,6 +29420,14 @@ async function saveShareTarget() {
       // Create new — ECDH key wrapping flow
       const guestEmail = document.getElementById('share-target-email')?.value.trim();
       if (!guestEmail) throw new Error('Enter their email address so their share key can be encrypted for them');
+
+      // Forward-only enforcement of the deny / allow lists. The check exists
+      // only here at share-create time — existing shares are unaffected when
+      // someone is added to the deny list later (renderShareAccessControl
+      // shows a conflict hint instead). The check is client-side only by
+      // design — the lists exist to protect the owner from themselves.
+      const sacCheck = checkShareAccessControl(guestEmail);
+      if (!sacCheck.ok) throw new Error(sacCheck.reason);
 
       // 1. Hash guest email → fetch their ECDH public key. A 404 means the
       //    recipient hasn't signed up yet — that's a supported case via
