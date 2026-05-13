@@ -532,38 +532,50 @@
       max-width: 100%;
     }
 
-    /* ── BURGER-VIEW BACK BAR ──
+    /* ── BURGER-VIEW BACK BUTTON ──
        On mobile, when the user navigates into a burger-menu page (Report,
        Billing, Settings, Account & Security), hide the 3×2 tab grid and
-       show a single back button instead. Removes nav clutter from screens
-       the user explicitly drilled into. Pattern set by body.burger-view-
-       active in showView(). */
+       show a small floating back arrow at the top-right of the view area.
+       Sits inline with each view's section heading without needing any H2
+       restructuring — works for all four burger views uniformly. Pattern
+       set by body.burger-view-active in showView(). */
     body.burger-view-active #tabs { display: none; }
-    body.burger-view-active #burger-view-back-bar {
-      display: flex !important;
-      align-items: center;
-      padding: 4px;
+    body.burger-view-active #tabs-sticky-wrap {
+      /* Collapse the now-empty tab-bar slot so the section heading rises
+         to the same vertical position as it occupies on non-burger views. */
+      min-height: 0;
+      padding: 0;
+      margin: 0;
     }
-    #burger-view-back-bar button {
-      display: flex;
+    body.burger-view-active #burger-view-back-btn {
+      display: inline-flex !important;
       align-items: center;
-      gap: 8px;
-      background: transparent;
-      border: none;
-      cursor: pointer;
-      color: var(--text);
-      font-family: var(--sans);
-      font-size: 14px;
-      font-weight: 600;
-      padding: 10px 14px;
-      border-radius: 8px;
-      transition: background 0.15s;
-    }
-    #burger-view-back-bar button:hover,
-    #burger-view-back-bar button:active {
+      justify-content: center;
+      position: absolute;
+      /* Anchored to the top-right corner of #main. #main is the positioning
+         parent — see body.burger-view-active #main { position: relative }
+         below. Top offset matches #main's padding-top so the button aligns
+         with the section heading's baseline. */
+      top: 16px;
+      right: 12px;
+      z-index: 50;
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      /* Lighter grey than the page background so it reads as an actionable
+         control without competing with primary buttons. */
       background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
     }
-    #burger-view-back-bar button .icon { color: var(--muted); }
+    body.burger-view-active #burger-view-back-btn:hover,
+    body.burger-view-active #burger-view-back-btn:active {
+      background: var(--surface);
+      transform: translateX(-2px);
+    }
+    body.burger-view-active #main { position: relative; }
 
     /* ── CARDS: single column, slightly more padding ── */
     #items-grid { grid-template-columns: 1fr; gap: 12px; }
@@ -691,6 +703,19 @@
     #app-header .btn-ghost { display:none; }
     /* Keep sync pill visible */
     #app-header #sync-pill { display:flex; }
+    /* Reorder the right-side header cluster on mobile via flex `order`:
+       sync-pill (connected dot) FIRST, then the notification bell, then
+       the burger menu. The HTML source order has the bell first (so it
+       sits leftmost on desktop where the order is intentional alongside
+       the shield / quick-add / add-item buttons). On mobile, where only
+       three elements remain visible, swapping their visual order via
+       CSS leaves the DOM untouched — no risk of breaking desktop layout
+       or tab-order for keyboard users (focus order follows DOM, not the
+       visual flex order, which is the right call here since the visual
+       LTR cluster is icons-only and not meaningfully sequential). */
+    #app-header #sync-pill        { order: 1; }
+    #app-header #notif-bell-btn   { order: 2; }
+    #app-header #header-burger-btn { order: 3; }
     /* Grocery and reminders header action buttons too.
        NOTE: scoped to #grocery-sticky-header (the desktop header row) so we
        don't accidentally hide buttons in the mobile #grocery-fs-header,
@@ -1279,10 +1304,15 @@
   #view-settings { max-width: 720px; }
 }
 /* Notes view on mobile — view sits at body level (outside #main), so it
-   doesn't inherit #main's 16px/12px padding. Match it explicitly so notes
-   don't render edge-to-edge. */
+   doesn't inherit #main's 16px/12px padding. Match the horizontal padding
+   explicitly so notes don't render edge-to-edge. Top padding is zeroed
+   because the tab bar's natural bottom edge (inside #main, with #main's
+   bottom padding already zeroed by body.notes-view-active below) already
+   gives a tight visual baseline matching every other top-level view —
+   without this, Notes shows an extra ~16px gap above the title compared
+   to Stockroom / Groceries / etc. */
 @media (max-width: 899px) {
-  #view-notes { padding: 16px 12px; }
+  #view-notes { padding: 0 12px 16px; }
   /* When Notes is active, hide the now-empty #view-content and zero #main's
      bottom padding so the empty space (otherwise ~32px) doesn't push the
      Notes header below where other tabs render. The tab bar lives in

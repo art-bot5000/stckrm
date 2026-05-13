@@ -10535,15 +10535,6 @@ function showView(name, btn) {
     window._previousMainView = name;
   }
   document.body.classList.toggle('burger-view-active', isBurgerView);
-  // Update back-bar label so the user sees which page they're on alongside
-  // the back arrow. e.g. "Back · Settings".
-  if (isBurgerView) {
-    const labelEl = document.getElementById('burger-view-back-label');
-    if (labelEl) {
-      const LABELS = { report: 'Report', billing: 'Billing', settings: 'Settings', 'account-security': 'Account & Security' };
-      labelEl.textContent = 'Back · ' + (LABELS[name] || name);
-    }
-  }
   if (_householdEnabled) pushPresence();
   updateFab(name);
   // Clear grocery done-slide when leaving grocery view

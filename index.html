@@ -1651,19 +1651,18 @@
     <button class="tab" onclick="showView('settings',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg> <span>Settings</span></button>
   </div>
 
-  <!-- Mobile back-bar — replaces the tab grid on burger-menu views (Report,
-       Billing, Settings, Account & Security). Hidden by default; CSS shows
-       it only when body.burger-view-active is set AND on mobile. The label
-       is set dynamically by showView so the user sees which page they're
-       on (e.g. "← Back · Settings"). -->
-  <div id="burger-view-back-bar" style="display:none">
-    <button type="button" onclick="backFromBurgerView()" aria-label="Go back">
-      <svg class="icon icon-lg" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
-      <span id="burger-view-back-label">Back</span>
-    </button>
-  </div>
-
   </div><!-- /tabs-sticky-wrap -->
+
+  <!-- Floating back button for burger-menu views (Report, Billing, Settings,
+       Account & Security). Mobile-only; CSS shows it when body.burger-
+       view-active is set. Positioned absolutely at the top-right of the
+       view-content area so it sits inline with each view's section heading
+       without each H2 needing its own flex wrapper. -->
+  <button id="burger-view-back-btn" type="button" onclick="backFromBurgerView()"
+    aria-label="Go back" title="Back" style="display:none">
+    <svg class="icon icon-lg" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
+  </button>
+
   <div id="view-content">
 
   <!-- STOCK VIEW -->
