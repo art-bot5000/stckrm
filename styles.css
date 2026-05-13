@@ -3521,24 +3521,33 @@ body.has-demo-banner #view-notes #notes-header {
 }
 
 /* ─────────────────────────────────────────────────────────
-   Mobile: bottom-sheet variant
-   ───────────────────────────────────────────────────────── */
+   Mobile: full-screen under the app header
+   ─────────────────────────────────────────────────────────
+   Anchors directly under #app-header (56px tall on mobile) and
+   extends to the bottom of the viewport. Keeps rounded top corners
+   so the panel still reads as a distinct surface separated from the
+   title bar. Slides DOWN from the header on open (was: up from bottom).
+   safe-area-inset-bottom keeps the last row clear of the home-bar
+   gesture area on iOS PWAs and Android 3-button nav. */
 @media (max-width: 600px) {
   .notif-panel {
-    top: auto;
+    top: 56px;
     bottom: 0;
     left: 0;
     right: 0;
     width: 100%;
     max-width: 100%;
-    max-height: 80vh;
+    max-height: none;
+    height: calc(100vh - 56px);
+    height: calc(100dvh - 56px); /* dvh accounts for mobile chrome bars when supported */
     border-radius: 16px 16px 0 0;
     border-bottom: none;
-    transform: translateY(20px) scale(1);
-    box-shadow: 0 -8px 32px rgba(0,0,0,0.5);
+    transform: translateY(-12px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    padding-bottom: env(safe-area-inset-bottom, 0);
   }
   .notif-panel.open {
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
   }
   .notif-panel-header {
     padding: 14px 16px;
