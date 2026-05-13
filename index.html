@@ -2304,6 +2304,24 @@
       </div>
     </div>
 
+    <!-- ── PUSH NOTIFICATIONS ────────────────────────── -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-bell"></use></svg> Notifications</div>
+      <div class="acc-sec-card">
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h"><svg class="icon icon-md" aria-hidden="true"><use href="#i-bell"></use></svg> Push notifications</div>
+            <div class="acc-sec-p" id="push-settings-status">Off — turn on to get reminders even when the app is closed</div>
+            <div class="acc-sec-p" style="margin-top:4px;font-size:11px;color:var(--muted)">Notifications fire across all your devices when enabled.</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost acc-sec-btn" id="push-settings-test-btn" style="display:none" onclick="pushSelfTest()">Test</button>
+            <button class="btn btn-primary acc-sec-btn" id="push-settings-toggle-btn">Enable</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ── DATA ───────────────────────────────────────── -->
     <div class="acc-sec-section" style="margin-bottom:20px">
       <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-package"></use></svg> Data</div>

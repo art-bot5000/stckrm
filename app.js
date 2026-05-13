@@ -3410,7 +3410,377 @@ async function pullBillingNotifications() {
   }
 }
 
-// ── New-device sign-in detection ──────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+// PUSH NOTIFICATIONS (Web Push, Option A — client-prepared payloads)
+// ══════════════════════════════════════════════════════════════════════
+// Architecture summary (see main.ts for the server side):
+//   1. User taps "Enable notifications" → Notification.requestPermission()
+//   2. We call pushManager.subscribe() with the VAPID public key
+//   3. POST the subscription {endpoint, p256dh, auth} to /push/subscribe
+//   4. From then on, when the user wants a future notification to fire
+//      on this or any of their other devices, we encrypt the body with
+//      our data key and POST it to /push/schedule with a dueAt timestamp
+//   5. The server's 5-minute cron dispatches due payloads to all of the
+//      user's subscriptions, fan-out style
+//   6. The SW receives the push, reads the data key from IDB, decrypts,
+//      shows the notification
+//
+// E2E preservation: server sees timing + sourceRef but never content.
+//
+// Public API (call from anywhere):
+//   isPushSupported()         — does this browser/context support push?
+//   isPushSubscribed()        — async; is this device subscribed?
+//   enablePush()              — async; full subscribe flow with UI feedback
+//   disablePush()             — async; unsubscribe + remove on server
+//   schedulePushPayload(args) — async; encrypt + post to /push/schedule
+//   cancelPushPayload(sourceRef) — async; remove a pending push
+//   pushSelfTest()            — async; send a test push to all our subs
+
+const PUSH_VAPID_PUBLIC_KEY_CACHE_KEY = '_pushVapidPublicKey';
+
+function isPushSupported() {
+  return typeof navigator !== 'undefined'
+    && 'serviceWorker' in navigator
+    && 'PushManager' in window
+    && 'Notification' in window;
+}
+
+async function isPushSubscribed() {
+  if (!isPushSupported()) return false;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    return !!sub;
+  } catch (err) { return false; }
+}
+
+// base64url → Uint8Array — used to feed the VAPID public key into
+// pushManager.subscribe()'s applicationServerKey option.
+function _pushB64UrlToUint8Array(b64) {
+  const padded = (b64 + '==='.slice((b64.length + 3) % 4))
+    .replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(padded);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+// Uint8Array → base64 (standard, NOT base64url — what crypto.subtle
+// outputs typically lands in). Used when posting subscription keys.
+function _pushBytesToB64(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s);
+}
+
+// Friendly UA label for the subscription record. Matches the device
+// labelling in _checkAndNotifyNewDevice (kept in sync deliberately).
+function _pushUaLabel() {
+  const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+  if (/iPhone/i.test(ua))   return 'iPhone';
+  if (/iPad/i.test(ua))     return 'iPad';
+  if (/Android/i.test(ua))  return /Mobile/i.test(ua) ? 'Android phone' : 'Android tablet';
+  if (/Macintosh/i.test(ua)) return 'Mac';
+  if (/Windows/i.test(ua))   return 'Windows PC';
+  if (/Linux/i.test(ua))     return 'Linux device';
+  return 'Web';
+}
+
+// Fetch the server's VAPID public key. Cached in localStorage so we
+// don't refetch on every subscribe; it changes very rarely (only if
+// we rotate VAPID keys, which would require all clients to re-sub
+// anyway, at which point we'd bust this cache server-side).
+async function _pushGetVapidPublicKey() {
+  const cached = localStorage.getItem(PUSH_VAPID_PUBLIC_KEY_CACHE_KEY);
+  if (cached) return cached;
+  try {
+    const r = await fetch(`${WORKER_URL}/push/config`);
+    if (!r.ok) return null;
+    const cfg = await r.json();
+    if (!cfg.configured || !cfg.publicKey) return null;
+    localStorage.setItem(PUSH_VAPID_PUBLIC_KEY_CACHE_KEY, cfg.publicKey);
+    return cfg.publicKey;
+  } catch (err) {
+    console.warn('[push] vapid key fetch failed:', err && err.message);
+    return null;
+  }
+}
+
+// Mirror the device id + device secret into IndexedDB so the service
+// worker can read them on push receipt. localStorage is unreachable
+// from the SW context, but IDB is. The secret value isn't "more secret"
+// than the key itself — anything that can read IDB on this origin
+// already has equivalent access — so duplicating it is not a security
+// regression. This must be called after sign-in completes, when both
+// values are available.
+async function _saveDeviceSecretToIdb() {
+  try {
+    const id = getOrCreateDeviceId();
+    const secret = localStorage.getItem('stockroom_device_secret');
+    if (!id || !secret) return;
+    await dbPut('settings', '_pushDeviceId', id);
+    await dbPut('settings', '_pushDeviceSecret', secret);
+  } catch (err) {
+    console.warn('[push] mirror device secret to IDB failed:', err && err.message);
+  }
+}
+
+// Called on sign-out / wipe to remove the mirrored values
+async function _clearDeviceSecretFromIdb() {
+  try {
+    await dbPut('settings', '_pushDeviceId', null);
+    await dbPut('settings', '_pushDeviceSecret', null);
+  } catch (err) { /* non-fatal */ }
+}
+
+async function enablePush() {
+  if (!isPushSupported()) {
+    toast('Push notifications aren\'t supported in this browser');
+    return false;
+  }
+  if (!kvConnected) {
+    toast('Sign in first');
+    return false;
+  }
+  // iOS PWA gate — push only works for home-screen-installed PWAs
+  const isiOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const isStandalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true;
+  if (isiOS && !isStandalone) {
+    toast('Add Stockroom to your home screen first — iOS only allows notifications from installed apps');
+    return false;
+  }
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') {
+      toast(perm === 'denied'
+        ? 'Notifications blocked — enable in browser settings to use this'
+        : 'Notifications not enabled');
+      return false;
+    }
+    const vapidKey = await _pushGetVapidPublicKey();
+    if (!vapidKey) {
+      toast('Push isn\'t configured on the server yet');
+      return false;
+    }
+    const reg = await navigator.serviceWorker.ready;
+    // If we already have a subscription on this device, reuse it. The
+    // server-side subscribe handler is idempotent on deviceId.
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: _pushB64UrlToUint8Array(vapidKey),
+      });
+    }
+    const json = sub.toJSON();
+    const p256dhB64 = json.keys && json.keys.p256dh;
+    const authB64   = json.keys && json.keys.auth;
+    if (!json.endpoint || !p256dhB64 || !authB64) {
+      toast('Subscription incomplete — could not enable');
+      return false;
+    }
+    // Mirror device secret to IDB so the SW can decrypt on push receipt
+    await _saveDeviceSecretToIdb();
+    // POST to server
+    const authBody = _kvSessionToken && !_kvVerifier
+      ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken }
+      : { emailHash: _kvEmailHash, verifier: _kvVerifier };
+    const r = await fetch(`${WORKER_URL}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...authBody,
+        endpoint:  json.endpoint,
+        p256dhB64,
+        authB64,
+        deviceId:  getOrCreateDeviceId(),
+        uaLabel:   _pushUaLabel(),
+      }),
+    });
+    if (!r.ok) {
+      console.warn('[push] server subscribe failed:', r.status);
+      toast('Could not register with server — try again');
+      // Don't unsubscribe locally — we'll retry on next enable
+      return false;
+    }
+    settings.pushEnabled = true;
+    try { await _saveSettings(); } catch(_) {}
+    toast('Notifications enabled ✓');
+    // Audit log notification
+    addNotification({
+      type:      'account',
+      title:     'Push notifications enabled',
+      body:      `You'll receive notifications on ${_pushUaLabel()}.`,
+      sourceRef: `account:push-enabled:${getOrCreateDeviceId()}`,
+    }).catch(_ => {});
+    return true;
+  } catch (err) {
+    console.error('[push] enable failed:', err && err.message);
+    toast('Could not enable: ' + (err && err.message ? err.message : 'unknown'));
+    return false;
+  }
+}
+
+async function disablePush() {
+  if (!isPushSupported()) return false;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) await sub.unsubscribe();
+    // Remove from server
+    if (kvConnected) {
+      const authBody = _kvSessionToken && !_kvVerifier
+        ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken }
+        : { emailHash: _kvEmailHash, verifier: _kvVerifier };
+      await fetch(`${WORKER_URL}/push/unsubscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...authBody, deviceId: getOrCreateDeviceId() }),
+      }).catch(_ => {});
+    }
+    settings.pushEnabled = false;
+    try { await _saveSettings(); } catch(_) {}
+    toast('Notifications disabled');
+    return true;
+  } catch (err) {
+    console.error('[push] disable failed:', err && err.message);
+    toast('Could not disable: ' + (err && err.message ? err.message : 'unknown'));
+    return false;
+  }
+}
+
+// Encrypt a notification body with the user's data key and POST it as
+// a scheduled push. Body shape: { title: string, body?: string, url?: string }
+// The server only sees ciphertext + sourceRef + dueAt — never the title.
+async function schedulePushNotification({ dueAt, sourceRef, title, body, url, fallbackTitle }) {
+  if (!kvConnected || !_kvKey) return false;
+  if (typeof dueAt !== 'number') return false;
+  if (!sourceRef || !title) return false;
+  try {
+    const plaintext = JSON.stringify({ title, body: body || '', url: url || './' });
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      _kvKey,
+      new TextEncoder().encode(plaintext),
+    );
+    // Prepend iv to ciphertext, base64 the whole thing
+    const combined = new Uint8Array(12 + ciphertext.byteLength);
+    combined.set(iv, 0);
+    combined.set(new Uint8Array(ciphertext), 12);
+    const b64 = btoa(String.fromCharCode(...combined));
+    const authBody = _kvSessionToken && !_kvVerifier
+      ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken }
+      : { emailHash: _kvEmailHash, verifier: _kvVerifier };
+    const r = await fetch(`${WORKER_URL}/push/schedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...authBody,
+        dueAt,
+        sourceRef,
+        ciphertextB64: b64,
+        fallbackTitle: fallbackTitle || 'New Stockroom notification',
+      }),
+    });
+    if (!r.ok) {
+      console.warn('[push] schedule failed:', r.status);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('[push] schedule error:', err && err.message);
+    return false;
+  }
+}
+
+async function cancelPushNotification(sourceRef) {
+  if (!kvConnected || !sourceRef) return false;
+  try {
+    const authBody = _kvSessionToken && !_kvVerifier
+      ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken }
+      : { emailHash: _kvEmailHash, verifier: _kvVerifier };
+    const r = await fetch(`${WORKER_URL}/push/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...authBody, sourceRef }),
+    });
+    return r.ok;
+  } catch (err) {
+    return false;
+  }
+}
+
+async function pushSelfTest() {
+  if (!kvConnected) { toast('Sign in first'); return; }
+  const subbed = await isPushSubscribed();
+  if (!subbed) { toast('Enable push notifications first'); return; }
+  try {
+    const authBody = _kvSessionToken && !_kvVerifier
+      ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken }
+      : { emailHash: _kvEmailHash, verifier: _kvVerifier };
+    const r = await fetch(`${WORKER_URL}/push/self-test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(authBody),
+    });
+    const data = await r.json();
+    if (data.ok) {
+      toast(`Test push sent to ${data.pushed} device${data.pushed === 1 ? '' : 's'}${data.failed ? ` (${data.failed} failed)` : ''}`);
+    } else {
+      toast(data.error || 'Test failed');
+    }
+  } catch (err) {
+    toast('Test failed: ' + (err && err.message));
+  }
+}
+
+// Handle the pushsubscriptionchange message from the SW — re-subscribe
+if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
+  navigator.serviceWorker.addEventListener('message', event => {
+    if (event.data && event.data.type === 'PUSH_SUBSCRIPTION_CHANGE') {
+      console.log('[push] subscription rotated — re-subscribing');
+      enablePush().catch(_ => {});
+    }
+  });
+}
+
+// UI helper for the account security toggle
+async function renderPushSettingsUI() {
+  const labelEl = document.getElementById('push-settings-status');
+  const btnEl   = document.getElementById('push-settings-toggle-btn');
+  const testBtn = document.getElementById('push-settings-test-btn');
+  if (!labelEl || !btnEl) return;
+  if (!isPushSupported()) {
+    labelEl.textContent = 'Not supported in this browser';
+    btnEl.style.display = 'none';
+    if (testBtn) testBtn.style.display = 'none';
+    return;
+  }
+  const subbed = await isPushSubscribed();
+  if (subbed) {
+    labelEl.textContent = 'Enabled on this device';
+    btnEl.textContent = 'Disable';
+    btnEl.onclick = async () => {
+      await disablePush();
+      renderPushSettingsUI();
+    };
+    if (testBtn) testBtn.style.display = 'inline-flex';
+  } else {
+    labelEl.textContent = Notification.permission === 'denied'
+      ? 'Blocked — re-enable in browser settings to use'
+      : 'Off — turn on to get reminders even when the app is closed';
+    btnEl.textContent = 'Enable';
+    btnEl.onclick = async () => {
+      await enablePush();
+      renderPushSettingsUI();
+    };
+    if (testBtn) testBtn.style.display = 'none';
+  }
+}
+
+
 // On every successful sync (which is the first moment `settings` is
 // populated post-sign-in), check whether the current device's ID appears
 // in settings.knownDevices. If not, this is a new device — emit an
@@ -16446,6 +16816,10 @@ async function kvSyncNow(silent = false) {
     // been seen before). Fire-and-forget; helper is single-flight so
     // subsequent syncs don't re-check.
     if (kvConnected) { _checkAndNotifyNewDevice(); }
+    // Also mirror the device secret to IDB so the service worker can
+    // decrypt push payloads. The page can read it from localStorage but
+    // the SW cannot, so we duplicate into IDB which both contexts share.
+    if (kvConnected) { _saveDeviceSecretToIdb().catch(_ => {}); }
   } catch(err) {
     hideDataLoadingOverlay();
     console.error('KV sync error:', err);
@@ -16567,6 +16941,9 @@ async function kvSignOut() {
   _kvKey          = null;
   _shareState     = null;
   _newDeviceCheckDone = false; // re-arm check for the next sign-in
+  // Remove the IDB-mirrored device secret so the SW can no longer decrypt
+  // push payloads after sign-out
+  _clearDeviceSecretFromIdb().catch(_ => {});
   // Show login screen (fallback — full reload happens via the setTimeout
   // scheduled at the top of this function)
   document.body.classList.add('wizard-active'); document.getElementById('wizard').style.display = 'flex';
@@ -31752,6 +32129,9 @@ function renderAccountSecurity() {
 
   // MFA status
   _updateMfaSettingsUI();
+
+  // Push notification toggle status
+  renderPushSettingsUI().catch(_ => {});
 
   // Load passkeys into account security list
   if (kvConnected) {
