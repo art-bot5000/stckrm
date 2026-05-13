@@ -532,6 +532,39 @@
       max-width: 100%;
     }
 
+    /* ── BURGER-VIEW BACK BAR ──
+       On mobile, when the user navigates into a burger-menu page (Report,
+       Billing, Settings, Account & Security), hide the 3×2 tab grid and
+       show a single back button instead. Removes nav clutter from screens
+       the user explicitly drilled into. Pattern set by body.burger-view-
+       active in showView(). */
+    body.burger-view-active #tabs { display: none; }
+    body.burger-view-active #burger-view-back-bar {
+      display: flex !important;
+      align-items: center;
+      padding: 4px;
+    }
+    #burger-view-back-bar button {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      font-weight: 600;
+      padding: 10px 14px;
+      border-radius: 8px;
+      transition: background 0.15s;
+    }
+    #burger-view-back-bar button:hover,
+    #burger-view-back-bar button:active {
+      background: var(--surface2);
+    }
+    #burger-view-back-bar button .icon { color: var(--muted); }
+
     /* ── CARDS: single column, slightly more padding ── */
     #items-grid { grid-template-columns: 1fr; gap: 12px; }
 
@@ -1308,9 +1341,13 @@
 #view-account-security.active { display:block !important; }
 /* Settings view — same width as Account & Security */
 #view-settings { max-width:680px; }
-/* Ensure acc-sec rows use flex regardless of any settings overrides */
-.acc-sec-card .acc-sec-row { display:flex !important; }
-.acc-sec-card .acc-sec-row.acc-sec-row-block { flex-direction:column !important; }
+/* Ensure acc-sec rows use flex regardless of any settings overrides — but
+   skip rows that have been explicitly hidden via inline style="display:none"
+   (e.g. #household-joined-section, which is only shown when _shareState is
+   set). Without the :not() guard the !important rule forces every row
+   visible, including ones the JS specifically hid. */
+.acc-sec-card .acc-sec-row:not([style*="display:none"]):not([style*="display: none"]) { display:flex !important; }
+.acc-sec-card .acc-sec-row.acc-sec-row-block:not([style*="display:none"]):not([style*="display: none"]) { flex-direction:column !important; }
 .acc-sec-section-title { font-size:11px; font-weight:700; color:var(--muted); font-family:var(--mono); letter-spacing:1.5px; text-transform:uppercase; margin-bottom:10px; padding-left:2px; }
 .acc-sec-card { background:var(--surface); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
 .acc-sec-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 18px; border-bottom:1px solid var(--border); }

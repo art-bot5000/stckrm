@@ -10522,6 +10522,28 @@ function showView(name, btn) {
   // empty #main when Notes is active — otherwise its empty padding leaves a
   // visual gap above the Notes header on mobile.
   document.body.classList.toggle('notes-view-active', name === 'notes');
+  // Burger-menu views (Report / Billing / Settings / Account & Security) get
+  // a body class so mobile CSS can hide the tab bar and show a back button
+  // instead. Keeps the screen focused on the section the user navigated into
+  // from the burger. _previousMainView remembers the last non-burger view so
+  // the back button knows where to return.
+  const BURGER_VIEWS = ['report', 'billing', 'settings', 'account-security'];
+  const isBurgerView = BURGER_VIEWS.includes(name);
+  if (!isBurgerView) {
+    // Remember every non-burger view we visit. When the user later taps a
+    // burger-menu item, the back button can return them here.
+    window._previousMainView = name;
+  }
+  document.body.classList.toggle('burger-view-active', isBurgerView);
+  // Update back-bar label so the user sees which page they're on alongside
+  // the back arrow. e.g. "Back · Settings".
+  if (isBurgerView) {
+    const labelEl = document.getElementById('burger-view-back-label');
+    if (labelEl) {
+      const LABELS = { report: 'Report', billing: 'Billing', settings: 'Settings', 'account-security': 'Account & Security' };
+      labelEl.textContent = 'Back · ' + (LABELS[name] || name);
+    }
+  }
   if (_householdEnabled) pushPresence();
   updateFab(name);
   // Clear grocery done-slide when leaving grocery view
@@ -10556,6 +10578,16 @@ function navTo(name) {
     return oc.includes(`'${name}'`);
   });
   showView(name, tabBtn || { classList: { add: () => {}, remove: () => {} } });
+}
+
+// Back navigation from a burger-menu view (Report / Billing / Settings /
+// Account & Security). Called by the mobile back button that replaces the
+// tab bar on those views. Returns to whichever non-burger view the user
+// last visited, falling back to Stockroom if there's no record. _previous-
+// MainView is set in showView whenever the user lands on a non-burger view.
+function backFromBurgerView() {
+  const target = window._previousMainView || 'stock';
+  navTo(target);
 }
 
 // Update sidebar profile label and sync state

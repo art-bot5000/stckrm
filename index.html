@@ -1484,6 +1484,15 @@
   </div>
   <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
     <div id="presence-bar" style="display:none"></div>
+    <!-- Notification bell — anchors the notification panel dropdown. The
+         badge is a small counter element that's hidden when there are no
+         unread items. See _renderNotificationBellBadge in app.js. -->
+    <button id="notif-bell-btn" type="button" onclick="toggleNotificationPanel()"
+      aria-label="Notifications" title="Notifications"
+      style="background:none;border:none;cursor:pointer;padding:4px 6px;position:relative;display:flex;align-items:center;color:var(--muted);border-radius:8px">
+      <svg class="icon icon-lg" aria-hidden="true"><use href="#i-bell"></use></svg>
+      <span id="notif-bell-badge" class="notif-bell-badge" style="display:none">0</span>
+    </button>
     <button id="header-shield-btn" onclick="navTo('account-security')"
       title="Account &amp; Security"
       style="background:none;border:none;cursor:pointer;padding:4px 2px;display:flex;align-items:center;color:var(--muted)"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-shield"></use></svg></button>
@@ -1493,15 +1502,6 @@
     </div>
     <button class="btn btn-ghost btn-sm" onclick="openQuickAdd()" title="Quick add multiple items"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg></button>
     <button class="btn btn-primary btn-sm" onclick="openAddModal()">+ Add Item</button>
-	<!-- Notification bell — anchors the notification panel dropdown. The
-         badge is a small counter element that's hidden when there are no
-         unread items. See _renderNotificationBellBadge in app.js. -->
-    <button id="notif-bell-btn" type="button" onclick="toggleNotificationPanel()"
-      aria-label="Notifications" title="Notifications"
-      style="background:none;border:none;cursor:pointer;padding:4px 6px;position:relative;display:flex;align-items:center;color:var(--muted);border-radius:8px">
-      <svg class="icon icon-lg" aria-hidden="true"><use href="#i-bell"></use></svg>
-      <span id="notif-bell-badge" class="notif-bell-badge" style="display:none">0</span>
-    </button>
     <!-- Burger menu (mobile only, hidden via CSS on desktop) — opens an
          overlay containing the secondary nav items: Report, Billing,
          Settings, Account & Security. -->
@@ -1649,6 +1649,18 @@
     <button class="tab" onclick="showView('report',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> <span>Report</span></button>
     <button class="tab" onclick="showView('billing',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg> <span>Billing</span></button>
     <button class="tab" onclick="showView('settings',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg> <span>Settings</span></button>
+  </div>
+
+  <!-- Mobile back-bar — replaces the tab grid on burger-menu views (Report,
+       Billing, Settings, Account & Security). Hidden by default; CSS shows
+       it only when body.burger-view-active is set AND on mobile. The label
+       is set dynamically by showView so the user sees which page they're
+       on (e.g. "← Back · Settings"). -->
+  <div id="burger-view-back-bar" style="display:none">
+    <button type="button" onclick="backFromBurgerView()" aria-label="Go back">
+      <svg class="icon icon-lg" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
+      <span id="burger-view-back-label">Back</span>
+    </button>
   </div>
 
   </div><!-- /tabs-sticky-wrap -->
