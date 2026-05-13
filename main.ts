@@ -1534,6 +1534,26 @@ async function queueBillingNotification(
     expireIn: BILLING_NOTIF_TTL_MS,
   });
   console.log(`[billing-notif] queued ${emailHash.slice(0,8)} ${payload.subtype} ${payload.sourceRef}`);
+
+  // Also fan out as a push to any subscribed devices. Server-side billing
+  // content is not user-generated and the push relay already knows this
+  // user has a Stockroom account (they have a subscription with us), so
+  // we accept the small visibility leak of "title visible to push relay"
+  // in exchange for the user actually seeing the notification on their
+  // phone. Pushes use the fallbackTitle path — no ciphertext, since the
+  // server has no access to the user's data key.
+  try {
+    const pushPayload: ScheduledPushPayload = {
+      id:            crypto.randomUUID(),
+      dueAt:         Date.now(),
+      sourceRef:     payload.sourceRef,
+      ciphertextB64: '', // empty → SW falls back to fallbackTitle
+      fallbackTitle: payload.title,
+    };
+    await schedulePushPayload(emailHash, pushPayload);
+  } catch (err) {
+    console.warn(`[billing-notif] push schedule failed (in-app still delivered): ${(err as Error).message}`);
+  }
 }
 
 async function listBillingNotifications(emailHash: string): Promise<QueuedBillingNotification[]> {
@@ -2448,6 +2468,46 @@ async function runBillingMigration(): Promise<void> {
 runBillingMigration().catch(err => {
   console.error('Billing migration: unhandled error:', err);
 });
+
+// ── Internal push dispatch scheduler ──────────────────────────────────
+// Runs runPushDispatch() every 5 minutes from this same Deno process,
+// so we don't need an external cron / scheduled machine. Fly keeps the
+// app machine alive 24/7, so the interval just keeps ticking.
+//
+// Single-flight: if a previous tick is still working (slow KV scan,
+// transient network, etc.), we skip rather than queue. The next tick
+// will pick up whatever is due. Total volume is small enough that
+// 5-minute granularity is plenty.
+//
+// Disabled when VAPID isn't configured (e.g. on staging without secrets
+// set) so we don't log warnings on every tick.
+const PUSH_DISPATCH_INTERVAL_MS = 5 * 60 * 1000;
+let _pushDispatchInflight = false;
+async function _pushDispatchTick(): Promise<void> {
+  if (_pushDispatchInflight) {
+    console.log('[push-dispatch] previous tick still running — skipping');
+    return;
+  }
+  if (!vapidConfigured()) return;
+  _pushDispatchInflight = true;
+  try {
+    const stats = await runPushDispatch();
+    if (stats.users > 0 || stats.payloads > 0) {
+      console.log(`[push-dispatch] tick users=${stats.users} payloads=${stats.payloads} pushes=${stats.pushes} failures=${stats.failures} unsubscribed=${stats.unsubscribed}`);
+    }
+  } catch (err) {
+    console.error('[push-dispatch] tick error:', (err as Error).message);
+  } finally {
+    _pushDispatchInflight = false;
+  }
+}
+// Stagger the first tick by ~30 seconds so it doesn't race startup work.
+// Then keep firing every 5 minutes for the lifetime of the process.
+setTimeout(() => {
+  _pushDispatchTick().catch(_ => {});
+  setInterval(() => { _pushDispatchTick().catch(_ => {}); }, PUSH_DISPATCH_INTERVAL_MS);
+}, 30_000);
+console.log(`[push-dispatch] internal scheduler armed — interval ${PUSH_DISPATCH_INTERVAL_MS / 1000}s`);
 
 // ═══════════════════════════════════════════════════════════
 //  REFERRALS — Phase 3
