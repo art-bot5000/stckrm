@@ -1471,6 +1471,101 @@ async function gateFeature(
   return { ok: true, status: 200, reason: 'ok' };
 }
 
+// ── Billing notification queue ────────────────────────────────────────
+// Webhook handlers can't write into the user's *encrypted* notification
+// inbox (the server doesn't have their key). Instead we queue notifications
+// in a plaintext side-namespace, and the client absorbs+acks them on its
+// next billing/status poll. Notification *content* here is billing/account
+// metadata (subscription state, payment outcomes, referral progress) — it's
+// not user-generated data, so storing in plaintext doesn't violate the E2E
+// guarantee.
+//
+// KV layout:
+//   ['billing_notif_queue', emailHash, notifId] → QueuedBillingNotification
+//
+// Lifecycle: server pushes via queueBillingNotification(), client pulls all
+// via GET-style POST endpoint, then POSTs ack with ids → server deletes.
+// 30-day TTL on each entry as a safety net so unacked notifs don't pile up
+// for accounts that never come back online.
+//
+// Dedupe: queueBillingNotification skips the push if any existing entry
+// for the same (emailHash, sourceRef) is unacked. Client-side dedupe in
+// addNotification provides a second safety net.
+interface QueuedBillingNotification {
+  id:         string;
+  type:       'billing' | 'account';
+  subtype:    string;   // e.g. 'upgrade', 'payment-failed', 'referral-qualified'
+  title:      string;
+  body:       string;
+  sourceRef:  string;   // dedupe key, e.g. 'billing:upgrade:sub_1ABC'
+  createdAt:  number;   // unix seconds
+}
+
+const BILLING_NOTIF_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+async function queueBillingNotification(
+  emailHash: string,
+  payload: Omit<QueuedBillingNotification, 'id' | 'createdAt'>
+): Promise<void> {
+  if (!emailHash) return;
+  // Dedupe by sourceRef — scan the user's queue and skip if a notification
+  // with the same sourceRef is already pending. This protects against the
+  // same Stripe event being processed twice (idempotency middleware should
+  // catch most, but webhooks can retry on transient errors).
+  try {
+    const iter = kv.list({ prefix: ['billing_notif_queue', emailHash] });
+    for await (const entry of iter) {
+      const existing = entry.value as QueuedBillingNotification | null;
+      if (existing && existing.sourceRef === payload.sourceRef) {
+        console.log(`[billing-notif] dedupe skip ${emailHash.slice(0,8)} ${payload.sourceRef}`);
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn(`[billing-notif] dedupe scan failed (continuing): ${(err as Error).message}`);
+  }
+  const id = crypto.randomUUID();
+  const entry: QueuedBillingNotification = {
+    id,
+    createdAt: Math.floor(Date.now() / 1000),
+    ...payload,
+  };
+  await kvSet(['billing_notif_queue', emailHash, id], JSON.stringify(entry), {
+    expireIn: BILLING_NOTIF_TTL_MS,
+  });
+  console.log(`[billing-notif] queued ${emailHash.slice(0,8)} ${payload.subtype} ${payload.sourceRef}`);
+}
+
+async function listBillingNotifications(emailHash: string): Promise<QueuedBillingNotification[]> {
+  const out: QueuedBillingNotification[] = [];
+  const iter = kv.list({ prefix: ['billing_notif_queue', emailHash] });
+  for await (const entry of iter) {
+    try {
+      const parsed: QueuedBillingNotification = typeof entry.value === 'string'
+        ? JSON.parse(entry.value)
+        : (entry.value as QueuedBillingNotification);
+      if (parsed && parsed.id) out.push(parsed);
+    } catch (err) {
+      console.warn(`[billing-notif] bad entry for ${emailHash.slice(0,8)}: ${(err as Error).message}`);
+    }
+  }
+  return out;
+}
+
+async function ackBillingNotifications(emailHash: string, ids: string[]): Promise<number> {
+  let deleted = 0;
+  for (const id of ids) {
+    if (typeof id !== 'string' || !id) continue;
+    try {
+      await kv.delete(['billing_notif_queue', emailHash, id]);
+      deleted++;
+    } catch (err) {
+      console.warn(`[billing-notif] ack delete failed ${id}: ${(err as Error).message}`);
+    }
+  }
+  return deleted;
+}
+
 async function handleStripeEvent(event: any): Promise<void> {
   const type: string = event.type;
   const obj = event?.data?.object || {};
@@ -1560,6 +1655,10 @@ async function _handleSubscriptionUpsert(emailHash: string, sub: any): Promise<v
     console.log(`[stripe-webhook] ignoring subscription update for grandfathered ${emailHash}`);
     return;
   }
+  // Capture prior state BEFORE mutation so we can detect transitions for
+  // notification emission.
+  const priorStatus = acct.status;
+  const priorCancelAtPeriodEnd = !!acct.cancelAtPeriodEnd;
   acct.stripeSubscriptionId = sub.id;
   // Stripe statuses: trialing, active, past_due, canceled, unpaid, incomplete, incomplete_expired
   // Map onto our schema:
@@ -1580,16 +1679,111 @@ async function _handleSubscriptionUpsert(emailHash: string, sub: any): Promise<v
   if (sub.default_payment_method) acct.cardOnFile = true;
   await setBillingAccount(emailHash, acct);
   console.log(`[stripe-webhook] sub ${sub.id} status=${sub.status} -> local status=${acct.status}`);
+
+  // ── Notification emission ────────────────────────────────────────────
+  // Emit only on TRUE state transitions so users don't get spammed when
+  // Stripe sends multiple `customer.subscription.updated` events for the
+  // same logical change (it sometimes does — e.g. card update + period
+  // recalc within seconds of each other).
+  //
+  // Source refs are versioned by sub.id so resubscribing produces a new
+  // welcome notification rather than dedupe-suppressing it.
+  if (priorStatus !== acct.status) {
+    // Going from {free, none, canceled, undefined} → trialing/active
+    // is the "welcome to Pro" moment.
+    if ((priorStatus === 'free' || priorStatus === 'none' || priorStatus === 'canceled' || priorStatus === undefined)
+        && (acct.status === 'trialing' || acct.status === 'active')) {
+      await queueBillingNotification(emailHash, {
+        type:      'billing',
+        subtype:   'upgrade',
+        title:     acct.status === 'trialing' ? 'Welcome to Stockroom Pro — trial started' : 'Welcome to Stockroom Pro',
+        body:      'Photos, grocery mode, notes, and email reminders are now unlocked on this account.',
+        sourceRef: `billing:upgrade:${sub.id}`,
+      });
+    }
+    // Going active → past_due means a payment failed since the last event.
+    // The invoice.payment_failed handler also emits a notification — but
+    // that event sometimes lands AFTER the subscription update, so we
+    // emit here too. The shared sourceRef (`billing:past-due:<sub-id>`)
+    // means the second emit dedupes.
+    if (acct.status === 'past_due' && priorStatus !== 'past_due') {
+      await queueBillingNotification(emailHash, {
+        type:      'billing',
+        subtype:   'payment-failed',
+        title:     'Payment problem',
+        body:      'We couldn\'t process your latest payment. Update your card to keep your subscription active.',
+        sourceRef: `billing:past-due:${sub.id}`,
+      });
+    }
+    // Recovered from past_due back to active — let them know payment went through.
+    if (priorStatus === 'past_due' && acct.status === 'active') {
+      await queueBillingNotification(emailHash, {
+        type:      'billing',
+        subtype:   'payment-recovered',
+        title:     'Payment received',
+        body:      'Your subscription is back to active.',
+        sourceRef: `billing:recovered:${sub.id}:${acct.currentPeriodEnd || ''}`,
+      });
+    }
+    // Cancellation taking effect (vs scheduled — see cancelAtPeriodEnd below).
+    if (acct.status === 'canceled' && priorStatus !== 'canceled') {
+      await queueBillingNotification(emailHash, {
+        type:      'billing',
+        subtype:   'canceled',
+        title:     'Subscription cancelled',
+        body:      'Your Stockroom Pro plan has ended. Your data stays — you can resubscribe at any time.',
+        sourceRef: `billing:canceled:${sub.id}`,
+      });
+    }
+  }
+  // Schedule-to-cancel transition (separate from immediate cancel): the
+  // user clicked "Cancel" but they still have time on the clock until
+  // currentPeriodEnd. Worth a notification because they may want to undo.
+  if (acct.cancelAtPeriodEnd && !priorCancelAtPeriodEnd) {
+    const endsLabel = acct.currentPeriodEnd
+      ? new Date(acct.currentPeriodEnd * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+      : 'the end of this period';
+    await queueBillingNotification(emailHash, {
+      type:      'billing',
+      subtype:   'cancel-scheduled',
+      title:     'Cancellation scheduled',
+      body:      `Your subscription will end on ${endsLabel}. You can resume any time before then.`,
+      sourceRef: `billing:cancel-scheduled:${sub.id}:${acct.currentPeriodEnd || ''}`,
+    });
+  }
+  // Resumed a previously-scheduled cancellation.
+  if (!acct.cancelAtPeriodEnd && priorCancelAtPeriodEnd && acct.status === 'active') {
+    await queueBillingNotification(emailHash, {
+      type:      'billing',
+      subtype:   'cancel-resumed',
+      title:     'Subscription resumed',
+      body:      'You\'re no longer scheduled to cancel — your subscription continues.',
+      sourceRef: `billing:cancel-resumed:${sub.id}:${acct.currentPeriodEnd || ''}`,
+    });
+  }
 }
 
 async function _handleSubscriptionDeleted(emailHash: string, sub: any): Promise<void> {
   const acct = await ensureBillingAccount(emailHash);
   if (acct.grandfathered) return;
+  const wasActive = acct.status !== 'canceled' && acct.status !== 'free' && acct.status !== 'none';
   acct.status = 'canceled';
   acct.cancelAtPeriodEnd = false;
   // Keep stripeSubscriptionId for historical reference; the user might
   // resubscribe and we'll create a new one on the next checkout.
   await setBillingAccount(emailHash, acct);
+  // Only emit if this represents a real transition. If the subscription
+  // was already canceled before this hard-delete event, we already sent
+  // a "Subscription cancelled" notification via _handleSubscriptionUpsert.
+  if (wasActive) {
+    await queueBillingNotification(emailHash, {
+      type:      'billing',
+      subtype:   'canceled',
+      title:     'Subscription ended',
+      body:      'Your Stockroom Pro plan has ended. Your data stays — you can resubscribe at any time.',
+      sourceRef: `billing:canceled:${sub.id}`,
+    });
+  }
 }
 
 // Stripe sends this 3 days before a Stripe-side trial ends. We use it as
@@ -1597,8 +1791,17 @@ async function _handleSubscriptionDeleted(emailHash: string, sub: any): Promise<
 // event will not fire — we handle that separately via a daily cron. For
 // users who have moved to a Stripe trial (added card), this fires.
 async function _handleTrialWillEnd(emailHash: string, sub: any): Promise<void> {
-  // Phase 2: just log. Email in a future polish pass.
   console.log(`[stripe-webhook] trial_will_end for ${emailHash}, ends at ${sub.trial_end}`);
+  const endsLabel = typeof sub.trial_end === 'number'
+    ? new Date(sub.trial_end * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    : 'soon';
+  await queueBillingNotification(emailHash, {
+    type:      'billing',
+    subtype:   'trial-ending',
+    title:     'Your trial is ending soon',
+    body:      `Your free trial ends on ${endsLabel}. Add a payment method to keep Pro features active.`,
+    sourceRef: `billing:trial-ending:${sub.id}`,
+  });
 }
 
 // Successful payment. Sync any subscription changes (period rolled forward,
@@ -1611,6 +1814,26 @@ async function _handleInvoicePaid(emailHash: string, invoice: any): Promise<void
     await _handleSubscriptionUpsert(emailHash, sub);
   } catch (err) {
     console.error(`[stripe-webhook] failed to fetch subscription ${invoice.subscription}:`, (err as Error).message);
+  }
+  // Renewal receipt notification. We only emit on RENEWALS (billing_reason
+  // = subscription_cycle), not the first invoice — the first invoice's
+  // success is already covered by the "Welcome to Pro" notification from
+  // _handleSubscriptionUpsert. Emitting both would be redundant clutter.
+  if (invoice.billing_reason === 'subscription_cycle') {
+    const amount = typeof invoice.amount_paid === 'number'
+      ? (invoice.amount_paid / 100).toFixed(2)
+      : null;
+    const currency = (typeof invoice.currency === 'string' ? invoice.currency.toUpperCase() : '');
+    const amountLabel = amount
+      ? (currency === 'GBP' ? `£${amount}` : currency === 'USD' ? `$${amount}` : currency === 'EUR' ? `€${amount}` : `${amount} ${currency}`)
+      : 'your subscription';
+    await queueBillingNotification(emailHash, {
+      type:      'billing',
+      subtype:   'renewal',
+      title:     'Payment received',
+      body:      `${amountLabel} charged for your Stockroom Pro renewal.`,
+      sourceRef: `billing:renewal:${invoice.id}`,
+    });
   }
   // Advance the referral state machine if this user is a referee.
   // Each successful invoice (1st → converted, 2nd → qualified). Idempotent
@@ -1625,6 +1848,16 @@ async function _handleInvoiceFailed(emailHash: string, invoice: any): Promise<vo
   acct.status = 'past_due';
   await setBillingAccount(emailHash, acct);
   console.log(`[stripe-webhook] invoice.payment_failed for ${emailHash}, marked past_due`);
+  // Notification — shared sourceRef prefix with the subscription-upsert
+  // past_due emit so we don't double-notify if both events land.
+  const subId = invoice.subscription || 'unknown';
+  await queueBillingNotification(emailHash, {
+    type:      'billing',
+    subtype:   'payment-failed',
+    title:     'Card declined',
+    body:      'We couldn\'t process your latest payment. Update your card to keep your subscription active.',
+    sourceRef: `billing:past-due:${subId}`,
+  });
 }
 
 async function _handlePaymentMethodAttached(emailHash: string, pm: any): Promise<void> {
@@ -2129,6 +2362,17 @@ async function processInvoiceForReferral(refereeHash: string): Promise<void> {
     await setReferralSignup(refereeHash, signup);
     await _bumpReferrerStat(signup.referrerHash, 'convertedCount', 1);
     console.log(`[referral] ${refereeHash.slice(0,8)} converted (1st payment)`);
+    // Notify the REFERRER that someone they referred just made their
+    // first payment. This is a "progress" notification — they don't get
+    // a free month yet (that's at qualification), but they should know
+    // their referral is on track.
+    await queueBillingNotification(signup.referrerHash, {
+      type:      'billing',
+      subtype:   'referral-converted',
+      title:     'Your referral made their first payment',
+      body:      'One more payment and you\'ll earn a free month of Stockroom Pro.',
+      sourceRef: `billing:referral-converted:${refereeHash}`,
+    });
     return;
   }
 
@@ -2157,6 +2401,14 @@ async function processInvoiceForReferral(refereeHash: string): Promise<void> {
     console.log(`[referral] ${refereeHash.slice(0,8)} QUALIFIED — referrer ${signup.referrerHash.slice(0,8)} got 30 days`);
     // Send referrer email (best-effort, async)
     _sendReferrerQualifiedEmail(signup.referrerHash).catch(_ => {});
+    // Notify the REFERRER — they just earned a free month.
+    await queueBillingNotification(signup.referrerHash, {
+      type:      'billing',
+      subtype:   'referral-qualified',
+      title:     'You earned a free month',
+      body:      'Your referral made their second payment — we\'ve added a free month of Stockroom Pro to your account.',
+      sourceRef: `billing:referral-qualified:${refereeHash}`,
+    });
   }
 }
 
@@ -2198,6 +2450,36 @@ Deno.serve(async (request) => {
       if (_authFail) return _authFail;
       const status = await getBillingStatusForUser(emailHash);
       return json(status, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Billing: pending notifications queue ──
+  // Returns server-queued billing/account notifications for this user.
+  // The client absorbs each one into its encrypted notification inbox
+  // (via addNotification, which handles dedupe), then POSTs the ids back
+  // to /billing/ack-notifications to remove them from the queue.
+  if (url.pathname === '/billing/pending-notifications' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      const items = await listBillingNotifications(emailHash);
+      return json({ items }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Billing: ack notifications ──
+  // Takes a list of ids previously returned by /billing/pending-notifications
+  // and removes them from the queue. Idempotent: acking an id that's
+  // already gone is a no-op.
+  if (url.pathname === '/billing/ack-notifications' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, ids } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      if (!Array.isArray(ids)) return json({ error: 'ids must be an array' }, corsHeaders, 400);
+      const deleted = await ackBillingNotifications(emailHash, ids);
+      return json({ ok: true, deleted }, corsHeaders);
     } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
   }
 
