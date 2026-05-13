@@ -653,9 +653,15 @@
     #app-header .btn-ghost { display:none; }
     /* Keep sync pill visible */
     #app-header #sync-pill { display:flex; }
-    /* Grocery and reminders header action buttons too */
-    #view-grocery > div:first-child .btn-primary,
-    #view-grocery > div:first-child .btn-ghost,
+    /* Grocery and reminders header action buttons too.
+       NOTE: scoped to #grocery-sticky-header (the desktop header row) so we
+       don't accidentally hide buttons in the mobile #grocery-fs-header,
+       which is a sibling div added before the sticky header — without
+       this scope, the more general "> div:first-child" selector matched
+       the FS header and hid its action buttons (Start Shopping, Done,
+       back arrow, edit pencil). */
+    #grocery-sticky-header .btn-primary,
+    #grocery-sticky-header .btn-ghost,
     #view-reminders > div:first-child .btn-primary { display:none; }
     /* Add padding to bottom of views so FAB doesn't overlap last items */
     #view-stock, #view-grocery, #view-reminders { padding-bottom: 110px; }
