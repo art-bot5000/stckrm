@@ -1777,14 +1777,13 @@
     <!-- Health dashboard -->
     <div id="health-dashboard" style="display:flex;gap:8px;flex-wrap:wrap"></div>
 
-    <!-- Stockroom search + filters/sort: stacked on mobile, side-by-side on desktop.
-         Three flex children: search (1 card width), filters button (½ card), sort select (½ card). -->
+    <!-- Stockroom filters/sort toolbar. The inline #stock-search input that
+         used to sit here was removed when the global search took over; the
+         filters button and sort select now anchor to the left where the
+         search used to be. Wrapper IDs are preserved so the existing CSS
+         (with its mobile/desktop sizing rules) keeps working without a
+         second sweep. -->
     <div id="stock-search-toolbar" style="display:flex;gap:10px;margin-bottom:10px">
-      <div id="stock-search-wrap">
-        <input id="stock-search" type="search" placeholder="Search items…" autocomplete="off"
-          class="grocery-search" style="width:100%;box-sizing:border-box;height:36px"
-          oninput="renderGrid()">
-      </div>
       <div id="stock-toolbar-wrap">
         <button class="btn btn-ghost btn-sm" id="filter-toggle-btn" onclick="toggleFilters()"
           style="display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:36px">
@@ -2830,16 +2829,9 @@
         <svg class="icon" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
       </button>
       <div class="grocery-fs-title" id="grocery-fs-title">List</div>
-      <!-- Inline search: input expands leftward from behind the icon. When
-           collapsed, it has 0 width and 0 opacity so it's invisible but
-           keeps its tab order. When expanded (grocery-fs-search-open class
-           on the topbar), it grows to fill the space between the back arrow
-           and the search icon. -->
-      <input class="grocery-search grocery-fs-search-inline" id="grocery-fs-search-input"
-        type="search" placeholder="Search items…" oninput="renderGrocery()" autocomplete="off">
-      <button class="grocery-fs-iconbtn" id="grocery-fs-search-toggle" onclick="_toggleGroceryFsSearch()" aria-label="Search">
-        <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
-      </button>
+      <!-- Previously: an expandable inline search input + magnifier toggle
+           lived here. Both were removed when the global search took over.
+           The title now extends to fill the row's full width. -->
     </div>
     <!-- Mode bar (mirrors the phase bar, but lives in the sticky header) -->
     <div id="grocery-fs-mode-bar" class="grocery-fs-mode-bar"></div>
@@ -2858,7 +2850,6 @@
     </div>
   </div>
   <div class="grocery-toolbar">
-    <input class="grocery-search" id="grocery-search" type="search" placeholder="Search items…" oninput="renderGrocery()" autocomplete="off">
     <div class="grocery-sort-toggle">
       <button class="grocery-sort-btn active" id="grocery-sort-dept" onclick="setGrocerySort('dept',this)">By Dept</button>
       <button class="grocery-sort-btn" id="grocery-sort-alpha" onclick="setGrocerySort('alpha',this)">A–Z</button>
@@ -4007,10 +3998,6 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
       <p style="font-size:12px;color:var(--muted);margin-top:3px">Personal encrypted notes</p>
     </div>
     <button class="btn btn-primary btn-sm" onclick="openNoteEditor(null)">+ New note</button>
-  </div>
-  <div style="position:relative;margin-bottom:12px">
-    <input type="text" id="notes-search" class="grocery-search" placeholder="Search notes…" oninput="filterNotes(this.value)" autocomplete="off" style="padding-left:36px">
-    <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none;display:flex;align-items:center"><svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg></span>
   </div>
   <div id="notes-chips" style="display:flex;gap:8px;margin-bottom:16px;overflow-x:auto;padding-bottom:2px">
     <button class="note-chip active" onclick="setNotesFilter('all',this)">All</button>

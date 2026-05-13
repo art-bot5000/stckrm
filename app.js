@@ -1676,7 +1676,6 @@ let activeProfile = 'default'; // household profile key
 // ── Notes state ───────────────────────────────────────────
 let notes = [];                    // array of note metadata + body (unlocked) or no body (locked)
 let _notesFilter = 'all';          // 'all'|'pinned'|'archived'|'trash'
-let _notesSearch = '';
 let _editingNoteId = null;         // currently open note id
 let _noteUnlocked = new Map();     // noteId → { body, lastActivity, inactivityTimer }
 let _noteColourPickerOpen = false;
@@ -7860,7 +7859,9 @@ function renderAll() { scheduleRender(...RENDER_REGIONS); }
 function renderGrid() {
   const threshold   = settings.threshold;
   const grid        = document.getElementById('items-grid');
-  const stockSearch = (document.getElementById('stock-search')?.value || '').toLowerCase().trim();
+  // Stockroom's inline #stock-search input was removed when the global
+  // search took over — there's nothing to read here anymore. Filters /
+  // sort / cadence / rating / store / tag controls below all still apply.
 
   // Defensive guard — should never happen but prevents blank screens
   if (!Array.isArray(items)) {
@@ -7877,16 +7878,7 @@ function renderGrid() {
     if (item._archived && activeFilter !== 'archived') return false;
     if (!item._archived && activeFilter === 'archived') return false;
     if (activeFilter === 'archived') {
-      if (stockSearch && !item.name.toLowerCase().includes(stockSearch) &&
-          !(item.notes||'').toLowerCase().includes(stockSearch) &&
-          !(item.category||'').toLowerCase().includes(stockSearch)) return false;
       return true;
-    }
-
-    // Text search filter
-    if (stockSearch) {
-      const hay = [item.name, item.category, item.notes, item.store, ...(item.tags||[])].join(' ').toLowerCase();
-      if (!hay.includes(stockSearch)) return false;
     }
 
     const s = calcStock(item);
@@ -25474,13 +25466,9 @@ function _groceryGoToAllLists() {
   try { localStorage.removeItem('stockroom_active_grocery_list'); } catch(e) {}
   // Exit "list open" state — restore the normal app chrome
   document.body.classList.remove('grocery-list-open');
-  // Clear any lingering FS search query so the picker isn't accidentally filtered
-  const _fsSearchInput = document.getElementById('grocery-fs-search-input');
-  const _fsTopbar = document.querySelector('.grocery-fs-topbar');
-  const _fsTitle = document.getElementById('grocery-fs-title');
-  if (_fsSearchInput) _fsSearchInput.value = '';
-  if (_fsTopbar) _fsTopbar.classList.remove('grocery-fs-search-open');
-  if (_fsTitle) _fsTitle.style.display = '';
+  // Previously: cleared a lingering FS search query / closed the inline
+  // search overlay before re-rendering. With the FS search removed there's
+  // nothing left to reset here.
   renderGrocery();
 }
 
@@ -25658,32 +25646,9 @@ function _renderGroceryFsModeBar(list, mode, phase, listItems) {
   slot.innerHTML = `<div class="grocery-phase-bar">${_buildGroceryPhaseBarHTML(phase, listItems)}</div>`;
 }
 
-// Toggle the inline expandable search inside the FS topbar. The input
-// expands leftward from behind the icon (width grows; nothing wraps to a
-// new line). Focuses the input on open; clears it on close.
-function _toggleGroceryFsSearch() {
-  const topbar = document.querySelector('.grocery-fs-topbar');
-  const input = document.getElementById('grocery-fs-search-input');
-  const titleEl = document.getElementById('grocery-fs-title');
-  if (!topbar) return;
-  const isOpen = topbar.classList.contains('grocery-fs-search-open');
-  if (isOpen) {
-    topbar.classList.remove('grocery-fs-search-open');
-    if (input) input.value = '';
-    if (titleEl) titleEl.style.display = '';
-    renderGrocery();
-  } else {
-    topbar.classList.add('grocery-fs-search-open');
-    // Hide the title to make room — the expanded input fills its space.
-    if (titleEl) titleEl.style.display = 'none';
-    setTimeout(() => input?.focus(), 30);
-  }
-}
-
 // ── Grocery List Picker (shown when 2+ lists exist) ──────────────────────
 function renderGroceryListPicker() {
   const body = document.getElementById('grocery-list-body');
-  const query = (document.getElementById('grocery-search')?.value || '').toLowerCase().trim();
   if (!body) return;
 
   // Active lists only (soft-deleted ones go in their own section below).
@@ -25697,17 +25662,10 @@ function renderGroceryListPicker() {
   });
   const deletedLists = groceryLists.filter(l => l._deletedAt).sort((a, b) => new Date(b._deletedAt) - new Date(a._deletedAt));
 
-  // When searching, include lists that match by name/store OR contain matching items
-  if (query) {
-    lists = lists.filter(l => {
-      const nameMatch  = l.name.toLowerCase().includes(query) || (l.store||'').toLowerCase().includes(query);
-      const itemMatch  = groceryItems.some(i =>
-        (i.listId||'default') === l.id &&
-        (i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query))
-      );
-      return nameMatch || itemMatch;
-    });
-  }
+  // The previous in-page search input (#grocery-search) used to also filter
+  // this picker view and inline-show matching items per list card. That
+  // input was removed when the global search took over — searching
+  // groceries now goes through the global search modal instead.
 
   // (uses outer unified fmt())
 
@@ -25737,25 +25695,10 @@ function renderGroceryListPicker() {
           ? `<span style="font-family:var(--mono);font-size:10px;font-weight:700;padding:2px 7px;border-radius:99px;background:rgba(232,168,56,0.15);color:var(--accent);border:1px solid rgba(232,168,56,0.3);letter-spacing:0.4px;margin-right:6px">${phase==='shop'?'SHOPPING':'STOCK CHECK'}</span>`
           : '';
 
-        // When searching, show matching items inline under the list card
-        let matchingItemsHTML = '';
-        if (query) {
-          const matchingItems = allListItems.filter(i =>
-            i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query)
-          );
-          if (matchingItems.length) {
-            matchingItemsHTML = `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
-              ${matchingItems.slice(0,5).map(i =>
-                `<div style="font-size:12px;color:var(--muted);padding:2px 0;display:flex;align-items:center;gap:6px">
-                  <span style="color:${i.checked?'var(--ok)':'var(--text)'}">${i.checked?'<svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg>':'<svg class="icon" aria-hidden="true"><use href="#i-square"></use></svg>'}</span>
-                  <span style="${i.checked?'text-decoration:line-through':''}">${esc(i.name)}</span>
-                  ${i.notes?`<span style="color:var(--muted);font-style:italic">— ${esc(i.notes)}</span>`:''}
-                </div>`
-              ).join('')}
-              ${matchingItems.length > 5 ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">+${matchingItems.length - 5} more</div>` : ''}
-            </div>`;
-          }
-        }
+        // Previously: when the inline grocery-search was active, the picker
+        // inlined up to 5 matching items under each list card. With the
+        // inline search gone, this block was removed — global search now
+        // surfaces matching grocery items directly.
 
         return `
         <div onclick="switchGroceryList('${l.id}')" style="display:flex;flex-direction:column;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;cursor:pointer;transition:border-color 0.15s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
@@ -25772,7 +25715,6 @@ function renderGroceryListPicker() {
               ${lists.length > 1 ? `<button onclick="event.stopPropagation();deleteGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--danger);font-size:13px;cursor:pointer" title="Delete list"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>` : ''}
             </div>
           </div>
-          ${matchingItemsHTML}
         </div>`; }).join('')}
     </div>
     ${deletedLists.length ? `
@@ -26613,13 +26555,12 @@ async function confirmGroceryImport() {
 }
 
 function renderGrocery() {
-  // Query may come from either the regular sticky-header search input
-  // (desktop / picker view) or the mobile full-screen header search input
-  // (when a list is open on mobile). Use whichever has content; if both
-  // are empty, default to ''.
-  const regularQ = (document.getElementById('grocery-search')?.value || '').trim();
-  const fsQ      = (document.getElementById('grocery-fs-search-input')?.value || '').trim();
-  const query    = (regularQ || fsQ).toLowerCase();
+  // Previously this read from two inline search inputs (#grocery-search on
+  // desktop, #grocery-fs-search-input on mobile FS). Both were removed when
+  // the global search took over — searching groceries now happens via the
+  // global search modal. `query` is kept as a const here so the existing
+  // filter call sites (`!query || …`) stay valid without a wider sweep.
+  const query = '';
   const body  = document.getElementById('grocery-list-body');
   const infoEl = document.getElementById('grocery-interval-info');
   const checkedBar = document.getElementById('grocery-checked-bar');
@@ -31408,7 +31349,6 @@ async function renderNotes() {
     banner.remove();
   }
 
-  const q = (_notesSearch || '').toLowerCase().trim();
   const now = Date.now();
   const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
 
@@ -31425,13 +31365,10 @@ async function renderNotes() {
   notes = notes.filter(n => !n.deletedAt || (now - new Date(n.deletedAt).getTime()) < thirtyDaysMs);
   if (notes.length !== before) await saveNotes();
 
-  // Search
-  if (q) {
-    visible = visible.filter(n =>
-      n.title.toLowerCase().includes(q) ||
-      (!n.locked && (n.body || '').toLowerCase().includes(q))
-    );
-  }
+  // Previously: applied a text-search filter on top of the chip filter
+  // when the inline #notes-search input was present. That input was
+  // removed when the global search took over — searching notes goes
+  // through the global search modal instead.
 
   if (!visible.length) {
     grid.innerHTML = '';
@@ -31707,8 +31644,10 @@ function setNotesFilter(f, btn) {
 }
 
 function filterNotes(q) {
-  _notesSearch = q;
-  renderNotes();
+  // No-op shim — the inline notes search input was removed when the global
+  // search took over. Kept as a stub in case anything external still calls
+  // it; safe to delete once we're certain nothing does.
+  // Intentionally empty.
 }
 
 // ── Editor open/close ─────────────────────

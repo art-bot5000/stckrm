@@ -647,7 +647,6 @@
     .grocery-item-meta { font-size: 16px; }
     .grocery-dept-label { font-size: 15px; }
     .grocery-dept-count { font-size: 15px; }
-    .grocery-search { font-size: 16px; }
 
     /* ── STOCK COUNT / PRICE HISTORY MODALS ── */
     #ph-chart svg { min-height: 140px; }
@@ -845,17 +844,11 @@
     #stock-top-sections { display:flex; flex-direction:row; gap:16px; }
     #pending-deliveries-section, #incomplete-section { flex:1; min-width:0; }
 
-    /* ── Inline search replaces standalone search bar on desktop ── */
-    #stock-search-mobile { display:none; }
-    #stock-search-inline { display:flex !important; }
-    #stock-toolbar-row { flex-wrap:nowrap; }
-    /* Search + filters/sort row layout:
-       - Mobile: stacked via flex-wrap (each child grows to 100% width)
-       - Desktop ≥900px: 3 cells on one row, search at 1 card width,
-         filters and sort each at half a card width.
-         Spacing matches #items-grid gap (10px). */
-    #view-stock #stock-search-toolbar { flex-direction: row; flex-wrap: nowrap; gap: 10px; }
-    #view-stock #stock-search-wrap   { flex: 0 0 280px; max-width: 280px; min-width: 0; }
+    /* Stockroom toolbar layout — desktop. The #stock-search-wrap that
+       used to occupy the leftmost slot was removed when the global search
+       took over; filters and sort now anchor to the left of the row.
+       Spacing matches #items-grid gap (10px). */
+    #view-stock #stock-search-toolbar { flex-direction: row; flex-wrap: nowrap; gap: 10px; justify-content: flex-start; }
     #view-stock #stock-toolbar-wrap  { flex: 0 0 135px; max-width: 135px; min-width: 0; }
     #view-stock #stock-sort-wrap     { flex: 0 0 135px; max-width: 135px; min-width: 0; }
     #view-report { max-width: 100%; }
@@ -912,8 +905,9 @@
      GROCERY LIST STYLES
   ══════════════════════════════════════ */
   .grocery-toolbar { display:flex; gap:8px; align-items:center; margin-bottom:14px; flex-wrap:wrap; }
-  .grocery-search { flex:1; min-width:160px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:9px 14px; color:var(--text); font-family:var(--sans); font-size:14px; outline:none; }
-  .grocery-search:focus { border-color:var(--accent); }
+  /* .grocery-search and :focus rules removed — the inline search input that
+     used this class (and was reused by #stock-search and #notes-search via
+     the same className) was deleted when the global search took over. */
 
   /* ── Full-screen grocery list header (mobile only) ──
      Shows back arrow + title + search-toggle, with the sort/edit row
@@ -947,34 +941,8 @@
     font-size: 17px; font-weight: 700; color: var(--text);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  /* Inline expandable search — collapsed by default (width 0, opacity 0).
-     When the parent .grocery-fs-topbar has .grocery-fs-search-open, the
-     input grows to fill the available space between the back arrow and
-     the search icon. The title hides at the same time (set via JS) so
-     the input has room to expand without wrapping. */
-  .grocery-fs-search-inline {
-    flex: 0 0 0;
-    width: 0;
-    min-width: 0;
-    opacity: 0;
-    padding: 0;
-    border: 1px solid transparent;
-    background: var(--surface2);
-    border-radius: 8px;
-    height: 40px;
-    box-sizing: border-box;
-    transition: flex-basis 0.18s ease, width 0.18s ease, opacity 0.15s ease 0.03s, padding 0.18s ease;
-    pointer-events: none;
-  }
-  .grocery-fs-topbar.grocery-fs-search-open .grocery-fs-search-inline {
-    flex: 1 1 auto;
-    width: auto;
-    min-width: 0;
-    opacity: 1;
-    padding: 0 12px;
-    pointer-events: auto;
-    border-color: var(--accent);
-  }
+  /* The expandable .grocery-fs-search-inline input and its .grocery-fs-search-
+     open state used to live here. Removed when the global search took over. */
   .grocery-fs-mode-bar:empty { display: none; }
   /* The mode bar reuses .grocery-phase-bar styling internally — see render */
   .grocery-fs-mode-bar { padding: 8px 12px; background: var(--bg); }
@@ -995,9 +963,10 @@
     vertical-align: -0.18em;
   }
 
-  /* Stockroom toolbar — Search / Filters / Sort all use the same base surface
-     + border so they read as a single related toolbar group. */
-  #stock-search-toolbar #stock-search,
+  /* Stockroom toolbar — Filters / Sort share the same base surface + border
+     so they read as a single related toolbar group. The #stock-search input
+     that used to be in this row was removed when the global search took
+     over; the rules below previously targeted #stock-search too. */
   #stock-search-toolbar #filter-toggle-btn,
   #stock-search-toolbar #sort-select {
     background: var(--surface) !important;
@@ -1007,9 +976,6 @@
     font-size: 12px;
     font-family: var(--sans);
   }
-  #stock-search-toolbar #stock-search { color: var(--text) !important; padding: 8px 12px; }
-  #stock-search-toolbar #stock-search::placeholder { color: var(--muted); }
-  #stock-search-toolbar #stock-search:focus { border-color: var(--accent) !important; }
   #stock-search-toolbar #filter-toggle-btn:hover,
   #stock-search-toolbar #sort-select:hover { color: var(--text) !important; }
   .grocery-sort-toggle { display:flex; background:var(--surface2); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
@@ -1285,8 +1251,6 @@
   /* Amazon import banner sits at top of Stockroom; constrain to 800px to match
      the toolbar width and align left with the rest of the view. */
   .amazon-banner { max-width: 800px; }
-  /* Cap inline search width */
-  #stock-search-inline { flex:0 1 320px !important; max-width:320px; }
   /* Sort select height matches filter button */
   #sort-select { padding:8px 24px 8px 10px !important; height:36px; box-sizing:border-box; }
   /* Grocery: hide Edit button + Add Item in multi-list picker view */
@@ -2212,10 +2176,11 @@ body.note-open { overflow: hidden; touch-action: none; }
 }
 
 
-/* Mobile: search at 100% on row 1, filters+sort split 50/50 on row 2 */
+/* Mobile: filters + sort split 50/50 on a single row. The #stock-search-wrap
+   that used to occupy the full first row was removed when the global search
+   took over. */
 @media (max-width: 899px) {
   #view-stock #stock-search-toolbar { flex-wrap: wrap; }
-  #view-stock #stock-search-wrap   { flex: 1 1 100%; max-width: 100%; }
   #view-stock #stock-toolbar-wrap  { flex: 1 1 calc(50% - 5px); max-width: calc(50% - 5px); }
   #view-stock #stock-sort-wrap     { flex: 1 1 calc(50% - 5px); max-width: calc(50% - 5px); }
 }
