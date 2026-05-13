@@ -669,7 +669,8 @@
     body.grocery-list-open #app-header,
     body.grocery-list-open #tabs,
     body.grocery-list-open #grocery-sticky-header,
-    body.grocery-list-open #grocery-active-toolbar {
+    body.grocery-list-open #grocery-active-toolbar,
+    body.grocery-list-open #grocery-phase-bar {
       display: none !important;
     }
     body.grocery-list-open #fab-btn,
