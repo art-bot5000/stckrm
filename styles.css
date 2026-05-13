@@ -647,7 +647,12 @@
 
   /* Hide header action buttons on mobile — FAB replaces them */
   @media (max-width: 699px) {
-    #fab-btn { display:flex !important; }
+    /* NOTE: no !important here. openModal() sets fab-btn.style.display='none'
+       inline when a modal opens; an !important here would beat that inline
+       style and leave the FAB rendering on top of every bottom-sheet modal.
+       updateFab() sets display:flex inline whenever the FAB should appear,
+       so we don't need !important to keep it visible on mobile. */
+    #fab-btn { display:flex; }
     /* Header quick-add and add-item buttons hidden on mobile */
     #app-header .btn-primary,
     #app-header .btn-ghost { display:none; }
@@ -2083,9 +2088,13 @@ body.note-open { overflow: hidden; touch-action: none; }
      hide it on mobile to declutter the bottom row. The same info is still
      available in the item detail modal. */
   .card-qty-interval { display: none; }
-  /* If hiding the interval pill leaves the footer with no other children,
+  /* "X left" qty pill is also redundant on mobile — the days-left hero
+     and the slim stock bar above already communicate the same info. The
+     full count remains visible in the item detail modal. */
+  .card-qty { display: none; }
+  /* If hiding the qty pills leaves the footer with no other children,
      collapse the now-empty footer so it doesn't add dead vertical space. */
-  .card-footer:not(:has(> *:not(.card-qty-interval))) { display: none; }
+  .card-footer:not(:has(> *:not(.card-qty):not(.card-qty-interval))) { display: none; }
 }
 
 /* ── Tag picker modal ──────────────────────────────────────────────── */

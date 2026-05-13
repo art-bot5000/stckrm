@@ -1745,6 +1745,36 @@ function closeModal(id) {
   }, 50);
 }
 
+// ── _hideFabForCustomOverlay ──────────────────────────────────────────────
+// Helper for inline overlays (e.g. _openGroceryListModal) that don't go
+// through openModal() but still need the FAB out of the way. Hides the FAB
+// when called, then watches `overlayEl` for removal via MutationObserver and
+// restores the FAB automatically — so every dismissal path (button click,
+// backdrop click, programmatic remove()) is covered without each caller
+// having to remember to restore the FAB.
+function _hideFabForCustomOverlay(overlayEl) {
+  const fabBtn = document.getElementById('fab-btn');
+  const fabContainer = document.getElementById('fab-container');
+  if (fabBtn) { fabBtn.dataset.overlayHid = '1'; fabBtn.style.display = 'none'; }
+  if (fabContainer) fabContainer.style.display = 'none';
+  if (typeof closeFab === 'function') closeFab(true);
+  // Watch for the overlay element being removed from the DOM. When it goes,
+  // hand the FAB back to updateFab() which knows whether the current view
+  // should show one.
+  if (!overlayEl || !overlayEl.parentNode) return;
+  const obs = new MutationObserver(() => {
+    if (!document.body.contains(overlayEl)) {
+      obs.disconnect();
+      const fabBtn2 = document.getElementById('fab-btn');
+      if (fabBtn2 && fabBtn2.dataset.overlayHid === '1') {
+        delete fabBtn2.dataset.overlayHid;
+        if (typeof updateFab === 'function') updateFab(_currentView);
+      }
+    }
+  });
+  obs.observe(document.body, { childList: true, subtree: false });
+}
+
 // ═══════════════════════════════════════════
 //  UTILS
 // ═══════════════════════════════════════════
@@ -5331,10 +5361,17 @@ function updateRemindersBadge(count) {
   const existing = tab.querySelector('.reminder-badge');
   if (existing) existing.remove();
   if (count > 0) {
+    // Ensure the tab can host an absolutely-positioned child. The base .tab
+    // rule already sets position:relative, but we set it here defensively
+    // in case a future style change breaks that assumption.
+    if (getComputedStyle(tab).position === 'static') tab.style.position = 'relative';
     const badge = document.createElement('span');
     badge.className = 'reminder-badge';
     badge.textContent = count;
-    badge.style.cssText = 'background:var(--danger);color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:99px;margin-left:4px;font-family:var(--mono)';
+    // Absolute positioning keeps the badge out of the normal flow, so the
+    // tab's "Reminders" label stays centered on mobile (where the tab uses
+    // flex-direction:column) and the badge floats in the top-right corner.
+    badge.style.cssText = 'position:absolute;top:2px;right:4px;background:var(--danger);color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:99px;font-family:var(--mono);line-height:1.3;pointer-events:none';
     tab.appendChild(badge);
   }
 }
@@ -17091,6 +17128,12 @@ async function kvSyncNow(silent = false) {
         // so a fresh-device login doesn't keep the banner showing despite
         // the user having dismissed it elsewhere.
         try { _refreshAmazonBannerVisibility(); } catch(_) {}
+        // settings.displayName may also have just arrived from the server
+        // (fresh device login, or local IDB cleared). Re-draw the header
+        // greeting + sidebar profile so "Hi, there" updates to the user's
+        // actual name without requiring a page refresh.
+        try { updateHeaderGreeting(); } catch(_) {}
+        try { _updateSidebarProfile(); } catch(_) {}
       }
       if (remote.groceries) {
         const localEmpty = groceryItems.length === 0;
@@ -25236,6 +25279,11 @@ function _openGroceryListModal(id) {
   const overlay = document.createElement('div');
   overlay.id = 'grocery-list-picker-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(0,0,0,0.7);display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px)';
+  // This is a custom inline overlay, not a .modal-backdrop — so openModal()
+  // never ran and didn't hide the FAB. Hide it here, and restore on tear-down
+  // via the MutationObserver below so all three dismissal paths (Cancel
+  // button, backdrop click, _saveGroceryListModal) are covered automatically.
+  _hideFabForCustomOverlay(overlay);
   overlay.innerHTML = `
     <div style="background:var(--surface);border-radius:20px 20px 0 0;width:100%;max-width:560px;padding:24px 20px 36px;box-shadow:0 -8px 32px rgba(0,0,0,0.5)">
       <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 18px"></div>
@@ -31108,6 +31156,10 @@ async function openNoteEditor(noteId) {
     _noteRedoStack.set(n.id, []);
     // Show overlay first so elements are visible, then render into them
     overlay.style.display = 'flex';
+    // Set body.note-open so the CSS rules in styles.css (lines ~1467-1477)
+    // can hide the FAB and lock background scroll. Without this class the
+    // FAB stays at z-index 1100 and renders on top of the note editor.
+    document.body.classList.add('note-open');
     document.getElementById('note-editor-body').style.display = 'flex';
     document.getElementById('note-lock-screen').style.display = 'none';
     _renderNoteEditor(n, false);
@@ -31134,6 +31186,9 @@ async function openNoteEditor(noteId) {
   const isUnlocked = _noteUnlocked.has(noteId);
   // Show overlay before rendering so all child elements are accessible
   overlay.style.display = 'flex';
+  // Match the new-note branch above — set body.note-open so CSS hides the
+  // FAB and locks background scroll while the editor is up.
+  document.body.classList.add('note-open');
   _renderNoteEditor(n, n.locked && !isUnlocked);
 
   if (n.locked && !isUnlocked) {
@@ -31239,6 +31294,9 @@ function _showNoteBody(n) {
 function _closeNoteEditorImmediate() {
   const overlay = document.getElementById('note-editor-overlay');
   if (overlay) overlay.style.display = 'none';
+  // Remove the body class set by openNoteEditor so the FAB returns and
+  // background scrolling resumes. Safe to call even if class isn't set.
+  document.body.classList.remove('note-open');
   _editingNoteId = null;
   _noteBodyDirty = false;
   clearTimeout(_noteAutoSaveTimer);
