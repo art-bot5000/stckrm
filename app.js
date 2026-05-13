@@ -25750,15 +25750,12 @@ function renderGroceryListPicker() {
       </div>
     ` : ''}`;
 
-  // Switch sort button labels for multi-list view
-  const _deptBtn = document.getElementById('grocery-sort-dept');
-  const _alphaBtn = document.getElementById('grocery-sort-alpha');
-  if (_deptBtn) _deptBtn.textContent = 'By Store';
-  if (_alphaBtn) _alphaBtn.textContent = 'A–Z';
-  const sub = document.getElementById('grocery-subtitle');
-  if (sub) sub.textContent = query
-    ? `${lists.length} list${lists.length!==1?'s':''} match`
-    : `${lists.length} list${lists.length!==1?'s':''} · tap to open`;
+  // The sort-button label swap ("By Dept" → "By Store") used to happen
+  // here for the multi-list picker, plus a subtitle write referencing a
+  // `query` variable that no longer exists. Both are dead now: the
+  // .grocery-toolbar containing those buttons is fully hidden during
+  // picker view (renderGrocery handles that), and the subtitle row is
+  // removed entirely.
 }
 
 function switchGroceryList(id) {
@@ -25768,11 +25765,9 @@ function switchGroceryList(id) {
   // Enter "list open" state — CSS uses this on mobile to hide the app
   // nav/FAB and give the list a full-screen feel with its own back arrow.
   document.body.classList.add('grocery-list-open');
-  // Restore per-list sort labels
-  const _db = document.getElementById('grocery-sort-dept');
-  const _ab = document.getElementById('grocery-sort-alpha');
-  if (_db) _db.textContent = 'By Dept';
-  if (_ab) _ab.textContent = 'A–Z';
+  // The picker view no longer relabels "By Dept" to "By Store" (the
+  // toolbar containing those buttons is hidden in picker view now), so
+  // there's no label to restore here.
   const list = groceryLists.find(l => l.id === id);
   if (list) { list.updatedAt = new Date().toISOString(); _saveGroceryLists(); }
   renderGrocery();
@@ -26562,42 +26557,65 @@ function renderGrocery() {
   // filter call sites (`!query || …`) stay valid without a wider sweep.
   const query = '';
   const body  = document.getElementById('grocery-list-body');
-  const infoEl = document.getElementById('grocery-interval-info');
   const checkedBar = document.getElementById('grocery-checked-bar');
   if (!body) return;
 
-  // ── Multi-list picker: show list selector when 2+ lists and no active list chosen ──
+  // ── Multi-list picker vs active-list view ──
+  // Picker view: shown when 2+ lists exist AND no list is currently open.
+  // Active view: shown when a list is open (single-list users always see
+  // this — they never get a picker).
   const multiList = groceryLists.length > 1;
-  const listBrowsing = multiList && !activeGroceryListId;
+  const isPicker  = multiList && !activeGroceryListId;
 
-  // Active-list toolbar — only the "All lists" back-button now. The
-  // stockcheck/shopping mode pill was removed: lists default to stockcheck,
-  // and the workflow uses Start Shopping / Done buttons (in the phase bar)
-  // to move between phases.
-  let toolbar = document.getElementById('grocery-active-toolbar');
-  if (!toolbar) {
-    toolbar = document.createElement('div');
-    toolbar.id = 'grocery-active-toolbar';
-    toolbar.className = 'grocery-active-toolbar';
-    body.parentNode.insertBefore(toolbar, body);
+  // Shared header chrome — the standalone subtitle row and interval-info
+  // row were both removed per Pete's request. Their elements are kept in
+  // the DOM (set to display:none in index.html) so any straggler writes
+  // are invisible rather than throwing. Force-empty here as belt-and-
+  // braces so a stale value from an older session can't peek through.
+  const _sub = document.getElementById('grocery-subtitle');
+  if (_sub) { _sub.textContent = ''; _sub.style.display = 'none'; }
+  const _info = document.getElementById('grocery-interval-info');
+  if (_info) { _info.textContent = ''; _info.style.display = 'none'; }
+
+  // "← All lists" button slot — only visible when an active list is open
+  // AND there are 2+ lists to navigate between. Single-list users have
+  // nowhere to go back to. Sits at the left of the action-button cluster.
+  const _allListsSlot = document.getElementById('grocery-all-lists-slot');
+  if (_allListsSlot) {
+    _allListsSlot.style.display = (activeGroceryListId && multiList) ? 'inline-flex' : 'none';
   }
 
-  // Show the toolbar only when there's an active list AND we have multiple
-  // lists to navigate between. With a single list, there's nothing to show.
-  if (activeGroceryListId && multiList) {
-    toolbar.innerHTML = `<button class="btn btn-ghost btn-sm" onclick="_groceryGoToAllLists()" style="flex-shrink:0">← All lists</button>`;
-    toolbar.style.display = 'flex';
+  // Active list name + toolbar visibility — both shown only when a list
+  // is open. In the picker the user is choosing a list; sort/edit controls
+  // don't apply yet, so we hide them entirely.
+  const _activeName = document.getElementById('grocery-active-list-name');
+  const _toolbar    = document.querySelector('#view-grocery .grocery-toolbar');
+  if (isPicker) {
+    if (_activeName) { _activeName.textContent = ''; _activeName.style.display = 'none'; }
+    if (_toolbar)    _toolbar.style.display = 'none';
   } else {
-    toolbar.style.display = 'none';
-    toolbar.innerHTML = '';
+    // Single-list or active-list view: write the list name above the
+    // toolbar. The phase bar (Stock Check / Start Shopping) renders
+    // further below, between the toolbar and the list body.
+    const _activeList = groceryLists.find(l => l.id === activeGroceryListId && !l._deletedAt);
+    if (_activeName) {
+      _activeName.textContent = _activeList?.name || 'List';
+      _activeName.style.display = '';
+    }
+    if (_toolbar) _toolbar.style.display = '';
   }
 
+  // Remove the standalone #grocery-active-toolbar that used to inject a
+  // separate "← All lists" button row above the list body. The slot in
+  // the header above replaces it.
+  const _legacyActiveToolbar = document.getElementById('grocery-active-toolbar');
+  if (_legacyActiveToolbar) _legacyActiveToolbar.remove();
   // Remove legacy dynamic back-button if it exists from a previous render
   const legacyBack = document.getElementById('grocery-back-to-lists');
   if (legacyBack) legacyBack.remove();
 
-  // Show list picker if no active list or browsing mode
-  if (multiList && !activeGroceryListId) {
+  // Show list picker if no active list (multi-list mode only)
+  if (isPicker) {
     document.body.classList.add('grocery-multilist');
     // Hide single-list-only controls
     const editToggle = document.getElementById('grocery-edit-toggle');
@@ -26605,11 +26623,9 @@ function renderGrocery() {
     if (editToggle) editToggle.style.display = 'none';
     if (addItem)    addItem.style.display    = 'none';
     renderGroceryListPicker();
-    const sub = document.getElementById('grocery-subtitle');
-    if (sub) sub.textContent = `${groceryLists.length} lists · tap to open`;
-    if (infoEl) infoEl.textContent = '';
     const _binEl = document.getElementById('grocery-recycle-bin');
     if (_binEl) _binEl.style.display = 'none';
+    // Hide any leftover phase bar from a previous active-list render.
     const _phaseBar = document.getElementById('grocery-phase-bar');
     if (_phaseBar) _phaseBar.style.display = 'none';
     return;
@@ -26653,26 +26669,11 @@ function renderGrocery() {
   // It sits between the toolbar and the items so it's always visible.
   _renderGroceryPhaseBar(_activeList, _mode, _phase, listItems);
 
-  // Interval info — scoped to active list
-  const si = getGroceryShopInterval();
-  const unitLabel = si.unit === 7 ? (si.value === 1 ? 'week' : 'weeks') : si.unit === 30 ? (si.value === 1 ? 'month' : 'months') : (si.value === 1 ? 'day' : 'days');
-  const activeListName = _activeGroceryList()?.name || '';
-  if (infoEl) infoEl.textContent = `Shopping every ${si.value} ${unitLabel} · ${listItems.filter(i=>!i.checked).length} item${listItems.filter(i=>!i.checked).length===1?'':'s'} remaining`;
-
-  const sub = document.getElementById('grocery-subtitle');
-  if (sub) {
-    let subBits = `${listItems.length} item${listItems.length===1?'':'s'}`;
-    if (groceryEditMode) {
-      subBits += ` · <svg class="icon icon-sm" aria-hidden="true"><use href="#i-pencil"></use></svg> editing`;
-    } else if (_mode === 'stockcheck' && _phase === 'check') {
-      subBits += ` · stock check — tap to mark as needed`;
-    } else if (_mode === 'stockcheck' && _phase === 'shop') {
-      subBits += ` · shopping — tap to tick off`;
-    } else {
-      subBits += ` · tap to check off`;
-    }
-    sub.innerHTML = subBits;
-  }
+  // Subtitle line ("78 items · stock check — tap to mark as needed") and
+  // interval-info line ("Shopping every 7 days · N items remaining") used
+  // to be written here. Both removed per Pete's request — the list name
+  // (set in the header switch above) plus the phase bar already convey
+  // mode and intent without the extra text rows.
 
   // Edit mode lock button
   const editBtn = document.getElementById('grocery-edit-toggle');

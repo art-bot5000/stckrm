@@ -2840,15 +2840,31 @@
   <div class="view-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
     <div>
       <h2 style="font-size:18px;font-weight:700;color:var(--text);font-family:var(--sans);margin:0"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-shopping-cart"></use></svg> Groceries</h2>
-      <div id="grocery-subtitle" style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:3px"></div>
+      <!-- #grocery-subtitle was previously written by renderGrocery and the
+           list-picker render with "stock check — tap to mark as needed" /
+           "N lists · tap to open" / interval text. Pete asked to drop all
+           of these; renderGrocery now leaves this element empty so the row
+           collapses. Kept in DOM in case future per-view metadata wants it. -->
+      <div id="grocery-subtitle" style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:3px;display:none"></div>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <!-- ← All lists button — only injected by renderGrocery when an active
+           list is open AND there are 2+ lists to navigate between. Sits at
+           the left of the action cluster with a separator after it. -->
+      <span id="grocery-all-lists-slot" style="display:none;align-items:center;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="_groceryGoToAllLists()" style="flex-shrink:0">← All lists</button>
+        <span aria-hidden="true" style="display:inline-block;width:1px;height:22px;background:var(--border)"></span>
+      </span>
       <button class="btn btn-ghost btn-sm" onclick="openQuickList()" title="Quick add items"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg> Quick List</button>
-      <button class="btn btn-ghost btn-sm" onclick="openAddGroceryList()" title="Add new shopping list"><svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> Add Store</button>
+      <button class="btn btn-ghost btn-sm" onclick="openAddGroceryList()" title="Add new shopping list"><svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> Add List</button>
       <button class="btn btn-ghost btn-sm" onclick="openGroceryDepts()" title="Manage departments"><svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg> Departments</button>
       <button class="btn btn-primary btn-sm" onclick="openAddGroceryItem()">+ Add Item</button>
     </div>
   </div>
+  <!-- Active list name — populated by renderGrocery only when a list is
+       open. Sits between the page heading and the By-Dept/A-Z toolbar.
+       Hidden in the multi-list picker view. -->
+  <h3 id="grocery-active-list-name" style="display:none;font-size:20px;font-weight:700;color:var(--text);font-family:var(--sans);margin:8px 0 6px 0"></h3>
   <div class="grocery-toolbar">
     <div class="grocery-sort-toggle">
       <button class="grocery-sort-btn active" id="grocery-sort-dept" onclick="setGrocerySort('dept',this)">By Dept</button>
@@ -2858,7 +2874,12 @@
 
     <input type="file" id="grocery-import-file" accept=".txt,.csv,.text,.xml,.doc,.docx,.rtf,.md,.tsv" style="display:none" onchange="handleGroceryImportFile(event)">
   </div>
-  <div class="grocery-interval-info" id="grocery-interval-info"></div>
+  <!-- #grocery-interval-info was used by renderGrocery to display
+       "Shopping every N days · M items remaining". Removed from the
+       active-list header per Pete's request; the element is kept hidden
+       in the DOM so any leftover writes from edge-case code paths are
+       invisible rather than throwing. -->
+  <div class="grocery-interval-info" id="grocery-interval-info" style="display:none"></div>
   </div><!-- /grocery-sticky-header -->
   <div id="grocery-list-body"></div>
   <div style="display:flex;align-items:center;gap:8px;padding:0 2px;margin-top:4px;flex-wrap:wrap">
