@@ -10389,7 +10389,18 @@ function showView(name, btn) {
   if (name === 'reminders') renderReminders();
   if (name === 'shopping')  renderShoppingList();
   if (name === 'savings')   renderSavingsView();
-  if (name === 'grocery')   { if (billingLocked === 'grocery') _renderBillingLockscreen('grocery'); else renderGrocery(); }
+  if (name === 'grocery')   {
+    if (billingLocked === 'grocery') _renderBillingLockscreen('grocery');
+    else {
+      // Default landing is the list-picker overview. Clear the cached
+      // active list so a fresh tab tap always shows the picker even if
+      // the user was previously inside a list.
+      activeGroceryListId = '';
+      try { localStorage.removeItem('stockroom_active_grocery_list'); } catch(e) {}
+      document.body.classList.remove('grocery-list-open');
+      renderGrocery();
+    }
+  }
   if (name === 'budget')    renderBudget();
   if (name === 'notes')     { if (billingLocked === 'notes') _renderBillingLockscreen('notes'); else { renderNotes(); setTimeout(_maybeShowMfaPrompt, 600); } }
   if (name === 'account-security') renderAccountSecurity();
@@ -10453,6 +10464,13 @@ function showView(name, btn) {
 
 // navTo — called by sidebar links (no btn element needed)
 function navTo(name) {
+  // Whenever we navigate (to any tab), drop the "grocery list open" body
+  // class. The grocery tab handler will re-add it if the user enters a
+  // specific list. Without this reset, switching from inside a list to
+  // any other tab would leave the chrome-hidden state behind.
+  if (name !== 'grocery') {
+    document.body.classList.remove('grocery-list-open');
+  }
   // Find the matching tab button if it exists (for mobile tab state)
   const tabBtn = [...document.querySelectorAll('.tab')].find(t => {
     const oc = t.getAttribute('onclick') || '';
@@ -24777,6 +24795,13 @@ function _groceryGoToAllLists() {
   groceryEditMode = false;
   activeGroceryListId = '';
   try { localStorage.removeItem('stockroom_active_grocery_list'); } catch(e) {}
+  // Exit "list open" state — restore the normal app chrome
+  document.body.classList.remove('grocery-list-open');
+  // Clear any lingering FS search query so the picker isn't accidentally filtered
+  const _fsSearchInput = document.getElementById('grocery-fs-search-input');
+  const _fsSearchRow   = document.getElementById('grocery-fs-search-row');
+  if (_fsSearchInput) _fsSearchInput.value = '';
+  if (_fsSearchRow)   _fsSearchRow.style.display = 'none';
   renderGrocery();
 }
 
@@ -24883,6 +24908,8 @@ function _renderGroceryPhaseBar(list, mode, phase, listItems) {
   // Hide entirely when not in stockcheck mode or in edit mode
   if (!list || mode !== 'stockcheck' || groceryEditMode || !activeGroceryListId) {
     if (bar) bar.style.display = 'none';
+    // Also clear the mobile-FS copy
+    _renderGroceryFsModeBar(null, null, null, null);
     return;
   }
 
@@ -24894,11 +24921,20 @@ function _renderGroceryPhaseBar(list, mode, phase, listItems) {
   }
   bar.style.display = 'flex';
 
+  const inner = _buildGroceryPhaseBarHTML(phase, listItems);
+  bar.innerHTML = inner;
+  // Keep the mobile FS-header mode bar in sync.
+  _renderGroceryFsModeBar(list, mode, phase, listItems);
+}
+
+// Build the inner HTML of the phase bar. Pulled out so the mobile
+// full-screen mode bar can reuse the exact same markup.
+function _buildGroceryPhaseBarHTML(phase, listItems) {
   if (phase === 'check') {
     const neededCount = listItems.filter(_itemIsNeeded).length;
     const totalCount  = listItems.length;
     const canStart    = neededCount > 0;
-    bar.innerHTML = `
+    return `
       <div class="grocery-phase-info">
         <div class="grocery-phase-title"><svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> Stock Check</div>
         <div class="grocery-phase-meta">${neededCount} of ${totalCount} marked to buy</div>
@@ -24907,22 +24943,56 @@ function _renderGroceryPhaseBar(list, mode, phase, listItems) {
         <svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg>
         Start Shopping
       </button>`;
-  } else { // 'shop'
-    // Shop-phase count is over the buy-list only (items marked needed during
-    // stock check). Items that weren't marked are visually suppressed but
-    // don't count as "to buy" — they're not on the shopping list.
-    const needed = listItems.filter(_itemIsNeeded);
-    const remaining = needed.filter(i => !i.checked).length;
-    const total     = needed.length;
-    bar.innerHTML = `
-      <div class="grocery-phase-info">
-        <div class="grocery-phase-title" style="color:var(--ok)"><svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Shopping</div>
-        <div class="grocery-phase-meta">${total - remaining} of ${total} ticked off${remaining ? ` · ${remaining} to go` : ''}</div>
-      </div>
-      <div style="display:flex;gap:6px;flex-shrink:0">
-        <button class="btn btn-ghost btn-sm" onclick="backToStockCheck()" title="Back to stock check"><svg class="icon" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button>
-        <button class="btn btn-primary btn-sm" onclick="finishGroceryShopping()">Done</button>
-      </div>`;
+  }
+  // 'shop'
+  const needed = listItems.filter(_itemIsNeeded);
+  const remaining = needed.filter(i => !i.checked).length;
+  const total     = needed.length;
+  return `
+    <div class="grocery-phase-info">
+      <div class="grocery-phase-title" style="color:var(--ok)"><svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Shopping</div>
+      <div class="grocery-phase-meta">${total - remaining} of ${total} ticked off${remaining ? ` · ${remaining} to go` : ''}</div>
+    </div>
+    <div style="display:flex;gap:6px;flex-shrink:0">
+      <button class="btn btn-ghost btn-sm" onclick="backToStockCheck()" title="Back to stock check"><svg class="icon" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button>
+      <button class="btn btn-primary btn-sm" onclick="finishGroceryShopping()">Done</button>
+    </div>`;
+}
+
+// Mobile FS mode bar — lives inside #grocery-fs-mode-bar in the sticky
+// FS header. Mirrors the desktop phase bar but always renders (even in
+// shopping mode) so the mode + actions are always visible.
+function _renderGroceryFsModeBar(list, mode, phase, listItems) {
+  const slot = document.getElementById('grocery-fs-mode-bar');
+  if (!slot) return;
+  if (!list || groceryEditMode || !activeGroceryListId) {
+    slot.innerHTML = '';
+    return;
+  }
+  // For shopping-mode lists (mode==='shopping'), there's no phase bar
+  // at all on desktop. Keep the FS mode bar empty in that case too —
+  // the title already tells the user which list they're in.
+  if (mode !== 'stockcheck') {
+    slot.innerHTML = '';
+    return;
+  }
+  slot.innerHTML = `<div class="grocery-phase-bar">${_buildGroceryPhaseBarHTML(phase, listItems)}</div>`;
+}
+
+// Toggle the expandable search row inside the FS header. Focuses the
+// input on open so the user can start typing immediately.
+function _toggleGroceryFsSearch() {
+  const row = document.getElementById('grocery-fs-search-row');
+  const input = document.getElementById('grocery-fs-search-input');
+  if (!row) return;
+  const isOpen = row.style.display !== 'none';
+  if (isOpen) {
+    row.style.display = 'none';
+    if (input) input.value = '';
+    renderGrocery();
+  } else {
+    row.style.display = 'block';
+    setTimeout(() => input?.focus(), 30);
   }
 }
 
@@ -25056,6 +25126,9 @@ function switchGroceryList(id) {
   groceryEditMode = false;
   activeGroceryListId = id;
   try { localStorage.setItem('stockroom_active_grocery_list', id); } catch(e) {}
+  // Enter "list open" state — CSS uses this on mobile to hide the app
+  // nav/FAB and give the list a full-screen feel with its own back arrow.
+  document.body.classList.add('grocery-list-open');
   // Restore per-list sort labels
   const _db = document.getElementById('grocery-sort-dept');
   const _ab = document.getElementById('grocery-sort-alpha');
@@ -25299,9 +25372,21 @@ function _quickListAutocomplete(val) {
   const searchTerm = parsedLast.name || lastPart;
   if (searchTerm.length < 1) { sugg.style.display = 'none'; return; }
   const already = new Set(parts.slice(0, -1).map(p => parseGroceryQty(p).name.toLowerCase()));
-  const matches = groceryItems
-    .filter(i => i.name.toLowerCase().includes(searchTerm.toLowerCase()) && !already.has(i.name.toLowerCase()))
-    .slice(0, 8);
+  // Dedupe by name (case-insensitive) so the same item present in multiple
+  // shopping lists shows only once in suggestions. Keep the first match
+  // we encounter — typically the most recently-touched given the natural
+  // order of groceryItems isn't strict but is good-enough.
+  const seenNames = new Set();
+  const matches = [];
+  for (const i of groceryItems) {
+    const lname = i.name.toLowerCase();
+    if (already.has(lname)) continue;
+    if (seenNames.has(lname)) continue;
+    if (!lname.includes(searchTerm.toLowerCase())) continue;
+    seenNames.add(lname);
+    matches.push(i);
+    if (matches.length >= 8) break;
+  }
   if (!matches.length) { sugg.style.display = 'none'; return; }
   sugg.style.display = 'block';
   sugg.innerHTML = matches.map(i => {
@@ -25809,7 +25894,13 @@ async function confirmGroceryImport() {
 }
 
 function renderGrocery() {
-  const query = (document.getElementById('grocery-search')?.value || '').toLowerCase().trim();
+  // Query may come from either the regular sticky-header search input
+  // (desktop / picker view) or the mobile full-screen header search input
+  // (when a list is open on mobile). Use whichever has content; if both
+  // are empty, default to ''.
+  const regularQ = (document.getElementById('grocery-search')?.value || '').trim();
+  const fsQ      = (document.getElementById('grocery-fs-search-input')?.value || '').trim();
+  const query    = (regularQ || fsQ).toLowerCase();
   const body  = document.getElementById('grocery-list-body');
   const infoEl = document.getElementById('grocery-interval-info');
   const checkedBar = document.getElementById('grocery-checked-bar');
@@ -25889,6 +25980,14 @@ function renderGrocery() {
   const _activeList = _activeGroceryList();
   const _mode  = _activeGroceryListMode();
   const _phase = _activeGroceryListPhase();
+
+  // Populate the mobile full-screen header title with the list name. The
+  // CSS only shows the FS header on mobile when body.grocery-list-open is
+  // set, so this is a cheap write either way.
+  const _fsTitle = document.getElementById('grocery-fs-title');
+  if (_fsTitle) {
+    _fsTitle.textContent = _activeList ? _activeList.name : 'List';
+  }
 
   // Render the phase-control bar (Start Shopping / Done Shopping etc.).
   // It sits between the toolbar and the items so it's always visible.

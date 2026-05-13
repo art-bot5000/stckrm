@@ -598,10 +598,10 @@
     .shopping-link { padding: 8px 12px; font-size: 14px; }
 
     /* ── REMINDERS / GROCERY ── */
-    .grocery-item-name { font-size: 19px; }
-    .grocery-item-meta { font-size: 15px; }
-    .grocery-dept-label { font-size: 14px; }
-    .grocery-dept-count { font-size: 14px; }
+    .grocery-item-name { font-size: 22px; }
+    .grocery-item-meta { font-size: 16px; }
+    .grocery-dept-label { font-size: 15px; }
+    .grocery-dept-count { font-size: 15px; }
     .grocery-search { font-size: 16px; }
 
     /* ── STOCK COUNT / PRICE HISTORY MODALS ── */
@@ -659,6 +659,37 @@
     #view-reminders > div:first-child .btn-primary { display:none; }
     /* Add padding to bottom of views so FAB doesn't overlap last items */
     #view-stock, #view-grocery, #view-reminders { padding-bottom: 110px; }
+
+    /* ── Full-screen grocery list mode (body.grocery-list-open) ──
+       Mirrors the body.note-open pattern. When the user has opened a
+       specific grocery list on mobile, the rest of the app chrome gets
+       out of the way and the list takes the full viewport. The
+       grocery-fs-header block becomes visible and sticks to the top so
+       back-arrow / search / sort / mode-bar are always reachable. */
+    body.grocery-list-open #app-header,
+    body.grocery-list-open #tabs,
+    body.grocery-list-open #grocery-sticky-header,
+    body.grocery-list-open #grocery-active-toolbar {
+      display: none !important;
+    }
+    body.grocery-list-open #fab-btn,
+    body.grocery-list-open #fab-container { display: none !important; }
+    body.grocery-list-open #main { padding-top: 0; padding-left: 0; padding-right: 0; }
+    body.grocery-list-open #view-grocery { padding-bottom: 24px; }
+    body.grocery-list-open .grocery-fs-header {
+      display: block;
+      position: sticky;
+      top: 0;
+      z-index: 95;
+      background: var(--bg);
+    }
+    /* The dynamic mode bar inside the FS header reuses the .grocery-phase-bar
+       look but with smaller margins to fit a sticky-header context. */
+    body.grocery-list-open #grocery-fs-mode-bar .grocery-phase-bar {
+      margin-bottom: 0;
+    }
+    /* Body list contents need horizontal padding back (since #main lost it) */
+    body.grocery-list-open #grocery-list-body { padding: 8px 14px 24px; }
   }
 
   /* ══════════════════════════════════════
@@ -815,6 +846,55 @@
   .grocery-search { flex:1; min-width:160px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:9px 14px; color:var(--text); font-family:var(--sans); font-size:14px; outline:none; }
   .grocery-search:focus { border-color:var(--accent); }
 
+  /* ── Full-screen grocery list header (mobile only) ──
+     Shows back arrow + title + search-toggle, with the sort/edit row
+     and mode bar below. The whole stack sticks to the top of the
+     viewport when the user scrolls so back / mode-switch are always
+     reachable. Hidden by default; mobile-only @media rules toggle it. */
+  .grocery-fs-header { display: none; }
+  .grocery-fs-topbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .grocery-fs-back, .grocery-fs-iconbtn {
+    flex-shrink: 0;
+    width: 40px; height: 40px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 10px;
+    background: transparent; border: none; color: var(--text);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s;
+  }
+  .grocery-fs-back:hover, .grocery-fs-iconbtn:hover {
+    background: var(--surface2);
+  }
+  .grocery-fs-back .icon, .grocery-fs-iconbtn .icon { width: 22px; height: 22px; }
+  .grocery-fs-title {
+    flex: 1; min-width: 0;
+    font-family: var(--sans);
+    font-size: 17px; font-weight: 700; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .grocery-fs-search-row {
+    padding: 8px 12px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .grocery-fs-search-row .grocery-search { width: 100%; box-sizing: border-box; height: 40px; }
+  .grocery-fs-sort-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .grocery-fs-sort-row .grocery-sort-toggle { flex: 1; }
+  .grocery-fs-mode-bar:empty { display: none; }
+  /* The mode bar reuses .grocery-phase-bar styling internally — see render */
+  .grocery-fs-mode-bar { padding: 8px 12px; background: var(--bg); }
+
   /* View header — applied to the title row of every top-level view. Standardises
      spacing below the title so navigating between tabs doesn't shift the page. */
   .view-header { margin: 0 0 16px 0; }
@@ -854,7 +934,7 @@
   .grocery-dept-header { display:flex; align-items:center; justify-content:space-between; padding:10px 0 6px; margin-top:6px; border-bottom:1px solid var(--border); }
   .grocery-dept-label { font-family:var(--mono); font-size:12px; letter-spacing:1.5px; text-transform:uppercase; color:var(--accent); font-weight:700; display:flex; align-items:center; gap:6px; }
   .grocery-dept-count { font-size:12px; color:var(--muted); font-family:var(--mono); }
-  .grocery-item { display:flex; align-items:center; gap:12px; padding:16px 0; border-bottom:1px solid rgba(46,51,80,0.35); min-height:56px; }
+  .grocery-item { display:flex; align-items:center; gap:12px; padding:18px 0; border-bottom:1px solid rgba(46,51,80,0.35); min-height:62px; }
   .grocery-item.checked { opacity:0.4; }
   .grocery-item.checked .grocery-item-name { text-decoration:line-through; color:var(--muted); }
   /* Shop phase: items NOT marked needed during stock check render as
@@ -889,8 +969,8 @@
   .grocery-cb:checked { background:var(--ok); border-color:var(--ok); }
   .grocery-cb:checked::after { content:'✓'; color:#111; font-size:14px; font-weight:700; display:block; line-height:1; }
   .grocery-item-info { flex:1; min-width:0; }
-  .grocery-item-name { font-size:17px; font-weight:600; line-height:1.3; }
-  .grocery-item-meta { font-size:13px; color:var(--muted); margin-top:4px; }
+  .grocery-item-name { font-size:18px; font-weight:600; line-height:1.3; }
+  .grocery-item-meta { font-size:14px; color:var(--muted); margin-top:4px; }
   .grocery-item-actions { display:flex; gap:4px; }
   .grocery-icon-btn { background:transparent; border:none; color:var(--muted); font-size:16px; cursor:pointer; padding:4px; border-radius:4px; line-height:1; }
   .grocery-icon-btn:hover { color:var(--text); }
