@@ -3342,6 +3342,138 @@ async function addNotification({ type, title, body, sourceRef, sharedFromCode, s
   return entry;
 }
 
+// ── Pull billing/account notifications from the server queue ─────────
+// Webhook handlers can't write directly into our encrypted notification
+// inbox (server doesn't have the key), so they push to a plaintext
+// server-side queue. This function pulls everything pending, absorbs each
+// into the local inbox (via addNotification, which handles dedupe by
+// sourceRef), then acks the ids so the server can delete them.
+//
+// Called on every billing-status refresh and on every kvSyncNow. Idempotent
+// and safe to call repeatedly — addNotification dedupes by sourceRef
+// inside its own 24h window, and the server-side queue dedupe protects
+// against duplicate webhook deliveries.
+let _pullBillingNotificationsInflight = false;
+async function pullBillingNotifications() {
+  if (!kvConnected || !_kvEmailHash) return;
+  if (_pullBillingNotificationsInflight) return; // single-flight
+  _pullBillingNotificationsInflight = true;
+  try {
+    const authBody = _kvSessionToken && !_kvVerifier
+      ? { emailHash: _kvEmailHash, sessionToken: _kvSessionToken }
+      : { emailHash: _kvEmailHash, verifier: _kvVerifier };
+    const r = await fetch(`${WORKER_URL}/billing/pending-notifications`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(authBody),
+    });
+    if (!r.ok) {
+      console.warn(`[billing-notif] pending fetch failed: ${r.status}`);
+      return;
+    }
+    const data = await r.json();
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if (items.length === 0) return;
+    const ackIds = [];
+    for (const it of items) {
+      if (!it || !it.id || !it.type || !it.title) continue;
+      try {
+        await addNotification({
+          type:      it.type,
+          title:     it.title,
+          body:      it.body || '',
+          sourceRef: it.sourceRef || `billing:${it.id}`,
+        });
+        ackIds.push(it.id);
+      } catch (err) {
+        console.warn(`[billing-notif] failed to absorb ${it.id}:`, err?.message || err);
+      }
+    }
+    // Ack — even partial success is worth reporting so successful absorbs
+    // don't get re-delivered on the next pull.
+    if (ackIds.length > 0) {
+      try {
+        await fetch(`${WORKER_URL}/billing/ack-notifications`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...authBody, ids: ackIds }),
+        });
+      } catch (err) {
+        // Non-fatal — they'll re-arrive next pull and dedupe via sourceRef.
+        console.warn('[billing-notif] ack failed:', err?.message || err);
+      }
+    }
+  } catch (err) {
+    console.warn('[billing-notif] pull failed:', err?.message || err);
+  } finally {
+    _pullBillingNotificationsInflight = false;
+  }
+}
+
+// ── New-device sign-in detection ──────────────────────────────────────
+// On every successful sync (which is the first moment `settings` is
+// populated post-sign-in), check whether the current device's ID appears
+// in settings.knownDevices. If not, this is a new device — emit an
+// account notification and add the device to the list.
+//
+// The deviceId is local-only (localStorage), so a single human signing in
+// on phone+tablet+desktop gets one notification per physical device on
+// first sign-in. Wiping browser data on a device produces a new deviceId,
+// so the next sign-in there will look "new" — that's a reasonable trade
+// (a cleared device is effectively a new device from a security stance).
+//
+// Single-flight on `_newDeviceCheckDone` so we don't fire the same
+// notification twice within a session (the helper is idempotent thanks
+// to addNotification's sourceRef dedupe, but the in-memory guard saves
+// the dedupe scan).
+let _newDeviceCheckDone = false;
+async function _checkAndNotifyNewDevice() {
+  if (_newDeviceCheckDone) return;
+  if (!kvConnected || !settings) return;
+  try {
+    const deviceId = getOrCreateDeviceId();
+    if (!deviceId) return;
+    const known = Array.isArray(settings.knownDevices) ? settings.knownDevices : [];
+    const isKnown = known.some(d => d && d.id === deviceId);
+    if (isKnown) {
+      _newDeviceCheckDone = true;
+      // Refresh lastSeen so we have a recent timestamp if/when we add a
+      // "manage devices" view later. Best-effort, no push needed.
+      const entry = known.find(d => d && d.id === deviceId);
+      if (entry) entry.lastSeenAt = new Date().toISOString();
+      return;
+    }
+    // Unknown device — record and notify.
+    const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+    // Light UA parsing for a friendly label
+    let label = 'this device';
+    if (/iPhone/i.test(ua))      label = 'an iPhone';
+    else if (/iPad/i.test(ua))   label = 'an iPad';
+    else if (/Android/i.test(ua)) label = /Mobile/i.test(ua) ? 'an Android phone' : 'an Android tablet';
+    else if (/Macintosh/i.test(ua)) label = 'a Mac';
+    else if (/Windows/i.test(ua))   label = 'a Windows PC';
+    else if (/Linux/i.test(ua))     label = 'a Linux device';
+    known.push({
+      id: deviceId,
+      firstSeenAt: new Date().toISOString(),
+      lastSeenAt:  new Date().toISOString(),
+      uaLabel:     label,
+    });
+    settings.knownDevices = known;
+    try { await _saveSettings(); } catch(e) {}
+    addNotification({
+      type:      'account',
+      title:     'New sign-in on a new device',
+      body:      `You signed in on ${label}. If this wasn\'t you, change your passphrase immediately.`,
+      sourceRef: `account:new-device:${deviceId}`,
+    }).catch(_ => {});
+    _newDeviceCheckDone = true;
+  } catch (err) {
+    console.warn('[new-device] check failed:', err?.message || err);
+  }
+}
+
+
 // Cap enforcement: keep all pinned (up to NOTIFICATIONS_PINNED_MAX), and
 // trim the unpinned tail so total never exceeds NOTIFICATIONS_CAP. Pinned
 // items beyond the max are demoted to unpinned (oldest pin first), so a
@@ -3449,6 +3581,8 @@ function _notifTypeIcon(type) {
     case 'low-stock': return 'i-alert-triangle';
     case 'expiring':  return 'i-alert-triangle';
     case 'share':     return 'i-users';
+    case 'billing':   return 'i-piggy-bank';
+    case 'account':   return 'i-shield';
     default:          return 'i-circle';
   }
 }
@@ -3705,6 +3839,12 @@ async function onNotificationRowClick(id) {
     closeNotificationPanel();
     // Navigation depends on the section that changed — default to stock view
     try { navTo('stock'); } catch(_) {}
+  } else if (n.type === 'billing') {
+    closeNotificationPanel();
+    try { navTo('billing'); } catch(_) {}
+  } else if (n.type === 'account') {
+    closeNotificationPanel();
+    try { navTo('account'); } catch(_) {}
   }
 }
 
@@ -8703,6 +8843,10 @@ window.stockroomBilling = (function() {
       _renderBanner();
       // If the Billing view is open, repaint it
       if (_currentViewName === 'billing') _renderBillingPage();
+      // Piggyback the billing/account notification queue pull on the same
+      // refresh heartbeat. Fire-and-forget — we don't block status refresh
+      // on notification delivery. Errors are logged inside the helper.
+      pullBillingNotifications();
       return _cached;
     } catch (err) {
       console.warn('[billing] /billing/status fetch failed:', err.message);
@@ -14767,6 +14911,16 @@ async function _doAddPasskeyToAccount() {
     console.log('[passkey] Setup complete — credId:', credId.slice(0, 12), 'method:', prfOutput ? 'PRF' : 'device-bound');
 
     toast('Passkey added ✓ — you can now sign in with Face ID / Fingerprint');
+    // Persistent account notification — security events should be visible
+    // in the inbox even after the toast disappears, so the user has a
+    // history they can audit. sourceRef includes credId so a fresh-add
+    // doesn't collapse with a previous one.
+    addNotification({
+      type:      'account',
+      title:     'Passkey added',
+      body:      'You can now sign in with Face ID / Fingerprint on this device.',
+      sourceRef: `account:passkey-added:${credId.slice(0, 16)}`,
+    }).catch(_ => {});
     loadPasskeys();
   } catch(err) {
     // Toast for settings context, but also rethrow so protect screen can show persistent error
@@ -15951,6 +16105,10 @@ async function kvSyncNow(silent = false) {
     return;
   }
   if (!silent) updateSyncPill('syncing');
+  // Piggyback the server-side billing/account notification queue pull onto
+  // every sync. Fire-and-forget; errors are logged inside the helper.
+  // Excluded for share-only sessions (no auth credentials of our own).
+  if (kvConnected) { pullBillingNotifications(); }
   const _wasSilent = silent;
   try {
     // Owner-side: absorb any guest writes from shares we own BEFORE pulling
@@ -16283,6 +16441,11 @@ async function kvSyncNow(silent = false) {
     }
     if (!_wasSilent) updateSyncPill('synced'); else updateSyncPill('connected');
     hideDataLoadingOverlay();
+    // First sync after sign-in is the right moment to check device identity:
+    // `settings` is now populated (with knownDevices if this device has
+    // been seen before). Fire-and-forget; helper is single-flight so
+    // subsequent syncs don't re-check.
+    if (kvConnected) { _checkAndNotifyNewDevice(); }
   } catch(err) {
     hideDataLoadingOverlay();
     console.error('KV sync error:', err);
@@ -16403,6 +16566,7 @@ async function kvSignOut() {
   _kvSessionToken = '';
   _kvKey          = null;
   _shareState     = null;
+  _newDeviceCheckDone = false; // re-arm check for the next sign-in
   // Show login screen (fallback — full reload happens via the setTimeout
   // scheduled at the top of this function)
   document.body.classList.add('wizard-active'); document.getElementById('wizard').style.display = 'flex';
@@ -31371,6 +31535,19 @@ async function _mfaFinishSetup(newMethod) {
   localStorage.setItem(_MFA_DISMISSED_KEY, 'enabled');
   _updateMfaSettingsUI();
   toast(_pendingMfaSetupMode === 'add' ? 'Method added ✓' : 'Multifactor authentication enabled ✓');
+  // Persistent account notification — security event, should be auditable
+  // from the inbox even after the toast disappears.
+  const _mfaAdded = _pendingMfaSetupMode === 'add';
+  addNotification({
+    type:      'account',
+    title:     _mfaAdded ? 'New MFA method added' : 'Multifactor authentication enabled',
+    body:      _mfaAdded
+      ? 'A new authentication method has been added to your account.'
+      : 'Your account is now protected by multifactor authentication.',
+    sourceRef: _mfaAdded
+      ? `account:mfa-method-added:${(newMethod && newMethod.id) || Date.now()}`
+      : `account:mfa-enabled:${Date.now()}`,
+  }).catch(_ => {});
 }
 
 // ── Manage methods ──────────────────────────────────────────────────────────
@@ -31453,6 +31630,16 @@ function mfaDisable() {
       closeModal('mfa-manage-modal');
       _updateMfaSettingsUI();
       toast('MFA disabled');
+      // Security-relevant change — always notify, even when self-initiated.
+      // The inbox entry serves as an audit trail; if the user later sees a
+      // "MFA disabled" notification they didn't trigger, that's their cue
+      // to investigate.
+      addNotification({
+        type:      'account',
+        title:     'Multifactor authentication disabled',
+        body:      'MFA is no longer required to sign in. If you didn\'t make this change, re-enable MFA immediately.',
+        sourceRef: `account:mfa-disabled:${Date.now()}`,
+      }).catch(_ => {});
     },
     { passkeyAllowed: true }
   );
