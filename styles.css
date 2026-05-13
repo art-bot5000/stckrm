@@ -679,8 +679,8 @@
     body.grocery-list-open #grocery-phase-bar {
       display: none !important;
     }
-    body.grocery-list-open #fab-btn,
-    body.grocery-list-open #fab-container { display: none !important; }
+    /* FAB stays visible in list-open mode — see getGroceryFabActions for
+       the context-aware primary action (Edit list vs. Quick list). */
     body.grocery-list-open #main { padding-top: 0; padding-left: 0; padding-right: 0; }
     body.grocery-list-open #view-grocery { padding-bottom: 24px; }
     body.grocery-list-open .grocery-fs-header {
@@ -885,19 +885,34 @@
     font-size: 17px; font-weight: 700; color: var(--text);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .grocery-fs-search-row {
-    padding: 8px 12px;
-    background: var(--bg);
-    border-bottom: 1px solid var(--border);
+  /* Inline expandable search — collapsed by default (width 0, opacity 0).
+     When the parent .grocery-fs-topbar has .grocery-fs-search-open, the
+     input grows to fill the available space between the back arrow and
+     the search icon. The title hides at the same time (set via JS) so
+     the input has room to expand without wrapping. */
+  .grocery-fs-search-inline {
+    flex: 0 0 0;
+    width: 0;
+    min-width: 0;
+    opacity: 0;
+    padding: 0;
+    border: 1px solid transparent;
+    background: var(--surface2);
+    border-radius: 8px;
+    height: 40px;
+    box-sizing: border-box;
+    transition: flex-basis 0.18s ease, width 0.18s ease, opacity 0.15s ease 0.03s, padding 0.18s ease;
+    pointer-events: none;
   }
-  .grocery-fs-search-row .grocery-search { width: 100%; box-sizing: border-box; height: 40px; }
-  .grocery-fs-sort-row {
-    display: flex; align-items: center; gap: 8px;
-    padding: 8px 12px;
-    background: var(--bg);
-    border-bottom: 1px solid var(--border);
+  .grocery-fs-topbar.grocery-fs-search-open .grocery-fs-search-inline {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    opacity: 1;
+    padding: 0 12px;
+    pointer-events: auto;
+    border-color: var(--accent);
   }
-  .grocery-fs-sort-row .grocery-sort-toggle { flex: 1; }
   .grocery-fs-mode-bar:empty { display: none; }
   /* The mode bar reuses .grocery-phase-bar styling internally — see render */
   .grocery-fs-mode-bar { padding: 8px 12px; background: var(--bg); }
@@ -2185,12 +2200,48 @@ body.note-open { overflow: hidden; touch-action: none; }
   border-radius: 12px;
   opacity: 0.85;
 }
+/* When collapsed: tighten the section and visually muffle it so it
+   reads as "yes the bin exists, no it isn't holding your attention". */
+.recycle-bin-section.recycle-bin-collapsed {
+  padding-bottom: 12px;
+}
+.recycle-bin-section.recycle-bin-collapsed .recycle-bin-subtitle,
+.recycle-bin-section.recycle-bin-collapsed .recycle-bin-rows {
+  display: none;
+}
+.recycle-bin-section.recycle-bin-collapsed .recycle-bin-header {
+  margin-bottom: 0;
+}
 .recycle-bin-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.recycle-bin-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.recycle-bin-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+}
+.recycle-bin-chevron .icon { width: 14px; height: 14px; }
+/* Default (expanded): chevron points down. Collapsed: rotate to point right. */
+.recycle-bin-section.recycle-bin-collapsed .recycle-bin-chevron {
+  transform: rotate(-90deg);
 }
 .recycle-bin-title {
   display: flex;
@@ -3713,6 +3764,14 @@ body.has-demo-banner #view-notes #notes-header {
   margin: 2px 4px;
 }
 .notif-history-row:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
+/* Dismissed notifications appear in the history modal at lower opacity so
+   they read as "you already swiped this away" without disappearing. */
+.notif-history-row.notif-dismissed { opacity: 0.55; }
+.notif-history-row.notif-dismissed .notif-title { text-decoration: line-through; text-decoration-thickness: 1px; }
+.notif-dismissed-tag {
+  font-style: italic;
+  color: var(--muted);
+}
 
 /* Notification history modal overlay — element-scoped (the global
    .modal-overlay class is not a generic implementation). Higher z-index

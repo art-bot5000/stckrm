@@ -2302,6 +2302,37 @@ function _expiredFromBin(obj) {
   return (Date.now() - new Date(obj._deletedAt).getTime()) >= RECYCLE_BIN_MS;
 }
 
+// ── Collapsible recycle-bin header ──────────────────────────────────
+// Returns the HTML for a header that toggles the bin section between
+// collapsed (just the title) and expanded (subtitle + rows). State is
+// persisted per-key in localStorage. Default is collapsed — the bin's
+// purpose is just to advertise its existence; users open it on demand.
+function _binCollapseKey(key)   { return `stockroom_bin_collapsed_${key}`; }
+function _isBinCollapsed(key)   {
+  // Default collapsed when no preference stored.
+  const v = localStorage.getItem(_binCollapseKey(key));
+  return v === null ? true : v === '1';
+}
+function _toggleBinCollapsed(key) {
+  const next = !_isBinCollapsed(key);
+  localStorage.setItem(_binCollapseKey(key), next ? '1' : '0');
+  // Find the .recycle-bin-section that wraps this header and toggle its class
+  const section = document.querySelector(`[data-bin-key="${CSS.escape(key)}"]`);
+  if (section) section.classList.toggle('recycle-bin-collapsed', next);
+}
+// Builds the header markup used by every recycle bin. `titleHTML` is the
+// caption (e.g. "Recently Deleted" plus a count chip). `actionHTML` is
+// the right-hand action button (e.g. an Empty button) — pass '' if none.
+function _renderBinHeader(key, titleHTML, actionHTML) {
+  return `<div class="recycle-bin-header" onclick="_toggleBinCollapsed('${key}')">
+      <div class="recycle-bin-header-left">
+        <span class="recycle-bin-chevron"><svg class="icon" aria-hidden="true"><use href="#i-chevron-down"></use></svg></span>
+        ${titleHTML}
+      </div>
+      ${actionHTML ? `<div onclick="event.stopPropagation()">${actionHTML}</div>` : ''}
+    </div>`;
+}
+
 // One-time hint after first soft-delete in each section, so users know
 // where deleted things go. Stored in localStorage so it persists.
 function _maybeShowBinHint(section) {
@@ -4298,7 +4329,11 @@ function _renderNotificationPanel() {
   const body = document.getElementById('notif-panel-body');
   if (!body) return;
 
-  if (!notifications.length) {
+  // Visible notifications = everything except dismissed. Dismissed entries
+  // are kept in the underlying array so they show up in the history modal.
+  const visible = notifications.filter(n => !n.dismissedAt);
+
+  if (!visible.length) {
     body.innerHTML = `
       <div class="notif-empty">
         <div style="color:var(--muted);margin-bottom:8px"><svg aria-hidden="true" style="width:32px;height:32px"><use href="#i-bell-off"></use></svg></div>
@@ -4309,7 +4344,7 @@ function _renderNotificationPanel() {
   }
 
   // Sort: pinned (newest first) → unpinned (newest first)
-  const sorted = [...notifications].sort((a, b) => {
+  const sorted = [...visible].sort((a, b) => {
     if (!!b.pinned - !!a.pinned !== 0) return !!b.pinned - !!a.pinned;
     return new Date(b.createdAt) - new Date(a.createdAt);
   });
@@ -4479,7 +4514,8 @@ function _renderNotificationHistory() {
 
   const renderItem = n => {
     const icon = _notifTypeIcon(n.type);
-    return `<div class="notif-history-row" data-id="${n.id}">
+    const isDismissed = !!n.dismissedAt;
+    return `<div class="notif-history-row${isDismissed ? ' notif-dismissed' : ''}" data-id="${n.id}">
       <div class="notif-icon"><svg class="icon" aria-hidden="true"><use href="#${icon}"></use></svg></div>
       <div class="notif-content" onclick="onNotificationRowClick('${n.id}');closeNotificationHistory()">
         <div class="notif-title">${esc(n.title)}</div>
@@ -4487,6 +4523,7 @@ function _renderNotificationHistory() {
         <div class="notif-meta">
           <span>${esc(_notifAbsoluteTime(n.createdAt))}</span>
           ${n.sharedFromName ? `<span class="notif-source">· ${esc(n.sharedFromName)}</span>` : ''}
+          ${isDismissed ? `<span class="notif-dismissed-tag">· Dismissed</span>` : ''}
         </div>
       </div>
     </div>`;
@@ -4663,9 +4700,14 @@ async function toggleNotificationPin(id) {
 }
 
 async function dismissNotification(id) {
-  const idx = notifications.findIndex(x => x.id === id);
-  if (idx === -1) return;
-  notifications.splice(idx, 1);
+  const n = notifications.find(x => x.id === id);
+  if (!n) return;
+  // Mark dismissed instead of removing so the entry stays in the
+  // notification history modal. The panel filters dismissed items out;
+  // history filters them in (with a "dismissed" visual treatment).
+  n.dismissedAt = new Date().toISOString();
+  // If unread, mark read too — dismiss is a stronger acknowledgement
+  if (!n.readAt) n.readAt = n.dismissedAt;
   await saveNotificationsLocal();
   _renderNotificationBellBadge();
   _renderNotificationPanel();
@@ -4963,21 +5005,21 @@ function renderRemindersRecycleBin() {
     bin = document.createElement('div');
     bin.id = 'reminders-recycle-bin';
     bin.className = 'recycle-bin-section';
+    bin.setAttribute('data-bin-key', 'reminders');
     view.appendChild(bin);
   }
   bin.style.display = 'block';
+  bin.classList.toggle('recycle-bin-collapsed', _isBinCollapsed('reminders'));
 
-  const headerHTML = `
-    <div class="recycle-bin-header">
-      <div class="recycle-bin-title">
-        <svg class="icon icon-md" aria-hidden="true"><use href="#i-trash-2"></use></svg>
-        Recently Deleted
-        <span class="recycle-bin-count">${trashed.length}</span>
-      </div>
-      <button class="btn btn-ghost btn-sm" onclick="emptyRemindersBin()">Empty</button>
-    </div>
-    <div class="recycle-bin-subtitle">Reminders are permanently deleted after 30 days.</div>
-  `;
+  const titleHTML = `
+    <div class="recycle-bin-title">
+      <svg class="icon icon-md" aria-hidden="true"><use href="#i-trash-2"></use></svg>
+      Recently Deleted
+      <span class="recycle-bin-count">${trashed.length}</span>
+    </div>`;
+  const actionHTML = `<button class="btn btn-ghost btn-sm" onclick="emptyRemindersBin()">Empty</button>`;
+  const headerHTML = _renderBinHeader('reminders', titleHTML, actionHTML)
+    + `<div class="recycle-bin-subtitle">Reminders are permanently deleted after 30 days.</div>`;
   const rowsHTML = trashed.map(r => {
     const days = _daysLeftInBin(r);
     const interval = (r.interval && r.unit) ? `Every ${r.interval} ${r.unit}` : '';
@@ -4994,7 +5036,7 @@ function renderRemindersRecycleBin() {
       </div>`;
   }).join('');
 
-  bin.innerHTML = headerHTML + rowsHTML;
+  bin.innerHTML = headerHTML + `<div class="recycle-bin-rows">${rowsHTML}</div>`;
 }
 
 function reminderCardHTML(r) {
@@ -7390,21 +7432,21 @@ function renderItemsRecycleBin() {
     bin = document.createElement('div');
     bin.id = 'items-recycle-bin';
     bin.className = 'recycle-bin-section';
+    bin.setAttribute('data-bin-key', 'items');
     grid.parentNode.insertBefore(bin, grid.nextSibling);
   }
   bin.style.display = 'block';
+  bin.classList.toggle('recycle-bin-collapsed', _isBinCollapsed('items'));
 
-  const headerHTML = `
-    <div class="recycle-bin-header">
-      <div class="recycle-bin-title">
-        <svg class="icon icon-md" aria-hidden="true"><use href="#i-trash-2"></use></svg>
-        Recently Deleted
-        <span class="recycle-bin-count">${trashed.length}</span>
-      </div>
-      <button class="btn btn-ghost btn-sm" onclick="emptyItemsBin()">Empty</button>
-    </div>
-    <div class="recycle-bin-subtitle">Items are permanently deleted after 30 days.</div>
-  `;
+  const titleHTML = `
+    <div class="recycle-bin-title">
+      <svg class="icon icon-md" aria-hidden="true"><use href="#i-trash-2"></use></svg>
+      Recently Deleted
+      <span class="recycle-bin-count">${trashed.length}</span>
+    </div>`;
+  const actionHTML = `<button class="btn btn-ghost btn-sm" onclick="emptyItemsBin()">Empty</button>`;
+  const headerHTML = _renderBinHeader('items', titleHTML, actionHTML)
+    + `<div class="recycle-bin-subtitle">Items are permanently deleted after 30 days.</div>`;
   const rowsHTML = trashed.map(item => {
     const days = _daysLeftInBin(item);
     const cat  = item.category ? esc(item.category) : '';
@@ -7421,7 +7463,7 @@ function renderItemsRecycleBin() {
       </div>`;
   }).join('');
 
-  bin.innerHTML = headerHTML + rowsHTML;
+  bin.innerHTML = headerHTML + `<div class="recycle-bin-rows">${rowsHTML}</div>`;
 }
 
 function cardHTML(item, threshold) {
@@ -17803,6 +17845,27 @@ function _getFabActionsForView(viewName) {
 
 // Grocery FAB: primary action slides left, secondaries stack above
 function getGroceryFabActions() {
+  // ── List-open mode (mobile full-screen, single list view) ──
+  // Edit-mode toggle is the only meaningful action here — Quick List /
+  // Add Store / Edit Depts don't make sense in the context of a single
+  // open list. When already in edit mode, the FAB becomes the "Done
+  // editing" lock so the user can exit edit mode without scrolling.
+  if (document.body.classList.contains('grocery-list-open')) {
+    if (groceryEditMode) {
+      return {
+        primary:     { icon: '<svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>', label: 'Done editing', action: () => { closeFab(); toggleGroceryEditMode(); } },
+        secondaries: [],
+      };
+    }
+    return {
+      primary:     { icon: '<svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg>', label: 'Edit list', action: () => { closeFab(); toggleGroceryEditMode(); } },
+      secondaries: [],
+    };
+  }
+  // ── List picker mode ──
+  // Add/Edit List was previously offered here, but each list row now has
+  // pin/edit/delete inline — so that's redundant. Quick List is promoted
+  // to the primary action since it's the most common task from this view.
   if (groceryEditMode) {
     return {
       primary:     { icon: '<svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>',          label: 'Done editing',   action: () => { closeFab(); toggleGroceryEditMode(); } },
@@ -17813,9 +17876,8 @@ function getGroceryFabActions() {
     };
   }
   return {
-    primary:     { icon: '<svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg>',         label: 'Add / Edit List', action: () => { closeFab(); toggleGroceryEditMode(); } },
+    primary:     { icon: '<svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg>',           label: 'Quick List',  action: () => { closeFab(); openQuickList(); } },
     secondaries: [
-      { icon: '<svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg>',            label: 'Quick List',  action: () => { closeFab(); openQuickList(); } },
       { icon: '<svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg>', label: 'Import List', action: () => { closeFab(); openGroceryImport(); } },
       { icon: '<svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg>',           label: 'Add Store',   action: () => { closeFab(); openAddGroceryList(); } },
       { icon: '<svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg>',             label: 'Edit Depts',  action: () => { closeFab(); openGroceryDepts(); } },
@@ -24799,9 +24861,11 @@ function _groceryGoToAllLists() {
   document.body.classList.remove('grocery-list-open');
   // Clear any lingering FS search query so the picker isn't accidentally filtered
   const _fsSearchInput = document.getElementById('grocery-fs-search-input');
-  const _fsSearchRow   = document.getElementById('grocery-fs-search-row');
+  const _fsTopbar = document.querySelector('.grocery-fs-topbar');
+  const _fsTitle = document.getElementById('grocery-fs-title');
   if (_fsSearchInput) _fsSearchInput.value = '';
-  if (_fsSearchRow)   _fsSearchRow.style.display = 'none';
+  if (_fsTopbar) _fsTopbar.classList.remove('grocery-fs-search-open');
+  if (_fsTitle) _fsTitle.style.display = '';
   renderGrocery();
 }
 
@@ -24979,19 +25043,24 @@ function _renderGroceryFsModeBar(list, mode, phase, listItems) {
   slot.innerHTML = `<div class="grocery-phase-bar">${_buildGroceryPhaseBarHTML(phase, listItems)}</div>`;
 }
 
-// Toggle the expandable search row inside the FS header. Focuses the
-// input on open so the user can start typing immediately.
+// Toggle the inline expandable search inside the FS topbar. The input
+// expands leftward from behind the icon (width grows; nothing wraps to a
+// new line). Focuses the input on open; clears it on close.
 function _toggleGroceryFsSearch() {
-  const row = document.getElementById('grocery-fs-search-row');
+  const topbar = document.querySelector('.grocery-fs-topbar');
   const input = document.getElementById('grocery-fs-search-input');
-  if (!row) return;
-  const isOpen = row.style.display !== 'none';
+  const titleEl = document.getElementById('grocery-fs-title');
+  if (!topbar) return;
+  const isOpen = topbar.classList.contains('grocery-fs-search-open');
   if (isOpen) {
-    row.style.display = 'none';
+    topbar.classList.remove('grocery-fs-search-open');
     if (input) input.value = '';
+    if (titleEl) titleEl.style.display = '';
     renderGrocery();
   } else {
-    row.style.display = 'block';
+    topbar.classList.add('grocery-fs-search-open');
+    // Hide the title to make room — the expanded input fills its space.
+    if (titleEl) titleEl.style.display = 'none';
     setTimeout(() => input?.focus(), 30);
   }
 }
@@ -25003,7 +25072,14 @@ function renderGroceryListPicker() {
   if (!body) return;
 
   // Active lists only (soft-deleted ones go in their own section below).
-  let lists = [...groceryLists].filter(l => !l._deletedAt).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  // Sort order: pinned lists first (most-recently-touched among pinned at top),
+  // then unpinned lists by recency. The user can pin/unpin from each row.
+  let lists = [...groceryLists].filter(l => !l._deletedAt).sort((a, b) => {
+    const ap = a.pinned ? 1 : 0;
+    const bp = b.pinned ? 1 : 0;
+    if (ap !== bp) return bp - ap;
+    return new Date(b.updatedAt) - new Date(a.updatedAt);
+  });
   const deletedLists = groceryLists.filter(l => l._deletedAt).sort((a, b) => new Date(b._deletedAt) - new Date(a._deletedAt));
 
   // When searching, include lists that match by name/store OR contain matching items
@@ -25076,23 +25152,28 @@ function renderGroceryListPicker() {
               </div>
             </div>
             <div style="display:flex;gap:6px;flex-shrink:0">
-              <button onclick="event.stopPropagation();editGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:13px;cursor:pointer"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
-              ${lists.length > 1 ? `<button onclick="event.stopPropagation();deleteGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--danger);font-size:13px;cursor:pointer"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>` : ''}
+              <button onclick="event.stopPropagation();toggleGroceryListPin('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:${l.pinned ? 'var(--accent)' : 'var(--muted)'};font-size:13px;cursor:pointer" title="${l.pinned ? 'Unpin list' : 'Pin to top'}"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg></button>
+              <button onclick="event.stopPropagation();editGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:13px;cursor:pointer" title="Edit list"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
+              ${lists.length > 1 ? `<button onclick="event.stopPropagation();deleteGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--danger);font-size:13px;cursor:pointer" title="Delete list"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>` : ''}
             </div>
           </div>
           ${matchingItemsHTML}
         </div>`; }).join('')}
     </div>
     ${deletedLists.length ? `
-      <div class="recycle-bin-section" style="margin-top:24px">
-        <div class="recycle-bin-header">
-          <div class="recycle-bin-title">
-            <svg class="icon icon-md" aria-hidden="true"><use href="#i-trash-2"></use></svg>
-            Recently Deleted Lists
-            <span class="recycle-bin-count">${deletedLists.length}</span>
+      <div class="recycle-bin-section${_isBinCollapsed('grocery-lists') ? ' recycle-bin-collapsed' : ''}" data-bin-key="grocery-lists" style="margin-top:24px">
+        <div class="recycle-bin-header" onclick="_toggleBinCollapsed('grocery-lists')">
+          <div class="recycle-bin-header-left">
+            <span class="recycle-bin-chevron"><svg class="icon" aria-hidden="true"><use href="#i-chevron-down"></use></svg></span>
+            <div class="recycle-bin-title">
+              <svg class="icon icon-md" aria-hidden="true"><use href="#i-trash-2"></use></svg>
+              Recently Deleted Lists
+              <span class="recycle-bin-count">${deletedLists.length}</span>
+            </div>
           </div>
         </div>
         <div class="recycle-bin-subtitle">Lists are permanently deleted after 30 days.</div>
+        <div class="recycle-bin-rows">
         ${deletedLists.map(l => {
           const days = Math.max(0, Math.ceil(30 - (Date.now() - new Date(l._deletedAt).getTime()) / MS_PER_DAY));
           const totalItems = groceryItems.filter(i => (i.listId||'default') === l.id).length;
@@ -25108,6 +25189,7 @@ function renderGroceryListPicker() {
               </div>
             </div>`;
         }).join('')}
+        </div>
       </div>
     ` : ''}`;
 
@@ -25201,6 +25283,23 @@ async function _saveGroceryListModal(id) {
   }
   await _saveGroceryLists();
   renderGrocery();
+}
+
+// Toggle the "pinned" flag on a grocery list. Pinned lists sort to the
+// top of the picker so the user's frequently-used lists are easy to reach.
+async function toggleGroceryListPin(id) {
+  if (!canWrite('groceries')) { showLockBanner('groceries'); return; }
+  const list = groceryLists.find(l => l.id === id);
+  if (!list) return;
+  list.pinned = !list.pinned;
+  list.updatedAt = new Date().toISOString();
+  if (typeof touchField === 'function') {
+    try { touchField(list, 'pinned'); } catch(e) {}
+  }
+  await _saveGroceryLists();
+  if (typeof _syncQueue !== 'undefined' && _syncQueue?.enqueue) _syncQueue.enqueue();
+  renderGrocery();
+  toast(list.pinned ? 'Pinned to top' : 'Unpinned');
 }
 
 async function deleteGroceryList(id) {
@@ -26219,21 +26318,21 @@ function renderGroceryRecycleBin() {
     bin = document.createElement('div');
     bin.id = 'grocery-recycle-bin';
     bin.className = 'recycle-bin-section';
+    bin.setAttribute('data-bin-key', 'grocery-items');
     body.parentNode.insertBefore(bin, body.nextSibling);
   }
   bin.style.display = 'block';
+  bin.classList.toggle('recycle-bin-collapsed', _isBinCollapsed('grocery-items'));
 
-  const headerHTML = `
-    <div class="recycle-bin-header">
-      <div class="recycle-bin-title">
-        <svg class="icon icon-md" aria-hidden="true"><use href="#i-trash-2"></use></svg>
-        Recently Deleted
-        <span class="recycle-bin-count">${trashed.length}</span>
-      </div>
-      <button class="btn btn-ghost btn-sm" onclick="emptyGroceryBin()">Empty</button>
-    </div>
-    <div class="recycle-bin-subtitle">Items are permanently deleted after 30 days.</div>
-  `;
+  const titleHTML = `
+    <div class="recycle-bin-title">
+      <svg class="icon icon-md" aria-hidden="true"><use href="#i-trash-2"></use></svg>
+      Recently Deleted
+      <span class="recycle-bin-count">${trashed.length}</span>
+    </div>`;
+  const actionHTML = `<button class="btn btn-ghost btn-sm" onclick="emptyGroceryBin()">Empty</button>`;
+  const headerHTML = _renderBinHeader('grocery-items', titleHTML, actionHTML)
+    + `<div class="recycle-bin-subtitle">Items are permanently deleted after 30 days.</div>`;
   const rowsHTML = trashed.map(item => {
     const days = _daysLeftInBin(item);
     const dept = item.dept ? esc(item.dept) : '';
@@ -26250,7 +26349,7 @@ function renderGroceryRecycleBin() {
       </div>`;
   }).join('');
 
-  bin.innerHTML = headerHTML + rowsHTML;
+  bin.innerHTML = headerHTML + `<div class="recycle-bin-rows">${rowsHTML}</div>`;
 }
 
 function _toggleDeptCollapse(deptId) {

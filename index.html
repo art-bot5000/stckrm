@@ -2769,21 +2769,16 @@
         <svg class="icon" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
       </button>
       <div class="grocery-fs-title" id="grocery-fs-title">List</div>
+      <!-- Inline search: input expands leftward from behind the icon. When
+           collapsed, it has 0 width and 0 opacity so it's invisible but
+           keeps its tab order. When expanded (grocery-fs-search-open class
+           on the topbar), it grows to fill the space between the back arrow
+           and the search icon. -->
+      <input class="grocery-search grocery-fs-search-inline" id="grocery-fs-search-input"
+        type="search" placeholder="Search items…" oninput="renderGrocery()" autocomplete="off">
       <button class="grocery-fs-iconbtn" id="grocery-fs-search-toggle" onclick="_toggleGroceryFsSearch()" aria-label="Search">
         <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
       </button>
-    </div>
-    <!-- Expandable search row -->
-    <div class="grocery-fs-search-row" id="grocery-fs-search-row" style="display:none">
-      <input class="grocery-search" id="grocery-fs-search-input" type="search" placeholder="Search items…" oninput="renderGrocery()" autocomplete="off">
-    </div>
-    <!-- Sort toggle row -->
-    <div class="grocery-fs-sort-row">
-      <div class="grocery-sort-toggle">
-        <button class="grocery-sort-btn active" id="grocery-fs-sort-dept" onclick="setGrocerySort('dept',this)">By Dept</button>
-        <button class="grocery-sort-btn" id="grocery-fs-sort-alpha" onclick="setGrocerySort('alpha',this)">A–Z</button>
-      </div>
-      <button class="btn btn-ghost btn-sm" id="grocery-fs-edit-toggle" onclick="toggleGroceryEditMode()" title="Edit list"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
     </div>
     <!-- Mode bar (mirrors the phase bar, but lives in the sticky header) -->
     <div id="grocery-fs-mode-bar" class="grocery-fs-mode-bar"></div>
