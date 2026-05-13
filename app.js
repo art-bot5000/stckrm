@@ -4714,6 +4714,512 @@ function _flashElement(el) {
   setTimeout(() => { el.classList.remove('notif-flash'); }, 1700);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+//  GLOBAL SEARCH
+// ═══════════════════════════════════════════════════════════════════
+// Opened by #global-search-btn (mobile header) and #global-search-nav-btn
+// (desktop sidebar). The modal lives at body level in index.html as
+// #global-search-modal. Per-section searchers each return a list of
+// { id, title, sub, view, target } records — runGlobalSearch groups them
+// by section and renders, pinning the current view's section to the top.
+//
+// Tapping a result calls _navigateToSearchResult, which navigates to the
+// right view, waits for paint, scrolls the matching DOM node into view,
+// and runs the existing _flashElement orange-border animation.
+const _GLOBAL_SEARCH = {
+  active: false,
+  query: '',
+  debounceTimer: null,
+  cachedSettingsIndex: null,
+  // Render order — current view first (computed at render time), then this
+  // fixed order for the rest. Empty sections are omitted entirely.
+  sectionOrder: ['stock', 'grocery', 'notes', 'reminders', 'budget', 'savings', 'report', 'billing', 'account-security', 'settings'],
+  sectionMeta: {
+    stock:             { label: 'Stockroom',          icon: 'i-package',        view: 'stock' },
+    grocery:           { label: 'Groceries',          icon: 'i-shopping-cart',  view: 'grocery' },
+    notes:             { label: 'Notes',              icon: 'i-notebook-pen',   view: 'notes' },
+    reminders:         { label: 'Reminders',          icon: 'i-bell',           view: 'reminders' },
+    budget:            { label: 'Budget',             icon: 'i-banknote',       view: 'budget' },
+    savings:           { label: 'Savings',            icon: 'i-piggy-bank',     view: 'savings' },
+    report:            { label: 'Report',             icon: 'i-clipboard-list', view: 'report' },
+    billing:           { label: 'Billing',            icon: 'i-credit-card',    view: 'billing' },
+    'account-security':{ label: 'Account & Security', icon: 'i-shield',         view: 'account-security' },
+    settings:          { label: 'Settings',           icon: 'i-settings',       view: 'settings' },
+  },
+};
+const _SEARCH_RESULTS_PER_SECTION = 8;
+
+function openGlobalSearch() {
+  const modal = document.getElementById('global-search-modal');
+  const input = document.getElementById('global-search-input');
+  if (!modal || !input) return;
+  _GLOBAL_SEARCH.active = true;
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+  // Reset to a clean state each open. Don't preserve previous query — search
+  // is fast enough that retyping is fine and a stale query feels confusing
+  // when the underlying data may have changed since last open.
+  input.value = '';
+  _GLOBAL_SEARCH.query = '';
+  _renderGlobalSearchEmpty();
+  // setTimeout so the focus call lands after the modal is visible — focusing
+  // a display:none input is a no-op on some browsers.
+  setTimeout(() => { try { input.focus(); } catch(_) {} }, 30);
+  // Esc handler — installed on open, removed on close
+  document.addEventListener('keydown', _globalSearchKeyEscape);
+}
+
+function closeGlobalSearch() {
+  const modal = document.getElementById('global-search-modal');
+  if (!modal) return;
+  _GLOBAL_SEARCH.active = false;
+  modal.classList.remove('open');
+  modal.setAttribute('aria-hidden', 'true');
+  clearTimeout(_GLOBAL_SEARCH.debounceTimer);
+  document.removeEventListener('keydown', _globalSearchKeyEscape);
+}
+
+function _globalSearchKeyEscape(e) {
+  if (e.key === 'Escape' && _GLOBAL_SEARCH.active) {
+    e.preventDefault();
+    closeGlobalSearch();
+  }
+}
+
+// Cmd/Ctrl+K shortcut — opens or closes. Wired in init via a single
+// keydown listener on document.
+function _globalSearchKeyShortcut(e) {
+  // Don't trigger inside the search input itself
+  if (e.target && e.target.id === 'global-search-input') return;
+  const isMac = navigator.platform && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+  const mod = isMac ? e.metaKey : e.ctrlKey;
+  if (mod && e.key && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    if (_GLOBAL_SEARCH.active) closeGlobalSearch();
+    else openGlobalSearch();
+  }
+}
+
+function onGlobalSearchInput() {
+  const input = document.getElementById('global-search-input');
+  if (!input) return;
+  const q = (input.value || '').trim();
+  _GLOBAL_SEARCH.query = q;
+  clearTimeout(_GLOBAL_SEARCH.debounceTimer);
+  if (!q) { _renderGlobalSearchEmpty(); return; }
+  // 120ms debounce — keeps typing fluent without re-running searchers on
+  // every keystroke. Searches are in-memory so 120ms is generous.
+  _GLOBAL_SEARCH.debounceTimer = setTimeout(() => {
+    try { runGlobalSearch(q); } catch (err) { console.error('Global search failed:', err); }
+  }, 120);
+}
+
+function onGlobalSearchKeyDown(e) {
+  // Enter without an active selection currently does nothing (Pete asked to
+  // skip "jump to first result on Enter" for v1). We still capture Enter so
+  // form-submit fallback doesn't trigger anything unexpected.
+  if (e.key === 'Enter') { e.preventDefault(); return; }
+  // Up/Down arrows could be added later for keyboard navigation through
+  // results — left out of v1 to keep the surface area small.
+}
+
+function _renderGlobalSearchEmpty() {
+  const container = document.getElementById('global-search-results');
+  if (!container) return;
+  container.innerHTML = '<div class="global-search-empty">Type to search across every section.</div>';
+}
+
+function runGlobalSearch(query) {
+  const container = document.getElementById('global-search-results');
+  if (!container) return;
+  const q = (query || '').toLowerCase();
+  if (!q) { _renderGlobalSearchEmpty(); return; }
+
+  // Run each section searcher. Each returns { results, hasMore } where
+  // `results` is already capped at _SEARCH_RESULTS_PER_SECTION.
+  const byKey = {
+    stock:             _searchStockroom(q),
+    grocery:           _searchGroceries(q),
+    notes:             _searchNotes(q),
+    reminders:         _searchReminders(q),
+    budget:            _searchBudget(q),
+    savings:           _searchSavings(q),
+    report:            _searchStaticView(q, 'report'),
+    billing:           _searchStaticView(q, 'billing'),
+    'account-security':_searchStaticView(q, 'account-security'),
+    settings:          _searchStaticView(q, 'settings'),
+  };
+
+  // Pin current view's section to the top of the list. Map the current
+  // view name (which may be 'shopping' inside the stock view) to the
+  // matching section key.
+  const currentSectionKey = _searchSectionForView(_currentView || 'stock');
+  const order = [currentSectionKey, ..._GLOBAL_SEARCH.sectionOrder.filter(k => k !== currentSectionKey)];
+
+  const blocks = [];
+  for (const key of order) {
+    const section = byKey[key];
+    if (!section || !section.results || !section.results.length) continue;
+    blocks.push(_renderSearchSection(key, section, key === currentSectionKey, q));
+  }
+
+  if (!blocks.length) {
+    container.innerHTML = `<div class="global-search-empty">No matches for <strong>${esc(query)}</strong>.</div>`;
+    return;
+  }
+  container.innerHTML = blocks.join('');
+}
+
+// Map a view name (which may be a sub-view like 'shopping') back to the
+// section key used by the search. 'shopping' is part of Stockroom for
+// purposes of search-result ordering.
+function _searchSectionForView(viewName) {
+  if (!viewName) return 'stock';
+  if (viewName === 'shopping') return 'stock';
+  if (_GLOBAL_SEARCH.sectionMeta[viewName]) return viewName;
+  return 'stock';
+}
+
+function _renderSearchSection(sectionKey, section, isCurrent, query) {
+  const meta = _GLOBAL_SEARCH.sectionMeta[sectionKey];
+  const titleCls = isCurrent ? 'global-search-section-title current' : 'global-search-section-title';
+  const titleSuffix = isCurrent ? ' · current tab' : '';
+  const rows = section.results.map(r => _renderSearchRow(r, sectionKey, query)).join('');
+  const moreLine = section.hasMore
+    ? `<div class="global-search-section-more">+ more matches — refine your search to narrow</div>`
+    : '';
+  return `<div class="global-search-section">
+    <div class="${titleCls}"><svg class="icon" aria-hidden="true"><use href="#${meta.icon}"></use></svg> ${esc(meta.label)}${titleSuffix}</div>
+    ${rows}
+    ${moreLine}
+  </div>`;
+}
+
+function _renderSearchRow(r, sectionKey, query) {
+  // r.id is encoded with sectionKey to keep it unique across sections so the
+  // tap handler can route correctly. We pass through view + target separately.
+  const titleHTML = _highlightMatch(r.title || '', query);
+  const subHTML   = r.sub ? _highlightMatch(r.sub, query) : '';
+  // Inline onclick keeps things simple — no event delegation needed because
+  // result rows are re-rendered on every keystroke after debounce.
+  return `<div class="global-search-row" onclick="_navigateToSearchResult(${JSON.stringify({s:sectionKey, v:r.view, t:r.target}).replace(/"/g,'&quot;')})">
+    <svg class="global-search-row-icon" aria-hidden="true"><use href="#${esc(r.icon || _GLOBAL_SEARCH.sectionMeta[sectionKey].icon)}"></use></svg>
+    <div class="global-search-row-body">
+      <div class="global-search-row-title">${titleHTML}</div>
+      ${subHTML ? `<div class="global-search-row-sub">${subHTML}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+// Wrap query matches in <mark> for visual emphasis. Case-insensitive, plain
+// substring — same matcher the searchers use. Pre-escapes the text so any
+// user-supplied content (item names, notes) is rendered safely.
+function _highlightMatch(text, query) {
+  if (!text) return '';
+  const escaped = esc(text);
+  if (!query) return escaped;
+  // Build a case-insensitive regex from the query, with regex metachars
+  // escaped so a search for "$10" doesn't error out.
+  const safeQ = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  try {
+    const re = new RegExp(`(${safeQ})`, 'ig');
+    return escaped.replace(re, '<mark>$1</mark>');
+  } catch (_) { return escaped; }
+}
+
+// Navigate to a search result. Closes the modal, calls navTo, then waits a
+// tick for the view to mount before scrolling + flashing the target node.
+function _navigateToSearchResult(payload) {
+  if (!payload) return;
+  const { s: section, v: view, t: target } = payload;
+  closeGlobalSearch();
+  // navTo handles the view switch — for sub-views like 'shopping' the search
+  // result carries the explicit view name in v.
+  try { navTo(view || section); } catch(_) {}
+  // 350ms after navigation matches the timing used in the notification-tap
+  // handler — gives the target view time to render its grid/rows.
+  setTimeout(() => {
+    const el = _findSearchResultElement(section, target);
+    if (el) {
+      try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+      _flashElement(el);
+    }
+  }, 350);
+}
+
+// Locate the DOM node corresponding to a search result. Each section uses a
+// different selector convention — keep them isolated here so result records
+// only carry an opaque `target` id.
+//
+// Stockroom, Notes, Reminders, and Settings/Report/Billing/Account-Security
+// flash on tap (their renders include the data-* attrs / ids we query).
+// Groceries / Budget bills / Savings results currently fall through to
+// "navigate only" because their renders don't yet emit data-grocery-id /
+// data-bill-id / data-savings-id. Adding those attrs is a follow-up.
+function _findSearchResultElement(section, target) {
+  if (!target) return null;
+  switch (section) {
+    case 'stock':
+      return document.querySelector(`.item-card[data-id="${CSS.escape(target)}"]`);
+    case 'grocery':
+      // Grocery rows have a data-id; lists have a data-list-id
+      return document.querySelector(`[data-grocery-id="${CSS.escape(target)}"], [data-list-id="${CSS.escape(target)}"]`);
+    case 'notes':
+      return document.querySelector(`[data-note-id="${CSS.escape(target)}"]`);
+    case 'reminders':
+      return document.querySelector(`[data-reminder-id="${CSS.escape(target)}"]`);
+    case 'budget':
+      // Bills carry an id via inline onclick="openBillEditor('<id>')"; we
+      // fall back to any element with the matching data attribute.
+      return document.querySelector(`[data-bill-id="${CSS.escape(target)}"]`);
+    case 'savings':
+      return document.querySelector(`[data-savings-id="${CSS.escape(target)}"]`);
+    default:
+      // Settings / Report / Billing / Account-Security — target is an
+      // element id captured at index time
+      return document.getElementById(target);
+  }
+}
+
+// ── Section searchers ────────────────────────────────────────────────────
+// Each returns { results: [...], hasMore: bool } with results capped at
+// _SEARCH_RESULTS_PER_SECTION. Records have:
+//   { title, sub, view, target, icon? }
+
+function _searchStockroom(q) {
+  const out = [];
+  for (const item of (items || [])) {
+    if (item._deletedAt || item._archived) continue;
+    const hay = [item.name, item.category, item.store, item.notes, (item.tags || []).join(' ')].filter(Boolean).join(' ').toLowerCase();
+    if (hay.includes(q)) {
+      out.push({
+        title: item.name || '(untitled)',
+        sub:   [item.category, item.store].filter(Boolean).join(' · '),
+        view:  'stock',
+        target: item.id,
+      });
+      if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
+    }
+  }
+  return { results: out.slice(0, _SEARCH_RESULTS_PER_SECTION), hasMore: out.length > _SEARCH_RESULTS_PER_SECTION };
+}
+
+function _searchGroceries(q) {
+  const out = [];
+  // Lists first (so "Tesco" matches the Tesco list before its items)
+  for (const list of (groceryLists || [])) {
+    if (list._deletedAt) continue;
+    const hay = [list.name, list.store].filter(Boolean).join(' ').toLowerCase();
+    if (hay.includes(q)) {
+      out.push({
+        title: list.name || '(unnamed list)',
+        sub:   list.store ? `List · ${list.store}` : 'Shopping list',
+        view:  'grocery',
+        target: list.id,
+        icon:  'i-shopping-cart',
+      });
+      if (out.length >= _SEARCH_RESULTS_PER_SECTION + 1) break;
+    }
+  }
+  // Then items
+  for (const item of (groceryItems || [])) {
+    if (item._deletedAt) continue;
+    const hay = [item.name, item.dept, item.notes].filter(Boolean).join(' ').toLowerCase();
+    if (hay.includes(q)) {
+      out.push({
+        title: item.name || '(unnamed item)',
+        sub:   item.dept ? `Item · ${item.dept}` : 'Grocery item',
+        view:  'grocery',
+        target: item.id,
+      });
+      if (out.length >= _SEARCH_RESULTS_PER_SECTION + 1) break;
+    }
+  }
+  return { results: out.slice(0, _SEARCH_RESULTS_PER_SECTION), hasMore: out.length > _SEARCH_RESULTS_PER_SECTION };
+}
+
+function _searchNotes(q) {
+  const out = [];
+  for (const n of (notes || [])) {
+    if (n.deletedAt) continue;
+    // Locked notes: title-only matching (body is encrypted and we don't
+    // decrypt at index time). Show a lock indicator in the sub line.
+    const title = (n.title || '').toLowerCase();
+    const body  = n.locked ? '' : ((n.body || '').toLowerCase());
+    const hay = (title + ' ' + body);
+    if (hay.includes(q)) {
+      out.push({
+        title: n.title || '(untitled note)',
+        sub:   n.locked ? '🔒 Locked note' : (n.pinned ? 'Pinned note' : 'Note'),
+        view:  'notes',
+        target: n.id,
+      });
+      if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
+    }
+  }
+  return { results: out.slice(0, _SEARCH_RESULTS_PER_SECTION), hasMore: out.length > _SEARCH_RESULTS_PER_SECTION };
+}
+
+function _searchReminders(q) {
+  const out = [];
+  for (const r of (reminders || [])) {
+    if (r._deletedAt) continue;
+    const hay = [r.name, r.notes].filter(Boolean).join(' ').toLowerCase();
+    if (hay.includes(q)) {
+      out.push({
+        title: r.name || '(unnamed reminder)',
+        sub:   r.interval ? `Every ${r.interval} ${r.unit || 'months'}` : 'Reminder',
+        view:  'reminders',
+        target: r.id,
+      });
+      if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
+    }
+  }
+  return { results: out.slice(0, _SEARCH_RESULTS_PER_SECTION), hasMore: out.length > _SEARCH_RESULTS_PER_SECTION };
+}
+
+function _searchBudget(q) {
+  const out = [];
+  // Bills — primary searchable budget content
+  for (const b of (typeof bills !== 'undefined' && Array.isArray(bills) ? bills : [])) {
+    if (b._deletedAt) continue;
+    const hay = [b.name, b.notes].filter(Boolean).join(' ').toLowerCase();
+    if (hay.includes(q)) {
+      out.push({
+        title: b.name || '(unnamed bill)',
+        sub:   b.amount != null ? `Bill · £${b.amount}` : 'Bill',
+        view:  'budget',
+        target: b.id,
+      });
+      if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
+    }
+  }
+  return { results: out.slice(0, _SEARCH_RESULTS_PER_SECTION), hasMore: out.length > _SEARCH_RESULTS_PER_SECTION };
+}
+
+function _searchSavings(q) {
+  // Savings opportunities are derived from items[] (Amazon Subscribe & Save
+  // tracking) — search the underlying items but route results to the savings
+  // view. We deliberately don't surface every stockroom item here; only ones
+  // that have any savings tracking signal (logs in the last 6 months or any
+  // savings metadata).
+  const out = [];
+  const ITEM_HAS_HISTORY = it => (it.logs && it.logs.length) || it.savingsSubscribed;
+  for (const item of (items || [])) {
+    if (item._deletedAt || item._archived) continue;
+    if (!ITEM_HAS_HISTORY(item)) continue;
+    const hay = [item.name, item.category].filter(Boolean).join(' ').toLowerCase();
+    if (hay.includes(q)) {
+      out.push({
+        title: item.name || '(untitled)',
+        sub:   item.savingsSubscribed ? 'Subscribed' : 'Tracking',
+        view:  'savings',
+        // No card-level DOM hook in savings yet — route to the view; we
+        // still scroll to top of the view and flash nothing if no match.
+        target: item.id,
+        icon:  'i-piggy-bank',
+      });
+      if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
+    }
+  }
+  return { results: out.slice(0, _SEARCH_RESULTS_PER_SECTION), hasMore: out.length > _SEARCH_RESULTS_PER_SECTION };
+}
+
+// Static-view searcher — indexes labels/headers in Report / Billing /
+// Account & Security / Settings. The index is built lazily the first time
+// any search runs, by walking the DOM of each view and pulling text from
+// elements that look like headings/labels (h2/h3/h4, .acc-sec-h, settings
+// section titles, labels). Each entry stores { title, sub, target } where
+// target is an element id (added at index time if missing). Re-built on
+// demand if the view markup changes.
+function _searchStaticView(q, viewKey) {
+  const idx = _ensureSettingsIndex();
+  const entries = idx[viewKey] || [];
+  const out = [];
+  for (const e of entries) {
+    if (e.haystack.includes(q)) {
+      out.push({ title: e.title, sub: e.sub, view: viewKey, target: e.target });
+      if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
+    }
+  }
+  return { results: out.slice(0, _SEARCH_RESULTS_PER_SECTION), hasMore: out.length > _SEARCH_RESULTS_PER_SECTION };
+}
+
+function _ensureSettingsIndex() {
+  if (_GLOBAL_SEARCH.cachedSettingsIndex) return _GLOBAL_SEARCH.cachedSettingsIndex;
+  const idx = {};
+  const VIEW_IDS = {
+    report:             'view-report',
+    billing:            'view-billing',
+    'account-security': 'view-account-security',
+    settings:           'view-settings',
+  };
+  for (const [viewKey, elId] of Object.entries(VIEW_IDS)) {
+    const root = document.getElementById(elId);
+    if (!root) { idx[viewKey] = []; continue; }
+    idx[viewKey] = _harvestSettingsEntries(root, viewKey);
+  }
+  _GLOBAL_SEARCH.cachedSettingsIndex = idx;
+  return idx;
+}
+
+// Walk a view's DOM and pull out searchable label nodes. We grab headings
+// (h2/h3/h4), `.acc-sec-h` titles, `.settings-section-header`, label-like
+// `<label>` text, and section titles. Each gets an auto-id if missing so
+// the search-result tap can target it. Returns an array of:
+//   { title, sub, haystack, target }
+function _harvestSettingsEntries(root, viewKey) {
+  const out = [];
+  const seenText = new Set();
+  // Selectors that tend to mark a section/label inside our settings UI.
+  const SELECTORS = [
+    'h2', 'h3', 'h4',
+    '.acc-sec-h',
+    '.acc-sec-section-title',
+    '.settings-section-header',
+    '.settings-section-title',
+    'label',
+  ];
+  const sel = SELECTORS.join(',');
+  let counter = 0;
+  root.querySelectorAll(sel).forEach(el => {
+    // Skip empty or icon-only labels
+    const rawText = (el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!rawText || rawText.length < 2) return;
+    // De-dupe identical labels (some labels appear twice in the same view)
+    const dedupeKey = viewKey + '::' + rawText.toLowerCase();
+    if (seenText.has(dedupeKey)) return;
+    seenText.add(dedupeKey);
+    // Ensure the element has an id so we can target it
+    if (!el.id) { el.id = `search-tgt-${viewKey}-${++counter}`; }
+    // Find the nearest section ancestor for the sub-label (gives the user
+    // context like "Preferences · Currency" rather than just "Currency").
+    let sub = '';
+    let cur = el.parentElement;
+    while (cur && cur !== root) {
+      if (cur.matches('.acc-sec-section, .acc-sec-card, .settings-section, details')) {
+        const head = cur.querySelector('.acc-sec-section-title, .settings-section-header, summary');
+        if (head) { sub = (head.textContent || '').replace(/\s+/g, ' ').trim(); break; }
+      }
+      cur = cur.parentElement;
+    }
+    out.push({
+      title: rawText,
+      sub:   sub && sub.toLowerCase() !== rawText.toLowerCase() ? sub : '',
+      haystack: rawText.toLowerCase() + ' ' + sub.toLowerCase(),
+      target: el.id,
+    });
+  });
+  return out;
+}
+
+// Invalidate the cached settings index — called whenever settings UI is
+// rebuilt (e.g. country changes, MFA enabled, passkey added). Cheap to
+// re-index next time the user searches.
+function _invalidateSettingsSearchIndex() {
+  _GLOBAL_SEARCH.cachedSettingsIndex = null;
+}
+
 async function toggleNotificationPin(id) {
   const n = notifications.find(x => x.id === id);
   if (!n) return;
@@ -29968,6 +30474,10 @@ async function init() {
   setTimeout(checkScheduledEmail, 2000);
   setTimeout(checkLowStockNotifications, 3000);
   setTimeout(checkReminderNotifications, 3500);
+  // Global search keyboard shortcut — Cmd+K on Mac, Ctrl+K elsewhere.
+  // Attaches once at init; the handler itself no-ops when the user is
+  // already inside the search input so plain "k" keystrokes don't fight.
+  document.addEventListener('keydown', _globalSearchKeyShortcut);
 }
 
 // ═══════════════════════════════════════════════════════════

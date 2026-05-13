@@ -1500,6 +1500,18 @@
       <div class="sync-dot"></div>
       <span id="sync-label">Local only</span>
     </div>
+    <!-- Global search button — mobile only; sits between sync pill and the
+         notification bell. Opens #global-search-modal which searches across
+         every section (Stockroom items, Notes, Reminders, Groceries, Bills,
+         settings labels, etc.) and presents results grouped by section with
+         the current tab's results pinned first. See openGlobalSearch in
+         app.js. The matching desktop entry lives in the sidebar nav above
+         the Connected pill — see #global-search-nav-btn. -->
+    <button id="global-search-btn" type="button" onclick="openGlobalSearch()"
+      aria-label="Search" title="Search"
+      style="background:none;border:none;cursor:pointer;padding:4px 6px;display:flex;align-items:center;color:var(--muted);border-radius:8px">
+      <svg class="icon icon-lg" aria-hidden="true"><use href="#i-search"></use></svg>
+    </button>
     <button class="btn btn-ghost btn-sm" onclick="openQuickAdd()" title="Quick add multiple items"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg></button>
     <button class="btn btn-primary btn-sm" onclick="openAddModal()">+ Add Item</button>
     <!-- Burger menu (mobile only, hidden via CSS on desktop) — opens an
@@ -1587,6 +1599,30 @@
   <div id="notif-panel-body" class="notif-panel-body"></div>
 </aside>
 
+<!-- ═══ GLOBAL SEARCH MODAL ═══
+     Body-level modal opened by #global-search-btn (mobile header) and
+     #global-search-nav-btn (desktop sidebar). Centered overlay on desktop,
+     bottom sheet on mobile. The results container is populated by
+     runGlobalSearch() in app.js — see that function for the per-section
+     searchers and how the current view's section is pinned to the top. -->
+<div id="global-search-modal" class="global-search-modal" aria-hidden="true" role="dialog" aria-label="Search">
+  <div class="global-search-backdrop" onclick="closeGlobalSearch()"></div>
+  <div class="global-search-panel" role="document">
+    <div class="global-search-input-row">
+      <svg class="icon icon-lg global-search-input-icon" aria-hidden="true"><use href="#i-search"></use></svg>
+      <input id="global-search-input" type="search" placeholder="Search items, notes, reminders, settings…"
+        autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+        oninput="onGlobalSearchInput()" onkeydown="onGlobalSearchKeyDown(event)">
+      <button type="button" class="global-search-close" onclick="closeGlobalSearch()" aria-label="Close">
+        <svg class="icon icon-md" aria-hidden="true"><use href="#i-x"></use></svg>
+      </button>
+    </div>
+    <div id="global-search-results" class="global-search-results">
+      <div class="global-search-empty">Type to search across every section.</div>
+    </div>
+  </div>
+</div>
+
 <!-- ═══ APP SIDEBAR (desktop only) ═══ -->
 <nav id="app-nav">
   <div class="app-nav-logo">
@@ -1603,6 +1639,17 @@
     <button class="app-nav-link"        data-view="savings"    onclick="navTo('savings')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-piggy-bank"></use></svg> <span>Savings</span></button>
     <button class="app-nav-link"        data-view="report"     onclick="navTo('report')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> <span>Report</span></button>
     <button class="app-nav-link"        data-view="budget"     onclick="navTo('budget')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
+  </div>
+  <!-- Desktop sidebar search button — sits in its own block between the
+       primary nav links and the bottom utility cluster (Connected pill,
+       Notifications, Billing, Account & Security, Settings). Mirrors the
+       mobile #global-search-btn but styled to match sidebar links. -->
+  <div class="app-nav-search-wrap">
+    <button id="global-search-nav-btn" type="button" class="app-nav-link app-nav-search-btn" onclick="openGlobalSearch()" aria-label="Search everything">
+      <svg class="icon icon-tab" aria-hidden="true"><use href="#i-search"></use></svg>
+      <span>Search</span>
+      <kbd class="app-nav-search-kbd" aria-hidden="true">⌘K</kbd>
+    </button>
   </div>
   <div class="app-nav-bottom">
     <div id="app-nav-sync" class="sync-pill pending app-nav-sync-pill" onclick="handleSyncPillTap()">
