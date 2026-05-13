@@ -2017,6 +2017,9 @@ async function saveData() {
   if (activeProfile) await saveCurrentProfile();
   registerBackgroundSync();
   bcPost({ type: 'DATA_CHANGED' });
+  // Items can contain replacementReminders — recompute push schedule.
+  // Debounced so a flurry of saves coalesces into one sync.
+  if (typeof syncReminderPushesDebounced === 'function') syncReminderPushesDebounced();
 }
 
 async function saveSettings() {
@@ -3248,6 +3251,8 @@ async function loadReminders() {
 async function saveReminders() {
   await dbPut('reminders', 'reminders', reminders);
   if (activeProfile) await saveCurrentProfile();
+  // Recompute future push schedule — debounced so rapid edits coalesce.
+  if (typeof syncReminderPushesDebounced === 'function') syncReminderPushesDebounced();
 }
 
 async function loadNotes() {
@@ -3607,6 +3612,10 @@ async function enablePush() {
     settings.pushEnabled = true;
     try { await _saveSettings(); } catch(_) {}
     toast('Notifications enabled ✓');
+    // Seed the server-side push queue with all of this user's future
+    // reminders so this device starts receiving pushes immediately
+    // (vs. having to wait for the next reminder edit to trigger sync).
+    _syncReminderPushes().catch(_ => {});
     // Audit log notification
     addNotification({
       type:      'account',
@@ -3744,6 +3753,109 @@ if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
       enablePush().catch(_ => {});
     }
   });
+}
+
+// ── Reminder push scheduling ─────────────────────────────────────────
+// Walks the full reminder universe (standalone + item-embedded) and for
+// each whose due date is in the future, schedules a Web Push for that
+// exact moment. The server's idempotent schedulePushPayload (matched
+// by sourceRef) means we can re-run this freely — duplicates collapse.
+//
+// sourceRef includes the due-date stamp so a "marked replaced" reminder
+// gets a brand-new sourceRef when its next cycle is scheduled, while
+// any stale push for the old cycle is automatically superseded.
+//
+// Called from:
+//   - saveReminders() and the various reminder mutators (after a change)
+//   - _applyReplacedLocally() (after marking a reminder replaced)
+//   - kvSyncNow() (after a pull that may have brought in remote changes)
+//   - enablePush() (so newly-subscribed devices immediately have their
+//     future reminders queued)
+let _syncReminderPushesInflight = false;
+async function _syncReminderPushes() {
+  if (_syncReminderPushesInflight) return;
+  if (!kvConnected || !_kvKey) return;
+  // Skip if push isn't enabled on this device — no server subs to feed.
+  // (Server-side fan-out covers other-device subs even if THIS device
+  // hasn't subscribed, but if NO device of the user is subscribed,
+  // scheduling pushes is wasted work.)
+  if (!isPushSupported()) return;
+  _syncReminderPushesInflight = true;
+  try {
+    // Build the full reminder list — mirrors the construction in renderReminders().
+    const allReminders = [
+      ...reminders.filter(r => !r._deletedAt),
+      ...items.filter(i => !i._deletedAt).flatMap(i => {
+        const fallbackDate = i.startedUsing || i.logs?.filter(l => !l.pendingDelivery)[0]?.date || null;
+        if (i.replacementReminders?.length) {
+          return i.replacementReminders.map(r => ({
+            id:           `item_${i.id}_${r.id}`,
+            name:         r.name ? `${i.name} — ${r.name}` : i.name,
+            itemName:     i.name,
+            reminderName: r.name || '',
+            interval:     r.interval,
+            unit:         r.unit,
+            lastReplaced: r.lastReplaced || fallbackDate || null,
+          }));
+        } else if (i.replacementInterval && i.replacementUnit) {
+          return [{
+            id:           `item_${i.id}`,
+            name:         i.name,
+            itemName:     i.name,
+            reminderName: '',
+            interval:     i.replacementInterval,
+            unit:         i.replacementUnit,
+            lastReplaced: i.lastReplaced || fallbackDate || null,
+          }];
+        }
+        return [];
+      }),
+    ];
+    const now = Date.now();
+    // Look ahead up to 365 days — beyond that, the user has probably
+    // changed devices/passphrase anyway and a re-sync will refresh.
+    const HORIZON_MS = 365 * 24 * 60 * 60 * 1000;
+    for (const r of allReminders) {
+      const dueDate = getReminderDueDate(r);
+      if (!dueDate) continue;
+      const dueAt = dueDate.getTime();
+      if (dueAt <= now) continue;                  // already due — handled by in-app loop
+      if (dueAt - now > HORIZON_MS) continue;      // too far out
+      const dueDateStr = dueDate.toISOString().slice(0, 10);
+      const sourceRef = `reminder:${r.id}:${dueDateStr}`;
+      const title = r.name;
+      // Body: human-readable due description
+      const days = Math.round((dueAt - now) / (24 * 60 * 60 * 1000));
+      const body = days <= 0 ? 'Due today' : (days === 1 ? 'Due tomorrow' : `Due in ${days} days`);
+      // Fire-and-forget; the inner function logs its own failures.
+      schedulePushNotification({
+        dueAt,
+        sourceRef,
+        title,
+        body,
+        url:           './',
+        fallbackTitle: 'A Stockroom reminder is due',
+      }).catch(_ => {});
+    }
+  } catch (err) {
+    console.warn('[push] _syncReminderPushes failed:', err && err.message);
+  } finally {
+    _syncReminderPushesInflight = false;
+  }
+}
+
+// Debounced wrapper — call this from event handlers (save, edit, replace).
+// Multiple rapid edits collapse into a single sync after 1.5s of quiet.
+let _syncReminderPushesTimer = null;
+function syncReminderPushesDebounced() {
+  if (_syncReminderPushesTimer) clearTimeout(_syncReminderPushesTimer);
+  _syncReminderPushesTimer = setTimeout(() => {
+    _syncReminderPushesTimer = null;
+    _syncReminderPushesDebounce_fire();
+  }, 1500);
+}
+function _syncReminderPushesDebounce_fire() {
+  _syncReminderPushes().catch(_ => {});
 }
 
 // UI helper for the account security toggle
@@ -5159,6 +5271,20 @@ async function _applyReplacedLocally(reminderId, date) {
     setTimeout(syncAll, 400);
     showToast('✅ Marked as replaced');
     bcPost({ type: 'REMINDER_REPLACED', reminderId, date });
+    // Refresh future-push schedule — the just-completed cycle's push
+    // (if any was queued for the about-to-fire moment) is now stale,
+    // and the next cycle needs queuing. _syncReminderPushes is
+    // idempotent so cancelling the stale one isn't strictly needed —
+    // it'll fire harmlessly and the SW will show a notification the
+    // user may briefly find puzzling. To avoid that, explicitly
+    // cancel the old sourceRef pattern (any future-dated push for
+    // THIS reminder gets cancelled because its sourceRef prefix is
+    // 'reminder:<reminderId>:' — server-side cancel is by exact match
+    // though, so we'd need a separate "cancel by prefix" endpoint.
+    // For now, accept the rare edge case; a fresh schedule catches it
+    // most of the time because the SAME-day case re-uses the same
+    // sourceRef (date-stamped) and dedupe replaces it.
+    if (typeof syncReminderPushesDebounced === 'function') syncReminderPushesDebounced();
   }
 }
 
@@ -6207,6 +6333,23 @@ async function checkLowStockNotifications() {
         sourceRef: `lowstock:${d.item.id}`,
       });
     } catch(e) { /* don't let inbox errors block push */ }
+    // Also schedule an immediate Web Push to all subscribed devices.
+    // sourceRef matches the in-app one so OS-level dedupe (per-type tag
+    // in the SW) coalesces multiple low-stock pushes into a single
+    // OS notification — exactly the per-type-tag behaviour we want.
+    // Stamp the date in the sourceRef so a re-trigger tomorrow becomes
+    // a fresh push (otherwise schedulePushPayload would dedupe it).
+    if (typeof schedulePushNotification === 'function') {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      schedulePushNotification({
+        dueAt:     Date.now(),
+        sourceRef: `lowstock:${d.item.id}:${todayStr}`,
+        title,
+        body,
+        url:       './',
+        fallbackTitle: 'A Stockroom item is low',
+      }).catch(_ => {});
+    }
   }
 
   // Below: existing push-notification path (gated on notifEnabled)
@@ -16820,6 +16963,11 @@ async function kvSyncNow(silent = false) {
     // decrypt push payloads. The page can read it from localStorage but
     // the SW cannot, so we duplicate into IDB which both contexts share.
     if (kvConnected) { _saveDeviceSecretToIdb().catch(_ => {}); }
+    // Refresh future-push schedule — remote changes from other devices
+    // may have created/edited/deleted reminders since we last synced.
+    if (kvConnected && typeof syncReminderPushesDebounced === 'function') {
+      syncReminderPushesDebounced();
+    }
   } catch(err) {
     hideDataLoadingOverlay();
     console.error('KV sync error:', err);
