@@ -4017,7 +4017,11 @@ body.has-demo-banner #view-notes #notes-header {
    See openGlobalSearch / runGlobalSearch in app.js for behaviour.
 ═══════════════════════════════════════════════════════════════════ */
 
-/* ── Sidebar search button (desktop only) ── */
+/* ── Sidebar search button (desktop only) ──
+   Designed to read like a lighter sibling of the Connected pill below it:
+   fully rounded (pill shape, matching .sync-pill's 99px), slightly smaller
+   than the full-height nav links, with a darker fill so it sits visually
+   distinct from the .app-nav-link entries above it. */
 .app-nav-search-wrap {
   padding: 8px;
   border-top: 1px solid var(--glass-border);
@@ -4025,24 +4029,14 @@ body.has-demo-banner #view-notes #notes-header {
 .app-nav-search-btn {
   width: 100%;
   position: relative;
-  /* Reuse .app-nav-link styling for icon + label, plus a subtle border so the
-     search slot reads as its own actionable affordance separate from the
-     primary nav links above it. */
+  /* Override .app-nav-link defaults — shorter, pill-shaped, darker bg. */
+  padding: 7px 14px !important;
+  border-radius: 99px !important;
   border: 1px solid var(--border) !important;
-  background: var(--surface2) !important;
+  background: var(--bg) !important;
+  font-size: 13px !important;
 }
-.app-nav-search-btn:hover { background: var(--surface) !important; }
-.app-nav-search-kbd {
-  margin-left: auto;
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--muted);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 1px 5px;
-  letter-spacing: 0.5px;
-}
+.app-nav-search-btn:hover { background: var(--surface2) !important; }
 
 /* ── Modal shell ── */
 .global-search-modal {
@@ -4089,8 +4083,14 @@ body.has-demo-banner #view-notes #notes-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 16px;
+  /* Slightly tighter than the original 14px/16px — on desktop this row is
+     the only "header" of the modal and doesn't need as much breathing room
+     as a mobile bottom-sheet handle would. */
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border);
+  /* Darker than the panel surface so the input area reads as a distinct
+     editable field rather than blending into the result list below. */
+  background: var(--bg);
   flex-shrink: 0;
 }
 .global-search-input-icon { color: var(--muted); flex-shrink: 0; }
@@ -4104,9 +4104,14 @@ body.has-demo-banner #view-notes #notes-header {
   font-family: var(--sans);
   font-size: 16px;
   /* Disable the iOS auto-zoom on input focus by ensuring font-size ≥ 16px. */
-  padding: 4px 0;
+  padding: 2px 0;
 }
 #global-search-input::placeholder { color: var(--muted); }
+/* Belt-and-braces: kill the native search-input clear X on browsers that
+   render one. We use type="text" already, but if anyone ever flips this
+   back to type="search" the X won't reappear. */
+#global-search-input::-webkit-search-cancel-button,
+#global-search-input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
 .global-search-close {
   background: transparent;
   border: none;
@@ -4203,25 +4208,42 @@ body.has-demo-banner #view-notes #notes-header {
   padding: 0 1px;
 }
 
-/* ── Mobile: bottom sheet ── */
-@media (max-width: 600px) {
+/* ── Mobile: drop-from-top half-screen panel ──
+   Anchored to the top so the Android keyboard (which inflates from the
+   bottom) doesn't cover the search input. Fixed at 50vh max so results
+   are scrollable inside the panel while the bottom half of the screen
+   shows the blurred-out app behind. body.global-search-open (set by
+   openGlobalSearch) locks background scrolling so swipes inside the
+   results don't bleed through to the app underneath. */
+@media (max-width: 899px) {
   .global-search-modal {
+    /* Top-aligned, full-width — the panel itself controls its own height */
     padding: 0;
-    align-items: flex-end;
+    align-items: flex-start;
+    justify-content: stretch;
   }
   .global-search-panel {
     max-width: 100%;
-    max-height: 88vh;
-    border-radius: 16px 16px 0 0;
+    width: 100%;
+    height: 50vh;
+    max-height: 50vh;
+    border-radius: 0 0 16px 16px;
+    border-top: none;
     border-left: none;
     border-right: none;
-    border-bottom: none;
+    /* Hand the results their own scroll container — see .global-search-
+       results below. The panel itself doesn't scroll, only the inner
+       results list does, so the input row stays pinned at the top. */
   }
   @keyframes globalSearchIn {
-    from { opacity: 0.6; transform: translateY(20px); }
+    from { opacity: 0.6; transform: translateY(-20px); }
     to   { opacity: 1;   transform: translateY(0); }
   }
 }
+/* Body scroll lock while the search modal is open. Mirrors the body.note-
+   open pattern used for the note editor — prevents the app behind the
+   modal from scrolling when the user swipes within the search results. */
+body.global-search-open { overflow: hidden; touch-action: none; }
 
 /* ── Header search button placement on mobile ──
    The new #global-search-btn sits between sync-pill and notif-bell. Order

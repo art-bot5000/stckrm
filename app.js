@@ -4756,6 +4756,10 @@ function openGlobalSearch() {
   _GLOBAL_SEARCH.active = true;
   modal.classList.add('open');
   modal.setAttribute('aria-hidden', 'false');
+  // Lock background scroll while the modal is open. CSS rule
+  // `body.global-search-open { overflow: hidden; touch-action: none; }`
+  // does the work — see styles.css. Mirrors the body.note-open pattern.
+  document.body.classList.add('global-search-open');
   // Reset to a clean state each open. Don't preserve previous query — search
   // is fast enough that retyping is fine and a stale query feels confusing
   // when the underlying data may have changed since last open.
@@ -4775,6 +4779,7 @@ function closeGlobalSearch() {
   _GLOBAL_SEARCH.active = false;
   modal.classList.remove('open');
   modal.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('global-search-open');
   clearTimeout(_GLOBAL_SEARCH.debounceTimer);
   document.removeEventListener('keydown', _globalSearchKeyEscape);
 }
@@ -4784,6 +4789,18 @@ function _globalSearchKeyEscape(e) {
     e.preventDefault();
     closeGlobalSearch();
   }
+}
+
+// Clears the search input and result list, returning focus to the input.
+// Triggered by the inline X button — distinct from closeGlobalSearch which
+// dismisses the entire modal. The user closes the modal by tapping the
+// backdrop or pressing Esc.
+function clearGlobalSearch() {
+  const input = document.getElementById('global-search-input');
+  if (input) { input.value = ''; input.focus(); }
+  _GLOBAL_SEARCH.query = '';
+  clearTimeout(_GLOBAL_SEARCH.debounceTimer);
+  _renderGlobalSearchEmpty();
 }
 
 // Cmd/Ctrl+K shortcut — opens or closes. Wired in init via a single
@@ -5062,8 +5079,34 @@ function _searchNotes(q) {
 
 function _searchReminders(q) {
   const out = [];
-  for (const r of (reminders || [])) {
-    if (r._deletedAt) continue;
+  // Reminders shown on the Reminders tab come from two sources: the
+  // standalone `reminders[]` array AND the `replacementReminders` arrays
+  // (and legacy single-reminder fields) on each item. The renderReminders
+  // function aggregates both — search must do the same or the user will
+  // type a reminder name they can see on screen and get no results.
+  // Aggregation logic mirrors renderReminders() — keep in sync.
+  const aggregated = [
+    ...((reminders || []).filter(r => !r._deletedAt)),
+    ...((items || []).filter(i => !i._deletedAt).flatMap(i => {
+      if (i.replacementReminders?.length) {
+        return i.replacementReminders.map(r => ({
+          id:       `item_${i.id}_${r.id}`,
+          name:     r.name ? `${i.name} — ${r.name}` : i.name,
+          interval: r.interval, unit: r.unit,
+          notes:    i.notes || '',
+        }));
+      } else if (i.replacementInterval && i.replacementUnit) {
+        return [{
+          id:       `item_${i.id}`,
+          name:     i.name,
+          interval: i.replacementInterval, unit: i.replacementUnit,
+          notes:    i.notes || '',
+        }];
+      }
+      return [];
+    })),
+  ];
+  for (const r of aggregated) {
     const hay = [r.name, r.notes].filter(Boolean).join(' ').toLowerCase();
     if (hay.includes(q)) {
       out.push({

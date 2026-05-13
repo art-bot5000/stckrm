@@ -1610,10 +1610,14 @@
   <div class="global-search-panel" role="document">
     <div class="global-search-input-row">
       <svg class="icon icon-lg global-search-input-icon" aria-hidden="true"><use href="#i-search"></use></svg>
-      <input id="global-search-input" type="search" placeholder="Search items, notes, reminders, settings…"
+      <input id="global-search-input" type="text" placeholder="Search items, notes, reminders, settings…"
         autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
         oninput="onGlobalSearchInput()" onkeydown="onGlobalSearchKeyDown(event)">
-      <button type="button" class="global-search-close" onclick="closeGlobalSearch()" aria-label="Close">
+      <!-- Single X clears the input text. To close the modal the user taps
+           outside (the backdrop) or presses Esc. Previously we had a
+           separate close X here AND the browser's native type="search"
+           clear X — two competing buttons. Now there's just one. -->
+      <button type="button" class="global-search-close" onclick="clearGlobalSearch()" aria-label="Clear">
         <svg class="icon icon-md" aria-hidden="true"><use href="#i-x"></use></svg>
       </button>
     </div>
@@ -1648,7 +1652,6 @@
     <button id="global-search-nav-btn" type="button" class="app-nav-link app-nav-search-btn" onclick="openGlobalSearch()" aria-label="Search everything">
       <svg class="icon icon-tab" aria-hidden="true"><use href="#i-search"></use></svg>
       <span>Search</span>
-      <kbd class="app-nav-search-kbd" aria-hidden="true">⌘K</kbd>
     </button>
   </div>
   <div class="app-nav-bottom">
