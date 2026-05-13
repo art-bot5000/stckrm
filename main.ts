@@ -1566,6 +1566,484 @@ async function ackBillingNotifications(emailHash: string, ids: string[]): Promis
   return deleted;
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// WEB PUSH (Option A — client-prepared payloads, server-delivered)
+// ══════════════════════════════════════════════════════════════════════
+// Architecture:
+//   1. Client device gets push permission, subscribes via pushManager,
+//      POSTs the {endpoint, p256dh, auth} subscription object here.
+//   2. Server stores subscriptions per-user, fans out at dispatch time.
+//   3. Client schedules payloads — for each *future* notification it
+//      wants to fire, it encrypts the body with its own data key and
+//      POSTs {dueAt, sourceRef, ciphertextB64} to /push/schedule.
+//      The server stores this in a time-bucketed queue keyed by user.
+//   4. Every 5 minutes, a cron endpoint scans for payloads where
+//      dueAt <= now, dispatches an encrypted-body push to each of the
+//      user's subscriptions, then deletes the payload.
+//   5. The SW receives the push, decrypts the body with the user's key
+//      (read from IDB), and shows the notification.
+//
+// E2E preservation: The server never sees notification *content*. It
+// sees timing (dueAt) and sourceRef (used for dedupe) — these leak
+// metadata but not the underlying data. Stricter (Option C) would
+// hide timing too; for Stockroom that level of secrecy isn't needed.
+//
+// VAPID = Voluntary Application Server Identification. The protocol
+// uses a public/private keypair (ES256) to sign each push request,
+// proving to FCM/Mozilla/APNs that pushes are coming from a known
+// application server (not arbitrary spam).
+const VAPID_CFG = {
+  publicKey:  Deno.env.get('VAPID_PUBLIC_KEY')  || '',
+  privateKey: Deno.env.get('VAPID_PRIVATE_KEY') || '',
+  subject:    Deno.env.get('VAPID_SUBJECT')     || 'mailto:pete@artbot5000.com',
+};
+const vapidConfigured = () => !!(VAPID_CFG.publicKey && VAPID_CFG.privateKey);
+
+// ── KV layout ─────────────────────────────────────────────────────────
+//   ['push_sub', emailHash, deviceId]                    → PushSubscription
+//   ['push_queue', emailHash, dueAtPaddedMs, payloadId]  → ScheduledPayload
+//   ['push_failures', emailHash, deviceId]               → consecutive failure count
+// The queue key uses a zero-padded dueAt timestamp so kv.list with a
+// prefix returns entries in chronological order, and we can range-scan
+// the "due" subset with a start/end bound efficiently.
+interface PushSubscriptionRecord {
+  endpoint:    string;
+  p256dhB64:   string;     // base64url client public key (P-256)
+  authB64:     string;     // base64url auth secret (16 random bytes)
+  deviceId:    string;     // our own device identifier
+  uaLabel?:    string;     // friendly label for debugging
+  createdAt:   number;
+  lastUsed?:   number;
+}
+
+interface ScheduledPushPayload {
+  id:           string;
+  dueAt:        number;    // unix ms
+  sourceRef:    string;    // dedupe key, e.g. 'reminder:item_abc_rem1:2026-05-15'
+  ciphertextB64: string;   // client-encrypted notification body (AES-GCM, with iv prepended)
+  // Server passes the ciphertext verbatim in the push payload. The SW
+  // decrypts using the user's data key.
+  fallbackTitle?: string;  // shown if SW can't decrypt (untrusted device,
+                           // missing key). Generic so as not to leak content
+                           // — e.g. "New Stockroom notification".
+}
+
+function _padDueAt(ms: number): string {
+  // 16-digit zero-padded covers up through year 5138 — comfortable margin.
+  return String(ms).padStart(16, '0');
+}
+
+// Base64url helpers — Web Push spec uses base64url throughout.
+function b64UrlEncode(buf: ArrayBuffer | Uint8Array): string {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function b64UrlDecode(s: string): Uint8Array {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// ── VAPID JWT signing ────────────────────────────────────────────────
+// Web Push expects an Authorization header of:
+//   vapid t=<JWT signed with VAPID private key>, k=<VAPID public key>
+// JWT payload: { aud, exp, sub }. Algorithm: ES256 (ECDSA P-256 SHA-256).
+async function _importVapidPrivateKey(): Promise<CryptoKey> {
+  // VAPID_PRIVATE_KEY is the raw 32-byte d-parameter base64url-encoded
+  // (the standard format used by every web-push library).
+  const d = b64UrlDecode(VAPID_CFG.privateKey);
+  if (d.length !== 32) throw new Error(`VAPID private key must be 32 bytes (got ${d.length})`);
+  // The public key (uncompressed 65 bytes: 0x04 + x + y) is also needed
+  // to build the JWK. We have it in base64url form.
+  const pub = b64UrlDecode(VAPID_CFG.publicKey);
+  if (pub.length !== 65 || pub[0] !== 0x04) throw new Error('VAPID public key must be uncompressed 65 bytes starting with 0x04');
+  const x = pub.slice(1, 33);
+  const y = pub.slice(33, 65);
+  const jwk = {
+    kty: 'EC',
+    crv: 'P-256',
+    d:   b64UrlEncode(d),
+    x:   b64UrlEncode(x),
+    y:   b64UrlEncode(y),
+    ext: true,
+  };
+  return crypto.subtle.importKey(
+    'jwk',
+    jwk as JsonWebKey,
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['sign'],
+  );
+}
+
+async function _signVapidJWT(audience: string, ttlSeconds = 12 * 3600): Promise<string> {
+  const header  = { typ: 'JWT', alg: 'ES256' };
+  const payload = {
+    aud: audience,
+    exp: Math.floor(Date.now() / 1000) + ttlSeconds,
+    sub: VAPID_CFG.subject,
+  };
+  const enc = new TextEncoder();
+  const h = b64UrlEncode(enc.encode(JSON.stringify(header)));
+  const p = b64UrlEncode(enc.encode(JSON.stringify(payload)));
+  const signingInput = `${h}.${p}`;
+  const key = await _importVapidPrivateKey();
+  const sigRaw = await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    key,
+    enc.encode(signingInput),
+  );
+  // crypto.subtle returns raw r||s (64 bytes for P-256), which is exactly
+  // what JWS expects for ES256 — no DER conversion needed.
+  const s = b64UrlEncode(sigRaw);
+  return `${signingInput}.${s}`;
+}
+
+// ── RFC 8291 payload encryption ──────────────────────────────────────
+// Web Push uses aes128gcm content encoding: derive a content-encryption
+// key + nonce from an ephemeral ECDH between server and subscription,
+// HKDF-mixed with the subscription's auth secret. Output format:
+//   salt(16) || rs(4, big-endian) || idlen(1) || keyid || ciphertext+tag
+// where keyid is the server's ephemeral public key (uncompressed 65B).
+async function _encryptWebPushBody(
+  plaintext: Uint8Array,
+  recipientP256dh: Uint8Array,
+  recipientAuth: Uint8Array,
+): Promise<Uint8Array> {
+  // 1) Generate ephemeral ECDH P-256 keypair for the server
+  const serverKp = await crypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    ['deriveBits'],
+  ) as CryptoKeyPair;
+  const serverPubRaw = await crypto.subtle.exportKey('raw', serverKp.publicKey); // 65 bytes
+  const serverPub = new Uint8Array(serverPubRaw);
+
+  // 2) Import recipient public key
+  const recipientPubKey = await crypto.subtle.importKey(
+    'raw',
+    recipientP256dh,
+    { name: 'ECDH', namedCurve: 'P-256' },
+    false,
+    [],
+  );
+
+  // 3) ECDH shared secret
+  const sharedSecret = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'ECDH', public: recipientPubKey },
+    serverKp.privateKey,
+    256,
+  ));
+
+  // 4) HKDF — extract+expand to derive PRK, then CEK and nonce.
+  // RFC 8291 uses two HKDFs:
+  //   first:  IKM=sharedSecret, salt=auth, info="WebPush: info\0" || ua_public || as_public
+  //   second: IKM=above PRK, salt=random_salt, info="Content-Encoding: aes128gcm\0" -> CEK
+  //                                       info="Content-Encoding: nonce\0"       -> nonce
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+
+  const info1 = new Uint8Array(
+    new TextEncoder().encode('WebPush: info\0').length + 65 + 65,
+  );
+  let off = 0;
+  const wpiInfo = new TextEncoder().encode('WebPush: info\0');
+  info1.set(wpiInfo, off); off += wpiInfo.length;
+  info1.set(recipientP256dh, off); off += 65;
+  info1.set(serverPub, off);
+
+  const prk1Key = await crypto.subtle.importKey(
+    'raw', recipientAuth, { name: 'HKDF' }, false, ['deriveBits'],
+  );
+  const ikm = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt: sharedSecret, info: info1 },
+    prk1Key,
+    256,
+  ));
+
+  // Stage 2: salt-mix to derive CEK + nonce
+  const ikmKey = await crypto.subtle.importKey(
+    'raw', ikm, { name: 'HKDF' }, false, ['deriveBits'],
+  );
+  const cekInfo   = new TextEncoder().encode('Content-Encoding: aes128gcm\0');
+  const nonceInfo = new TextEncoder().encode('Content-Encoding: nonce\0');
+  const cek = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt, info: cekInfo }, ikmKey, 128,
+  ));
+  const nonce = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt, info: nonceInfo }, ikmKey, 96,
+  ));
+
+  // 5) Pad plaintext with single 0x02 byte (aes128gcm record terminator)
+  const padded = new Uint8Array(plaintext.length + 1);
+  padded.set(plaintext, 0);
+  padded[plaintext.length] = 0x02;
+
+  const cekKey = await crypto.subtle.importKey(
+    'raw', cek, { name: 'AES-GCM' }, false, ['encrypt'],
+  );
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce }, cekKey, padded,
+  ));
+
+  // 6) Assemble header: salt(16) || rs(4, BE = 4096) || idlen(1=65) || serverPub(65)
+  const recordSize = 4096;
+  const out = new Uint8Array(16 + 4 + 1 + 65 + ciphertext.length);
+  out.set(salt, 0);
+  // rs in big-endian
+  out[16] = (recordSize >>> 24) & 0xff;
+  out[17] = (recordSize >>> 16) & 0xff;
+  out[18] = (recordSize >>> 8)  & 0xff;
+  out[19] =  recordSize         & 0xff;
+  out[20] = 65; // idlen
+  out.set(serverPub, 21);
+  out.set(ciphertext, 21 + 65);
+  return out;
+}
+
+// ── Subscription store ───────────────────────────────────────────────
+async function setPushSubscription(emailHash: string, sub: PushSubscriptionRecord): Promise<void> {
+  await kvSet(['push_sub', emailHash, sub.deviceId], JSON.stringify(sub));
+}
+async function listPushSubscriptions(emailHash: string): Promise<PushSubscriptionRecord[]> {
+  const out: PushSubscriptionRecord[] = [];
+  const iter = kv.list({ prefix: ['push_sub', emailHash] });
+  for await (const entry of iter) {
+    try {
+      const parsed: PushSubscriptionRecord = typeof entry.value === 'string'
+        ? JSON.parse(entry.value)
+        : entry.value as PushSubscriptionRecord;
+      if (parsed?.endpoint) out.push(parsed);
+    } catch { /* skip */ }
+  }
+  return out;
+}
+async function deletePushSubscription(emailHash: string, deviceId: string): Promise<void> {
+  await kv.delete(['push_sub', emailHash, deviceId]);
+  await kv.delete(['push_failures', emailHash, deviceId]);
+}
+async function bumpPushFailures(emailHash: string, deviceId: string): Promise<number> {
+  const r = await kvGet(['push_failures', emailHash, deviceId]);
+  const prev = r.value ? Number(r.value) : 0;
+  const next = prev + 1;
+  await kvSet(['push_failures', emailHash, deviceId], String(next));
+  return next;
+}
+async function clearPushFailures(emailHash: string, deviceId: string): Promise<void> {
+  await kv.delete(['push_failures', emailHash, deviceId]);
+}
+
+// ── Scheduled payload store ──────────────────────────────────────────
+async function schedulePushPayload(
+  emailHash: string,
+  payload: ScheduledPushPayload,
+): Promise<void> {
+  // Dedupe: scan the user's queue for an entry with the same sourceRef.
+  // If found, delete it and replace — this lets the client "update" a
+  // scheduled payload (e.g. recompute the title, push the time back)
+  // without leaving stale duplicates.
+  try {
+    const iter = kv.list({ prefix: ['push_queue', emailHash] });
+    for await (const entry of iter) {
+      try {
+        const existing: ScheduledPushPayload = typeof entry.value === 'string'
+          ? JSON.parse(entry.value)
+          : entry.value as ScheduledPushPayload;
+        if (existing?.sourceRef === payload.sourceRef) {
+          await kv.delete(entry.key);
+        }
+      } catch { /* skip */ }
+    }
+  } catch (err) {
+    console.warn(`[push] schedule dedupe scan failed: ${(err as Error).message}`);
+  }
+  await kvSet(
+    ['push_queue', emailHash, _padDueAt(payload.dueAt), payload.id],
+    JSON.stringify(payload),
+  );
+}
+
+async function cancelPushPayloadBySourceRef(emailHash: string, sourceRef: string): Promise<number> {
+  let removed = 0;
+  const iter = kv.list({ prefix: ['push_queue', emailHash] });
+  for await (const entry of iter) {
+    try {
+      const existing: ScheduledPushPayload = typeof entry.value === 'string'
+        ? JSON.parse(entry.value)
+        : entry.value as ScheduledPushPayload;
+      if (existing?.sourceRef === sourceRef) {
+        await kv.delete(entry.key);
+        removed++;
+      }
+    } catch { /* skip */ }
+  }
+  return removed;
+}
+
+async function listAllUsersWithDuePayloads(now: number): Promise<Map<string, ScheduledPushPayload[]>> {
+  // Scan ALL push_queue entries with dueAt <= now. The key layout makes
+  // this scan ordered, so once we encounter an entry with dueAt > now
+  // for a given user we could skip — but we'd need the scan to be
+  // per-user-prefixed to take advantage. Simpler: scan everything once
+  // every 5 minutes; volumes will be very low for a while.
+  const byUser = new Map<string, ScheduledPushPayload[]>();
+  const iter = kv.list({ prefix: ['push_queue'] });
+  for await (const entry of iter) {
+    try {
+      const key = entry.key as unknown as string[];
+      const userHash = key[1];
+      const payload: ScheduledPushPayload = typeof entry.value === 'string'
+        ? JSON.parse(entry.value)
+        : entry.value as ScheduledPushPayload;
+      if (!payload || typeof payload.dueAt !== 'number') continue;
+      if (payload.dueAt > now) continue;
+      if (!byUser.has(userHash)) byUser.set(userHash, []);
+      byUser.get(userHash)!.push(payload);
+    } catch { /* skip */ }
+  }
+  return byUser;
+}
+
+async function deleteScheduledPayload(emailHash: string, dueAt: number, payloadId: string): Promise<void> {
+  await kv.delete(['push_queue', emailHash, _padDueAt(dueAt), payloadId]);
+}
+
+// ── Send a push to a single subscription ─────────────────────────────
+// Returns { ok, status, shouldUnsubscribe }. The push services use 404
+// or 410 to signal the subscription is permanently invalid — in that
+// case we remove it. Transient errors (5xx, network) bump a failure
+// counter; after 5 consecutive failures we also unsubscribe.
+async function sendPushToSubscription(
+  sub: PushSubscriptionRecord,
+  ciphertext: Uint8Array,
+): Promise<{ ok: boolean; status: number; shouldUnsubscribe: boolean }> {
+  if (!vapidConfigured()) {
+    return { ok: false, status: 0, shouldUnsubscribe: false };
+  }
+  const url = new URL(sub.endpoint);
+  const audience = `${url.protocol}//${url.host}`;
+  let jwt: string;
+  try {
+    jwt = await _signVapidJWT(audience);
+  } catch (err) {
+    console.error('[push] vapid sign failed:', (err as Error).message);
+    return { ok: false, status: 0, shouldUnsubscribe: false };
+  }
+  try {
+    const r = await fetch(sub.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type':     'application/octet-stream',
+        'Content-Encoding': 'aes128gcm',
+        'TTL':              '86400',     // queue for up to 24h if recipient offline
+        'Urgency':          'normal',
+        'Authorization':    `vapid t=${jwt}, k=${VAPID_CFG.publicKey}`,
+      },
+      body: ciphertext,
+    });
+    // 201 Created is the happy path. 410 Gone / 404 Not Found mean the
+    // subscription is dead — caller should remove it.
+    if (r.status === 201 || r.status === 200 || r.status === 202) {
+      return { ok: true, status: r.status, shouldUnsubscribe: false };
+    }
+    if (r.status === 404 || r.status === 410) {
+      return { ok: false, status: r.status, shouldUnsubscribe: true };
+    }
+    // 4xx other than gone usually means our request is malformed; log and
+    // don't retry forever.
+    console.warn(`[push] dispatch ${r.status} for ${sub.endpoint.slice(0, 60)}`);
+    return { ok: false, status: r.status, shouldUnsubscribe: false };
+  } catch (err) {
+    console.warn('[push] fetch error:', (err as Error).message);
+    return { ok: false, status: 0, shouldUnsubscribe: false };
+  }
+}
+
+// Build the on-the-wire JSON body that the SW will decrypt. We pass the
+// client-encrypted ciphertext through verbatim plus a few server-known
+// hints (sourceRef, fallback title). All of this lives INSIDE the
+// aes128gcm-encrypted layer that Web Push wraps around it, so even the
+// push relay can't read the sourceRef.
+function _buildPushBody(payload: ScheduledPushPayload): Uint8Array {
+  const body = {
+    v:             1,
+    sourceRef:     payload.sourceRef,
+    fallbackTitle: payload.fallbackTitle || 'New Stockroom notification',
+    ciphertextB64: payload.ciphertextB64,
+  };
+  return new TextEncoder().encode(JSON.stringify(body));
+}
+
+// ── Dispatcher (cron-callable) ───────────────────────────────────────
+// Returns counts so the cron endpoint can log them.
+async function runPushDispatch(now = Date.now()): Promise<{
+  users: number; payloads: number; pushes: number; failures: number; unsubscribed: number;
+}> {
+  const stats = { users: 0, payloads: 0, pushes: 0, failures: 0, unsubscribed: 0 };
+  if (!vapidConfigured()) {
+    console.warn('[push-dispatch] VAPID not configured — skipping');
+    return stats;
+  }
+  const byUser = await listAllUsersWithDuePayloads(now);
+  stats.users = byUser.size;
+  for (const [emailHash, payloads] of byUser) {
+    const subs = await listPushSubscriptions(emailHash);
+    if (subs.length === 0) {
+      // No active subscriptions — discard the payloads. They've already
+      // been delivered to the in-app inbox via other channels.
+      for (const p of payloads) {
+        await deleteScheduledPayload(emailHash, p.dueAt, p.id);
+      }
+      continue;
+    }
+    for (const payload of payloads) {
+      stats.payloads++;
+      const bodyBytes = _buildPushBody(payload);
+      // Fan out to every device subscription this user has
+      for (const sub of subs) {
+        const p256dh = b64UrlDecode(sub.p256dhB64);
+        const auth = b64UrlDecode(sub.authB64);
+        let ciphertext: Uint8Array;
+        try {
+          ciphertext = await _encryptWebPushBody(bodyBytes, p256dh, auth);
+        } catch (err) {
+          console.error('[push] encrypt failed for', sub.deviceId, (err as Error).message);
+          stats.failures++;
+          continue;
+        }
+        const result = await sendPushToSubscription(sub, ciphertext);
+        if (result.ok) {
+          stats.pushes++;
+          await clearPushFailures(emailHash, sub.deviceId);
+          // Update last-used so we know which subs are live
+          sub.lastUsed = now;
+          await setPushSubscription(emailHash, sub);
+        } else if (result.shouldUnsubscribe) {
+          await deletePushSubscription(emailHash, sub.deviceId);
+          stats.unsubscribed++;
+        } else {
+          stats.failures++;
+          const fc = await bumpPushFailures(emailHash, sub.deviceId);
+          if (fc >= 5) {
+            console.warn(`[push] sub ${sub.deviceId} hit 5 consecutive failures — removing`);
+            await deletePushSubscription(emailHash, sub.deviceId);
+            stats.unsubscribed++;
+          }
+        }
+      }
+      // Whether or not all sends succeeded, drop the payload — Web Push
+      // services will retry within their TTL, and re-sending on the next
+      // cron would create duplicates.
+      await deleteScheduledPayload(emailHash, payload.dueAt, payload.id);
+    }
+  }
+  return stats;
+}
+
 async function handleStripeEvent(event: any): Promise<void> {
   const type: string = event.type;
   const obj = event?.data?.object || {};
@@ -2481,6 +2959,178 @@ Deno.serve(async (request) => {
       const deleted = await ackBillingNotifications(emailHash, ids);
       return json({ ok: true, deleted }, corsHeaders);
     } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // WEB PUSH ROUTES
+  // ══════════════════════════════════════════════════════════════════
+
+  // ── Push: config — return public VAPID key so client can subscribe ──
+  // No auth needed — the public key is, by definition, public.
+  if (url.pathname === '/push/config' && request.method === 'GET') {
+    return json({
+      configured: vapidConfigured(),
+      publicKey:  VAPID_CFG.publicKey || null,
+    }, corsHeaders);
+  }
+
+  // ── Push: subscribe — register a device's pushManager subscription ──
+  // Client posts the subscription object returned by pushManager.subscribe()
+  // plus our internal deviceId so we can update an existing record when
+  // the same device re-subscribes (push endpoints rotate occasionally).
+  if (url.pathname === '/push/subscribe' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, endpoint, p256dhB64, authB64, deviceId, uaLabel } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      if (typeof endpoint !== 'string' || !endpoint.startsWith('https://')) {
+        return json({ error: 'endpoint required' }, corsHeaders, 400);
+      }
+      if (typeof p256dhB64 !== 'string' || typeof authB64 !== 'string') {
+        return json({ error: 'keys required' }, corsHeaders, 400);
+      }
+      if (typeof deviceId !== 'string' || !deviceId) {
+        return json({ error: 'deviceId required' }, corsHeaders, 400);
+      }
+      const sub: PushSubscriptionRecord = {
+        endpoint,
+        p256dhB64,
+        authB64,
+        deviceId,
+        uaLabel:   typeof uaLabel === 'string' ? uaLabel : undefined,
+        createdAt: Date.now(),
+      };
+      await setPushSubscription(emailHash, sub);
+      await clearPushFailures(emailHash, deviceId);
+      console.log(`[push] subscribed ${emailHash.slice(0,8)} device=${deviceId.slice(0,8)}`);
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Push: unsubscribe — remove a device's subscription ──
+  if (url.pathname === '/push/unsubscribe' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, deviceId } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      if (typeof deviceId !== 'string' || !deviceId) {
+        return json({ error: 'deviceId required' }, corsHeaders, 400);
+      }
+      await deletePushSubscription(emailHash, deviceId);
+      console.log(`[push] unsubscribed ${emailHash.slice(0,8)} device=${deviceId.slice(0,8)}`);
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Push: schedule a future payload ──
+  // The client encrypts the notification body with its own data key (so
+  // the server never sees content) and posts {dueAt, sourceRef, ciphertext}.
+  // Idempotent: scheduling with the same sourceRef replaces any pending
+  // entry, which lets the client update titles or reschedule cleanly.
+  if (url.pathname === '/push/schedule' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, dueAt, sourceRef, ciphertextB64, fallbackTitle } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      if (typeof dueAt !== 'number' || !Number.isFinite(dueAt)) {
+        return json({ error: 'dueAt required (ms timestamp)' }, corsHeaders, 400);
+      }
+      if (typeof sourceRef !== 'string' || !sourceRef) {
+        return json({ error: 'sourceRef required' }, corsHeaders, 400);
+      }
+      if (typeof ciphertextB64 !== 'string' || !ciphertextB64) {
+        return json({ error: 'ciphertextB64 required' }, corsHeaders, 400);
+      }
+      // Cap the queue depth per user to defend against runaway clients.
+      // 1000 future payloads is comfortably above any reasonable real
+      // usage (Stockroom users have dozens of reminders, not thousands).
+      let queueSize = 0;
+      const sizeIter = kv.list({ prefix: ['push_queue', emailHash] });
+      for await (const _entry of sizeIter) {
+        queueSize++;
+        if (queueSize >= 1000) break;
+      }
+      if (queueSize >= 1000) {
+        return json({ error: 'queue full' }, corsHeaders, 429);
+      }
+      const payload: ScheduledPushPayload = {
+        id:            crypto.randomUUID(),
+        dueAt,
+        sourceRef,
+        ciphertextB64,
+        fallbackTitle: typeof fallbackTitle === 'string' ? fallbackTitle : undefined,
+      };
+      await schedulePushPayload(emailHash, payload);
+      return json({ ok: true, id: payload.id }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Push: cancel scheduled payloads by sourceRef ──
+  // Used when a reminder is dismissed/edited so the client can cancel the
+  // future push without waiting for it to fire.
+  if (url.pathname === '/push/cancel' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, sourceRef } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      if (typeof sourceRef !== 'string' || !sourceRef) {
+        return json({ error: 'sourceRef required' }, corsHeaders, 400);
+      }
+      const removed = await cancelPushPayloadBySourceRef(emailHash, sourceRef);
+      return json({ ok: true, removed }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Push: dispatch cron endpoint ──
+  // Called by Fly scheduled machines every 5 minutes. Authenticated via
+  // a shared secret env var so random callers can't trigger dispatch.
+  // Returns counts as JSON for the caller to log.
+  if (url.pathname === '/push/dispatch' && request.method === 'POST') {
+    try {
+      const expected = Deno.env.get('PUSH_DISPATCH_SECRET') || '';
+      const got = request.headers.get('X-Dispatch-Secret') || '';
+      if (!expected || got !== expected) {
+        return json({ error: 'unauthorized' }, corsHeaders, 401);
+      }
+      const stats = await runPushDispatch();
+      console.log(`[push-dispatch] users=${stats.users} payloads=${stats.payloads} pushes=${stats.pushes} failures=${stats.failures} unsubscribed=${stats.unsubscribed}`);
+      return json({ ok: true, ...stats }, corsHeaders);
+    } catch(err) {
+      console.error('[push-dispatch] error:', (err as Error).message);
+      return json({ error: (err as Error).message }, corsHeaders, 500);
+    }
+  }
+
+  // ── Push: admin self-test — send a test notification to all my subs ──
+  // Authenticated as the user; useful for sanity-checking subscribe flow.
+  if (url.pathname === '/push/self-test' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      const subs = await listPushSubscriptions(emailHash);
+      if (subs.length === 0) {
+        return json({ ok: false, error: 'No subscriptions on this account' }, corsHeaders);
+      }
+      // Build a tiny test payload — no real ciphertext, just the fallback
+      // path. SW will show fallbackTitle directly.
+      const body = _buildPushBody({
+        id: 'self-test',
+        dueAt: Date.now(),
+        sourceRef: 'self-test:' + Date.now(),
+        ciphertextB64: '',
+        fallbackTitle: 'Stockroom push test — working ✓',
+      });
+      let pushed = 0, failed = 0;
+      for (const sub of subs) {
+        const ct = await _encryptWebPushBody(body, b64UrlDecode(sub.p256dhB64), b64UrlDecode(sub.authB64));
+        const res = await sendPushToSubscription(sub, ct);
+        if (res.ok) pushed++; else failed++;
+      }
+      return json({ ok: true, pushed, failed, subs: subs.length }, corsHeaders);
+    } catch(err) {
+      return json({ error: (err as Error).message }, corsHeaders, 500);
+    }
   }
 
   // ── Billing: checkout — create a Stripe Checkout Session ──
