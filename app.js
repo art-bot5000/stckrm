@@ -6999,6 +6999,28 @@ function openCardTagPickerForCreate() {
   // Hide the toggle list (no item to toggle) and the helper text
   const list = document.getElementById('card-tag-picker-list');
   if (list) list.innerHTML = `<p style="font-size:12px;color:var(--muted);margin:0">Create a new tag below — you can apply it to items afterwards.</p>`;
+  // _renderCardTagPicker bails when there's no item, so the colour swatches
+  // never get built on first open from this entry point. Build them here
+  // so the colour picker is visible on the very first invocation.
+  const swatches = document.getElementById('card-tag-picker-swatches');
+  if (swatches && !swatches.dataset.built) {
+    swatches.innerHTML = TAG_PICKER_PALETTE.map((p, i) => {
+      const sel = i === 0 ? ' selected' : '';
+      return `<button type="button" class="tag-swatch${sel}"
+        data-idx="${i}"
+        style="background:${p.bg};border:1.5px solid ${p.border}"
+        onclick="_selectTagSwatch(${i})"
+        title="${p.name}"></button>`;
+    }).join('');
+    swatches.dataset.built = '1';
+  }
+  // Also reset the "max tags reached" visibility for the no-item case
+  const tags = getCustomTags();
+  const defined = tags.filter(t => t && t.trim());
+  const newForm = document.getElementById('card-tag-picker-new-form');
+  if (newForm) newForm.style.display = (defined.length >= 5) ? 'none' : 'flex';
+  const maxNote = document.getElementById('card-tag-picker-max-note');
+  if (maxNote) maxNote.style.display = (defined.length >= 5) ? 'block' : 'none';
   const modal = document.getElementById('card-tag-picker-modal');
   if (modal) modal.classList.add('active');
   // Focus the name input
@@ -16325,6 +16347,13 @@ async function _doDeleteAccount() {
 
 async function kvSignOut() {
   if (!confirm('Sign out?\n\nYour encrypted data stays safely on the server. Sign back in with your email and passphrase to access it.')) return;
+  // Schedule the reload FIRST, before any awaits that could throw. The async
+  // cleanup work below (removeWrappedKey, _wipeStaleUserDataForSwitch, dbPut)
+  // can occasionally reject — if it does, a reload scheduled AFTER the awaits
+  // never runs and the page appears still-signed-in until the user manually
+  // refreshes. By scheduling here first, the reload always fires regardless
+  // of whether the cleanup succeeds.
+  setTimeout(() => location.reload(), 1500);
   // If MFA was active, record it so _mfaGate enforces it even offline on next login
   if (_mfaEnabled()) {
     localStorage.setItem('stockroom_mfa_was_active', _kvEmailHash || '1');
@@ -16341,7 +16370,7 @@ async function kvSignOut() {
   groceryEditMode = false;
   // Clear device trust
   const deviceId = getOrCreateDeviceId();
-  await removeWrappedKey(deviceId);
+  try { await removeWrappedKey(deviceId); } catch(e) {}
   localStorage.removeItem('stockroom_device_secret');
   localStorage.removeItem('stockroom_kv_key_fallback');
   localStorage.removeItem('stockroom_kv_session_key');
@@ -16361,7 +16390,7 @@ async function kvSignOut() {
   // leak surfaced as "recently deleted items follow you to a new account"
   // in May 2026. Pass null so _activeUserHash is NOT re-stamped — we also
   // clear it explicitly below so the next sign-in stamps fresh.
-  await _wipeStaleUserDataForSwitch(null);
+  try { await _wipeStaleUserDataForSwitch(null); } catch(e) {}
   // Clear the active-user stamp so the next sign-in is treated as a fresh
   // start rather than a "switch from the previous user" (the wipe above
   // already happened, so we don't need the switch path to wipe again).
@@ -16374,18 +16403,13 @@ async function kvSignOut() {
   _kvSessionToken = '';
   _kvKey          = null;
   _shareState     = null;
-  // Show login screen (fallback — full reload happens below)
+  // Show login screen (fallback — full reload happens via the setTimeout
+  // scheduled at the top of this function)
   document.body.classList.add('wizard-active'); document.getElementById('wizard').style.display = 'flex';
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   showKvLogin();
   updateSyncUI();
   toast('Signed out');
-  // Full reload after a short delay so the toast is visible and any
-  // un-awaited promises above (e.g. dbPut on stockroom_kv_session) finish.
-  // Without this, residual rendered state (nav, dashboard, modals, mid-
-  // flight async work) could linger and make the app look still-signed-in
-  // until the user manually refreshes. Mirrors _doDeleteAccount's pattern.
-  setTimeout(() => location.reload(), 1500);
 }
 
 function openChangePassphrase() {
