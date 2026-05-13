@@ -2833,8 +2833,19 @@ function updateCountryConfirm() {
 }
 
 function enableItemEdit() {
+  // Per-record readOnly downgrade (Part B Round 2). If the owner pushed
+  // this item with _shareEffectivePerm: 'r' to this guest, the guest is
+  // intentionally view-only on this specific item even when they have
+  // edit perm on the rest of the stockroom section. Block the form swap
+  // with a toast — defense-in-depth on top of the sync filter that
+  // already keeps these items in the guest's view.
+  const _editingItem = items.find(i => i.id === editingId);
+  if (_editingItem?._shareEffectivePerm === 'r') {
+    toast('This item is read-only — the owner shared it with view-only access');
+    return;
+  }
   document.getElementById('item-modal-title').textContent = 'Edit Item';
-  document.getElementById('item-modal-subtitle').textContent = 'Editing: ' + (items.find(i => i.id === editingId)?.name || '');
+  document.getElementById('item-modal-subtitle').textContent = 'Editing: ' + (_editingItem?.name || '');
   document.getElementById('item-readonly-view').style.display = 'none';
   document.getElementById('item-edit-view').style.display = 'block';
 }
@@ -8423,6 +8434,21 @@ function cardHTML(item, threshold) {
         <div class="card-category">${item.category||'Other'}</div>
         <div class="card-stars-row" onclick="event.stopPropagation()">${stars}</div>
         <div class="card-status" style="background:${color}22;color:${color}">${STATUS_LABEL[status]}</div>
+        ${(isOwner() && item.share != null) ? (() => {
+          // Per-item share override indicator (owner-only). Tells the
+          // owner at a glance which items have non-default sharing. Guest
+          // views never get this — their data is already filtered, so
+          // the policy is moot from their side.
+          const sh = item.share;
+          let icon = 'i-shield', title = 'Custom sharing';
+          if (sh === 'private') { icon = 'i-eye-off'; title = 'Private — owner only'; }
+          else if (typeof sh === 'object') {
+            if (Array.isArray(sh.allow))    title = `Visible to ${sh.allow.length} share${sh.allow.length===1?'':'s'} only`;
+            else if (Array.isArray(sh.deny))title = `Hidden from ${sh.deny.length} share${sh.deny.length===1?'':'s'}`;
+            if (Array.isArray(sh.readOnly) && sh.readOnly.length) title += ` · read-only for ${sh.readOnly.length}`;
+          }
+          return `<div class="card-share-indicator" title="${esc(title)}" style="color:var(--muted);display:flex;align-items:center" aria-label="${esc(title)}"><svg class="icon icon-sm" aria-hidden="true"><use href="#${icon}"></use></svg></div>`;
+        })() : ''}
       </div>
       <div class="card-name">${esc(item.name)}</div>
       <div class="card-hero-block">
@@ -12076,6 +12102,12 @@ function openEditModal(id) {
   // ── Replacement reminders ──
   _renderEditReminders(item);
 
+  // ── Sharing (Part B Round 2) ──
+  // Reset expanded state so every modal-open starts collapsed showing
+  // the one-line summary. The picker re-expands on demand.
+  _itemSharingExpanded = false;
+  _renderItemSharingPanel(item);
+
   // Show readonly, hide edit form
   document.getElementById('item-readonly-view').style.display = 'block';
   document.getElementById('item-edit-view').style.display = 'none';
@@ -12228,6 +12260,264 @@ function _getItemReminders(item) {
     saveData().catch(() => {});
   }
   return item.replacementReminders || [];
+}
+
+// ─── Item-level sharing panel (Part B, Round 2) ───────────────────────────
+// Renders the per-item sharing override picker inside the item modal's
+// readonly view. Owner-only — hidden entirely on guest views. The panel
+// has two display states: collapsed (one-line summary + "Override sharing"
+// link) and expanded (full picker).
+//
+// State is held on the item itself via item.share. Editing the picker
+// mutates item.share in place and calls saveData() + a re-push.
+//
+// _itemSharingExpanded toggles whether the picker is shown; resets on each
+// modal open via _renderItemSharingPanel.
+let _itemSharingExpanded = false;
+
+function _renderItemSharingPanel(item) {
+  const section = document.getElementById('ro-sharing-section');
+  const content = document.getElementById('ro-sharing-content');
+  if (!section || !content) return;
+
+  // Guests never see this panel — sharing policy is owner-only.
+  if (!isOwner()) { section.style.display = 'none'; return; }
+
+  // If there are no shares configured at all, the panel is useless —
+  // nothing to override for. Show a one-line note instead of the picker.
+  if (!Array.isArray(_shareTargets) || !_shareTargets.length) {
+    section.style.display = 'block';
+    content.innerHTML = `<p style="font-size:12px;color:var(--muted);font-style:italic">No shares configured. Set up household sharing first to use per-item overrides.</p>`;
+    return;
+  }
+
+  section.style.display = 'block';
+  if (!_itemSharingExpanded) {
+    content.innerHTML = _renderItemSharingSummary(item);
+  } else {
+    content.innerHTML = _renderItemSharingPicker(item);
+  }
+}
+
+// Compute a human-readable summary of the current share state for the
+// collapsed view. Returns the inner HTML of the summary row + the
+// "Override sharing" link / "Reset to inherit" link as appropriate.
+function _renderItemSharingSummary(item) {
+  const share = item.share;
+  let label, icon;
+  if (share == null) {
+    label = `Inherits from household — visible to ${_shareTargets.length} share${_shareTargets.length===1?'':'s'} per section perms`;
+    icon  = 'i-share-2';
+  } else if (share === 'private') {
+    label = `Private — owner only`;
+    icon  = 'i-eye-off';
+  } else if (typeof share === 'object') {
+    const parts = [];
+    if (Array.isArray(share.allow))    parts.push(`${share.allow.length} allowed`);
+    if (Array.isArray(share.deny))     parts.push(`${share.deny.length} denied`);
+    if (Array.isArray(share.readOnly)) parts.push(`${share.readOnly.length} read-only`);
+    label = `Overridden — ${parts.join(' · ') || 'no entries set'}`;
+    icon  = 'i-shield';
+  } else {
+    label = `Malformed override (${typeof share}) — review`;
+    icon  = 'i-alert-triangle';
+  }
+
+  const action = (share != null)
+    ? `<button class="btn btn-ghost btn-sm" onclick="_clearItemSharing()" style="margin-right:6px"><svg class="icon" aria-hidden="true"><use href="#i-rotate-ccw"></use></svg> Reset</button>
+       <button class="btn btn-ghost btn-sm" onclick="_expandItemSharing()"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit</button>`
+    : `<button class="btn btn-ghost btn-sm" onclick="_expandItemSharing()"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Override sharing</button>`;
+
+  return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border-radius:8px">
+    <svg class="icon" aria-hidden="true" style="color:var(--muted);flex-shrink:0"><use href="#${icon}"></use></svg>
+    <div style="flex:1;font-size:12px;color:var(--text);line-height:1.4">${esc(label)}</div>
+    <div style="flex-shrink:0;display:flex;gap:4px">${action}</div>
+  </div>`;
+}
+
+// Full picker UI shown when the panel is expanded. Four states (radio):
+// inherit / private / allow / deny. Plus a read-only multi-select that
+// works alongside inherit AND allow (so you can say "allow these 3,
+// and of those 3, mark one as read-only").
+function _renderItemSharingPicker(item) {
+  const share = item.share;
+  // Determine current mode (which radio is selected)
+  let mode = 'inherit';
+  if (share === 'private') mode = 'private';
+  else if (typeof share === 'object') {
+    if (Array.isArray(share.allow)) mode = 'allow';
+    else if (Array.isArray(share.deny)) mode = 'deny';
+    // readOnly without allow/deny still counts as 'inherit' for the radio
+  }
+
+  const allowSet    = new Set(Array.isArray(share?.allow)    ? share.allow    : []);
+  const denySet     = new Set(Array.isArray(share?.deny)     ? share.deny     : []);
+  const readOnlySet = new Set(Array.isArray(share?.readOnly) ? share.readOnly : []);
+
+  const radio = (val, label, help) => `
+    <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;cursor:pointer;border:1px solid ${mode===val?'var(--accent)':'var(--border)'};background:${mode===val?'rgba(232,168,56,0.08)':'transparent'};margin-bottom:6px">
+      <input type="radio" name="item-share-mode" value="${val}" ${mode===val?'checked':''} onchange="_setItemSharingMode('${val}')" style="accent-color:var(--accent);margin-top:2px;cursor:pointer">
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:600;color:var(--text)">${esc(label)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4">${esc(help)}</div>
+      </div>
+    </label>`;
+
+  // Per-share chips, used inside allow / deny / readOnly multi-select. The
+  // shareCodeSet param decides which are pre-checked.
+  const shareChips = (shareCodeSet, action, disabled) => _shareTargets.map(t => {
+    const checked = shareCodeSet.has(t.code);
+    return `<button class="btn btn-ghost btn-sm" ${disabled?'disabled':''} onclick="${action}('${t.code}')"
+      style="padding:5px 12px;border-radius:99px;font-size:12px;border:1px solid ${checked?'var(--accent)':'var(--border)'};background:${checked?'rgba(232,168,56,0.15)':'var(--bg)'};color:${checked?'var(--accent)':'var(--muted)'};${disabled?'opacity:0.4;cursor:not-allowed':''}">
+      ${checked?'<svg class="icon icon-sm" aria-hidden="true"><use href="#i-check"></use></svg> ':''}${esc(t.name)}
+    </button>`;
+  }).join('');
+
+  const showAllowList    = mode === 'allow';
+  const showDenyList     = mode === 'deny';
+  // ReadOnly applies to allow members (downgrade allowed share to view) OR
+  // to inherit (downgrade everyone-otherwise-rw to view). It's mutually
+  // exclusive with 'deny' and 'private' (those drop the record entirely,
+  // so read-only would be meaningless).
+  const showReadOnly     = mode === 'inherit' || mode === 'allow';
+
+  return `
+    <div style="padding:12px;background:var(--surface2);border-radius:8px">
+      ${radio('inherit', 'Inherit (default)', 'Use the section-level permission for every share.')}
+      ${radio('private', 'Private — owner only', 'Hide this item from every share. Nobody sees it.')}
+      ${radio('allow',   'Only specific shares', 'Hide from everyone EXCEPT the shares you tick below.')}
+      ${radio('deny',    'Hide from specific shares', 'Show to everyone EXCEPT the shares you tick below.')}
+
+      ${showAllowList ? `
+        <div style="margin-top:12px">
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">Allowed shares</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">${shareChips(allowSet, '_toggleItemSharingAllow', false)}</div>
+        </div>` : ''}
+
+      ${showDenyList ? `
+        <div style="margin-top:12px">
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">Denied shares</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">${shareChips(denySet, '_toggleItemSharingDeny', false)}</div>
+        </div>` : ''}
+
+      ${showReadOnly ? `
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">Read-only for these shares</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.4">Selected shares can see this item but never edit it, even if they have edit perm on the whole section.</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">${shareChips(readOnlySet, '_toggleItemSharingReadOnly', mode==='deny'||mode==='private')}</div>
+        </div>` : ''}
+
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:6px">
+        <button class="btn btn-ghost btn-sm" onclick="_collapseItemSharing()">Done</button>
+      </div>
+    </div>`;
+}
+
+// ── Sharing panel interactions ──────────────────────────────────────────
+// All of these mutate items.find(... editingId).share, persist via
+// saveData(), and re-render the panel. Re-push to shares happens
+// debounced via _syncQueue.enqueue.
+
+function _expandItemSharing() {
+  _itemSharingExpanded = true;
+  const item = items.find(i => i.id === editingId);
+  if (item) _renderItemSharingPanel(item);
+}
+
+function _collapseItemSharing() {
+  _itemSharingExpanded = false;
+  const item = items.find(i => i.id === editingId);
+  if (item) _renderItemSharingPanel(item);
+}
+
+async function _clearItemSharing() {
+  const item = items.find(i => i.id === editingId);
+  if (!item) return;
+  delete item.share;
+  item.updatedAt = new Date().toISOString();
+  await saveData();
+  _itemSharingExpanded = false;
+  _renderItemSharingPanel(item);
+  _syncQueue.enqueue('Updating sharing…');
+  // Re-push to all shares so the change propagates immediately
+  _rePushAllShares();
+}
+
+function _setItemSharingMode(mode) {
+  const item = items.find(i => i.id === editingId);
+  if (!item) return;
+  // Preserve readOnly across mode flips when it still makes sense
+  // (inherit and allow keep it; private and deny clear it).
+  const oldReadOnly = (typeof item.share === 'object' && Array.isArray(item.share?.readOnly))
+    ? item.share.readOnly : [];
+
+  if (mode === 'inherit') {
+    if (oldReadOnly.length) {
+      item.share = { readOnly: oldReadOnly };
+    } else {
+      delete item.share;
+    }
+  } else if (mode === 'private') {
+    item.share = 'private';
+  } else if (mode === 'allow') {
+    const oldAllow = (typeof item.share === 'object' && Array.isArray(item.share?.allow))
+      ? item.share.allow : [];
+    item.share = { allow: oldAllow };
+    if (oldReadOnly.length) item.share.readOnly = oldReadOnly;
+  } else if (mode === 'deny') {
+    const oldDeny = (typeof item.share === 'object' && Array.isArray(item.share?.deny))
+      ? item.share.deny : [];
+    item.share = { deny: oldDeny };
+  }
+  item.updatedAt = new Date().toISOString();
+  saveData();
+  _renderItemSharingPanel(item);
+  _syncQueue.enqueue('Updating sharing…');
+  _rePushAllShares();
+}
+
+function _toggleItemSharingAllow(shareCode)   { _toggleItemSharingArr('allow',    shareCode); }
+function _toggleItemSharingDeny(shareCode)    { _toggleItemSharingArr('deny',     shareCode); }
+function _toggleItemSharingReadOnly(shareCode){ _toggleItemSharingArr('readOnly', shareCode); }
+
+function _toggleItemSharingArr(key, shareCode) {
+  const item = items.find(i => i.id === editingId);
+  if (!item || typeof item.share !== 'object' || item.share === null) {
+    // Defensive: if share isn't an object the chip shouldn't have been
+    // tappable, but guard anyway. Initialise an empty object so the
+    // toggle can proceed.
+    item.share = {};
+  }
+  const cur = Array.isArray(item.share[key]) ? [...item.share[key]] : [];
+  const idx = cur.indexOf(shareCode);
+  if (idx === -1) cur.push(shareCode);
+  else cur.splice(idx, 1);
+  if (cur.length) {
+    item.share[key] = cur;
+  } else {
+    delete item.share[key];
+  }
+  // If the object is now empty (no allow/deny/readOnly), clear it entirely
+  // — that's just "inherit" without the noise.
+  if (typeof item.share === 'object' && Object.keys(item.share).length === 0) {
+    delete item.share;
+  }
+  item.updatedAt = new Date().toISOString();
+  saveData();
+  _renderItemSharingPanel(item);
+  _syncQueue.enqueue('Updating sharing…');
+  _rePushAllShares();
+}
+
+// Re-push every share so per-record perm changes take effect immediately
+// on the guest side. Without this, the change would still flow through
+// the next debounced sync, just a bit later. Worth doing here for fast
+// feedback when the owner is actively configuring overrides.
+async function _rePushAllShares() {
+  if (!Array.isArray(_shareTargets) || !_shareTargets.length) return;
+  for (const t of _shareTargets) {
+    try { await pushSharedData(t.code); } catch(_) {}
+  }
 }
 
 

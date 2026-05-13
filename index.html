@@ -3340,6 +3340,15 @@
         <button class="btn btn-ghost btn-sm" onclick="openReplRemindersModal(editingId)" style="width:100%"><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Manage Replacement Reminders</button>
       </div>
 
+      <!-- Sharing section — per-record permission overrides. Owner-only;
+           hidden entirely on guest views. Default state shows "Inherits
+           from household" with an "Override sharing" link. Clicking the
+           link expands the picker. See _renderItemSharingPanel in app.js. -->
+      <div id="ro-sharing-section" style="margin-bottom:14px;display:none">
+        <p style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Sharing</p>
+        <div id="ro-sharing-content"></div>
+      </div>
+
       <div class="modal-footer" style="margin-top:4px">
         <button class="btn btn-danger btn-sm" style="margin-right:auto" onclick="deleteItem(editingId)"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
         <button class="btn btn-ghost" onclick="closeModal('item-modal')">Close</button>
