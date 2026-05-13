@@ -1715,6 +1715,272 @@ function checkShareAccessControl(email) {
   return { ok: true, reason: null };
 }
 
+// ─── Per-record granular permissions (Part B foundation) ──────────────────
+// Each record (item / grocery list / reminder / transaction) may carry an
+// optional `share` field that OVERRIDES the section-level perm for one or
+// more specific SHARES. The field shape is one of:
+//
+//   undefined / null     → INHERIT — use the section-level perm as-is
+//   'private'            → owner only, all shares dropped
+//   { deny: [code,...] } → drop these shares; everyone else inherits
+//   { allow: [code,...], readOnly: [code,...] }
+//                        → only listed shares see it; readOnly forces 'r'
+//                          regardless of section perm
+//
+// `allow` and `readOnly` may coexist on the same record. e.g.:
+//   { allow: [spouseShareCode], readOnly: [cleanerShareCode] }
+// means everyone on spouse's share can see+edit (if section allows),
+// everyone on cleaner's share can only view, no other share sees it.
+//
+// ── Why share codes, not member email hashes ──
+// The plan doc originally specified recipient/member email hashes, but
+// that's not implementable with the current crypto: each share has ONE
+// encrypted blob that ALL its members decrypt with the same shareKey. We
+// can't put a different filtered view in there for each member. The unit
+// of access enforceable by the crypto is the share itself — so the
+// discriminator is the share code, not the member hash. If you want to
+// distinguish two people (e.g. allow spouse but not adult child), put
+// them on separate shares.
+//
+// Resolution rules (per-record ALWAYS wins over section-level):
+//   1. Section perm 'none'       → record is dropped (per-record can't
+//                                  promote a share that isn't in section)
+//   2. record.share absent       → use section perm
+//   3. record.share === 'private'→ drop
+//   4. record.share.deny present → drop if this share's code is in deny,
+//                                  otherwise use section perm
+//   5. record.share.allow present→ drop if share code NOT in allow
+//   6. record.share.readOnly present + share code in it → force 'r' even
+//                                  if section perm is 'rw'
+//
+// Returns one of: 'rw' | 'r' | 'none'. Callers can treat 'none' as "drop
+// this record from this share's payload."
+//
+// Malformed `share` fields fail-safe to 'none' (drop) and emit a console
+// warning so the writer can be fixed. Better to hide a record than to
+// accidentally expose one we shouldn't.
+function resolveRecordShare(record, shareCode, sectionPerm) {
+  // Rule 1: section access denied — record is unreachable regardless
+  if (!sectionPerm || sectionPerm === 'none') return 'none';
+
+  // Rule 2: no override — inherit section perm
+  const share = record?.share;
+  if (share == null) return sectionPerm;
+
+  // Rule 3: explicit private
+  if (share === 'private') return 'none';
+
+  // Object form
+  if (typeof share === 'object') {
+    // Rule 4: deny list — short-circuit if this share is denied
+    if (Array.isArray(share.deny)) {
+      if (share.deny.includes(shareCode)) return 'none';
+    }
+    // Rule 5: allow list — only listed shares see it
+    if (Array.isArray(share.allow)) {
+      if (!share.allow.includes(shareCode)) return 'none';
+    }
+    // Rule 6: readOnly downgrade — force 'r' even if section says 'rw'
+    if (Array.isArray(share.readOnly) && share.readOnly.includes(shareCode)) {
+      return 'r';
+    }
+    // Made it through all object checks — inherit section perm
+    return sectionPerm;
+  }
+
+  // Anything else (number, string other than 'private', etc.) is malformed
+  console.warn('[share] malformed record.share — failing safe to none:', share, 'on record id:', record?.id);
+  return 'none';
+}
+
+// Filter a section's records to those visible to a specific SHARE. Returns
+// a NEW array (does not mutate the original) with each retained record
+// optionally annotated with a `_shareEffectivePerm` field that downstream
+// guest code can read. Records resolving to 'none' are dropped entirely.
+//
+// Why annotate the record? Because the guest's local view of a record
+// needs to know whether they have 'r' or 'rw' on a per-record basis —
+// the section-level perm alone isn't enough once readOnly is in play.
+// The annotation is stripped before save on the guest side via
+// _scrubGuestRecords below.
+function _filterRecordsForShare(records, shareCode, sectionPerm) {
+  if (!Array.isArray(records)) return records;
+  if (!sectionPerm || sectionPerm === 'none') return [];
+  const out = [];
+  for (const rec of records) {
+    const perm = resolveRecordShare(rec, shareCode, sectionPerm);
+    if (perm === 'none') continue;
+    // Annotate only if the per-record perm differs from the section perm —
+    // saves wire bytes on the common case where it inherits.
+    if (perm !== sectionPerm) {
+      out.push({ ...rec, _shareEffectivePerm: perm });
+    } else {
+      out.push(rec);
+    }
+  }
+  return out;
+}
+
+// Budget transactions are a map keyed by month ('2026-05', '2026-06', ...)
+// where each value is an array of spend records. The standard filter only
+// handles arrays, so we walk the map and apply per-bucket. Returns a NEW
+// map (does not mutate). Empty buckets are pruned from the output to
+// save wire bytes.
+function _filterBudgetTransactionsForShare(txMap, shareCode, sectionPerm) {
+  if (!txMap || typeof txMap !== 'object') return {};
+  if (!sectionPerm || sectionPerm === 'none') return {};
+  const out = {};
+  for (const [month, bucket] of Object.entries(txMap)) {
+    if (!Array.isArray(bucket)) continue;
+    const filtered = _filterRecordsForShare(bucket, shareCode, sectionPerm);
+    if (filtered.length) out[month] = filtered;
+  }
+  return out;
+}
+
+// Strip owner-only fields (`share`, `_shareEffectivePerm`) from records
+// before a GUEST pushes them back to the owner's share blob. Per-record
+// perms are an owner-only concept — a guest writing them back would let
+// them unilaterally rewrite the owner's sharing policy. Returns a NEW
+// array of shallow-cloned records with those fields removed.
+function _scrubGuestRecords(records) {
+  if (!Array.isArray(records)) return records;
+  return records.map(rec => {
+    if (!rec || (rec.share === undefined && rec._shareEffectivePerm === undefined)) {
+      return rec; // common case — nothing to strip
+    }
+    const clone = { ...rec };
+    delete clone.share;
+    delete clone._shareEffectivePerm;
+    return clone;
+  });
+}
+
+// Same as _scrubGuestRecords but for the budget transactions map shape.
+function _scrubGuestTransactions(txMap) {
+  if (!txMap || typeof txMap !== 'object') return {};
+  const out = {};
+  for (const [month, bucket] of Object.entries(txMap)) {
+    if (!Array.isArray(bucket)) { out[month] = bucket; continue; }
+    out[month] = _scrubGuestRecords(bucket);
+  }
+  return out;
+}
+
+// ── Round 1 debug helper ─────────────────────────────────────────────────
+// No UI exists yet for setting per-record perms — Round 1 is foundation
+// only. This helper lets you set, clear, and inspect the `share` field on
+// any record via the browser console, then trigger a re-push to validate
+// the filter end-to-end before Round 2 builds the UI.
+//
+// Discriminator is the SHARE CODE (not the member email hash) — see
+// resolveRecordShare doc-comment for why.
+//
+// Usage examples:
+//   shareDebug.list()                       — print every record's id + share state
+//   shareDebug.shares()                     — list every share with its code
+//   shareDebug.set('items', 'abc123', 'private')              — hide item from all shares
+//   shareDebug.set('items', 'abc123', { allow: ['<shareCode>'] })  — only this share sees it
+//   shareDebug.set('items', 'abc123', { readOnly: ['<shareCode>'] }) — share sees but can't edit
+//   shareDebug.clear('items', 'abc123')                       — back to inherit
+//   shareDebug.push()                       — re-push all shares so changes go live
+window.shareDebug = {
+  // Inspect: list all records with non-default share state across all sections
+  list() {
+    const sections = {
+      items, groceryItems, groceryLists, reminders,
+    };
+    for (const [name, arr] of Object.entries(sections)) {
+      if (!Array.isArray(arr)) continue;
+      const overridden = arr.filter(r => r.share != null);
+      if (!overridden.length) { console.log(`${name}: (none with overrides)`); continue; }
+      console.log(`${name}: ${overridden.length} with overrides`);
+      overridden.forEach(r => console.log(`  ${r.id}  ${r.name||'(unnamed)'}  →`, r.share));
+    }
+    // transactions is a month-keyed map
+    if (transactions && typeof transactions === 'object') {
+      const flat = Object.values(transactions).flat();
+      const overridden = flat.filter(r => r && r.share != null);
+      if (overridden.length) {
+        console.log(`transactions: ${overridden.length} with overrides`);
+        overridden.forEach(r => console.log(`  ${r.id}  £${r.amount||'?'}  →`, r.share));
+      } else {
+        console.log('transactions: (none with overrides)');
+      }
+    }
+  },
+
+  // Set the share field on a specific record. value can be 'private',
+  // null/undefined (to clear), or an object like { allow: [shareCode] }
+  set(section, recordId, value) {
+    const arr = this._getSectionArr(section);
+    if (!arr) { console.warn('unknown section:', section); return; }
+    const rec = arr.find(r => r.id === recordId);
+    if (!rec) { console.warn('record not found:', recordId); return; }
+    if (value == null) {
+      delete rec.share;
+    } else {
+      rec.share = value;
+    }
+    rec.updatedAt = new Date().toISOString();
+    console.log('set', recordId, '→', rec.share || '(cleared)');
+    console.log('call shareDebug.push() to send to guests');
+  },
+
+  // Convenience clear
+  clear(section, recordId) { this.set(section, recordId, null); },
+
+  // List every share target with its share CODE. Use these codes in
+  // allow / deny / readOnly arrays — NOT the member email hashes.
+  shares() {
+    if (!Array.isArray(_shareTargets) || !_shareTargets.length) {
+      console.log('No share targets configured yet.');
+      return;
+    }
+    _shareTargets.forEach(t => {
+      const memberHashes = Object.keys(t.memberDetails || {});
+      const memberCount  = memberHashes.length;
+      const md = memberHashes[0] ? t.memberDetails[memberHashes[0]] : null;
+      const memberSummary = memberCount === 0
+        ? '(no members joined yet)'
+        : memberCount === 1
+          ? (md?.email || `${memberHashes[0].slice(0,12)}…`)
+          : `${memberCount} members`;
+      console.log(`${t.name}: code=${t.code}  →  ${memberSummary}`);
+    });
+  },
+
+  // Trigger a re-push of every share so filter changes take effect
+  async push() {
+    if (!Array.isArray(_shareTargets) || !_shareTargets.length) {
+      console.log('No share targets to push to.');
+      return;
+    }
+    for (const t of _shareTargets) {
+      try {
+        await pushSharedData(t.code);
+        console.log('pushed:', t.name);
+      } catch(e) {
+        console.warn('push failed for', t.name, e.message);
+      }
+    }
+    console.log('all shares re-pushed');
+  },
+
+  // Internal — find the right array for a section name
+  _getSectionArr(section) {
+    if (section === 'items')        return items;
+    if (section === 'groceries')    return groceryItems;
+    if (section === 'groceryLists') return groceryLists;
+    if (section === 'reminders')    return reminders;
+    if (section === 'transactions') {
+      // Flat view across all months
+      return Object.values(transactions || {}).flat().filter(Boolean);
+    }
+    return null;
+  },
+};
+
 let editingId = null;
 let loggingId = null;
 let tempStorePrices = []; // also declared in scanner.js; declared here so openAddModal works before scanner.js loads
@@ -29649,17 +29915,53 @@ async function pushSharedData(code, shareKey) {
       const canSeeReminders  = perms.reminders  && perms.reminders  !== 'none';
       const canSeeBudget     = perms.budget     && perms.budget     !== 'none';
 
+      // Per-record filter pass (Part B foundation). Each section's records
+      // are routed through _filterRecordsForShare, which drops anything the
+      // share's per-record perm resolves to 'none' and annotates the rest
+      // with their effective perm (only when it differs from section).
+      //
+      // Why share code, not member email hash: the share blob is encrypted
+      // once with the share's key, and ALL members of that share decrypt
+      // it. We can't put a per-member filtered view in the same blob.
+      // The unit of access the crypto can actually enforce is the share
+      // itself — so the discriminator is the share code. If a user wants
+      // different perms for spouse vs. adult child, they go on separate
+      // shares.
+      //
+      // For each section, apply the filter only when the section is
+      // visible. The share `code` is already in scope from the outer
+      // function signature.
+      const filteredItems     = canSeeStockroom
+        ? _filterRecordsForShare(hItems, code, perms.stockroom)
+        : [];
+      const filteredGroceries = canSeeGroceries
+        ? _filterRecordsForShare(hGroceries, code, perms.groceries)
+        : [];
+      const filteredReminders = canSeeReminders
+        ? _filterRecordsForShare(hReminders, code, perms.reminders)
+        : [];
+      const filteredGroceryLists = canSeeGroceries
+        ? _filterRecordsForShare(groceryLists, code, perms.groceries)
+        : [];
+      // Budget transactions are a map keyed by month, where values are
+      // arrays of spend records. The filter has to apply inside each
+      // bucket independently. Categories / accounts / income templates
+      // stay section-level per the plan doc.
+      const filteredTransactions = canSeeBudget
+        ? _filterBudgetTransactionsForShare(transactions, code, perms.budget)
+        : {};
+
       const payload = JSON.stringify({
-        items:       canSeeStockroom ? hItems     : [],
+        items:       filteredItems,
         settings:    hSettings,
-        groceries:   canSeeGroceries ? hGroceries : [],
-        reminders:   canSeeReminders ? hReminders : [],
+        groceries:   filteredGroceries,
+        reminders:   filteredReminders,
         departments: canSeeGroceries ? hDepts     : [],
         // Grocery lists (named lists like "Tesco" / "Costco") + their
         // tombstones live at user-level, not per-household. Without these
         // a guest pulling the share blob would see grocery ITEMS but no
         // named-list structure, leaving items orphaned in the default list.
-        groceryLists:            canSeeGroceries ? groceryLists : [],
+        groceryLists:            filteredGroceryLists,
         groceryListDeletedIds:   canSeeGroceries ? [...groceryListTombstones] : [],
         // Budget — Phase 1 (bills) + Phase 2 (categories, transactions) + Phase 3 (accounts, income).
         // Lives at user-level (not per-household), so the same data goes to every share with budget perm.
@@ -29815,6 +30117,17 @@ async function absorbSharedData(code, hKey) {
     console.warn('absorbSharedData: decrypt failed for', code, hKey, e.message);
     return false;
   }
+
+  // Defense in depth: scrub any owner-only fields (`share`,
+  // `_shareEffectivePerm`) the guest's payload might carry. The guest's
+  // push path already strips these, but if a guest is on a future or
+  // pre-scrub client version, we don't want their writes to overwrite
+  // the owner's per-record sharing policy on absorb.
+  if (Array.isArray(payload.items))         payload.items         = _scrubGuestRecords(payload.items);
+  if (Array.isArray(payload.groceries))     payload.groceries     = _scrubGuestRecords(payload.groceries);
+  if (Array.isArray(payload.groceryLists))  payload.groceryLists  = _scrubGuestRecords(payload.groceryLists);
+  if (Array.isArray(payload.reminders))     payload.reminders     = _scrubGuestRecords(payload.reminders);
+  if (payload.transactions)                 payload.transactions  = _scrubGuestTransactions(payload.transactions);
 
   // Merge into local state for this household. If hKey === activeProfile,
   // merging hits the live in-memory arrays; otherwise we merge into the
@@ -29981,26 +30294,32 @@ async function pushGuestSharedData() {
   // untouched by sending an empty array / object that the merger ignores.
   // mergeItems et al treat missing-on-remote as "no change", but they DO
   // overwrite when an explicit empty array is sent. So we omit entirely.
+  //
+  // Per-record perms (the `share` field and the `_shareEffectivePerm`
+  // annotation) are an OWNER-ONLY concept. The guest must NEVER write
+  // them back to the owner — that would let a guest unilaterally modify
+  // the owner's sharing policy. Strip both fields from every record
+  // before sending. _scrubGuestRecords does this in-place on a clone.
   const payload = {
     lastSynced: new Date().toISOString(),
   };
-  if (canWriteStockroom) payload.items     = items;
+  if (canWriteStockroom) payload.items     = _scrubGuestRecords(items);
   if (canWriteGroceries) {
-    payload.groceries   = groceryItems;
+    payload.groceries   = _scrubGuestRecords(groceryItems);
     payload.departments = groceryDepts;
     // Include named-list state — without these, a guest creating a new
     // list (e.g. "Tesco") would push grocery ITEMS but the list itself
     // would never reach the owner.
-    payload.groceryLists          = groceryLists;
+    payload.groceryLists          = _scrubGuestRecords(groceryLists);
     payload.groceryListDeletedIds = [...(await loadGroceryListDeletedIds())];
   }
-  if (canWriteReminders) payload.reminders = reminders;
+  if (canWriteReminders) payload.reminders = _scrubGuestRecords(reminders);
   if (canWriteBudget) {
     payload.bills             = bills;
     payload.billInstances     = billInstances;
     payload.budgetSettings    = budgetSettings;
     payload.budgetCategories  = budgetCategories;
-    payload.transactions      = transactions;
+    payload.transactions      = _scrubGuestTransactions(transactions);
     payload.budgetAccounts    = budgetAccounts;
     payload.incomeTemplates   = incomeTemplates;
     payload.incomeEntries     = incomeEntries;
