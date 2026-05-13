@@ -1567,6 +1567,10 @@
       <span>Notifications</span>
     </div>
     <div class="notif-panel-header-actions">
+      <button class="notif-panel-action-btn" onclick="openNotificationHistory()" title="View full history">
+        <svg class="icon icon-sm" aria-hidden="true"><use href="#i-clock"></use></svg>
+        <span>History</span>
+      </button>
       <button class="notif-panel-action-btn" onclick="markAllNotificationsRead()" title="Mark all as read">
         <svg class="icon icon-sm" aria-hidden="true"><use href="#i-check"></use></svg>
         <span>Mark read</span>
@@ -4331,6 +4335,26 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     </div>
   </div>
 </div>
+
+<!-- Notification history modal -->
+<div id="notif-history-modal" class="modal-overlay">
+  <div class="modal notif-history-modal" style="max-width:560px;padding:0;display:flex;flex-direction:column;max-height:90vh">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--border);flex-shrink:0">
+      <h3 style="font-size:16px;font-weight:700;margin:0;display:flex;align-items:center;gap:8px">
+        <svg class="icon" aria-hidden="true"><use href="#i-clock"></use></svg> Notification history
+      </h3>
+      <button class="btn-icon" onclick="closeNotificationHistory()" title="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
+    </div>
+    <div style="display:flex;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0;align-items:center;flex-wrap:wrap">
+      <span style="font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px">Sort</span>
+      <button class="notif-history-sort-btn active" data-sort="date" onclick="setNotifHistorySort('date')">By date</button>
+      <button class="notif-history-sort-btn" data-sort="type" onclick="setNotifHistorySort('type')">By type</button>
+      <span id="notif-history-count" style="margin-left:auto;font-size:11px;color:var(--muted);font-family:var(--mono)"></span>
+    </div>
+    <div id="notif-history-body" class="notif-history-body"></div>
+  </div>
+</div>
+
 
 </body>
 </html>

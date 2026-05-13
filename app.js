@@ -4018,6 +4018,8 @@ function openNotificationPanel() {
   _renderNotificationPanel();
   panel.classList.add('open');
   panel.setAttribute('aria-hidden', 'false');
+  // Body class drives CSS that pushes the FAB behind the panel on mobile.
+  document.body.classList.add('notif-panel-open');
   setTimeout(() => {
     document.addEventListener('click', _notifPanelOutsideClick, true);
     document.addEventListener('keydown', _notifPanelKeyDown);
@@ -4029,6 +4031,7 @@ function closeNotificationPanel() {
   if (!panel) return;
   panel.classList.remove('open');
   panel.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('notif-panel-open');
   document.removeEventListener('click', _notifPanelOutsideClick, true);
   document.removeEventListener('keydown', _notifPanelKeyDown);
 }
@@ -4223,6 +4226,74 @@ async function notifAction_snoozePending(notifId) {
   toast('Snoozed for 3 days');
 }
 
+// ── Swipe-to-dismiss for notification rows (mobile) ──────────────────
+// Horizontal drag past the threshold dismisses the row. Below the
+// threshold or vertical drag releases and snaps back. Vertical-first
+// gestures yield to the scroll container so the user can scroll the
+// list normally.
+const _NOTIF_SWIPE_THRESHOLD_PX = 80;
+const _notifSwipeState = new Map(); // id → { startX, startY, dx, locked }
+
+function onNotifRowTouchStart(event, id) {
+  if (!event.touches || event.touches.length !== 1) return;
+  const t = event.touches[0];
+  _notifSwipeState.set(id, { startX: t.clientX, startY: t.clientY, dx: 0, locked: null });
+  const row = event.currentTarget;
+  if (row) {
+    row.style.transition = ''; // remove any prior snap-back transition
+  }
+}
+
+function onNotifRowTouchMove(event, id) {
+  const st = _notifSwipeState.get(id);
+  if (!st) return;
+  const t = event.touches[0];
+  const dx = t.clientX - st.startX;
+  const dy = t.clientY - st.startY;
+  // First meaningful movement decides axis: horizontal → swipe-to-dismiss;
+  // vertical → release entirely so list scrolls.
+  if (st.locked === null && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+    st.locked = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+  }
+  if (st.locked !== 'h') return;
+  // Prevent page scroll while horizontally dragging the row
+  if (event.cancelable) event.preventDefault();
+  st.dx = dx;
+  const row = event.currentTarget;
+  if (!row) return;
+  // Fade as it drags — full opacity at rest, ~0.2 at threshold
+  const progress = Math.min(Math.abs(dx) / _NOTIF_SWIPE_THRESHOLD_PX, 1);
+  row.style.transform = `translateX(${dx}px)`;
+  row.style.opacity = String(1 - progress * 0.8);
+}
+
+function onNotifRowTouchEnd(event, id) {
+  const st = _notifSwipeState.get(id);
+  if (!st) return;
+  _notifSwipeState.delete(id);
+  const row = event.currentTarget;
+  if (!row) return;
+  if (st.locked !== 'h') {
+    // No horizontal commitment — clear any inline styles defensively
+    row.style.transform = '';
+    row.style.opacity = '';
+    return;
+  }
+  if (Math.abs(st.dx) >= _NOTIF_SWIPE_THRESHOLD_PX) {
+    // Animate off-screen in the swipe direction, then dismiss
+    const dir = st.dx > 0 ? 1 : -1;
+    row.style.transition = 'transform 0.18s ease-out, opacity 0.18s ease-out';
+    row.style.transform = `translateX(${dir * window.innerWidth}px)`;
+    row.style.opacity = '0';
+    setTimeout(() => { dismissNotification(id); }, 180);
+  } else {
+    // Snap back
+    row.style.transition = 'transform 0.18s ease-out, opacity 0.18s ease-out';
+    row.style.transform = '';
+    row.style.opacity = '';
+  }
+}
+
 function _renderNotificationPanel() {
   const body = document.getElementById('notif-panel-body');
   if (!body) return;
@@ -4256,7 +4327,11 @@ function _renderNotificationPanel() {
     const pinDisabled = !n.pinned && pinCount >= NOTIFICATIONS_PINNED_MAX;
     const ctxButtons = _buildNotifContextButtons(n);
     return `
-      <div class="notif-row${unread ? ' unread' : ''}${n.pinned ? ' pinned' : ''}" data-id="${n.id}">
+      <div class="notif-row${unread ? ' unread' : ''}${n.pinned ? ' pinned' : ''}" data-id="${n.id}"
+        ontouchstart="onNotifRowTouchStart(event,'${n.id}')"
+        ontouchmove="onNotifRowTouchMove(event,'${n.id}')"
+        ontouchend="onNotifRowTouchEnd(event,'${n.id}')"
+        ontouchcancel="onNotifRowTouchEnd(event,'${n.id}')">
         <div class="notif-icon"><svg class="icon" aria-hidden="true"><use href="#${icon}"></use></svg></div>
         <div class="notif-content" onclick="onNotificationRowClick('${n.id}')">
           <div class="notif-title">${esc(n.title)}</div>
@@ -4290,7 +4365,222 @@ function _renderNotificationPanel() {
     if (pinned.length) html += `<div class="notif-section-label">Recent</div>`;
     html += unpinned.map(rowHTML).join('');
   }
+  // ── "Your next reminder" footer ────────────────────────────────────
+  // Surfaces the soonest upcoming reminder so the user can see at a glance
+  // that nothing important is about to slip — even if it hasn't fired yet
+  // (i.e. not due today/overdue, so it wouldn't be in the inbox above).
+  try {
+    const nr = _nextUpcomingReminder();
+    if (nr) {
+      html += `<div class="notif-next-reminder">
+        <div class="notif-section-label" style="margin-top:18px"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-bell"></use></svg> Your next reminder</div>
+        <div class="notif-next-card">
+          <div class="notif-next-icon"><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg></div>
+          <div class="notif-next-content">
+            <div class="notif-next-title">${esc(nr.name)}</div>
+            <div class="notif-next-meta">${esc(nr.label)}</div>
+          </div>
+        </div>
+      </div>`;
+    }
+  } catch(e) { /* never let footer block panel render */ }
+  // ── End terminator ────────────────────────────────────────────────
+  html += `<div class="notif-end-terminator">— End —</div>`;
   body.innerHTML = html;
+}
+
+// Returns the soonest non-overdue reminder for the "Your next reminder"
+// footer. If everything is overdue or there are no reminders, returns null.
+function _nextUpcomingReminder() {
+  if (typeof reminders === 'undefined' || !Array.isArray(reminders)) return null;
+  if (typeof items === 'undefined' || !Array.isArray(items)) return null;
+  const all = [
+    ...reminders.filter(r => !r._deletedAt),
+    ...items.filter(i => !i._deletedAt).flatMap(i => {
+      const fallbackDate = i.startedUsing || i.logs?.filter(l => !l.pendingDelivery)[0]?.date || null;
+      if (i.replacementReminders?.length) {
+        return i.replacementReminders.map(r => ({
+          id:           `item_${i.id}_${r.id}`,
+          name:         r.name ? `${i.name} — ${r.name}` : i.name,
+          interval:     r.interval,
+          unit:         r.unit,
+          lastReplaced: r.lastReplaced || fallbackDate || null,
+        }));
+      } else if (i.replacementInterval && i.replacementUnit) {
+        return [{
+          id:           `item_${i.id}`,
+          name:         i.name,
+          interval:     i.replacementInterval,
+          unit:         i.replacementUnit,
+          lastReplaced: i.lastReplaced || fallbackDate || null,
+        }];
+      }
+      return [];
+    }),
+  ];
+  let best = null, bestDays = Infinity;
+  for (const r of all) {
+    const days = typeof getReminderDaysUntil === 'function' ? getReminderDaysUntil(r) : null;
+    if (days == null || days < 0) continue; // skip unknown + overdue
+    if (days < bestDays) { bestDays = days; best = r; }
+  }
+  if (!best) return null;
+  const label = bestDays === 0 ? 'Due today'
+              : bestDays === 1 ? 'Due tomorrow'
+              : `Due in ${bestDays} days`;
+  return { name: best.name, label };
+}
+
+// ── Notification history modal ───────────────────────────────────────
+// Shows the full notification cap-worth of entries (50), grouped by
+// either date or type. The modal stays mounted; calling openNotificationHistory
+// just re-renders the body.
+let _notifHistorySort = 'date'; // 'date' | 'type'
+
+function openNotificationHistory() {
+  const modal = document.getElementById('notif-history-modal');
+  if (!modal) return;
+  modal.classList.add('active');
+  _renderNotificationHistory();
+}
+
+function closeNotificationHistory() {
+  const modal = document.getElementById('notif-history-modal');
+  if (!modal) return;
+  modal.classList.remove('active');
+}
+
+function setNotifHistorySort(sort) {
+  _notifHistorySort = sort;
+  document.querySelectorAll('.notif-history-sort-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-sort') === sort);
+  });
+  _renderNotificationHistory();
+}
+
+function _renderNotificationHistory() {
+  const body = document.getElementById('notif-history-body');
+  const countEl = document.getElementById('notif-history-count');
+  if (!body) return;
+  const total = notifications.length;
+  if (countEl) countEl.textContent = `${total} / ${NOTIFICATIONS_CAP}`;
+  if (!total) {
+    body.innerHTML = `<div class="notif-empty" style="padding:60px 20px">
+      <div style="color:var(--muted);margin-bottom:8px"><svg aria-hidden="true" style="width:32px;height:32px"><use href="#i-bell-off"></use></svg></div>
+      <div style="font-weight:600;font-size:14px;color:var(--text)">No notifications</div>
+      <p style="font-size:12px;color:var(--muted);margin-top:6px;line-height:1.5">Past notifications will appear here, up to ${NOTIFICATIONS_CAP} entries.</p>
+    </div>`;
+    return;
+  }
+  // Always: pinned first (regardless of sort mode)
+  const pinned = notifications.filter(n => n.pinned)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const unpinned = notifications.filter(n => !n.pinned);
+
+  const renderItem = n => {
+    const icon = _notifTypeIcon(n.type);
+    return `<div class="notif-history-row" data-id="${n.id}">
+      <div class="notif-icon"><svg class="icon" aria-hidden="true"><use href="#${icon}"></use></svg></div>
+      <div class="notif-content" onclick="onNotificationRowClick('${n.id}');closeNotificationHistory()">
+        <div class="notif-title">${esc(n.title)}</div>
+        ${n.body ? `<div class="notif-body">${esc(n.body)}</div>` : ''}
+        <div class="notif-meta">
+          <span>${esc(_notifAbsoluteTime(n.createdAt))}</span>
+          ${n.sharedFromName ? `<span class="notif-source">· ${esc(n.sharedFromName)}</span>` : ''}
+        </div>
+      </div>
+    </div>`;
+  };
+
+  let html = '';
+  // Pinned always at top
+  if (pinned.length) {
+    html += `<div class="notif-section-label" style="margin-top:8px"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-pin"></use></svg> Pinned</div>`;
+    html += pinned.map(renderItem).join('');
+  }
+
+  // General body — grouped by date or type
+  if (_notifHistorySort === 'type') {
+    // Group by type, defined order
+    const typeOrder = ['low-stock','expiring','reminder','share','billing','account'];
+    const labelOf = t => ({
+      'low-stock': 'Low stock',
+      'expiring':  'Expiring',
+      'reminder':  'Reminders',
+      'share':     'Shared household',
+      'billing':   'Billing',
+      'account':   'Account',
+    }[t] || t);
+    const byType = {};
+    for (const n of unpinned) {
+      const key = typeOrder.includes(n.type) ? n.type : 'other';
+      (byType[key] = byType[key] || []).push(n);
+    }
+    const renderOrder = [...typeOrder.filter(t => byType[t]), ...Object.keys(byType).filter(k => !typeOrder.includes(k))];
+    if (renderOrder.length) html += `<div class="notif-section-label" style="margin-top:14px">General</div>`;
+    for (const t of renderOrder) {
+      html += `<div class="notif-history-subhead">${esc(labelOf(t))}</div>`;
+      // Sort within each type by date desc
+      byType[t].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      html += byType[t].map(renderItem).join('');
+    }
+  } else {
+    // By date — group into Today / Yesterday / This week / Earlier
+    const now = Date.now();
+    const startOfToday = new Date(); startOfToday.setHours(0,0,0,0);
+    const startOfYday  = new Date(startOfToday); startOfYday.setDate(startOfYday.getDate() - 1);
+    const startOfWeek  = new Date(startOfToday); startOfWeek.setDate(startOfWeek.getDate() - 6);
+    const buckets = { today: [], yesterday: [], week: [], earlier: [] };
+    for (const n of unpinned) {
+      const t = new Date(n.createdAt).getTime();
+      if (t >= startOfToday.getTime()) buckets.today.push(n);
+      else if (t >= startOfYday.getTime()) buckets.yesterday.push(n);
+      else if (t >= startOfWeek.getTime()) buckets.week.push(n);
+      else buckets.earlier.push(n);
+    }
+    if (unpinned.length) html += `<div class="notif-section-label" style="margin-top:14px">General</div>`;
+    const order = [
+      ['today',     'Today'],
+      ['yesterday', 'Yesterday'],
+      ['week',      'Earlier this week'],
+      ['earlier',   'Earlier'],
+    ];
+    for (const [key, label] of order) {
+      const list = buckets[key];
+      if (!list.length) continue;
+      list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      html += `<div class="notif-history-subhead">${label}</div>`;
+      html += list.map(renderItem).join('');
+    }
+  }
+
+  // "Your next reminder" footer
+  try {
+    const nr = _nextUpcomingReminder();
+    if (nr) {
+      html += `<div class="notif-next-reminder" style="margin-top:14px">
+        <div class="notif-section-label"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-bell"></use></svg> Your next reminder</div>
+        <div class="notif-next-card">
+          <div class="notif-next-icon"><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg></div>
+          <div class="notif-next-content">
+            <div class="notif-next-title">${esc(nr.name)}</div>
+            <div class="notif-next-meta">${esc(nr.label)}</div>
+          </div>
+        </div>
+      </div>`;
+    }
+  } catch(e) {}
+  html += `<div class="notif-end-terminator">— End —</div>`;
+  body.innerHTML = html;
+}
+
+// Absolute timestamp formatter for the history view — date + time, locale-aware.
+function _notifAbsoluteTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const opts = { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' };
+  return d.toLocaleString(undefined, opts);
 }
 
 async function onNotificationRowClick(id) {
@@ -4307,15 +4597,29 @@ async function onNotificationRowClick(id) {
   if (n.type === 'reminder') {
     closeNotificationPanel();
     try { navTo('reminders'); } catch(_) {}
+    // sourceRef is "reminder:<rid>" — parse and scroll/flash the matching card
+    if (n.sourceRef && n.sourceRef.startsWith('reminder:')) {
+      const rid = n.sourceRef.slice('reminder:'.length);
+      setTimeout(() => {
+        const el = document.querySelector(`[data-reminder-id="${CSS.escape(rid)}"]`)
+                || document.querySelector(`[data-id="${CSS.escape(rid)}"]`);
+        if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (el) _flashElement(el);
+      }, 350);
+    }
   } else if (n.type === 'low-stock' || n.type === 'expiring') {
     closeNotificationPanel();
     try { navTo('stock'); } catch(_) {}
     if (n.sourceRef) {
-      // Try to scroll to / open the item
+      // sourceRef format: "lowstock:<itemId>" (or "expiring:<itemId>"). Strip
+      // the prefix to get the item id we can match against .item-card[data-id].
+      const colon = n.sourceRef.indexOf(':');
+      const itemId = colon >= 0 ? n.sourceRef.slice(colon + 1) : n.sourceRef;
       setTimeout(() => {
-        const el = document.querySelector(`.item-card[data-id="${n.sourceRef}"]`);
+        const el = document.querySelector(`.item-card[data-id="${CSS.escape(itemId)}"]`);
         if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 300);
+        if (el) _flashElement(el);
+      }, 350);
     }
   } else if (n.type === 'share') {
     closeNotificationPanel();
@@ -4328,6 +4632,19 @@ async function onNotificationRowClick(id) {
     closeNotificationPanel();
     try { navTo('account'); } catch(_) {}
   }
+}
+
+// Brief highlight flash to draw the eye after scrolling to a card or row.
+// Adds the .notif-flash class for ~1.6s — the animation is in styles.css.
+function _flashElement(el) {
+  if (!el || !el.classList) return;
+  // Restart the animation if it was already running on this element
+  el.classList.remove('notif-flash');
+  // Force reflow so the next add re-triggers the animation
+  // eslint-disable-next-line no-unused-expressions
+  void el.offsetWidth;
+  el.classList.add('notif-flash');
+  setTimeout(() => { el.classList.remove('notif-flash'); }, 1700);
 }
 
 async function toggleNotificationPin(id) {
@@ -4706,7 +5023,7 @@ function reminderCardHTML(r) {
     : 'Never replaced';
   const nextLabel = dueDate ? `Next: ${fmtDate(dueDate.toISOString().slice(0,10))}` : 'Set a date to track';
 
-  return `<div style="background:var(--surface);border:1px solid ${borderColor};border-radius:12px;padding:14px 16px;margin-bottom:10px;display:flex;gap:12px;align-items:flex-start;cursor:pointer;transition:border-color 0.15s,box-shadow 0.15s" onclick="openReminderTimeline('${r.id}')" title="Tap to view timeline">
+  return `<div data-reminder-id="${r.id}" style="background:var(--surface);border:1px solid ${borderColor};border-radius:12px;padding:14px 16px;margin-bottom:10px;display:flex;gap:12px;align-items:flex-start;cursor:pointer;transition:border-color 0.15s,box-shadow 0.15s" onclick="openReminderTimeline('${r.id}')" title="Tap to view timeline">
     <div style="flex:1;min-width:0">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
         <span style="font-size:15px;font-weight:700;color:var(--text)">${esc(r.itemName || r.name)}</span>
@@ -7133,19 +7450,26 @@ function cardHTML(item, threshold) {
   // Compact stock indicator — projected unit count if we've got a stock count,
   // else fall back to the per-purchase descriptor.
   const projectedUnits = getProjectedUnitsLeft(item);
-  let qtyText;
+  let qtyText, qtyClass;
   if (projectedUnits != null) {
     const projStr = formatProjectedUnits(projectedUnits);
-    qtyText = `<strong>${projStr}</strong> left`;
+    qtyText  = `<strong>${projStr}</strong> left`;
+    qtyClass = '';
   } else if (daysLeft !== null) {
-    qtyText = `<strong>${item.months || 1}mo</strong> per purchase`;
+    qtyText  = `<strong>${item.months || 1}mo</strong> per purchase`;
+    qtyClass = ' card-qty-interval'; // hidden on mobile via styles.css
   } else {
-    qtyText = '';
+    qtyText  = '';
+    qtyClass = '';
   }
   // Quick "−1" button shown only when we have a meaningful count to decrement
   const decrementBtn = (projectedUnits != null && projectedUnits >= 1)
     ? `<button class="card-plus-btn card-plus-btn-decrement" onclick="event.stopPropagation();quickAdjustStock('${item.id}',-1)" title="Used one — decrement count">−1</button>`
     : '';
+  // Inline tags rendered up to TWO places: the original location below the
+  // stock bar (desktop) AND in a mobile-only slot next to the days-left
+  // hero (above the bar). styles.css toggles which copy is visible.
+  const tagsInlineHTML = cardSelectedTagsInline(item);
 
   return `
   <div class="item-card" style="border-left:3px solid ${color}" data-id="${item.id}"
@@ -7161,17 +7485,20 @@ function cardHTML(item, threshold) {
         <div class="card-status" style="background:${color}22;color:${color}">${STATUS_LABEL[status]}</div>
       </div>
       <div class="card-name">${esc(item.name)}</div>
-      ${(() => {
-        if (daysLeft === null) return `<div class="card-nodata">No stock data yet</div>`;
-        const f = formatDaysLeft(daysLeft);
-        const suspectFlag = f.suspect
-          ? ` <span title="Estimate looks unusually long — tap to recount stock" style="font-size:14px;cursor:help;color:var(--warn);vertical-align:middle" onclick="event.stopPropagation();openStockCountModal('${item.id}')">⚠</span>`
-          : '';
-        return `<div class="card-hero">
-             <span class="card-days-num" style="color:${color}">${f.num}</span>
-             <span class="card-days-unit">${f.unit}${suspectFlag}</span>
-           </div>`;
-      })()}
+      <div class="card-hero-block">
+        ${(() => {
+          if (daysLeft === null) return `<div class="card-nodata">No stock data yet</div>`;
+          const f = formatDaysLeft(daysLeft);
+          const suspectFlag = f.suspect
+            ? ` <span title="Estimate looks unusually long — tap to recount stock" style="font-size:14px;cursor:help;color:var(--warn);vertical-align:middle" onclick="event.stopPropagation();openStockCountModal('${item.id}')">⚠</span>`
+            : '';
+          return `<div class="card-hero">
+               <span class="card-days-num" style="color:${color}">${f.num}</span>
+               <span class="card-days-unit">${f.unit}${suspectFlag}</span>
+             </div>`;
+        })()}
+        ${tagsInlineHTML ? `<div class="card-tags-row card-tags-row-mobile">${tagsInlineHTML}</div>` : ''}
+      </div>
       ${pct !== null
         ? `<div class="card-bar" data-card-bar><div class="card-bar-fill" style="width:${pct}%;background:${fillColor}"></div></div>`
         : ''}
@@ -7180,12 +7507,9 @@ function cardHTML(item, threshold) {
           ${lastBoughtAgo ? `<div class="card-meta-item">Last: <strong>${lastBoughtAgo}</strong></div>` : ''}
           ${bestPriceStr ? `<div class="card-meta-item">Best: <strong>${bestPriceStr}</strong></div>` : ''}
         </div>` : ''}
-      ${(() => {
-        const inline = cardSelectedTagsInline(item);
-        return inline ? `<div class="card-tags-row">${inline}</div>` : '';
-      })()}
+      ${tagsInlineHTML ? `<div class="card-tags-row card-tags-row-desktop">${tagsInlineHTML}</div>` : ''}
       <div class="card-footer">
-        ${qtyText ? `<div class="card-qty">${qtyText}</div>` : ''}
+        ${qtyText ? `<div class="card-qty${qtyClass}">${qtyText}</div>` : ''}
         ${item.ordered ? `<div class="card-ordered"><svg class="icon" aria-hidden="true"><use href="#i-truck"></use></svg> Ordered</div>` : ''}
         ${expiry ? `<div class="card-expiry" style="color:${expiry.color};border-color:${expiry.color}55" title="${fmtDate(item.expiry)}">⏰ ${expiry.label}</div>` : ''}
         ${decrementBtn ? `<div class="card-action-btns" onclick="event.stopPropagation()">${decrementBtn}</div>` : ''}
