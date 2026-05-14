@@ -2029,13 +2029,24 @@ let _sharingExpanded = {};
 // Populated by registerSharingSection() — see the registration calls in
 // each section's editor. Pre-declared here (empty) so TDZ never throws.
 let _SHARING_SECTIONS = {};
-// ─── Stockroom multi-select state (Pass 1) ────────────────────────────
-// Set of item ids currently selected for a bulk action. Selection mode is
-// "on" when this set is non-empty OR _stockSelectMode is true. The mode
-// flag lets the user enter selection mode before picking the first item
-// (the bar appears with "0 selected"). Cleared on exit / after action.
-let _stockSelection = new Set();
-let _stockSelectMode = false;
+// ─── Bulk select / bulk actions module state (Pass 2a) ────────────────
+// Generic multi-select infrastructure shared across Stockroom, Groceries,
+// Reminders, and Spends. Each section registers a spec via
+// registerBulkSelectSection — see the registration calls near each
+// section's editor code. The picker UI / action bar / share-flow are
+// shared; section-specific bits (find record, save path, archive
+// support) live in the spec.
+//
+// _bulkSelectActiveSection is the key of the section currently in select
+// mode (e.g. 'stock'). null when no section is in select mode. Only one
+// section can be in select mode at a time — switching tabs auto-exits.
+//
+// _bulkSelections is keyed by section name. Each entry is a Set of
+// record ids. Lazily created when a section first enters select mode.
+let _bulkSelectActiveSection = null;
+let _bulkSelections = {};
+// Registry of section specs. Populated by registerBulkSelectSection.
+let _BULK_SELECT_SECTIONS = {};
 let tempStorePrices = []; // also declared in scanner.js; declared here so openAddModal works before scanner.js loads
 let activeFilter = 'all';
 let activeCadence = 'all';
@@ -8510,7 +8521,7 @@ function cardHTML(item, threshold) {
   const tagsInlineHTML = cardSelectedTagsInline(item);
 
   return `
-  <div class="item-card${_stockSelection.has(item.id) ? ' selected' : ''}" style="border-left:3px solid ${color}" data-id="${item.id}" data-item-id="${item.id}"
+  <div class="item-card${bulkSelectionHas('stock', item.id) ? ' selected' : ''}" style="border-left:3px solid ${color}" data-id="${item.id}" data-bulk-id="${item.id}" data-bulk-section="stock"
     onclick="onCardClick(event,'${item.id}')"
     onmouseenter="onCardHoverEnter('${item.id}')"
     onmouseleave="onCardHoverLeave('${item.id}')"
@@ -8787,12 +8798,12 @@ function _dismissCardActions(id) {
 // Suppress the open-edit click if a long-press just fired (touch path);
 // otherwise always open the edit modal (and dismiss any open overlay first).
 function onCardClick(event, id) {
-  // Multi-select mode (Pass 1): when active, taps toggle the item's
-  // selection instead of opening the editor. Action menus + hover are
-  // also suppressed (the swipe-hint chip isn't useful here either).
-  if (_stockSelectMode) {
+  // Multi-select mode (Pass 2a generic): when active, taps toggle the
+  // item's selection instead of opening the editor. Action menus + hover
+  // are suppressed via the .bulk-select-mode body class (CSS).
+  if (isBulkSelectMode('stock')) {
     if (event && event.stopPropagation) event.stopPropagation();
-    toggleStockSelection(id);
+    toggleBulkSelection('stock', id);
     return;
   }
   const st = _cardActionState.by[id] || {};
@@ -11419,11 +11430,11 @@ function _restoreFromBillingLockscreens() {
 }
 
 function showView(name, btn) {
-  // Exit stockroom multi-select mode when switching to any other tab.
-  // The action bar is body-level so it'd otherwise stick around. Skip
-  // when staying on stock (e.g. re-clicking the tab).
-  if (_stockSelectMode && name !== 'stock' && name !== 'shopping') {
-    exitStockSelectMode();
+  // Exit any bulk-select mode when switching views — the action bar is
+  // body-level so it'd otherwise persist into the new view. (Pass 2a:
+  // applies to any registered section, not just stockroom.)
+  if (isBulkSelectMode() && name !== _currentViewName) {
+    exitBulkSelectMode();
   }
   _currentViewName = name;
   // Restore any previously-hidden view content from billing lockscreens
@@ -13315,144 +13326,226 @@ async function saveStartedUsing() {
   toast('Start date saved — stock clock updated ✓');
 }
 
-// ─── Stockroom multi-select / bulk actions (Pass 1) ──────────────────────
-// Entry: "Select" button in the Stockroom toolbar enters _stockSelectMode.
-// In that mode, tapping a card adds/removes it from _stockSelection
-// (instead of opening the editor). A floating action bar at the bottom
-// shows the selection count + Delete / Archive / Share / Cancel actions.
+// ─── Generic bulk-select / bulk-actions module (Pass 2a) ────────────────
+// Section-parameterised multi-select infrastructure. Each section
+// registers its specifics — find record, save path, archive support,
+// per-section share-merge logic — via registerBulkSelectSection.
+// The picker, action bar, and share-flow are shared.
+//
+// Spec shape:
+//   findRecord(id)        — return the record object (or null)
+//   save()                — async, persist the section after a bulk
+//                           mutation (saveData, _saveGroceryLists, etc.)
+//   rerender()            — refresh the section's view after the action
+//   getVisibleIds()       — array of currently-rendered record ids; used
+//                           by Select All. Should respect filters.
+//   permCheck()           — boolean. Should toast+return false if the
+//                           user lacks the canWrite gate for this section.
+//   applyDelete(record)   — mutate record into the deleted state (set
+//                           tombstone, _deletedAt, etc). Called once per
+//                           record before a single save+rerender.
+//   applyArchive(record)  — optional. If present, action bar shows Archive.
+//                           Same shape as applyDelete.
+//   sectionPermKey        — 'stockroom' | 'groceries' | 'reminders' | 'budget'
+//                           Used when bulk-share creates a NEW share, to
+//                           pre-set that section perm to 'r'.
+//   noun                  — singular ("item", "list", "reminder", "spend")
+//   pluralNoun            — plural form
+//
+// Public API:
+//   registerBulkSelectSection(key, spec)
+//   enterBulkSelectMode(sectionKey)
+//   exitBulkSelectMode()
+//   isBulkSelectMode(sectionKey?) — true if any/specific section in mode
+//   toggleBulkSelection(sectionKey, id)
+//   bulkSelectionHas(sectionKey, id)
 
-function enterStockSelectMode() {
-  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
-  _stockSelectMode = true;
-  _stockSelection.clear();
-  document.body.classList.add('stock-select-mode');
-  _renderStockSelectionBar();
-  scheduleRender('grid');
-}
-
-function exitStockSelectMode() {
-  _stockSelectMode = false;
-  _stockSelection.clear();
-  document.body.classList.remove('stock-select-mode');
-  _renderStockSelectionBar();
-  scheduleRender('grid');
-}
-
-// Card click handler when in select mode. Cards call this from their
-// onclick instead of openEditModal when body has .stock-select-mode.
-function toggleStockSelection(id) {
-  if (!_stockSelectMode) return;
-  if (_stockSelection.has(id)) _stockSelection.delete(id);
-  else                         _stockSelection.add(id);
-  _renderStockSelectionBar();
-  // Mark/unmark just this card visually — cheaper than full re-render
-  const cardEl = document.querySelector(`[data-item-id="${id}"]`);
-  if (cardEl) cardEl.classList.toggle('selected', _stockSelection.has(id));
-}
-
-// Select-all toggle in the action bar. "All" means everything currently
-// visible in the grid (filtered by the active filter set + search), NOT
-// every item in the database. That matches the user's mental model —
-// "select all of what I see."
-function toggleStockSelectAll() {
-  // Read the rendered grid's card ids — respects current filters/sort.
-  const visibleIds = Array.from(document.querySelectorAll('#items-grid [data-item-id]'))
-    .map(el => el.getAttribute('data-item-id'))
-    .filter(Boolean);
-  const allSelected = visibleIds.length > 0 && visibleIds.every(id => _stockSelection.has(id));
-  if (allSelected) {
-    visibleIds.forEach(id => _stockSelection.delete(id));
-  } else {
-    visibleIds.forEach(id => _stockSelection.add(id));
+function registerBulkSelectSection(key, spec) {
+  if (_BULK_SELECT_SECTIONS[key]) {
+    console.warn('[bulk-select] section already registered, overwriting:', key);
   }
-  _renderStockSelectionBar();
-  scheduleRender('grid');
+  _BULK_SELECT_SECTIONS[key] = spec;
 }
 
-// Render the floating bottom bar. Idempotent — creates the element on
-// first call, updates innerText / button state on subsequent calls.
-function _renderStockSelectionBar() {
-  let bar = document.getElementById('stock-select-bar');
-  if (!_stockSelectMode) {
+function isBulkSelectMode(sectionKey) {
+  if (sectionKey) return _bulkSelectActiveSection === sectionKey;
+  return _bulkSelectActiveSection !== null;
+}
+
+function bulkSelectionHas(sectionKey, id) {
+  const set = _bulkSelections[sectionKey];
+  return set ? set.has(id) : false;
+}
+
+function _getActiveSpec() {
+  return _bulkSelectActiveSection ? _BULK_SELECT_SECTIONS[_bulkSelectActiveSection] : null;
+}
+
+function _getActiveSelection() {
+  if (!_bulkSelectActiveSection) return null;
+  if (!_bulkSelections[_bulkSelectActiveSection]) {
+    _bulkSelections[_bulkSelectActiveSection] = new Set();
+  }
+  return _bulkSelections[_bulkSelectActiveSection];
+}
+
+function enterBulkSelectMode(sectionKey) {
+  const spec = _BULK_SELECT_SECTIONS[sectionKey];
+  if (!spec) { console.warn('[bulk-select] unknown section:', sectionKey); return; }
+  // Permission gate — each section decides its own canWrite check.
+  if (spec.permCheck && !spec.permCheck()) return;
+  // If another section is already in select mode, exit it first (one
+  // section at a time — keeps the action bar unambiguous).
+  if (_bulkSelectActiveSection && _bulkSelectActiveSection !== sectionKey) {
+    exitBulkSelectMode();
+  }
+  _bulkSelectActiveSection = sectionKey;
+  _bulkSelections[sectionKey] = new Set();
+  document.body.classList.add('bulk-select-mode');
+  document.body.classList.add(`bulk-select-mode-${sectionKey}`);
+  _renderBulkSelectBar();
+  if (spec.rerender) spec.rerender();
+}
+
+function exitBulkSelectMode() {
+  if (!_bulkSelectActiveSection) return;
+  const wasSection = _bulkSelectActiveSection;
+  const spec = _BULK_SELECT_SECTIONS[wasSection];
+  _bulkSelectActiveSection = null;
+  if (_bulkSelections[wasSection]) _bulkSelections[wasSection].clear();
+  document.body.classList.remove('bulk-select-mode');
+  document.body.classList.remove(`bulk-select-mode-${wasSection}`);
+  _renderBulkSelectBar();
+  if (spec && spec.rerender) spec.rerender();
+}
+
+// Toggle a record in the active section's selection set. No-op when not
+// in select mode. Called from card/row click handlers via
+// `if (isBulkSelectMode(section)) { toggleBulkSelection(section, id); return; }`
+function toggleBulkSelection(sectionKey, id) {
+  if (_bulkSelectActiveSection !== sectionKey) return;
+  const set = _getActiveSelection();
+  if (set.has(id)) set.delete(id);
+  else             set.add(id);
+  _renderBulkSelectBar();
+  // Light visual update on the affected card/row only — cheaper than a
+  // full rerender. Caller can also rerender if they need to (e.g. when
+  // selection drives more than just the .selected class).
+  const el = document.querySelector(`[data-bulk-id="${id}"][data-bulk-section="${sectionKey}"]`);
+  if (el) el.classList.toggle('selected', set.has(id));
+}
+
+// "All" button — toggles every currently-visible record in the section.
+// Respects the section's filter state via getVisibleIds().
+function toggleBulkSelectAll() {
+  const spec = _getActiveSpec();
+  const set = _getActiveSelection();
+  if (!spec || !set) return;
+  const visibleIds = spec.getVisibleIds ? spec.getVisibleIds() : [];
+  const allSelected = visibleIds.length > 0 && visibleIds.every(id => set.has(id));
+  if (allSelected) visibleIds.forEach(id => set.delete(id));
+  else             visibleIds.forEach(id => set.add(id));
+  _renderBulkSelectBar();
+  if (spec.rerender) spec.rerender();
+}
+
+// Floating bottom bar. Idempotent — creates the element on first call,
+// updates innerHTML on subsequent calls. Shared across all sections;
+// labels adapt via spec.pluralNoun and spec.canArchive (Archive button
+// hidden when the section doesn't support archiving).
+function _renderBulkSelectBar() {
+  let bar = document.getElementById('bulk-select-bar');
+  if (!_bulkSelectActiveSection) {
     if (bar) bar.remove();
     return;
   }
+  const spec = _getActiveSpec();
+  const set  = _getActiveSelection();
+  if (!spec || !set) return;
   if (!bar) {
     bar = document.createElement('div');
-    bar.id = 'stock-select-bar';
-    bar.className = 'stock-select-bar';
+    bar.id = 'bulk-select-bar';
+    bar.className = 'bulk-select-bar';
     document.body.appendChild(bar);
   }
-  const n = _stockSelection.size;
+  const n = set.size;
+  const noun = (n === 1) ? spec.noun : spec.pluralNoun;
   const disabled = n === 0 ? 'disabled style="opacity:0.5;cursor:not-allowed"' : '';
+  const archiveBtn = spec.applyArchive
+    ? `<button class="btn btn-ghost btn-sm" ${disabled} onclick="bulkArchive()" title="Archive selected"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg> Archive</button>`
+    : '';
   bar.innerHTML = `
-    <div class="stock-select-bar-count">${n} selected</div>
-    <button class="btn btn-ghost btn-sm" onclick="toggleStockSelectAll()" title="Toggle select all">All</button>
-    <button class="btn btn-ghost btn-sm" ${disabled} onclick="bulkStockShare()" title="Share selected"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg> Share</button>
-    <button class="btn btn-ghost btn-sm" ${disabled} onclick="bulkStockArchive()" title="Archive selected"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg> Archive</button>
-    <button class="btn btn-ghost btn-sm" ${disabled} onclick="bulkStockDelete()" title="Delete selected" style="color:var(--danger)"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
-    <button class="btn btn-ghost btn-sm" onclick="exitStockSelectMode()" title="Exit selection">Cancel</button>
+    <div class="bulk-select-bar-count">${n} ${noun} selected</div>
+    <button class="btn btn-ghost btn-sm" onclick="toggleBulkSelectAll()" title="Toggle select all">All</button>
+    <button class="btn btn-ghost btn-sm" ${disabled} onclick="bulkShare()" title="Share selected"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg> Share</button>
+    ${archiveBtn}
+    <button class="btn btn-ghost btn-sm" ${disabled} onclick="bulkDelete()" title="Delete selected" style="color:var(--danger)"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
+    <button class="btn btn-ghost btn-sm" onclick="exitBulkSelectMode()" title="Exit selection">Cancel</button>
   `;
 }
 
-async function bulkStockDelete() {
-  if (!_stockSelection.size) return;
-  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
-  const n = _stockSelection.size;
-  if (!confirm(`Move ${n} item${n===1?'':'s'} to the recycle bin?\n\nYou can restore them within 30 days.`)) return;
-  const ids = [..._stockSelection];
-  const now = new Date().toISOString();
+async function bulkDelete() {
+  const spec = _getActiveSpec();
+  const set  = _getActiveSelection();
+  if (!spec || !set || !set.size) return;
+  if (spec.permCheck && !spec.permCheck()) return;
+  const n = set.size;
+  const noun = (n === 1) ? spec.noun : spec.pluralNoun;
+  if (!confirm(`Move ${n} ${noun} to the recycle bin?\n\nYou can restore them within 30 days.`)) return;
+  const ids = [...set];
   for (const id of ids) {
-    const item = items.find(i => i.id === id);
-    if (!item) continue;
-    item._deletedAt = now;
-    if (typeof touchField === 'function') { try { touchField(item, '_deletedAt'); } catch(_) {} }
+    const rec = spec.findRecord(id);
+    if (!rec) continue;
+    spec.applyDelete(rec);
   }
-  await saveData();
-  exitStockSelectMode();
-  scheduleRender('grid', 'dashboard', 'shopping');
-  _syncQueue.enqueue('Updating…');
-  toast(`Moved ${n} item${n===1?'':'s'} to recycle bin`);
+  await spec.save();
+  exitBulkSelectMode();
+  if (spec.rerender) spec.rerender();
+  _syncQueue?.enqueue?.('Updating…');
+  toast(`Moved ${n} ${noun} to recycle bin`);
 }
 
-async function bulkStockArchive() {
-  if (!_stockSelection.size) return;
-  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
-  const n = _stockSelection.size;
-  const ids = [..._stockSelection];
-  const now = new Date().toISOString();
+async function bulkArchive() {
+  const spec = _getActiveSpec();
+  const set  = _getActiveSelection();
+  if (!spec || !set || !set.size) return;
+  if (!spec.applyArchive) return; // Should not reach here — button hidden
+  if (spec.permCheck && !spec.permCheck()) return;
+  const n = set.size;
+  const noun = (n === 1) ? spec.noun : spec.pluralNoun;
+  const ids = [...set];
   for (const id of ids) {
-    const item = items.find(i => i.id === id);
-    if (!item) continue;
-    item._archived = true;
-    item.updatedAt = now;
+    const rec = spec.findRecord(id);
+    if (!rec) continue;
+    spec.applyArchive(rec);
   }
-  await saveData();
-  exitStockSelectMode();
-  scheduleRender('grid', 'dashboard');
-  _syncQueue.enqueue();
-  toast(`Archived ${n} item${n===1?'':'s'}`);
+  await spec.save();
+  exitBulkSelectMode();
+  if (spec.rerender) spec.rerender();
+  _syncQueue?.enqueue?.();
+  toast(`Archived ${n} ${noun}`);
 }
 
-// Open the bulk-share modal. Lists existing shares (each with an "Add to
-// this share" action) plus a "+ Create new share" button. The modal is
-// built inline because it's only used in this flow.
-function bulkStockShare() {
-  if (!_stockSelection.size) return;
-  if (!isOwner()) { toast('Only the owner can share items'); return; }
-  const n = _stockSelection.size;
-  // If no shares exist yet, skip the picker and go straight to new-share.
+// Open the bulk-share modal. Lists existing shares (each clickable to
+// append) plus a "Create new share" CTA. Modal text adapts to the
+// section's noun ("Share 3 items" / "Share 3 lists" / etc).
+function bulkShare() {
+  const spec = _getActiveSpec();
+  const set  = _getActiveSelection();
+  if (!spec || !set || !set.size) return;
+  if (!isOwner()) { toast('Only the owner can share'); return; }
+  const n = set.size;
+  const noun = (n === 1) ? spec.noun : spec.pluralNoun;
   const existing = Array.isArray(_shareTargets) ? _shareTargets.filter(t => !t._deletedAt) : [];
 
   document.getElementById('bulk-share-overlay')?.remove();
   const overlay = document.createElement('div');
   overlay.id = 'bulk-share-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;z-index:650;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)';
-  // Hide FAB while open — see _hideFabForCustomOverlay
   _hideFabForCustomOverlay(overlay);
 
   const existingRows = existing.length ? existing.map(t => `
-    <div onclick="bulkStockShareAppendToExisting('${t.code}')" style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+    <div onclick="bulkShareAppendToExisting('${t.code}')" style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
       <div style="width:32px;height:32px;border-radius:50%;background:${esc(t.colour||'var(--accent)')};display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:13px;flex-shrink:0">${esc((t.name||'?').charAt(0).toUpperCase())}</div>
       <div style="flex:1;min-width:0">
         <div style="font-size:14px;font-weight:600;color:var(--text)">${esc(t.name)}</div>
@@ -13464,14 +13557,14 @@ function bulkStockShare() {
   overlay.innerHTML = `
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 12px 48px rgba(0,0,0,0.5)">
       <div style="padding:18px 18px 12px;border-bottom:1px solid var(--border)">
-        <h3 style="font-size:17px;font-weight:700;margin:0 0 4px 0"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent);vertical-align:-3px"><use href="#i-share-2"></use></svg> Share ${n} item${n===1?'':'s'}</h3>
-        <p style="font-size:12px;color:var(--muted);margin:0">Append to an existing share, or create a new one — recipients will see ONLY these items.</p>
+        <h3 style="font-size:17px;font-weight:700;margin:0 0 4px 0"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent);vertical-align:-3px"><use href="#i-share-2"></use></svg> Share ${n} ${esc(noun)}</h3>
+        <p style="font-size:12px;color:var(--muted);margin:0">Append to an existing share, or create a new one — recipients will see ONLY ${spec.pluralNoun==='items'?'these items':'this'}.</p>
       </div>
       <div style="flex:1;overflow-y:auto;padding:14px 18px">
         ${existing.length ? `<div style="font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Add to existing share</div>` : ''}
         ${existingRows}
-        <button onclick="bulkStockShareCreateNew()" style="width:100%;padding:13px;border-radius:10px;border:1px dashed var(--accent);background:transparent;color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;margin-top:8px;display:flex;align-items:center;justify-content:center;gap:6px">
-          <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Create new share with these items
+        <button onclick="bulkShareCreateNew()" style="width:100%;padding:13px;border-radius:10px;border:1px dashed var(--accent);background:transparent;color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;margin-top:8px;display:flex;align-items:center;justify-content:center;gap:6px">
+          <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Create new share with ${spec.pluralNoun==='items'?'these items':'this selection'}
         </button>
       </div>
       <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end">
@@ -13482,162 +13575,180 @@ function bulkStockShare() {
   document.body.appendChild(overlay);
 }
 
-// Append the current selection to an existing share's allow list. Each
-// selected item gets share.allow extended with shareCode (or share.allow
-// initialised to [shareCode] if no override existed). Existing readOnly
-// entries are preserved. Existing deny entries are NOT cleared — if the
-// item was specifically denied to this share, that takes precedence;
-// user has to clear the deny manually.
-async function bulkStockShareAppendToExisting(shareCode) {
+// Merge shareCode into each selected record's share.allow. Items already
+// explicitly denied to this share are skipped (count flagged in toast).
+async function bulkShareAppendToExisting(shareCode) {
   document.getElementById('bulk-share-overlay')?.remove();
-  if (!_stockSelection.size) return;
-  const ids = [..._stockSelection];
+  const spec = _getActiveSpec();
+  const set  = _getActiveSelection();
+  if (!spec || !set || !set.size) return;
+  const ids = [...set];
   const now = new Date().toISOString();
   let appended = 0;
   let alreadyDenied = 0;
   for (const id of ids) {
-    const item = items.find(i => i.id === id);
-    if (!item) continue;
-    // Skip items already explicitly denied to this share — flag for toast.
-    if (typeof item.share === 'object' && Array.isArray(item.share?.deny) && item.share.deny.includes(shareCode)) {
+    const rec = spec.findRecord(id);
+    if (!rec) continue;
+    if (typeof rec.share === 'object' && Array.isArray(rec.share?.deny) && rec.share.deny.includes(shareCode)) {
       alreadyDenied++;
       continue;
     }
-    if (item.share == null) {
-      item.share = { allow: [shareCode] };
-    } else if (typeof item.share === 'object') {
-      const allow = Array.isArray(item.share.allow) ? item.share.allow : [];
+    if (rec.share == null) {
+      rec.share = { allow: [shareCode] };
+    } else if (typeof rec.share === 'object') {
+      const allow = Array.isArray(rec.share.allow) ? rec.share.allow : [];
       if (!allow.includes(shareCode)) allow.push(shareCode);
-      item.share.allow = allow;
-    } else if (item.share === 'private') {
-      // Private → switch to explicit allow with just this share
-      item.share = { allow: [shareCode] };
+      rec.share.allow = allow;
+    } else if (rec.share === 'private') {
+      rec.share = { allow: [shareCode] };
     }
-    item.updatedAt = now;
+    rec.updatedAt = now;
     appended++;
   }
-  await saveData();
-  exitStockSelectMode();
-  scheduleRender('grid');
-  _syncQueue.enqueue('Updating sharing…');
-  // Re-push that specific share so the recipient sees the new items.
+  await spec.save();
+  exitBulkSelectMode();
+  if (spec.rerender) spec.rerender();
+  _syncQueue?.enqueue?.('Updating sharing…');
   try { await pushSharedData(shareCode); } catch(_) {}
   const tgt = _shareTargets.find(t => t.code === shareCode);
   const recName = tgt?.name || 'share';
-  let msg = `Added ${appended} item${appended===1?'':'s'} to ${recName}`;
+  const noun = (appended === 1) ? spec.noun : spec.pluralNoun;
+  let msg = `Added ${appended} ${noun} to ${recName}`;
   if (alreadyDenied) msg += ` · ${alreadyDenied} skipped (explicitly denied)`;
   toast(msg);
 }
 
-// Open the standard share-create flow (share-target-modal) pre-configured
-// for this bulk-share path: stockroom perm set to 'r' so the recipient
-// can SEE the items (per-item allow overrides what they actually see),
-// and a hidden flag _bulkShareSelectionPending so saveShareTarget knows
-// to apply the allow-list to the selected items after the share is
-// successfully created.
-function bulkStockShareCreateNew() {
+// Pre-configures the share-target-modal for the bulk-share path: section
+// perm set to 'r' so the recipient can see the selected records; other
+// sections set to 'none'. Banner inserted, role/perms/mgmt rows hidden.
+function bulkShareCreateNew() {
   document.getElementById('bulk-share-overlay')?.remove();
-  if (!_stockSelection.size) return;
-  // Capture selection — exitStockSelectMode will clear _stockSelection
-  // but we keep a local copy that saveShareTarget consults via the
-  // _bulkShareSelectionPending flag.
-  _bulkShareSelectionPending = { section: 'stockroom', ids: [..._stockSelection] };
-  // Open the existing share-target-modal in "create" mode. Pre-set the
-  // section perm to 'r' so the recipient can see anything we explicitly
-  // allow. Other sections default to 'none' so the new share is scoped
-  // tightly to the items being shared.
+  const spec = _getActiveSpec();
+  const set  = _getActiveSelection();
+  if (!spec || !set || !set.size) return;
+  // Capture the selection AND the active section — exitBulkSelectMode
+  // clears the live state, so saveShareTarget needs both pieces.
+  _bulkShareSelectionPending = {
+    section: _bulkSelectActiveSection,
+    ids: [...set],
+  };
   openAddShareTarget();
-  // openAddShareTarget runs synchronously enough that the modal is open
-  // before we get here — but the perm-grid render is async via
-  // renderShareHouseholdPerms. Set the perms after the next tick.
   setTimeout(() => {
-    // Default every household to {stockroom:'r', groceries:'none', ...}
+    const targetPerm = spec.sectionPermKey;
     const hhKeys = Object.keys(_shareTargetPerms || {});
+    const blankPerms = { stockroom: 'none', groceries: 'none', reminders: 'none', budget: 'none' };
     if (!hhKeys.length) {
-      // No households initialised yet — set 'default' as the fallback
-      _shareTargetPerms = { default: { stockroom: 'r', groceries: 'none', reminders: 'none', budget: 'none' } };
+      _shareTargetPerms = { default: { ...blankPerms, [targetPerm]: 'r' } };
     } else {
       for (const k of hhKeys) {
-        _shareTargetPerms[k] = { stockroom: 'r', groceries: 'none', reminders: 'none', budget: 'none' };
+        _shareTargetPerms[k] = { ...blankPerms, [targetPerm]: 'r' };
       }
     }
-    // Refresh the perms grid so the visible state matches what we just
-    // assigned. Hidden in bulk-share mode (below), but rendering anyway
-    // is cheap and keeps the underlying DOM consistent with the data.
     if (typeof renderShareHouseholdPerms === 'function') renderShareHouseholdPerms();
-    // Hide the sections that don't apply to "share these specific items":
-    // Role (cosmetic-ish label), Access per household (pre-set above to
-    // give stockroom: 'r' so the selected items become reachable), and
-    // Share management (pre-set to 'none' via SHARE_MGMT_DEFAULTS.family).
-    // The underlying values are correctly set already — we just hide the
-    // UI so the user isn't asked to re-make choices the multi-select
-    // already implied. openAddShareTarget restores these on next normal
-    // open so this hide doesn't leak into the Settings → Add Person flow.
+    // Hide the sections that don't apply to "share these specific records"
     const _row1 = document.getElementById('share-target-role-row');
     const _row2 = document.getElementById('share-target-perms-row');
     const _row3 = document.getElementById('share-target-mgmt-row');
     if (_row1) _row1.style.display = 'none';
     if (_row2) _row2.style.display = 'none';
     if (_row3) _row3.style.display = 'none';
-    // Force "Share management = none" since the picker is hidden.
     _shareTargetMgmt = 'none';
-    // Banner so the user knows what's about to happen on Save.
+    // Banner
     const modal = document.getElementById('share-target-modal');
     let banner = document.getElementById('bulk-share-pending-banner');
     if (modal && !banner) {
+      const n = _bulkShareSelectionPending.ids.length;
+      const nounLabel = (n === 1) ? spec.noun : spec.pluralNoun;
       banner = document.createElement('div');
       banner.id = 'bulk-share-pending-banner';
       banner.style.cssText = 'margin:0 0 12px 0;padding:10px 12px;background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.3);border-radius:8px;font-size:12px;color:var(--text);line-height:1.4';
-      banner.innerHTML = `<svg class="icon icon-sm" aria-hidden="true" style="color:var(--accent);vertical-align:-2px"><use href="#i-share-2"></use></svg> Sharing <strong>${_bulkShareSelectionPending.ids.length} selected item${_bulkShareSelectionPending.ids.length===1?'':'s'}</strong>. Section perms are pre-set; the recipient will see only these items.`;
+      banner.innerHTML = `<svg class="icon icon-sm" aria-hidden="true" style="color:var(--accent);vertical-align:-2px"><use href="#i-share-2"></use></svg> Sharing <strong>${n} selected ${nounLabel}</strong>. Section perms are pre-set; the recipient will see only ${spec.pluralNoun==='items'?'these items':'this selection'}.`;
       const modalEl = modal.querySelector('.modal');
       if (modalEl) modalEl.insertBefore(banner, modalEl.firstChild?.nextSibling || null);
     }
   }, 30);
 }
 
-// Pending bulk-share state — set by bulkStockShareCreateNew, consumed by
+// Pending bulk-share state — set by bulkShareCreateNew, consumed by
 // saveShareTarget after a successful create. Cleared on cancel or save.
 let _bulkShareSelectionPending = null;
 
-// Cancel path for the share-target-modal. Wired to the modal's Cancel
-// button so we also clear the bulk-share pending state and remove the
-// banner — otherwise the next time the modal opens (for an unrelated
-// share-create) the pending allow-list would be applied to the wrong
-// share. closeModal alone wouldn't reset _bulkShareSelectionPending.
+// Cancel path for the share-target-modal. Clears bulk-share pending so
+// the next normal share-create doesn't accidentally apply the previous
+// pending allow-list.
 function _cancelShareTargetModal() {
   _bulkShareSelectionPending = null;
   document.getElementById('bulk-share-pending-banner')?.remove();
   closeModal('share-target-modal');
 }
 
-// Apply the pending bulk-share selection's allow-list overrides. Called
-// from saveShareTarget after a new share is successfully created and we
-// have its code. Returns nothing — fire-and-forget; failures only log.
+// Apply pending bulk-share allow-list overrides. Called from
+// saveShareTarget after a new share is created and data.code is known.
+// Dispatches to the right section spec — works for stock, groceries,
+// reminders, transactions, etc — because the spec carries findRecord/save.
 async function _applyBulkSharePending(newShareCode) {
   if (!_bulkShareSelectionPending) return;
-  const { ids } = _bulkShareSelectionPending;
+  const { ids, section } = _bulkShareSelectionPending;
   _bulkShareSelectionPending = null;
   if (!Array.isArray(ids) || !ids.length) return;
+  const spec = _BULK_SELECT_SECTIONS[section];
+  if (!spec) { console.warn('[bulk-share] unknown section for pending:', section); return; }
   const now = new Date().toISOString();
   for (const id of ids) {
-    const item = items.find(i => i.id === id);
-    if (!item) continue;
-    if (item.share == null) {
-      item.share = { allow: [newShareCode] };
-    } else if (typeof item.share === 'object') {
-      const allow = Array.isArray(item.share.allow) ? item.share.allow : [];
+    const rec = spec.findRecord(id);
+    if (!rec) continue;
+    if (rec.share == null) {
+      rec.share = { allow: [newShareCode] };
+    } else if (typeof rec.share === 'object') {
+      const allow = Array.isArray(rec.share.allow) ? rec.share.allow : [];
       if (!allow.includes(newShareCode)) allow.push(newShareCode);
-      item.share.allow = allow;
-    } else if (item.share === 'private') {
-      item.share = { allow: [newShareCode] };
+      rec.share.allow = allow;
+    } else if (rec.share === 'private') {
+      rec.share = { allow: [newShareCode] };
     }
-    item.updatedAt = now;
+    rec.updatedAt = now;
   }
-  await saveData();
-  scheduleRender('grid');
+  await spec.save();
+  if (spec.rerender) spec.rerender();
   try { await pushSharedData(newShareCode); } catch(_) {}
-  toast(`✓ Shared ${ids.length} item${ids.length===1?'':'s'}`);
+  const noun = (ids.length === 1) ? spec.noun : spec.pluralNoun;
+  toast(`✓ Shared ${ids.length} ${noun}`);
 }
+
+// Register Stockroom (Pass 1 → 2a) as the first section. Other sections
+// register themselves alongside their own editor code in passes 2b/c/d.
+registerBulkSelectSection('stock', {
+  findRecord:    (id) => items.find(i => i.id === id),
+  save:          ()   => saveData(),
+  rerender:      ()   => scheduleRender('grid', 'dashboard'),
+  getVisibleIds: ()   => Array.from(document.querySelectorAll('#items-grid [data-bulk-id]'))
+                          .map(el => el.getAttribute('data-bulk-id'))
+                          .filter(Boolean),
+  permCheck:     ()   => {
+    if (!canWrite('stockroom')) { showLockBanner('stockroom'); return false; }
+    return true;
+  },
+  applyDelete:   (item) => {
+    item._deletedAt = new Date().toISOString();
+    if (typeof touchField === 'function') { try { touchField(item, '_deletedAt'); } catch(_) {} }
+  },
+  applyArchive:  (item) => {
+    item._archived = true;
+    item.updatedAt = new Date().toISOString();
+  },
+  sectionPermKey: 'stockroom',
+  noun:           'item',
+  pluralNoun:     'items',
+});
+
+// ─── Stockroom-specific entry-point shim (Pass 2a compat) ────────────
+// The toolbar's "Select" button calls enterStockSelectMode — keep that
+// name working without changing the HTML.
+function enterStockSelectMode() { enterBulkSelectMode('stock'); }
+// Old name kept for the onCardClick interceptor — see comment there.
+function exitStockSelectMode()  { exitBulkSelectMode(); }
+
+
 
 async function archiveItem(id) {
   if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
@@ -30430,7 +30541,7 @@ async function openAddShareTarget() {
   // Restore the three sections that bulk-share mode hides (Role / Access
   // per household / Share management). When openAddShareTarget runs from
   // the normal Settings → Add Person path, these need to be visible. The
-  // bulk-share flow re-hides them in bulkStockShareCreateNew AFTER this
+  // bulk-share flow re-hides them in bulkShareCreateNew AFTER this
   // function returns, so the order is: reset everything → hide as needed.
   const _row1 = document.getElementById('share-target-role-row');
   const _row2 = document.getElementById('share-target-perms-row');
@@ -30644,8 +30755,10 @@ async function saveShareTarget() {
       _shareTargetDone = false; // reset for next use
 
       // Bulk-share hand-off — if this share was created via the
-      // selection-driven flow (bulkStockShareCreateNew), apply allow
-      // overrides to the selected items now that we have a share code.
+      // selection-driven flow (bulkShareCreateNew), apply allow
+      // overrides to the selected records now that we have a share code.
+      // The Pending state's `section` field routes the apply to the right
+      // section spec (stock, grocery, reminder, transaction).
       // Fire-and-forget — failures only toast a warn, the share itself
       // is already created and saved.
       try { await _applyBulkSharePending(data.code); } catch(e) { console.warn('_applyBulkSharePending failed:', e); }

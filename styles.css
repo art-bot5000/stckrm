@@ -4192,23 +4192,26 @@ body.global-search-open { overflow: hidden; touch-action: none; }
   .app-nav-search-wrap { display: none; }
 }
 
-/* ─── Stockroom multi-select mode (Pass 1) ──────────────────────────────
-   When body has .stock-select-mode, cards swap their hover affordances
-   for a click-to-toggle behaviour. .selected gives the visual cue. The
-   floating action bar (#stock-select-bar) sits above the FAB on desktop
-   and replaces it on mobile (the FAB hides while in select mode). */
-body.stock-select-mode .item-card { cursor: pointer; transition: outline 0.12s; }
-body.stock-select-mode .item-card:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* ─── Bulk multi-select mode (Pass 2a generic) ───────────────────────────
+   Body class .bulk-select-mode is set whenever ANY section is in bulk-
+   select mode. The action bar (#bulk-select-bar) lives at body level and
+   is shared across all sections. Stockroom is currently the only wired
+   section; passes 2b/c/d add groceries / reminders / spends.
+   Per-section variant classes (.bulk-select-mode-stock, -grocery, etc.)
+   let each section add scoped overrides if needed (e.g. hide a tab-
+   specific FAB, tweak which child elements respond to hover). */
+body.bulk-select-mode .item-card { cursor: pointer; transition: outline 0.12s; }
+body.bulk-select-mode .item-card:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
 .item-card.selected { outline: 2px solid var(--accent); outline-offset: -2px; background: rgba(232,168,56,0.05); }
-/* Card per-item action menu (the kebab/chip) is suppressed in select mode
+/* Card per-item action menus + swipe-hints are suppressed in select mode
    so taps go straight to selection toggle. */
-body.stock-select-mode .card-actions,
-body.stock-select-mode .swipe-hint { display: none !important; }
-/* Hide the existing FAB when select mode is active; the action bar takes
-   over the same role. */
-body.stock-select-mode #fab-btn { display: none !important; }
+body.bulk-select-mode .card-actions,
+body.bulk-select-mode .swipe-hint { display: none !important; }
+/* Hide the existing FAB when any select mode is active; the action bar
+   takes over the same role. */
+body.bulk-select-mode #fab-btn { display: none !important; }
 
-.stock-select-bar {
+.bulk-select-bar {
   position: fixed;
   z-index: 700;
   bottom: 16px;
@@ -4227,7 +4230,7 @@ body.stock-select-mode #fab-btn { display: none !important; }
   flex-wrap: wrap;
   justify-content: center;
 }
-.stock-select-bar-count {
+.bulk-select-bar-count {
   font-size: 12px;
   font-family: var(--mono);
   color: var(--muted);
@@ -4237,7 +4240,7 @@ body.stock-select-mode #fab-btn { display: none !important; }
   white-space: nowrap;
 }
 @media (max-width: 899px) {
-  .stock-select-bar {
+  .bulk-select-bar {
     bottom: 12px;
     left: 8px;
     right: 8px;
