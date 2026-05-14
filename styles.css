@@ -4212,11 +4212,22 @@ body.bulk-select-mode .swipe-hint { display: none !important; }
 body.bulk-select-mode #fab-btn { display: none !important; }
 
 .bulk-select-bar {
-  position: fixed;
-  z-index: 700;
+  /* Sticky on desktop: clings to the bottom of the content section when
+     content is short, anchors to viewport bottom when content overflows
+     and the user scrolls. Mounts inside #main (see _renderBulkSelectBar)
+     so it's centered against the content column, not the full window.
+     Mobile override below switches to position:fixed full-width — that's
+     the conventional pattern there given the bottom tab bar. */
+  position: sticky;
   bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
+  z-index: 700;
+  /* Width fits content; centered via auto margins. margin-top pushes the
+     bar away from whatever content is directly above it. The 32px gap
+     gives breathing room when content is short and the bar is at its
+     natural document position. */
+  margin: 32px auto 16px;
+  width: fit-content;
+  max-width: calc(100% - 24px);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -4226,7 +4237,6 @@ body.bulk-select-mode #fab-btn { display: none !important; }
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.45);
   backdrop-filter: blur(6px);
-  max-width: calc(100vw - 24px);
   flex-wrap: wrap;
   justify-content: center;
 }
@@ -4241,6 +4251,12 @@ body.bulk-select-mode #fab-btn { display: none !important; }
 }
 @media (max-width: 899px) {
   .bulk-select-bar {
+    /* On mobile, revert to fixed full-width — sticky inside a scrolling
+       content area is cramped on phones, and the existing tab bar at
+       the bottom is a familiar reference point. */
+    position: fixed;
+    margin: 0;
+    width: auto;
     bottom: 12px;
     left: 8px;
     right: 8px;
@@ -4300,14 +4316,15 @@ body.bulk-select-mode-reminder [data-bulk-disabled="true"] .reminder-card-action
 /* ─── Budget categories — bulk-select mode (Pass 2e-c) ───────────────────
    Two render surfaces share this section key: the Spend view's tile
    row (.budget-cat-tile) and the Manage Categories list rows
-   (.bill-row.budget-cat-row). Both get the same .is-selected outline +
+   (.bill-row.budget-cat-row). Both get the same .selected outline +
    accent tint to read as "picked" regardless of which surface the user
-   is on. */
+   is on. Class name matches the other sections (stock/grocery/reminder)
+   for consistency with toggleBulkSelection's class toggle. */
 
 /* Spend-view tiles */
 body.bulk-select-mode-category .budget-cat-tile { cursor: pointer; transition: outline 0.12s; }
 body.bulk-select-mode-category .budget-cat-tile:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
-.budget-cat-tile.is-selected {
+.budget-cat-tile.selected {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
   background: rgba(232,168,56,0.08);
@@ -4316,14 +4333,14 @@ body.bulk-select-mode-category .budget-cat-tile:hover { outline: 2px solid var(-
    filtered AND selected reads as just-selected. Avoids dual-outline
    confusion. Filter state still exists in memory; this only affects
    the visual. */
-body.bulk-select-mode-category .budget-cat-tile.is-filtered:not(.is-selected) {
+body.bulk-select-mode-category .budget-cat-tile.is-filtered:not(.selected) {
   outline: none;
 }
 
 /* Manage Categories rows */
 body.bulk-select-mode-category .budget-cat-row { cursor: pointer; transition: outline 0.12s; }
 body.bulk-select-mode-category .budget-cat-row:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
-.budget-cat-row.is-selected {
+.budget-cat-row.selected {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
   background: rgba(232,168,56,0.08);

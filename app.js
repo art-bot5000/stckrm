@@ -13568,7 +13568,14 @@ function _renderBulkSelectBar() {
     bar = document.createElement('div');
     bar.id = 'bulk-select-bar';
     bar.className = 'bulk-select-bar';
-    document.body.appendChild(bar);
+    // Mount inside #main (the content column) so it sticks to the
+    // bottom of the content rather than the viewport. The CSS uses
+    // position:sticky on desktop and switches back to position:fixed
+    // on mobile (where full-width pinning is the conventional pattern).
+    // Falls back to body if #main isn't mounted yet — defensive, the
+    // bar render should never happen before app boot.
+    const host = document.getElementById('main') || document.body;
+    host.appendChild(bar);
   }
   const n = set.size;
   const noun = (n === 1) ? spec.noun : spec.pluralNoun;
@@ -23084,7 +23091,7 @@ function _renderCategoryTile(cat, startIso, endIso, period, clickable) {
   const barWidth = budget ? Math.min(pct * 100, 100) : 0;
 
   return `
-    <div class="budget-cat-tile ${isFiltered ? 'is-filtered' : ''}${clickable && bulkSelectionHas('category', cat.id) ? ' is-selected' : ''}"
+    <div class="budget-cat-tile ${isFiltered ? 'is-filtered' : ''}${clickable && bulkSelectionHas('category', cat.id) ? ' selected' : ''}"
          ${clickable ? `data-bulk-id="${cat.id}" data-bulk-section="category" onclick="onCategoryTileClick(event,'${cat.id}')"` : ''}>
       <div class="budget-cat-tile-name" style="color:${cat.color || 'var(--text)'}">
         <span class="budget-cat-dot" style="background:${cat.color || 'var(--accent)'}"></span>
@@ -23452,7 +23459,7 @@ function _renderBudgetCategoryRow(cat) {
       <svg aria-hidden="true"><use href="#i-pencil"></use></svg>
     </button>`;
   return `
-    <div class="bill-row budget-cat-row ${cat.archived ? 'is-skipped' : ''}${bulkSelectionHas('category', cat.id) ? ' is-selected' : ''}" data-bulk-id="${cat.id}" data-bulk-section="category" onclick="onCategoryRowClick(event,'${cat.id}')" style="cursor:pointer">
+    <div class="bill-row budget-cat-row ${cat.archived ? 'is-skipped' : ''}${bulkSelectionHas('category', cat.id) ? ' selected' : ''}" data-bulk-id="${cat.id}" data-bulk-section="category" onclick="onCategoryRowClick(event,'${cat.id}')" style="cursor:pointer">
       <div class="bill-day" style="background:${cat.color || 'var(--surface)'};color:#000;border-color:${cat.color || 'var(--border)'}">●</div>
       <div class="bill-info">
         <div class="bill-name">${_escapeHtml(cat.name)}${(isOwner() && cat.share != null) ? (() => {
