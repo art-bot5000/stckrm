@@ -1828,6 +1828,73 @@ function _filterRecordsForShare(records, shareCode, sectionPerm) {
 // to compute an allowed-cat-id Set and filters transactions by
 // categoryId membership, not by per-tx share field.
 
+// ── Budget filter (Pass 2e-a) ────────────────────────────────────────────
+// Computes the allowed-category-id Set for a given share code and section
+// perm, then returns filtered { categories, transactions } for the push
+// payload. Uncategorised transactions (categoryId == null) are NEVER
+// included — they have no category to share through, so they're always
+// owner-private.
+//
+// Section perm semantics (option C, agreed): 'none' → drop everything.
+// 'r' or 'rw' → use per-category share field to decide which cats flow.
+// Cats without an override inherit the section perm. Per-category
+// overrides ('private' / { allow } / { deny } / { readOnly }) take
+// precedence — same rules as the other sections via resolveRecordShare.
+//
+// Returns: {
+//   allowedCatIds: Set<string>,  // for downstream filtering of tombstones, debug
+//   categories:    Array,         // filtered category array
+//   transactions:  Object,        // {month: {txId: tx}} with non-shared cats dropped
+// }
+function _filterBudgetForShare(categories, txMap, shareCode, sectionPerm) {
+  const empty = { allowedCatIds: new Set(), categories: [], transactions: {} };
+  if (!sectionPerm || sectionPerm === 'none') return empty;
+  if (!Array.isArray(categories)) return empty;
+
+  // Build the allowed-cat-id Set by walking categories and applying
+  // resolveRecordShare per cat. We collect both the id AND a possible
+  // per-cat 'r' downgrade for later (so a section-rw share can still
+  // see a single category as read-only).
+  const allowedCatIds = new Set();
+  const filteredCategories = [];
+  for (const cat of categories) {
+    const perm = resolveRecordShare(cat, shareCode, sectionPerm);
+    if (perm === 'none') continue;
+    allowedCatIds.add(cat.id);
+    // Annotate with _shareEffectivePerm when different from section perm
+    // (same pattern as other filtered records — guest's render code can
+    // read this to know it's read-only on a per-record basis).
+    if (perm !== sectionPerm) {
+      filteredCategories.push({ ...cat, _shareEffectivePerm: perm });
+    } else {
+      filteredCategories.push(cat);
+    }
+  }
+
+  // Filter transactions to those whose categoryId is in the allowed set.
+  // tx.categoryId === null (uncategorised) is always dropped — those have
+  // no category to share through, so they stay owner-private.
+  const filteredTransactions = {};
+  if (txMap && typeof txMap === 'object') {
+    for (const [month, bucket] of Object.entries(txMap)) {
+      if (!bucket || typeof bucket !== 'object') continue;
+      const filteredBucket = {};
+      for (const [txId, tx] of Object.entries(bucket)) {
+        if (!tx || tx.categoryId == null) continue;        // uncategorised → owner-only
+        if (!allowedCatIds.has(tx.categoryId)) continue;   // unshared cat → drop
+        filteredBucket[txId] = tx;
+      }
+      if (Object.keys(filteredBucket).length) filteredTransactions[month] = filteredBucket;
+    }
+  }
+
+  return {
+    allowedCatIds,
+    categories:   filteredCategories,
+    transactions: filteredTransactions,
+  };
+}
+
 // Strip owner-only fields (`share`, `_shareEffectivePerm`) from records
 // before a GUEST pushes them back to the owner's share blob. Per-record
 // perms are an owner-only concept — a guest writing them back would let
@@ -1874,7 +1941,7 @@ window.shareDebug = {
   // Inspect: list all records with non-default share state across all sections
   list() {
     const sections = {
-      items, groceryItems, groceryLists, reminders,
+      items, groceryItems, groceryLists, reminders, budgetCategories,
     };
     for (const [name, arr] of Object.entries(sections)) {
       if (!Array.isArray(arr)) continue;
@@ -1883,9 +1950,10 @@ window.shareDebug = {
       console.log(`${name}: ${overridden.length} with overrides`);
       overridden.forEach(r => console.log(`  ${r.id}  ${r.name||'(unnamed)'}  →`, r.share));
     }
-    // Per-tx sharing was removed in Pass 2d-rollback. Pass 2e adds
-    // per-category sharing; shareDebug will need a 'budgetCategories'
-    // accessor for it (added then).
+    // Per-tx sharing was removed in Pass 2d-rollback. Pass 2e-a adds
+    // per-category sharing — set via:
+    //   shareDebug.set('budgetCategories', '<catId>', { allow: ['<shareCode>'] })
+    // Then shareDebug.push() to propagate.
   },
 
   // Set the share field on a specific record. value can be 'private',
@@ -1947,12 +2015,13 @@ window.shareDebug = {
 
   // Internal — find the right array for a section name
   _getSectionArr(section) {
-    if (section === 'items')        return items;
-    if (section === 'groceries')    return groceryItems;
-    if (section === 'groceryLists') return groceryLists;
-    if (section === 'reminders')    return reminders;
+    if (section === 'items')             return items;
+    if (section === 'groceries')         return groceryItems;
+    if (section === 'groceryLists')      return groceryLists;
+    if (section === 'reminders')         return reminders;
+    if (section === 'budgetCategories')  return budgetCategories;
     // 'transactions' branch removed in Pass 2d-rollback. Per-tx sharing
-    // is gone. Pass 2e adds 'budgetCategories' here for the new model.
+    // is gone. Pass 2e uses per-category sharing via 'budgetCategories'.
     return null;
   },
 };
@@ -31038,13 +31107,18 @@ async function pushSharedData(code, shareKey) {
       const filteredGroceryLists = canSeeGroceries
         ? _filterRecordsForShare(groceryLists, code, perms.groceries)
         : [];
-      // ── Budget transactions filter ──
-      // Per-tx sharing was removed in Pass 2d-rollback. Pass 2e-a will
-      // reintroduce a filter that walks budgetCategories first to compute
-      // an allowed-cat-id Set, then filters transactions by categoryId
-      // membership. Until then, all transactions flow when canSeeBudget
-      // is true. Categories themselves are still pushed unfiltered too;
-      // 2e-a adds per-category filtering alongside.
+      // ── Budget filter (Pass 2e-a) ──
+      // Per-category sharing: walk budgetCategories to compute the
+      // allowed-cat-id set for THIS share, then filter both categories
+      // and transactions by that set. Uncategorised transactions
+      // (categoryId == null) are always owner-private.
+      //
+      // Other budget data (accounts, income, bills) stays section-level —
+      // category-membership filtering doesn't apply to those. The
+      // section perm 'r'/'rw' gates them as before.
+      const budgetFiltered = canSeeBudget
+        ? _filterBudgetForShare(budgetCategories, transactions, code, perms.budget)
+        : { allowedCatIds: new Set(), categories: [], transactions: {} };
 
       const payload = JSON.stringify({
         items:       filteredItems,
@@ -31063,8 +31137,11 @@ async function pushSharedData(code, shareKey) {
         bills:                       canSeeBudget ? bills           : [],
         billInstances:               canSeeBudget ? billInstances   : {},
         budgetSettings:              canSeeBudget ? budgetSettings  : {},
-        budgetCategories:            canSeeBudget ? budgetCategories: [],
-        transactions:                canSeeBudget ? transactions    : {},
+        // Categories + transactions filtered by per-category share state.
+        // Tombstones flow unfiltered — knowing an unknown id was deleted
+        // tells the guest nothing they didn't already know nothing about.
+        budgetCategories:            budgetFiltered.categories,
+        transactions:                budgetFiltered.transactions,
         budgetCategoryDeletedIds:    canSeeBudget ? [...budgetCategoryDeletedIds]    : [],
         budgetTransactionDeletedIds: canSeeBudget ? [...budgetTransactionDeletedIds] : [],
         budgetAccounts:              canSeeBudget ? budgetAccounts  : [],
@@ -31346,8 +31423,59 @@ async function absorbSharedData(code, hKey) {
     // Merge bills, categories, transactions, accounts, income.
     if (Array.isArray(payload.bills))             bills            = mergeBills(bills, payload.bills);
     if (payload.billInstances)                    billInstances    = mergeBillInstances(billInstances, payload.billInstances);
-    if (Array.isArray(payload.budgetCategories))  budgetCategories = mergeBudgetCategories(budgetCategories, payload.budgetCategories);
-    if (payload.transactions)                     transactions     = mergeTransactions(transactions, payload.transactions);
+
+    // ── Pass 2e-a absorb enforcement ──
+    // RULE A: Guests can't write categories. The owner owns category
+    // metadata (name, color, budget targets, share state). Guests can
+    // sync categories DOWN (to render their budget tab) but their
+    // writes are dropped. If a guest somehow pushes back a modified
+    // budgetCategories, we ignore it entirely.
+    //
+    // RULE B: Guests can only write transactions against categories
+    // shared with THEIR share code. The owner's current share state is
+    // authoritative — if the owner changed a category's share since
+    // the guest wrote, the most-recent owner policy wins. Transactions
+    // against unshared categories (or categoryId === null) are
+    // dropped silently.
+    //
+    // Both rules ONLY apply when the writer is a guest. Owner-to-owner
+    // sync (own-data pull on another device) bypasses these.
+    const writerIsGuest = body.writer?.kind === 'guest';
+
+    // RULE A: drop guest category writes entirely.
+    if (Array.isArray(payload.budgetCategories) && !writerIsGuest) {
+      budgetCategories = mergeBudgetCategories(budgetCategories, payload.budgetCategories);
+    }
+    // (no else — when writerIsGuest, the merge is simply skipped)
+
+    // RULE B: filter guest tx writes by current owner-side allowed-cat set.
+    if (payload.transactions) {
+      if (writerIsGuest) {
+        // Resolve which categories are currently shared with this code.
+        // Reuses the same _filterBudgetForShare helper as the push side
+        // — symmetric logic, single source of truth.
+        const { allowedCatIds } = _filterBudgetForShare(
+          budgetCategories, transactions, code, perms.budget
+        );
+        // Walk the incoming tx map and drop any not in the allowed set.
+        const filteredTxMap = {};
+        for (const [month, bucket] of Object.entries(payload.transactions)) {
+          if (!bucket || typeof bucket !== 'object') continue;
+          const cleanBucket = {};
+          for (const [txId, tx] of Object.entries(bucket)) {
+            if (!tx) continue;
+            if (tx.categoryId == null) continue;          // uncategorised → reject
+            if (!allowedCatIds.has(tx.categoryId)) continue; // unshared cat → reject
+            cleanBucket[txId] = tx;
+          }
+          if (Object.keys(cleanBucket).length) filteredTxMap[month] = cleanBucket;
+        }
+        transactions = mergeTransactions(transactions, filteredTxMap);
+      } else {
+        transactions = mergeTransactions(transactions, payload.transactions);
+      }
+    }
+
     if (Array.isArray(payload.budgetAccounts))    budgetAccounts   = mergeBudgetAccounts(budgetAccounts, payload.budgetAccounts);
     if (Array.isArray(payload.incomeTemplates))   incomeTemplates  = mergeIncomeTemplates(incomeTemplates, payload.incomeTemplates);
     if (payload.incomeEntries)                    incomeEntries    = mergeIncomeEntries(incomeEntries, payload.incomeEntries);
