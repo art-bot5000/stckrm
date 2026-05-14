@@ -6041,6 +6041,15 @@ function onReminderCardClick(event, id) {
   openReminderTimeline(id);
 }
 
+// Share-from-card entry for standalone reminders. Same pattern as
+// stockroom and grocery: enters bulk-select mode AND pre-selects this
+// reminder. Only callable on standalone reminders (the action row
+// branches on !isFromItem to render the Share button).
+function shareReminderFromCard(id) {
+  enterBulkSelectMode('reminder');
+  toggleBulkSelection('reminder', id);
+}
+
 function reminderCardHTML(r) {
   const days     = getReminderDaysUntil(r);
   const status   = getReminderStatus(r);
@@ -6110,6 +6119,10 @@ function reminderCardHTML(r) {
         ${!isFromItem
           ? `<button class="btn btn-ghost btn-sm" onclick="openEditReminderModal('${r.id}')"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit</button>`
           : `<button class="btn btn-ghost btn-sm" onclick="openEditModal('${r.fromItem}')"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit item</button>`
+        }
+        ${!isFromItem
+          ? `<button class="btn btn-ghost btn-sm" onclick="shareReminderFromCard('${r.id}')" title="Share this reminder"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg> Share</button>`
+          : ''
         }
         <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteReminder('${r.id}')"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
       </div>
@@ -27153,6 +27166,15 @@ function onGroceryListCardClick(event, id) {
   switchGroceryList(id);
 }
 
+// Share-from-card entry for grocery lists. Same pattern as stockroom:
+// enters bulk-select mode AND pre-selects this list, so the action bar
+// shows "1 list selected" and the user can immediately Share or add
+// more lists to the selection.
+function shareGroceryListFromCard(id) {
+  enterBulkSelectMode('grocery');
+  toggleBulkSelection('grocery', id);
+}
+
 function renderGroceryListPicker() {
   const body = document.getElementById('grocery-list-body');
   if (!body) return;
@@ -27228,6 +27250,7 @@ function renderGroceryListPicker() {
             </div>
             <div class="grocery-picker-card-actions" style="display:flex;gap:6px;flex-shrink:0">
               <button onclick="event.stopPropagation();toggleGroceryListPin('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:${l.pinned ? 'var(--accent)' : 'var(--muted)'};font-size:13px;cursor:pointer" title="${l.pinned ? 'Unpin list' : 'Pin to top'}"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg></button>
+              <button onclick="event.stopPropagation();shareGroceryListFromCard('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:13px;cursor:pointer" title="Share this list"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg></button>
               <button onclick="event.stopPropagation();editGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:13px;cursor:pointer" title="Edit list"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
               ${lists.length > 1 ? `<button onclick="event.stopPropagation();deleteGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--danger);font-size:13px;cursor:pointer" title="Delete list"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>` : ''}
             </div>

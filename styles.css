@@ -4190,11 +4190,10 @@ body.bulk-select-mode #fab-btn { display: none !important; }
   position: sticky;
   bottom: 16px;
   z-index: 700;
-  /* Width fits content; centered via auto margins. margin-top pushes the
-     bar away from whatever content is directly above it. The 32px gap
-     gives breathing room when content is short and the bar is at its
-     natural document position. */
-  margin: 32px auto 16px;
+  /* Width fits content; centered via auto margins. Tight top margin so
+     the bar anchors visually to the bottom of the section's content
+     rather than floating in empty space below. */
+  margin: 12px auto 16px;
   width: fit-content;
   max-width: calc(100% - 24px);
   display: flex;
