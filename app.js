@@ -4217,6 +4217,12 @@ if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
       console.log('[push] subscription rotated — re-subscribing');
       enablePush().catch(_ => {});
     }
+    // Note: SW_UPDATED is handled elsewhere (look for the BG_SYNC /
+    // REMINDER_REPLACED message listener) — it triggers an immediate
+    // reload to swap the running page from old → new bundle. That's
+    // safe in Stockroom because all state lives in IndexedDB and
+    // gets autosaved on every change; no mid-edit data is in
+    // volatile memory only.
   });
 }
 
@@ -7460,6 +7466,14 @@ if ('serviceWorker' in navigator) {
             }
           });
         });
+        // Periodic update check (hourly) so long-running tabs eventually
+        // pick up new deploys without a manual refresh. The browser
+        // caches sw.js HTTP-fetches aggressively by default, but
+        // reg.update() bypasses cache for the SW script specifically.
+        // Hourly is a reasonable trade between freshness and traffic.
+        setInterval(() => {
+          reg.update().catch(_ => {});
+        }, 60 * 60 * 1000);
       }).catch(e => console.warn('SW failed:', e));
 
       // Only reload automatically if the user explicitly triggered the update
@@ -7486,9 +7500,21 @@ function showUpdateBanner(worker) {
 
 function applyUpdate() {
   const banner = document.getElementById('update-banner');
+  if (banner) banner.style.display = 'none';
   if (window._markUserTriggeredUpdate) window._markUserTriggeredUpdate();
-  if (banner?._worker) banner._worker.postMessage({ type: 'SKIP_WAITING' });
-  else location.reload(true);
+  // Try to wake the waiting worker if present (no-op if already
+  // active, but harmless). With sw.js calling skipWaiting() on install,
+  // the new SW is usually already active by the time the user clicks —
+  // so the reload below is what actually matters for getting the fresh
+  // app shell.
+  if (banner?._worker) {
+    try { banner._worker.postMessage({ type: 'SKIP_WAITING' }); } catch(_) {}
+  }
+  // Always reload. The new SW (active from skipWaiting + clients.claim)
+  // serves the fresh /index.html, /app.js, /styles.css from its cache,
+  // so the reload swaps the user from old bundle → new bundle cleanly.
+  // No reinstall needed, IndexedDB credentials are preserved.
+  location.reload();
 }
 
 // Android install prompt — just capture the event; banner is shown via
