@@ -598,8 +598,11 @@
       <div id="budget-cat-archived-list" class="bill-list"></div>
     </div>
 
-    <div style="display:flex;justify-content:space-between;gap:10px;margin-top:6px">
-      <button class="btn btn-ghost btn-sm" onclick="openBudgetCategoryEditor()"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Category</button>
+    <div style="display:flex;justify-content:space-between;gap:10px;margin-top:6px;flex-wrap:wrap">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="openBudgetCategoryEditor()"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Category</button>
+        <button class="btn btn-ghost btn-sm" onclick="enterBulkSelectMode('category')" title="Select categories"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Select</button>
+      </div>
       <button class="btn btn-ghost" onclick="closeModal('budget-cat-modal')">Done</button>
     </div>
   </div>
@@ -642,6 +645,16 @@
         <input type="color" id="budget-cat-color" value="#5b8dee"
           style="width:80px;height:36px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:2px;cursor:pointer">
       </div>
+    </div>
+
+    <!-- Sharing override panel (Pass 2e-b) — owner-only; hidden entirely
+         on guest views. Per-category overrides decide which shares see
+         this category AND its transactions. Section perm `budget: r/rw`
+         gates whether the recipient sees the budget tab at all;
+         per-category sharing decides what's inside. -->
+    <div id="bcat-sharing-section" style="margin-top:14px;display:none">
+      <label style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;display:block;margin-bottom:8px"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Sharing</label>
+      <div id="bcat-sharing-content"></div>
     </div>
 
     <div class="modal-footer" style="margin-top:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -2171,6 +2184,14 @@
         </div>
       </div>
 
+      <!-- Category bulk-select entry (Pass 2e-c) — sits above the tile
+           row, right-aligned so it's discoverable without dominating
+           the section. Selecting categories from here is the same as
+           selecting from the Manage Categories screen — same set. -->
+      <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
+        <button class="btn btn-ghost btn-sm" onclick="enterBulkSelectMode('category')" title="Select categories"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Select</button>
+      </div>
+
       <!-- Tile row -->
       <div id="budget-spend-tiles" class="budget-tile-row" style="margin-bottom:18px">
         <!-- populated -->
@@ -2178,8 +2199,8 @@
 
       <!-- Pass 2d-rollback: the per-transaction Select button has been
            removed. The unit of share is now the budget CATEGORY (Pass
-           2e). The Select button for categories will land on the
-           category-tile row above this section. -->
+           2e), with its Select button landing above the tile row (just
+           added in Pass 2e-c). -->
 
       <!-- Transactions, grouped by day -->
       <div id="budget-spend-tx-list" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px">

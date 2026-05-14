@@ -13576,12 +13576,19 @@ function _renderBulkSelectBar() {
   const archiveBtn = spec.applyArchive
     ? `<button class="btn btn-ghost btn-sm" ${disabled} onclick="bulkArchive()" title="Archive selected"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg> Archive</button>`
     : '';
+  // Delete button is optional too — sections like categories prefer to
+  // route destructive removal through Archive (with hard-delete only
+  // available per-record after archive). Omitting applyDelete from the
+  // spec hides the Delete button automatically.
+  const deleteBtn = spec.applyDelete
+    ? `<button class="btn btn-ghost btn-sm" ${disabled} onclick="bulkDelete()" title="Delete selected" style="color:var(--danger)"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>`
+    : '';
   bar.innerHTML = `
     <div class="bulk-select-bar-count">${n} ${noun} selected</div>
     <button class="btn btn-ghost btn-sm" onclick="toggleBulkSelectAll()" title="Toggle select all">All</button>
     <button class="btn btn-ghost btn-sm" ${disabled} onclick="bulkShare()" title="Share selected"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg> Share</button>
     ${archiveBtn}
-    <button class="btn btn-ghost btn-sm" ${disabled} onclick="bulkDelete()" title="Delete selected" style="color:var(--danger)"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
+    ${deleteBtn}
     <button class="btn btn-ghost btn-sm" onclick="exitBulkSelectMode()" title="Exit selection">Cancel</button>
   `;
 }
@@ -23077,15 +23084,38 @@ function _renderCategoryTile(cat, startIso, endIso, period, clickable) {
   const barWidth = budget ? Math.min(pct * 100, 100) : 0;
 
   return `
-    <div class="budget-cat-tile ${isFiltered ? 'is-filtered' : ''}"
-         ${clickable ? `onclick="toggleSpendCategoryFilter('${cat.id}')"` : ''}>
+    <div class="budget-cat-tile ${isFiltered ? 'is-filtered' : ''}${clickable && bulkSelectionHas('category', cat.id) ? ' is-selected' : ''}"
+         ${clickable ? `data-bulk-id="${cat.id}" data-bulk-section="category" onclick="onCategoryTileClick(event,'${cat.id}')"` : ''}>
       <div class="budget-cat-tile-name" style="color:${cat.color || 'var(--text)'}">
         <span class="budget-cat-dot" style="background:${cat.color || 'var(--accent)'}"></span>
-        ${_escapeHtml(cat.name)}
+        ${_escapeHtml(cat.name)}${(isOwner() && cat.share != null) ? (() => {
+          // Per-category sharing override indicator (owner-only). Same
+          // pattern as the item/list/reminder card indicators.
+          const sh = cat.share;
+          let icon = 'i-shield', title = 'Custom sharing';
+          if (sh === 'private') { icon = 'i-eye-off'; title = 'Private — owner only'; }
+          else if (typeof sh === 'object') {
+            if (Array.isArray(sh.allow))     title = `Visible to ${sh.allow.length} share${sh.allow.length===1?'':'s'} only`;
+            else if (Array.isArray(sh.deny)) title = `Hidden from ${sh.deny.length} share${sh.deny.length===1?'':'s'}`;
+            if (Array.isArray(sh.readOnly) && sh.readOnly.length) title += ` · read-only for ${sh.readOnly.length}`;
+          }
+          return ` <svg class="icon icon-sm" aria-hidden="true" title="${_escapeHtml(title)}" style="color:var(--muted);vertical-align:-2px"><use href="#${icon}"></use></svg>`;
+        })() : ''}
       </div>
       <div class="budget-cat-tile-amt">${_money(spent)} ${budgetText}</div>
       <div class="budget-cat-tile-bar"><div class="budget-cat-tile-bar-fill ${barClass}" style="width:${barWidth}%;background:${cat.color || 'var(--accent)'}"></div></div>
     </div>`;
+}
+
+// Click handler for spend-view category tiles. In bulk mode, toggles
+// selection. Otherwise routes to the existing filter toggle as before.
+function onCategoryTileClick(event, id) {
+  if (isBulkSelectMode('category')) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    toggleBulkSelection('category', id);
+    return;
+  }
+  toggleSpendCategoryFilter(id);
 }
 
 function toggleSpendCategoryFilter(catId) {
@@ -23422,10 +23452,22 @@ function _renderBudgetCategoryRow(cat) {
       <svg aria-hidden="true"><use href="#i-pencil"></use></svg>
     </button>`;
   return `
-    <div class="bill-row ${cat.archived ? 'is-skipped' : ''}" onclick="openBudgetCategoryEditor('${cat.id}')" style="cursor:pointer">
+    <div class="bill-row budget-cat-row ${cat.archived ? 'is-skipped' : ''}${bulkSelectionHas('category', cat.id) ? ' is-selected' : ''}" data-bulk-id="${cat.id}" data-bulk-section="category" onclick="onCategoryRowClick(event,'${cat.id}')" style="cursor:pointer">
       <div class="bill-day" style="background:${cat.color || 'var(--surface)'};color:#000;border-color:${cat.color || 'var(--border)'}">●</div>
       <div class="bill-info">
-        <div class="bill-name">${_escapeHtml(cat.name)}</div>
+        <div class="bill-name">${_escapeHtml(cat.name)}${(isOwner() && cat.share != null) ? (() => {
+          // Per-category sharing override indicator (owner-only, same as
+          // the spend-view tile indicator).
+          const sh = cat.share;
+          let icon = 'i-shield', title = 'Custom sharing';
+          if (sh === 'private') { icon = 'i-eye-off'; title = 'Private — owner only'; }
+          else if (typeof sh === 'object') {
+            if (Array.isArray(sh.allow))     title = `Visible to ${sh.allow.length} share${sh.allow.length===1?'':'s'} only`;
+            else if (Array.isArray(sh.deny)) title = `Hidden from ${sh.deny.length} share${sh.deny.length===1?'':'s'}`;
+            if (Array.isArray(sh.readOnly) && sh.readOnly.length) title += ` · read-only for ${sh.readOnly.length}`;
+          }
+          return ` <svg class="icon icon-sm" aria-hidden="true" title="${_escapeHtml(title)}" style="color:var(--muted);vertical-align:-2px"><use href="#${icon}"></use></svg>`;
+        })() : ''}</div>
         <div class="bill-meta">${budgetText}</div>
       </div>
       <div class="bill-actions">
@@ -23434,11 +23476,90 @@ function _renderBudgetCategoryRow(cat) {
     </div>`;
 }
 
+// Click handler for Manage Categories rows. In bulk mode, toggles
+// selection. Otherwise opens the editor as before.
+function onCategoryRowClick(event, id) {
+  if (isBulkSelectMode('category')) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    toggleBulkSelection('category', id);
+    return;
+  }
+  openBudgetCategoryEditor(id);
+}
+
 async function handleUnarchiveBudgetCategory(id) {
   await unarchiveBudgetCategory(id);
   _renderBudgetCategoryList();
   if (_currentView === 'budget') renderBudget();
 }
+
+// ── Budget category sharing-panel registration (Pass 2e-b) ────────────
+// Single-record sharing UI inside the category editor. Reuses the
+// generic _renderSharingPanel module — same UX as item/list/reminder
+// sharing. _spendEditingCatId is the natural currentId source. save()
+// hits saveBudgetSpendLocal so the share field is persisted alongside
+// other category fields.
+registerSharingSection('category', {
+  findRecord: (id) => getBudgetCategoryById(id),
+  currentId:  ()   => _spendEditingCatId,
+  save:       ()   => saveBudgetSpendLocal(),
+  mountSectionEl: () => document.getElementById('bcat-sharing-section'),
+  mountContentEl: () => document.getElementById('bcat-sharing-content'),
+  noun: 'category',
+});
+
+// ── Budget category bulk-select registration (Pass 2e-c) ──────────────
+// Two entry points: a Select button on the Spend screen (above the tile
+// row) AND on the Manage Categories list. Same selection set across
+// both — user can switch screens while in select mode and what they
+// picked persists.
+//
+// NO Delete button — hard-deleting categories is dangerous when bulk-
+// applied (would lose spend history references). The path stays: edit
+// → Archive (soft), then in the archived list per-row Delete forever
+// for cases where the user is sure. The bulk module hides the Delete
+// button automatically when applyDelete is omitted.
+//
+// Archive IS supported in bulk — that's the safe, reversible action.
+//
+// getVisibleIds queries BOTH renders (spend tiles AND manage-categories
+// rows). Whichever screen is open contributes ids; the other returns
+// empty. If both are somehow visible (a future overlay scenario), de-
+// duping via Set takes care of double-counts.
+registerBulkSelectSection('category', {
+  findRecord: (id) => getBudgetCategoryById(id),
+  save:       ()   => saveBudgetSpendLocal(),
+  rerender:   ()   => {
+    // Re-render the budget tab if we're on it, AND the manage-categories
+    // list if it's mounted. Both could be visible at once (manage opens
+    // as a modal over the budget view). Cheap to do both.
+    if (_currentView === 'budget') renderBudget();
+    _renderBudgetCategoryList();
+  },
+  getVisibleIds: () => {
+    const ids = new Set();
+    document.querySelectorAll('[data-bulk-id][data-bulk-section="category"]')
+      .forEach(el => {
+        const id = el.getAttribute('data-bulk-id');
+        if (id) ids.add(id);
+      });
+    return [...ids];
+  },
+  permCheck:  ()   => {
+    if (!canWrite('budget')) { showLockBanner('budget'); return false; }
+    return true;
+  },
+  applyArchive: (cat) => {
+    cat.archived  = true;
+    cat.updatedAt = _nowIso();
+  },
+  // NO applyDelete — bulk Delete button is hidden by the module.
+  // Hard-delete stays per-category via the editor's "Delete forever"
+  // button on already-archived categories.
+  sectionPermKey: 'budget',
+  noun:           'category',
+  pluralNoun:     'categories',
+});
 
 function openBudgetCategoryEditor(catId = null) {
   _spendEditingCatId = catId;
@@ -23457,6 +23578,17 @@ function openBudgetCategoryEditor(catId = null) {
   budgetCatCycleChanged();
   openModal('budget-cat-editor-modal');
   setTimeout(() => document.getElementById('budget-cat-name').focus(), 50);
+  // Render the sharing panel for this category. Hidden by the module
+  // when adding a new cat (no record yet), when not the owner, or when
+  // no shares are configured.
+  if (cat) {
+    openSharingPanelFor('category');
+  } else {
+    // New-category flow: explicitly hide so a stale panel from a prior
+    // edit session doesn't leak through.
+    const _bcs = document.getElementById('bcat-sharing-section');
+    if (_bcs) _bcs.style.display = 'none';
+  }
 }
 
 function budgetCatCycleChanged() {

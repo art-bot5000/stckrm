@@ -4296,3 +4296,39 @@ body.bulk-select-mode-reminder [data-bulk-disabled="true"] .reminder-card-action
 /* Spend-tx-row bulk-select CSS removed in Pass 2d-rollback. The unit of
    share for budget data is now the CATEGORY (Pass 2e). Pass 2e-c will
    add the equivalent .bulk-select-mode-category scoped rules. */
+
+/* ─── Budget categories — bulk-select mode (Pass 2e-c) ───────────────────
+   Two render surfaces share this section key: the Spend view's tile
+   row (.budget-cat-tile) and the Manage Categories list rows
+   (.bill-row.budget-cat-row). Both get the same .is-selected outline +
+   accent tint to read as "picked" regardless of which surface the user
+   is on. */
+
+/* Spend-view tiles */
+body.bulk-select-mode-category .budget-cat-tile { cursor: pointer; transition: outline 0.12s; }
+body.bulk-select-mode-category .budget-cat-tile:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.budget-cat-tile.is-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: rgba(232,168,56,0.08);
+}
+/* In bulk mode, suppress the is-filtered styling so a tile that's both
+   filtered AND selected reads as just-selected. Avoids dual-outline
+   confusion. Filter state still exists in memory; this only affects
+   the visual. */
+body.bulk-select-mode-category .budget-cat-tile.is-filtered:not(.is-selected) {
+  outline: none;
+}
+
+/* Manage Categories rows */
+body.bulk-select-mode-category .budget-cat-row { cursor: pointer; transition: outline 0.12s; }
+body.bulk-select-mode-category .budget-cat-row:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.budget-cat-row.is-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: rgba(232,168,56,0.08);
+}
+/* Hide per-row action buttons (Edit / Unarchive icon) in select mode
+   so taps go straight to selection toggle. The action bar covers the
+   bulk equivalent of these actions. */
+body.bulk-select-mode-category .budget-cat-row .bill-actions { display: none !important; }
