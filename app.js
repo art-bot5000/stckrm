@@ -1821,30 +1821,12 @@ function _filterRecordsForShare(records, shareCode, sectionPerm) {
   return out;
 }
 
-// Budget transactions are a map keyed by month ('2026-05', '2026-06', ...)
-// where each value is itself an OBJECT keyed by transaction id (not an
-// array — see _findTransaction). The standard filter only handles
-// arrays, so we walk the map twice (month then id) and apply per-record.
-// Returns a NEW map (does not mutate). Empty buckets are pruned from
-// the output to save wire bytes.
-function _filterBudgetTransactionsForShare(txMap, shareCode, sectionPerm) {
-  if (!txMap || typeof txMap !== 'object') return {};
-  if (!sectionPerm || sectionPerm === 'none') return {};
-  const out = {};
-  for (const [month, bucket] of Object.entries(txMap)) {
-    if (!bucket || typeof bucket !== 'object') continue;
-    const filteredBucket = {};
-    for (const [txId, tx] of Object.entries(bucket)) {
-      const perm = resolveRecordShare(tx, shareCode, sectionPerm);
-      if (perm === 'none') continue;
-      filteredBucket[txId] = (perm !== sectionPerm)
-        ? { ...tx, _shareEffectivePerm: perm }
-        : tx;
-    }
-    if (Object.keys(filteredBucket).length) out[month] = filteredBucket;
-  }
-  return out;
-}
+// Per-transaction sharing was removed in Pass 2d-rollback. The model
+// changed so the unit of share is the budget CATEGORY (and its
+// transactions flow with it), not the individual transaction. The
+// replacement filter is built in Pass 2e-a — it walks budgetCategories
+// to compute an allowed-cat-id Set and filters transactions by
+// categoryId membership, not by per-tx share field.
 
 // Strip owner-only fields (`share`, `_shareEffectivePerm`) from records
 // before a GUEST pushes them back to the owner's share blob. Per-record
@@ -1864,30 +1846,12 @@ function _scrubGuestRecords(records) {
   });
 }
 
-// Same as _scrubGuestRecords but for the budget transactions map shape —
-// {month: {txId: tx}}. Strips owner-only fields from every tx in every
-// bucket. Empty buckets are kept (caller may write back empty months
-// for tombstoning); empty objects are cheaper than dropping the month.
-function _scrubGuestTransactions(txMap) {
-  if (!txMap || typeof txMap !== 'object') return {};
-  const out = {};
-  for (const [month, bucket] of Object.entries(txMap)) {
-    if (!bucket || typeof bucket !== 'object') { out[month] = bucket; continue; }
-    const cleanBucket = {};
-    for (const [txId, tx] of Object.entries(bucket)) {
-      if (!tx || (tx.share === undefined && tx._shareEffectivePerm === undefined)) {
-        cleanBucket[txId] = tx;
-        continue;
-      }
-      const clone = { ...tx };
-      delete clone.share;
-      delete clone._shareEffectivePerm;
-      cleanBucket[txId] = clone;
-    }
-    out[month] = cleanBucket;
-  }
-  return out;
-}
+// _scrubGuestTransactions was removed in Pass 2d-rollback. Per-tx
+// sharing fields no longer exist on transactions, so there's nothing
+// to scrub. Pass 2e-a will reintroduce category-membership-based
+// guest-write enforcement (a scrub that rejects categories the owner
+// doesn't already have, and rejects tx writes against non-shared
+// categories) — different from the field-stripping this helper did.
 
 // ── Round 1 debug helper ─────────────────────────────────────────────────
 // No UI exists yet for setting per-record perms — Round 1 is foundation
@@ -1919,22 +1883,9 @@ window.shareDebug = {
       console.log(`${name}: ${overridden.length} with overrides`);
       overridden.forEach(r => console.log(`  ${r.id}  ${r.name||'(unnamed)'}  →`, r.share));
     }
-    // transactions is a month-keyed map of {txId: tx} objects
-    if (transactions && typeof transactions === 'object') {
-      const flat = [];
-      for (const bucket of Object.values(transactions)) {
-        if (bucket && typeof bucket === 'object') {
-          for (const tx of Object.values(bucket)) if (tx) flat.push(tx);
-        }
-      }
-      const overridden = flat.filter(r => r && r.share != null);
-      if (overridden.length) {
-        console.log(`transactions: ${overridden.length} with overrides`);
-        overridden.forEach(r => console.log(`  ${r.id}  £${r.amount||'?'}  →`, r.share));
-      } else {
-        console.log('transactions: (none with overrides)');
-      }
-    }
+    // Per-tx sharing was removed in Pass 2d-rollback. Pass 2e adds
+    // per-category sharing; shareDebug will need a 'budgetCategories'
+    // accessor for it (added then).
   },
 
   // Set the share field on a specific record. value can be 'private',
@@ -2000,18 +1951,8 @@ window.shareDebug = {
     if (section === 'groceries')    return groceryItems;
     if (section === 'groceryLists') return groceryLists;
     if (section === 'reminders')    return reminders;
-    if (section === 'transactions') {
-      // Flatten {month:{txId:tx}} into a single array for debugging.
-      // Mutations via shareDebug.set still reach the original tx because
-      // Object.values gives object references, not clones.
-      const flat = [];
-      for (const bucket of Object.values(transactions || {})) {
-        if (bucket && typeof bucket === 'object') {
-          for (const tx of Object.values(bucket)) if (tx) flat.push(tx);
-        }
-      }
-      return flat;
-    }
+    // 'transactions' branch removed in Pass 2d-rollback. Per-tx sharing
+    // is gone. Pass 2e adds 'budgetCategories' here for the new model.
     return null;
   },
 };
@@ -23145,41 +23086,22 @@ function _renderTransactionRow(tx) {
   const catName = cat ? cat.name : 'Uncategorised';
   const catColor = cat ? cat.color : 'var(--muted)';
   const where = tx.where || '(no merchant)';
-  // Owner-only sharing indicator — small shield/eye-off icon shown next to
-  // the merchant name when the tx has a custom sharing override. Tooltip
-  // describes the state. Guests never see this; their view is already
-  // filtered server-side.
-  const shareInd = (isOwner() && tx.share != null) ? (() => {
-    const sh = tx.share;
-    let icon = 'i-shield', title = 'Custom sharing';
-    if (sh === 'private') { icon = 'i-eye-off'; title = 'Private — owner only'; }
-    else if (typeof sh === 'object') {
-      if (Array.isArray(sh.allow))     title = `Visible to ${sh.allow.length} share${sh.allow.length===1?'':'s'} only`;
-      else if (Array.isArray(sh.deny)) title = `Hidden from ${sh.deny.length} share${sh.deny.length===1?'':'s'}`;
-      if (Array.isArray(sh.readOnly) && sh.readOnly.length) title += ` · read-only for ${sh.readOnly.length}`;
-    }
-    return `<svg class="icon icon-sm" aria-hidden="true" title="${_escapeHtml(title)}" style="color:var(--muted);margin-left:6px;vertical-align:-2px"><use href="#${icon}"></use></svg>`;
-  })() : '';
+  // Per-tx sharing indicator + bulk-select wiring removed in Pass 2d-
+  // rollback. The unit of share is now the CATEGORY (Pass 2e). A
+  // per-tx click just opens the editor directly.
   return `
-    <div class="spend-tx-row${bulkSelectionHas('transaction', tx.id) ? ' selected' : ''}" data-bulk-id="${tx.id}" data-bulk-section="transaction" onclick="onSpendTxRowClick(event,'${tx.id}')">
+    <div class="spend-tx-row" onclick="openSpendTxEditor('${tx.id}')">
       <div class="spend-tx-info">
-        <div class="spend-tx-where">${_escapeHtml(where)}${shareInd}</div>
+        <div class="spend-tx-where">${_escapeHtml(where)}</div>
         <div class="spend-tx-cat"><span class="budget-cat-dot" style="background:${catColor}"></span>${_escapeHtml(catName)}</div>
       </div>
       <div class="spend-tx-amount">${_money(tx.amount)}</div>
     </div>`;
 }
 
-// Click handler for spend tx rows. In bulk-select mode, toggles selection;
-// otherwise opens the tx editor as before.
-function onSpendTxRowClick(event, id) {
-  if (isBulkSelectMode('transaction')) {
-    if (event && event.stopPropagation) event.stopPropagation();
-    toggleBulkSelection('transaction', id);
-    return;
-  }
-  openSpendTxEditor(id);
-}
+// onSpendTxRowClick removed in Pass 2d-rollback — the row's onclick
+// goes straight to openSpendTxEditor since transactions are no longer
+// a bulk-selectable unit.
 
 // ── Period navigation ──────────────────────────────────────────────────────
 function spendSwitchPeriod(period) {
@@ -23325,67 +23247,12 @@ async function confirmQuickAdd() {
 }
 
 // ── Transaction edit modal ─────────────────────────────────────────────────
-// Register the transaction section with the sharing-panel module.
-// Transactions live in a month-keyed map (`transactions[yyyymm][id]`)
-// rather than a flat array — getTransaction handles the lookup, and
-// saveBudgetSpendLocal persists transactions + categories specifically
-// (the smaller save path that updateTransaction uses too).
-registerSharingSection('transaction', {
-  findRecord: (id) => getTransaction(id),
-  currentId:  ()   => _spendEditingTxId,
-  save:       ()   => saveBudgetSpendLocal(),
-  mountSectionEl: () => document.getElementById('tx-sharing-section'),
-  mountContentEl: () => document.getElementById('tx-sharing-content'),
-  noun: 'spend',
-});
-
-// Register the transaction section with the bulk-select module (Pass 2d).
-// Unit: a single spend (one row inside a day group). Unlike the other
-// sections, transactions DON'T use _deletedAt — they hard-delete via the
-// budgetTransactionDeletedIds tombstone Set + a remove from the
-// transactions[yyyymm] map. That means the bulk confirm copy needs to
-// say "This can't be undone" (no recycle bin), driven by the
-// deleteIsPermanent flag.
-//
-// applyDelete: mirror of deleteTransaction — find the month bucket,
-// remove from it, prune empty buckets, add to tombstone Set. Per-record
-// _findTransaction is O(n) per call but n is small in practice.
-registerBulkSelectSection('transaction', {
-  findRecord: (id) => getTransaction(id),
-  save:       ()   => saveBudgetSpendLocal(),
-  rerender:   ()   => {
-    // Spend rows live inside the budget tab's "spend" panel. Only re-render
-    // that one panel if it's currently active; otherwise the next visit
-    // to the budget tab will paint fresh data anyway.
-    if (_currentView === 'budget' && _budgetActivePanel === 'spend') renderBudgetSpend();
-    else if (_currentView === 'budget' && _budgetActivePanel === 'dashboard') renderBudgetDashboard();
-  },
-  getVisibleIds: () => Array.from(document.querySelectorAll('#view-budget [data-bulk-id][data-bulk-section="transaction"]'))
-                        .map(el => el.getAttribute('data-bulk-id'))
-                        .filter(Boolean),
-  permCheck:  ()   => {
-    if (!canWrite('budget')) { showLockBanner('budget'); return false; }
-    return true;
-  },
-  applyDelete: (tx) => {
-    // Mirror deleteTransaction's logic. The tx object passed in is a
-    // direct reference into transactions[yyyymm][id], so we re-find its
-    // month bucket to do the removal cleanly. Tombstone set add prevents
-    // a sync resurrection.
-    const located = _findTransaction(tx.id);
-    if (!located) return;
-    delete transactions[located.yyyymm][tx.id];
-    if (Object.keys(transactions[located.yyyymm]).length === 0) {
-      delete transactions[located.yyyymm];
-    }
-    budgetTransactionDeletedIds.add(tx.id);
-  },
-  // No applyArchive — transactions don't have an archived state.
-  deleteIsPermanent: true,
-  sectionPermKey:    'budget',
-  noun:              'spend',
-  pluralNoun:        'spends',
-});
+// Per-transaction sharing was removed in Pass 2d-rollback. The unit of
+// share is now the budget CATEGORY (Pass 2e), and individual
+// transactions inherit visibility from their category's share state.
+// The registrations that used to live here (registerSharingSection
+// 'transaction', registerBulkSelectSection 'transaction') are gone;
+// 'category' replaces them in Pass 2e.
 
 function openSpendTxEditor(txId) {
   const tx = getTransaction(txId);
@@ -23405,9 +23272,8 @@ function openSpendTxEditor(txId) {
 
   openModal('spend-tx-modal');
   setTimeout(() => document.getElementById('spend-tx-where').focus(), 50);
-  // Render the sharing panel for this transaction. Hidden by the module
-  // when no shares exist or when not the owner.
-  openSharingPanelFor('transaction');
+  // openSharingPanelFor('transaction') call removed in Pass 2d-rollback.
+  // Per-tx sharing is gone; visibility flows from the tx's category.
 }
 
 async function saveSpendTxFromEditor() {
@@ -31172,13 +31038,13 @@ async function pushSharedData(code, shareKey) {
       const filteredGroceryLists = canSeeGroceries
         ? _filterRecordsForShare(groceryLists, code, perms.groceries)
         : [];
-      // Budget transactions are a map keyed by month, where values are
-      // arrays of spend records. The filter has to apply inside each
-      // bucket independently. Categories / accounts / income templates
-      // stay section-level per the plan doc.
-      const filteredTransactions = canSeeBudget
-        ? _filterBudgetTransactionsForShare(transactions, code, perms.budget)
-        : {};
+      // ── Budget transactions filter ──
+      // Per-tx sharing was removed in Pass 2d-rollback. Pass 2e-a will
+      // reintroduce a filter that walks budgetCategories first to compute
+      // an allowed-cat-id Set, then filters transactions by categoryId
+      // membership. Until then, all transactions flow when canSeeBudget
+      // is true. Categories themselves are still pushed unfiltered too;
+      // 2e-a adds per-category filtering alongside.
 
       const payload = JSON.stringify({
         items:       filteredItems,
@@ -31356,7 +31222,10 @@ async function absorbSharedData(code, hKey) {
   if (Array.isArray(payload.groceries))     payload.groceries     = _scrubGuestRecords(payload.groceries);
   if (Array.isArray(payload.groceryLists))  payload.groceryLists  = _scrubGuestRecords(payload.groceryLists);
   if (Array.isArray(payload.reminders))     payload.reminders     = _scrubGuestRecords(payload.reminders);
-  if (payload.transactions)                 payload.transactions  = _scrubGuestTransactions(payload.transactions);
+  // Transaction scrub removed in Pass 2d-rollback (no per-tx share field
+  // to scrub). Pass 2e-a will replace this with a category-membership
+  // check on absorb so guests can't introduce categories the owner
+  // doesn't have, and can't write transactions against unshared cats.
 
   // Merge into local state for this household. If hKey === activeProfile,
   // merging hits the live in-memory arrays; otherwise we merge into the
@@ -31548,7 +31417,11 @@ async function pushGuestSharedData() {
     payload.billInstances     = billInstances;
     payload.budgetSettings    = budgetSettings;
     payload.budgetCategories  = budgetCategories;
-    payload.transactions      = _scrubGuestTransactions(transactions);
+    // Transactions pushed raw — no per-tx share field to scrub since
+    // Pass 2d-rollback. Pass 2e-a's owner-side absorb will enforce
+    // category-membership rules on these writes (reject categories the
+    // owner doesn't have; reject tx writes against unshared cats).
+    payload.transactions      = transactions;
     payload.budgetAccounts    = budgetAccounts;
     payload.incomeTemplates   = incomeTemplates;
     payload.incomeEntries     = incomeEntries;

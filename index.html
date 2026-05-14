@@ -570,13 +570,8 @@
       </div>
     </div>
 
-    <!-- Sharing override panel — owner-only; hidden entirely on guest views.
-         Per-spend overrides let users hide individual transactions from
-         specific shares (e.g. a private purchase). -->
-    <div id="tx-sharing-section" style="margin-top:14px;display:none">
-      <label style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;display:block;margin-bottom:8px"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Sharing</label>
-      <div id="tx-sharing-content"></div>
-    </div>
+    <!-- Per-tx sharing panel removed in Pass 2d-rollback. The unit of
+         share is now the budget category, not the individual tx. -->
 
     <div class="modal-footer" style="margin-top:18px;display:flex;align-items:center;gap:10px">
       <button class="btn btn-ghost btn-sm" onclick="confirmDeleteSpendTx()" style="color:var(--danger);margin-right:auto"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
@@ -2181,12 +2176,10 @@
         <!-- populated -->
       </div>
 
-      <!-- Spend list toolbar (Pass 2d) — currently just the Select entry.
-           Sits between the category tiles and the tx list, aligned right
-           so it's discoverable without dominating the section. -->
-      <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
-        <button class="btn btn-ghost btn-sm" onclick="enterBulkSelectMode('transaction')" title="Select transactions"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Select</button>
-      </div>
+      <!-- Pass 2d-rollback: the per-transaction Select button has been
+           removed. The unit of share is now the budget CATEGORY (Pass
+           2e). The Select button for categories will land on the
+           category-tile row above this section. -->
 
       <!-- Transactions, grouped by day -->
       <div id="budget-spend-tx-list" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px">
