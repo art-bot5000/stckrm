@@ -7764,12 +7764,25 @@ const swipeState = {};
 const SWIPE_THRESHOLD  = 110; // px to trigger (was 72)
 const SWIPE_LOCK_ANGLE = 30;  // degrees — swipe must be within this of horizontal
 
+// Returns true when any per-card interaction (hover-actions, long-press,
+// horizontal-swipe-to-log) should be SUPPRESSED because the user is in
+// bulk-select mode. In select mode the only valid interaction with a
+// card is tap-to-toggle-selection — anything else is noise that confuses
+// the gesture. Hover delays, long-press timers, and swipe state are all
+// gated through this so the user's bulk-select intent doesn't get
+// hijacked by a stray drag or an over-long tap.
+function _cardInteractionFrozen() {
+  return isBulkSelectMode('stock');
+}
+
 function swipeStart(e, id) {
+  if (_cardInteractionFrozen()) return;
   const t = e.touches[0];
   swipeState[id] = { startX: t.clientX, startY: t.clientY, triggered: false, locked: null };
 }
 
 function swipeMove(e, id) {
+  if (_cardInteractionFrozen()) return;
   const s = swipeState[id];
   if (!s) return;
   const dx = e.touches[0].clientX - s.startX;
@@ -7793,6 +7806,7 @@ function swipeMove(e, id) {
 }
 
 async function swipeEnd(e, id) {
+  if (_cardInteractionFrozen()) return;
   const s = swipeState[id];
   if (!s) return;
   const hint = document.getElementById('swipe-hint-' + id);
@@ -8817,6 +8831,7 @@ function onCardClick(event, id) {
 
 // ── Desktop hover ─────────────────────────────────────────────
 function onCardHoverEnter(id) {
+  if (_cardInteractionFrozen()) return;
   // Only on devices that can actually hover (not coarse touch)
   if (!window.matchMedia || !window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
   const st = _cardActionState.by[id] || (_cardActionState.by[id] = {});
@@ -8825,6 +8840,7 @@ function onCardHoverEnter(id) {
 }
 
 function onCardHoverLeave(id) {
+  if (_cardInteractionFrozen()) return;
   const st = _cardActionState.by[id];
   if (st) clearTimeout(st.hoverTimer);
   _dismissCardActions(id);
@@ -8835,6 +8851,7 @@ function onCardHoverLeave(id) {
 // is cancelled the moment swipeMove acquires a horizontal lock, so a user
 // who swipes won't accidentally trigger the actions panel.
 function onCardTouchStart(event, id) {
+  if (_cardInteractionFrozen()) return;
   swipeStart(event, id);
   const st = _cardActionState.by[id] || (_cardActionState.by[id] = {});
   st.longPressFired = false;
@@ -8853,6 +8870,7 @@ function onCardTouchStart(event, id) {
 }
 
 function onCardTouchMove(event, id) {
+  if (_cardInteractionFrozen()) return;
   swipeMove(event, id);
   const st = _cardActionState.by[id];
   if (!st || !st.longPressTimer) return;
@@ -8869,6 +8887,7 @@ function onCardTouchMove(event, id) {
 }
 
 function onCardTouchEnd(event, id) {
+  if (_cardInteractionFrozen()) return;
   swipeEnd(event, id);
   const st = _cardActionState.by[id];
   if (st) {
@@ -13403,6 +13422,19 @@ function enterBulkSelectMode(sectionKey) {
   _bulkSelections[sectionKey] = new Set();
   document.body.classList.add('bulk-select-mode');
   document.body.classList.add(`bulk-select-mode-${sectionKey}`);
+  // Dismiss any card-actions overlay that might be open from a prior
+  // hover/long-press — and clear any pending hover/long-press timers,
+  // since onCardHoverEnter / onCardTouchStart now early-return so the
+  // timers won't be cleaned up by the usual paths once frozen.
+  if (typeof _dismissCardActions === 'function') {
+    try { _dismissCardActions(); } catch(_) {}
+  }
+  if (typeof _cardActionState === 'object' && _cardActionState?.by) {
+    for (const id of Object.keys(_cardActionState.by)) {
+      const st = _cardActionState.by[id];
+      if (st) { clearTimeout(st.hoverTimer); clearTimeout(st.longPressTimer); }
+    }
+  }
   _renderBulkSelectBar();
   if (spec.rerender) spec.rerender();
 }
@@ -13489,6 +13521,13 @@ async function bulkDelete() {
   const set  = _getActiveSelection();
   if (!spec || !set || !set.size) return;
   if (spec.permCheck && !spec.permCheck()) return;
+  // Optional section-specific pre-flight. Lets the section refuse the
+  // bulk delete with a custom message (e.g. groceries: "can't delete
+  // your only list"). Returns {ok, reason}.
+  if (spec.preDeleteCheck) {
+    const check = spec.preDeleteCheck([...set]);
+    if (!check.ok) { toast(check.reason || `Can't delete those right now`); return; }
+  }
   const n = set.size;
   const noun = (n === 1) ? spec.noun : spec.pluralNoun;
   if (!confirm(`Move ${n} ${noun} to the recycle bin?\n\nYou can restore them within 30 days.`)) return;
@@ -26862,6 +26901,21 @@ function _renderGroceryFsModeBar(list, mode, phase, listItems) {
 }
 
 // ── Grocery List Picker (shown when 2+ lists exist) ──────────────────────
+// Click handler for list cards in the picker view. In bulk-select mode,
+// toggles selection for the tapped list; otherwise switches to the list
+// as before. The per-card pin/edit/delete buttons use event.stopPropagation
+// so they still work in either mode — but in bulk mode they'd let the
+// user delete or edit a list without exiting select, which feels off, so
+// we also gate them via CSS body.bulk-select-mode-grocery (see styles).
+function onGroceryListCardClick(event, id) {
+  if (isBulkSelectMode('grocery')) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    toggleBulkSelection('grocery', id);
+    return;
+  }
+  switchGroceryList(id);
+}
+
 function renderGroceryListPicker() {
   const body = document.getElementById('grocery-list-body');
   if (!body) return;
@@ -26916,7 +26970,7 @@ function renderGroceryListPicker() {
         // surfaces matching grocery items directly.
 
         return `
-        <div onclick="switchGroceryList('${l.id}')" style="display:flex;flex-direction:column;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;cursor:pointer;transition:border-color 0.15s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div class="grocery-picker-card${bulkSelectionHas('grocery', l.id) ? ' selected' : ''}" data-bulk-id="${l.id}" data-bulk-section="grocery" onclick="onGroceryListCardClick(event,'${l.id}')" style="display:flex;flex-direction:column;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;cursor:pointer;transition:border-color 0.15s,outline 0.12s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
           <div style="display:flex;align-items:center;gap:14px">
             <div style="flex:1;min-width:0">
               <div style="font-size:16px;font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:6px">${modeBadge}<span>${esc(l.name)}</span>${(isOwner() && l.share != null) ? (() => {
@@ -26935,7 +26989,7 @@ function renderGroceryListPicker() {
                 ${l.store ? `<svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> ${esc(l.store)} · ` : ''}${statusBits} · ${fmt(l.updatedAt)}
               </div>
             </div>
-            <div style="display:flex;gap:6px;flex-shrink:0">
+            <div class="grocery-picker-card-actions" style="display:flex;gap:6px;flex-shrink:0">
               <button onclick="event.stopPropagation();toggleGroceryListPin('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:${l.pinned ? 'var(--accent)' : 'var(--muted)'};font-size:13px;cursor:pointer" title="${l.pinned ? 'Unpin list' : 'Pin to top'}"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg></button>
               <button onclick="event.stopPropagation();editGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:13px;cursor:pointer" title="Edit list"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
               ${lists.length > 1 ? `<button onclick="event.stopPropagation();deleteGroceryList('${l.id}')" style="padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface2);color:var(--danger);font-size:13px;cursor:pointer" title="Delete list"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>` : ''}
@@ -27019,6 +27073,74 @@ registerSharingSection('groceryList', {
   mountSectionEl: () => document.getElementById('gl-sharing-section'),
   mountContentEl: () => document.getElementById('gl-sharing-content'),
   noun: 'list',
+});
+
+// Register the grocery-list section with the bulk-select module (Pass 2b).
+// Unit of selection: WHOLE LIST (named lists in the picker view). Items
+// within a list are NOT selectable here — that's a different feature
+// that may come later. Picker view only — when an active list is open
+// the Select button is hidden.
+//
+// Specifics:
+// - No archive — lists don't have an archived state. Action bar shows
+//   only [All | Share | Delete | Cancel].
+// - applyDelete cascades to items inside the list (matches single-list
+//   deleteGroceryList semantics — list + its items soft-delete together,
+//   restoring the list brings the items back).
+// - preDeleteCheck refuses if the selection would leave zero active
+//   lists (the app needs at least one).
+// - save() bundles _saveGroceryLists + saveGrocery — both arrays were
+//   mutated, both need persisting.
+// - sectionPermKey is 'groceries' (per the section perm grid).
+registerBulkSelectSection('grocery', {
+  findRecord: (id) => groceryLists.find(l => l.id === id),
+  save:       async () => { await _saveGroceryLists(); await saveGrocery(); },
+  rerender:   ()   => renderGrocery(),
+  getVisibleIds: () => Array.from(document.querySelectorAll('#grocery-list-body [data-bulk-id][data-bulk-section="grocery"]'))
+                        .map(el => el.getAttribute('data-bulk-id'))
+                        .filter(Boolean),
+  permCheck:  ()   => {
+    if (!canWrite('groceries')) { showLockBanner('groceries'); return false; }
+    return true;
+  },
+  // Pre-flight for bulk delete: refuse if it would zero out all active
+  // lists. The single-list deleteGroceryList does this check per-call;
+  // we replicate it here for the bulk path. ids = the selection set.
+  preDeleteCheck: (ids) => {
+    const remaining = groceryLists.filter(l => !l._deletedAt && !ids.includes(l.id));
+    if (remaining.length === 0) {
+      return { ok: false, reason: "Can't delete every list — keep at least one" };
+    }
+    return { ok: true };
+  },
+  applyDelete: (list) => {
+    const stamp = new Date().toISOString();
+    // Soft-delete the list itself
+    list._deletedAt = stamp;
+    list.updatedAt  = stamp;
+    // Cascade soft-delete to its items so a restore brings them back too
+    groceryItems.forEach(i => {
+      if ((i.listId || 'default') === list.id && !i._deletedAt) {
+        i._deletedAt = stamp;
+        if (typeof touchField === 'function') {
+          try { touchField(i, '_deletedAt'); } catch(_) {}
+        }
+      }
+    });
+    // If the active list is among those deleted, reassign to the next
+    // remaining one so the user isn't stranded on a gone list. We do this
+    // inside applyDelete (rather than after the loop) because the spec's
+    // contract is one-call-per-record; doing it inline is simpler than
+    // adding an afterBulkDelete hook just for this case.
+    if (activeGroceryListId === list.id) {
+      const fallback = groceryLists.find(l => !l._deletedAt && l.id !== list.id);
+      activeGroceryListId = fallback?.id || 'default';
+      try { localStorage.setItem('stockroom_active_grocery_list', activeGroceryListId); } catch(_) {}
+    }
+  },
+  sectionPermKey: 'groceries',
+  noun:           'list',
+  pluralNoun:     'lists',
 });
 
 function editGroceryList(id) {
@@ -27851,6 +27973,14 @@ function renderGrocery() {
   const _allListsSlot = document.getElementById('grocery-all-lists-slot');
   if (_allListsSlot) {
     _allListsSlot.style.display = (activeGroceryListId && multiList) ? 'inline-flex' : 'none';
+  }
+
+  // Bulk-select entry slot (Pass 2b) — only visible in the multi-list
+  // picker view. When a list is open, the action bar would be ambiguous
+  // ("select what?") so we hide it there.
+  const _selectSlot = document.getElementById('grocery-select-slot');
+  if (_selectSlot) {
+    _selectSlot.style.display = (isPicker) ? 'inline-flex' : 'none';
   }
 
   // Active list name + toolbar visibility — both shown only when a list

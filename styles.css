@@ -4251,3 +4251,19 @@ body.bulk-select-mode #fab-btn { display: none !important; }
     font-size: 13px;
   }
 }
+
+/* ─── Grocery list picker — bulk-select mode (Pass 2b) ──────────────────
+   When body has .bulk-select-mode-grocery, the per-card action buttons
+   (pin / edit / delete) and the per-list sharing indicator are hidden so
+   the only interaction with a card is tap-to-toggle-selection. Cards get
+   the same .selected outline + accent tint as Stockroom cards via the
+   shared body.bulk-select-mode rules below the section.
+   Note: .item-card.selected CSS already applies to the .selected class
+   — the .grocery-picker-card class doesn't pick those rules up, so we
+   add an equivalent rule for that class here. */
+body.bulk-select-mode-grocery .grocery-picker-card { cursor: pointer; transition: outline 0.12s; }
+body.bulk-select-mode-grocery .grocery-picker-card:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.grocery-picker-card.selected { outline: 2px solid var(--accent); outline-offset: -2px; background: rgba(232,168,56,0.05); }
+/* Suppress per-card buttons in select mode — the action bar's bulk
+   Delete / Share covers their function across the selection. */
+body.bulk-select-mode-grocery .grocery-picker-card-actions { display: none !important; }

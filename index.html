@@ -2945,6 +2945,11 @@
         <button class="btn btn-ghost btn-sm" onclick="_groceryGoToAllLists()" style="flex-shrink:0">← All lists</button>
         <span aria-hidden="true" style="display:inline-block;width:1px;height:22px;background:var(--border)"></span>
       </span>
+      <!-- Bulk-select entry (Pass 2b) — only visible in the picker view
+           when there are 2+ lists. renderGrocery toggles its display. -->
+      <span id="grocery-select-slot" style="display:none;align-items:center;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="enterBulkSelectMode('grocery')" title="Select lists" style="flex-shrink:0"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Select</button>
+      </span>
       <button class="btn btn-ghost btn-sm" onclick="openQuickList()" title="Quick add items"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg> Quick List</button>
       <button class="btn btn-ghost btn-sm" onclick="openAddGroceryList()" title="Add new shopping list"><svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> Add List</button>
       <button class="btn btn-ghost btn-sm" onclick="openGroceryDepts()" title="Manage departments"><svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg> Departments</button>
