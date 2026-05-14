@@ -8695,6 +8695,8 @@ function cardActionOverlayHTML(item) {
     { icon: 'i-archive',       label: isArchived ? 'Restore' : 'Archive',
       onclick: isArchived ? `restoreItem('${id}')` : `archiveItem('${id}')` },
     { icon: 'i-pencil',        label: 'Edit Details',  onclick: `openEditModal('${id}')` },
+    { icon: 'i-tag',           label: 'Tag',           onclick: `openCardTagPicker('${id}')` },
+    { icon: 'i-share-2',       label: 'Share',         onclick: `shareItemFromCard('${id}')` },
   ];
   return `<div class="card-action-overlay" data-overlay onclick="event.stopPropagation()">
     <div class="card-action-grid">
@@ -8704,11 +8706,19 @@ function cardActionOverlayHTML(item) {
           <span>${t.label}</span>
         </button>`).join('')}
     </div>
-    <button type="button" class="card-action-tag-btn" onclick="event.stopPropagation();_dismissCardActions('${id}');openCardTagPicker('${id}')">
-      <svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg>
-      <span>Tag</span>
-    </button>
   </div>`;
+}
+
+// Share-from-card entry point: enters multi-select mode AND pre-selects
+// the item the user clicked on. The action bar appears with "1 item
+// selected" so the user can immediately tap Share — or add more items
+// to the selection first. Same flow as if they'd tapped Manage then
+// tapped this card.
+function shareItemFromCard(id) {
+  enterBulkSelectMode('stock');
+  // enterBulkSelectMode clears any prior selection. Now add the one
+  // the user clicked Share on.
+  toggleBulkSelection('stock', id);
 }
 
 // ── Card interaction state ────────────────────────────────────
