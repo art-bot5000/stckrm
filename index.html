@@ -3763,7 +3763,7 @@
         <span>Send them an email about this update</span>
       </label>
     </div>
-    <div class="form-group" style="margin-bottom:16px">
+    <div class="form-group" id="share-target-role-row" style="margin-bottom:16px">
       <label class="form-label">Role</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap" id="share-target-type-picker">
         <button class="share-type-btn active" data-type="family" onclick="selectShareType('family',this)" style="padding:8px 14px;border-radius:8px;border:2px solid var(--accent);background:rgba(232,168,56,0.1);color:var(--accent);font-size:13px;cursor:pointer">👨‍👩‍👧 Family</button>
@@ -3775,11 +3775,11 @@
       <label class="form-label">Colour</label>
       <div id="share-target-colours" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"></div>
     </div>
-    <div class="form-group" style="margin-bottom:16px">
+    <div class="form-group" id="share-target-perms-row" style="margin-bottom:16px">
       <label class="form-label" style="margin-bottom:8px">Access per household</label>
       <div id="share-household-perms" style="display:flex;flex-direction:column;gap:10px"></div>
     </div>
-    <div class="form-group" style="margin-bottom:16px">
+    <div class="form-group" id="share-target-mgmt-row" style="margin-bottom:16px">
       <label class="form-label" style="margin-bottom:6px">Share management</label>
       <p style="font-size:11px;color:var(--muted);margin:0 0 8px 0;line-height:1.4">Whether this person can see and modify who else has access to your households.</p>
       <div id="share-mgmt-perm" style="display:flex;gap:6px;flex-wrap:wrap"></div>

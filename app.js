@@ -13549,7 +13549,7 @@ function bulkStockShareCreateNew() {
   openAddShareTarget();
   // openAddShareTarget runs synchronously enough that the modal is open
   // before we get here — but the perm-grid render is async via
-  // renderShareTargetPermsGrid. Set the perms after the next tick.
+  // renderShareHouseholdPerms. Set the perms after the next tick.
   setTimeout(() => {
     // Default every household to {stockroom:'r', groceries:'none', ...}
     const hhKeys = Object.keys(_shareTargetPerms || {});
@@ -13561,7 +13561,26 @@ function bulkStockShareCreateNew() {
         _shareTargetPerms[k] = { stockroom: 'r', groceries: 'none', reminders: 'none', budget: 'none' };
       }
     }
-    if (typeof renderShareTargetPermsGrid === 'function') renderShareTargetPermsGrid();
+    // Refresh the perms grid so the visible state matches what we just
+    // assigned. Hidden in bulk-share mode (below), but rendering anyway
+    // is cheap and keeps the underlying DOM consistent with the data.
+    if (typeof renderShareHouseholdPerms === 'function') renderShareHouseholdPerms();
+    // Hide the sections that don't apply to "share these specific items":
+    // Role (cosmetic-ish label), Access per household (pre-set above to
+    // give stockroom: 'r' so the selected items become reachable), and
+    // Share management (pre-set to 'none' via SHARE_MGMT_DEFAULTS.family).
+    // The underlying values are correctly set already — we just hide the
+    // UI so the user isn't asked to re-make choices the multi-select
+    // already implied. openAddShareTarget restores these on next normal
+    // open so this hide doesn't leak into the Settings → Add Person flow.
+    const _row1 = document.getElementById('share-target-role-row');
+    const _row2 = document.getElementById('share-target-perms-row');
+    const _row3 = document.getElementById('share-target-mgmt-row');
+    if (_row1) _row1.style.display = 'none';
+    if (_row2) _row2.style.display = 'none';
+    if (_row3) _row3.style.display = 'none';
+    // Force "Share management = none" since the picker is hidden.
+    _shareTargetMgmt = 'none';
     // Banner so the user knows what's about to happen on Save.
     const modal = document.getElementById('share-target-modal');
     let banner = document.getElementById('bulk-share-pending-banner');
@@ -30408,6 +30427,19 @@ async function openAddShareTarget() {
   if (sendEmailRow) sendEmailRow.style.display = 'none';
   document.getElementById('share-link-section').style.display = 'none';
   document.getElementById('share-target-save-btn').textContent = 'Create & get link';
+  // Restore the three sections that bulk-share mode hides (Role / Access
+  // per household / Share management). When openAddShareTarget runs from
+  // the normal Settings → Add Person path, these need to be visible. The
+  // bulk-share flow re-hides them in bulkStockShareCreateNew AFTER this
+  // function returns, so the order is: reset everything → hide as needed.
+  const _row1 = document.getElementById('share-target-role-row');
+  const _row2 = document.getElementById('share-target-perms-row');
+  const _row3 = document.getElementById('share-target-mgmt-row');
+  if (_row1) _row1.style.display = '';
+  if (_row2) _row2.style.display = '';
+  if (_row3) _row3.style.display = '';
+  // Also clear any leftover bulk-share banner from a prior invocation.
+  document.getElementById('bulk-share-pending-banner')?.remove();
   selectShareType('family', document.querySelector('.share-type-btn[data-type="family"]'));
   renderShareTargetColourPicker(_shareTargetColour);
   renderShareMgmtPicker();
