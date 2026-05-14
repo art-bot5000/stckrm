@@ -189,6 +189,15 @@
       <div style="display:flex;flex-wrap:wrap;gap:6px" id="reminder-suggestions"></div>
     </div>
 
+    <!-- Sharing override panel — owner-only; hidden entirely on guest views.
+         Only meaningful for standalone reminders (the ones tracked in
+         reminders[]). Item-attached reminders inherit their parent item's
+         sharing — to hide an attached reminder, hide the whole item. -->
+    <div id="rem-sharing-section" style="margin-top:20px;display:none">
+      <label style="font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:8px"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Sharing</label>
+      <div id="rem-sharing-content"></div>
+    </div>
+
     <div class="modal-footer" style="margin-top:20px">
       <button class="btn btn-ghost" onclick="closeModal('reminder-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveReminder()">Save Reminder</button>
@@ -559,6 +568,14 @@
         <label>Notes <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
         <input type="text" id="spend-tx-notes" maxlength="120">
       </div>
+    </div>
+
+    <!-- Sharing override panel — owner-only; hidden entirely on guest views.
+         Per-spend overrides let users hide individual transactions from
+         specific shares (e.g. a private purchase). -->
+    <div id="tx-sharing-section" style="margin-top:14px;display:none">
+      <label style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;display:block;margin-bottom:8px"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Sharing</label>
+      <div id="tx-sharing-content"></div>
     </div>
 
     <div class="modal-footer" style="margin-top:18px;display:flex;align-items:center;gap:10px">

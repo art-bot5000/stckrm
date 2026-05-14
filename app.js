@@ -1822,18 +1822,26 @@ function _filterRecordsForShare(records, shareCode, sectionPerm) {
 }
 
 // Budget transactions are a map keyed by month ('2026-05', '2026-06', ...)
-// where each value is an array of spend records. The standard filter only
-// handles arrays, so we walk the map and apply per-bucket. Returns a NEW
-// map (does not mutate). Empty buckets are pruned from the output to
-// save wire bytes.
+// where each value is itself an OBJECT keyed by transaction id (not an
+// array — see _findTransaction). The standard filter only handles
+// arrays, so we walk the map twice (month then id) and apply per-record.
+// Returns a NEW map (does not mutate). Empty buckets are pruned from
+// the output to save wire bytes.
 function _filterBudgetTransactionsForShare(txMap, shareCode, sectionPerm) {
   if (!txMap || typeof txMap !== 'object') return {};
   if (!sectionPerm || sectionPerm === 'none') return {};
   const out = {};
   for (const [month, bucket] of Object.entries(txMap)) {
-    if (!Array.isArray(bucket)) continue;
-    const filtered = _filterRecordsForShare(bucket, shareCode, sectionPerm);
-    if (filtered.length) out[month] = filtered;
+    if (!bucket || typeof bucket !== 'object') continue;
+    const filteredBucket = {};
+    for (const [txId, tx] of Object.entries(bucket)) {
+      const perm = resolveRecordShare(tx, shareCode, sectionPerm);
+      if (perm === 'none') continue;
+      filteredBucket[txId] = (perm !== sectionPerm)
+        ? { ...tx, _shareEffectivePerm: perm }
+        : tx;
+    }
+    if (Object.keys(filteredBucket).length) out[month] = filteredBucket;
   }
   return out;
 }
@@ -1856,13 +1864,27 @@ function _scrubGuestRecords(records) {
   });
 }
 
-// Same as _scrubGuestRecords but for the budget transactions map shape.
+// Same as _scrubGuestRecords but for the budget transactions map shape —
+// {month: {txId: tx}}. Strips owner-only fields from every tx in every
+// bucket. Empty buckets are kept (caller may write back empty months
+// for tombstoning); empty objects are cheaper than dropping the month.
 function _scrubGuestTransactions(txMap) {
   if (!txMap || typeof txMap !== 'object') return {};
   const out = {};
   for (const [month, bucket] of Object.entries(txMap)) {
-    if (!Array.isArray(bucket)) { out[month] = bucket; continue; }
-    out[month] = _scrubGuestRecords(bucket);
+    if (!bucket || typeof bucket !== 'object') { out[month] = bucket; continue; }
+    const cleanBucket = {};
+    for (const [txId, tx] of Object.entries(bucket)) {
+      if (!tx || (tx.share === undefined && tx._shareEffectivePerm === undefined)) {
+        cleanBucket[txId] = tx;
+        continue;
+      }
+      const clone = { ...tx };
+      delete clone.share;
+      delete clone._shareEffectivePerm;
+      cleanBucket[txId] = clone;
+    }
+    out[month] = cleanBucket;
   }
   return out;
 }
@@ -1897,9 +1919,14 @@ window.shareDebug = {
       console.log(`${name}: ${overridden.length} with overrides`);
       overridden.forEach(r => console.log(`  ${r.id}  ${r.name||'(unnamed)'}  →`, r.share));
     }
-    // transactions is a month-keyed map
+    // transactions is a month-keyed map of {txId: tx} objects
     if (transactions && typeof transactions === 'object') {
-      const flat = Object.values(transactions).flat();
+      const flat = [];
+      for (const bucket of Object.values(transactions)) {
+        if (bucket && typeof bucket === 'object') {
+          for (const tx of Object.values(bucket)) if (tx) flat.push(tx);
+        }
+      }
       const overridden = flat.filter(r => r && r.share != null);
       if (overridden.length) {
         console.log(`transactions: ${overridden.length} with overrides`);
@@ -1974,8 +2001,16 @@ window.shareDebug = {
     if (section === 'groceryLists') return groceryLists;
     if (section === 'reminders')    return reminders;
     if (section === 'transactions') {
-      // Flat view across all months
-      return Object.values(transactions || {}).flat().filter(Boolean);
+      // Flatten {month:{txId:tx}} into a single array for debugging.
+      // Mutations via shareDebug.set still reach the original tx because
+      // Object.values gives object references, not clones.
+      const flat = [];
+      for (const bucket of Object.values(transactions || {})) {
+        if (bucket && typeof bucket === 'object') {
+          for (const tx of Object.values(bucket)) if (tx) flat.push(tx);
+        }
+      }
+      return flat;
     }
     return null;
   },
@@ -1983,6 +2018,17 @@ window.shareDebug = {
 
 let editingId = null;
 let loggingId = null;
+// ─── Sharing-panel module state ───────────────────────────────────────
+// Declared early so registerSharingSection() calls scattered through the
+// file (near each editor's code) don't trip the const TDZ. The actual
+// module implementation (registerSharingSection, _renderSharingPanel,
+// etc.) is declared further down — see "Per-record sharing panel" block.
+// Per-section "is the picker expanded?" flag, keyed by section name.
+let _sharingExpanded = {};
+// Registry of section specs (findRecord / currentId / save / mounts).
+// Populated by registerSharingSection() — see the registration calls in
+// each section's editor. Pre-declared here (empty) so TDZ never throws.
+let _SHARING_SECTIONS = {};
 let tempStorePrices = []; // also declared in scanner.js; declared here so openAddModal works before scanner.js loads
 let activeFilter = 'all';
 let activeCadence = 'all';
@@ -5980,6 +6026,20 @@ function reminderCardHTML(r) {
         <span style="font-size:15px;font-weight:700;color:var(--text)">${esc(r.itemName || r.name)}</span>
         ${r.reminderName ? `<span style="font-size:12px;color:var(--muted)">${esc(r.reminderName)}</span>` : ''}
         ${isFromItem ? `<span style="font-size:10px;color:var(--muted);font-family:var(--mono);padding:1px 6px;border:1px solid var(--border);border-radius:99px">linked</span>` : ''}
+        ${(!isFromItem && isOwner() && r.share != null) ? (() => {
+          // Sharing override indicator — only for standalone reminders.
+          // Item-attached reminders (isFromItem === true) inherit from
+          // their parent item and don't carry their own share field.
+          const sh = r.share;
+          let icon = 'i-shield', title = 'Custom sharing';
+          if (sh === 'private') { icon = 'i-eye-off'; title = 'Private — owner only'; }
+          else if (typeof sh === 'object') {
+            if (Array.isArray(sh.allow))     title = `Visible to ${sh.allow.length} share${sh.allow.length===1?'':'s'} only`;
+            else if (Array.isArray(sh.deny)) title = `Hidden from ${sh.deny.length} share${sh.deny.length===1?'':'s'}`;
+            if (Array.isArray(sh.readOnly) && sh.readOnly.length) title += ` · read-only for ${sh.readOnly.length}`;
+          }
+          return `<svg class="icon icon-sm" aria-hidden="true" title="${esc(title)}" style="color:var(--muted)"><use href="#${icon}"></use></svg>`;
+        })() : ''}
         <span style="font-size:10px;color:var(--muted);margin-left:auto;opacity:0.5"><svg class="icon" aria-hidden="true"><use href="#i-bar-chart-2"></use></svg> Timeline</span>
       </div>
       <div style="font-size:12px;font-weight:700;color:${statusColor};margin-bottom:4px">${timeLabel}</div>
@@ -6281,6 +6341,10 @@ function openAddReminderModal(prefill) {
 
   openModal('reminder-modal');
   setTimeout(() => document.getElementById('r-name').focus(), 100);
+  // Hide any sharing panel from a previous edit session — no record yet
+  // means nothing to override. Panel re-renders on next edit-open.
+  const _remSec = document.getElementById('rem-sharing-section');
+  if (_remSec) _remSec.style.display = 'none';
 }
 
 function applySuggestion(s) {
@@ -6288,6 +6352,19 @@ function applySuggestion(s) {
   document.getElementById('r-interval').value = s.interval;
   document.getElementById('r-unit').value     = s.unit;
 }
+
+// Register the reminder section with the sharing-panel module. Save path
+// is saveReminders. Only standalone reminders (in reminders[]) get
+// per-record sharing — item-attached reminders inherit the item's perm
+// and are scoped to Round 4+ if there's appetite.
+registerSharingSection('reminder', {
+  findRecord: (id) => reminders.find(r => r.id === id),
+  currentId:  ()   => editingReminderId,
+  save:       ()   => saveReminders(),
+  mountSectionEl: () => document.getElementById('rem-sharing-section'),
+  mountContentEl: () => document.getElementById('rem-sharing-content'),
+  noun: 'reminder',
+});
 
 function openEditReminderModal(id) {
   const r = reminders.find(r => r.id === id);
@@ -6304,6 +6381,9 @@ function openEditReminderModal(id) {
     + items.filter(i => !i.quickAdded).map(i => `<option value="${i.id}">${esc(i.name)}</option>`).join('');
   sel.value = r.linkedItemId || '';
   openModal('reminder-modal');
+  // Render the sharing panel for this reminder. Hidden by openSharingPanelFor
+  // when no shares exist or when not the owner.
+  openSharingPanelFor('reminder');
 }
 
 async function saveReminder() {
@@ -12102,11 +12182,12 @@ function openEditModal(id) {
   // ── Replacement reminders ──
   _renderEditReminders(item);
 
-  // ── Sharing (Part B Round 2) ──
-  // Reset expanded state so every modal-open starts collapsed showing
-  // the one-line summary. The picker re-expands on demand.
-  _itemSharingExpanded = false;
-  _renderItemSharingPanel(item);
+  // ── Sharing (Part B Rounds 2 + 3) ──
+  // Uses the generic sharing-panel module. The 'item' section was
+  // registered in the _SHARING_SECTIONS literal — see near
+  // openSharingPanelFor. openSharingPanelFor resets expanded state
+  // and renders for the currently-edited item.
+  openSharingPanelFor('item');
 
   // Show readonly, hide edit form
   document.getElementById('item-readonly-view').style.display = 'block';
@@ -12262,48 +12343,100 @@ function _getItemReminders(item) {
   return item.replacementReminders || [];
 }
 
-// ─── Item-level sharing panel (Part B, Round 2) ───────────────────────────
-// Renders the per-item sharing override picker inside the item modal's
-// readonly view. Owner-only — hidden entirely on guest views. The panel
-// has two display states: collapsed (one-line summary + "Override sharing"
-// link) and expanded (full picker).
+// ─── Per-record sharing panel (Part B, Rounds 2 + 3) ──────────────────────
+// One generic panel module powers per-record sharing overrides across all
+// sections: stockroom items (Round 2), grocery lists + reminders + budget
+// transactions (Round 3). Each section registers its specifics in
+// _SHARING_SECTIONS — record source array, DOM mount IDs, save function,
+// current-record-id getter — and reuses the same picker UI + interaction
+// helpers below.
 //
-// State is held on the item itself via item.share. Editing the picker
-// mutates item.share in place and calls saveData() + a re-push.
+// State is held on the record itself via `record.share`. Editing the
+// picker mutates the field in place and calls the section's save +
+// _rePushAllShares() for fast guest-side propagation.
 //
-// _itemSharingExpanded toggles whether the picker is shown; resets on each
-// modal open via _renderItemSharingPanel.
-let _itemSharingExpanded = false;
+// _sharingExpanded and _SHARING_SECTIONS are declared near the top of
+// the file (near editingId) so the various registerSharingSection() calls
+// scattered through this file don't trip the const TDZ. See the comment
+// near those declarations for why.
 
-function _renderItemSharingPanel(item) {
-  const section = document.getElementById('ro-sharing-section');
-  const content = document.getElementById('ro-sharing-content');
-  if (!section || !content) return;
+// Section registry contract. Each entry tells the panel HOW to find /
+// save / re-render records for that section. Keep keys short — they
+// appear in onclick attribute strings throughout the picker UI.
+//
+//   findRecord(id)   — return the record object (or null)
+//   currentId()      — return the id of the record currently being edited
+//                      for this section (e.g. editingId for items)
+//   save()           — async, persist the changed record (saveData,
+//                      _saveGroceryLists, etc.)
+//   mountSectionEl() — outer wrapper element to show/hide
+//   mountContentEl() — inner element that receives the rendered HTML
+//   noun             — singular noun for tooltips ("item", "list", etc.)
+
+// Public API for sections to register themselves. Each section's editor
+// code calls this to register its own spec — lets section-specific code
+// live near its editor without coming back here to edit a central
+// registry. Section keys must be unique.
+function registerSharingSection(key, spec) {
+  if (_SHARING_SECTIONS[key]) {
+    console.warn('[sharing] section already registered, overwriting:', key);
+  }
+  _SHARING_SECTIONS[key] = spec;
+}
+
+// Register the item section here as the first user of the API. Other
+// sections (groceryList, reminder, transaction) register themselves
+// alongside their own editor code.
+registerSharingSection('item', {
+  findRecord:    (id) => items.find(i => i.id === id),
+  currentId:     ()   => editingId,
+  save:          ()   => saveData(),
+  mountSectionEl: () => document.getElementById('ro-sharing-section'),
+  mountContentEl: () => document.getElementById('ro-sharing-content'),
+  noun:          'item',
+});
+
+// Called by each section's editor when it opens. Resets expanded state
+// and renders the panel for the currently-edited record.
+function openSharingPanelFor(sectionKey) {
+  _sharingExpanded[sectionKey] = false;
+  const spec = _SHARING_SECTIONS[sectionKey];
+  if (!spec) return;
+  const rec = spec.findRecord(spec.currentId());
+  _renderSharingPanel(sectionKey, rec);
+}
+
+function _renderSharingPanel(sectionKey, record) {
+  const spec = _SHARING_SECTIONS[sectionKey];
+  if (!spec) return;
+  const sectionEl = spec.mountSectionEl();
+  const contentEl = spec.mountContentEl();
+  if (!sectionEl || !contentEl) return;
 
   // Guests never see this panel — sharing policy is owner-only.
-  if (!isOwner()) { section.style.display = 'none'; return; }
+  if (!isOwner()) { sectionEl.style.display = 'none'; return; }
 
-  // If there are no shares configured at all, the panel is useless —
-  // nothing to override for. Show a one-line note instead of the picker.
+  // No record (shouldn't happen, but guard) — hide cleanly.
+  if (!record) { sectionEl.style.display = 'none'; return; }
+
+  // No shares configured anywhere → panel is useless, show a one-liner.
   if (!Array.isArray(_shareTargets) || !_shareTargets.length) {
-    section.style.display = 'block';
-    content.innerHTML = `<p style="font-size:12px;color:var(--muted);font-style:italic">No shares configured. Set up household sharing first to use per-item overrides.</p>`;
+    sectionEl.style.display = 'block';
+    contentEl.innerHTML = `<p style="font-size:12px;color:var(--muted);font-style:italic">No shares configured. Set up household sharing first to use per-${esc(spec.noun)} overrides.</p>`;
     return;
   }
 
-  section.style.display = 'block';
-  if (!_itemSharingExpanded) {
-    content.innerHTML = _renderItemSharingSummary(item);
+  sectionEl.style.display = 'block';
+  if (!_sharingExpanded[sectionKey]) {
+    contentEl.innerHTML = _renderSharingSummary(sectionKey, record);
   } else {
-    content.innerHTML = _renderItemSharingPicker(item);
+    contentEl.innerHTML = _renderSharingPicker(sectionKey, record);
   }
 }
 
-// Compute a human-readable summary of the current share state for the
-// collapsed view. Returns the inner HTML of the summary row + the
-// "Override sharing" link / "Reset to inherit" link as appropriate.
-function _renderItemSharingSummary(item) {
-  const share = item.share;
+// One-line summary of the current state. Visible in the collapsed view.
+function _renderSharingSummary(sectionKey, record) {
+  const share = record.share;
   let label, icon;
   if (share == null) {
     label = `Inherits from household — visible to ${_shareTargets.length} share${_shareTargets.length===1?'':'s'} per section perms`;
@@ -12324,9 +12457,9 @@ function _renderItemSharingSummary(item) {
   }
 
   const action = (share != null)
-    ? `<button class="btn btn-ghost btn-sm" onclick="_clearItemSharing()" style="margin-right:6px"><svg class="icon" aria-hidden="true"><use href="#i-rotate-ccw"></use></svg> Reset</button>
-       <button class="btn btn-ghost btn-sm" onclick="_expandItemSharing()"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit</button>`
-    : `<button class="btn btn-ghost btn-sm" onclick="_expandItemSharing()"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Override sharing</button>`;
+    ? `<button class="btn btn-ghost btn-sm" onclick="_clearSharing('${sectionKey}')" style="margin-right:6px"><svg class="icon" aria-hidden="true"><use href="#i-rotate-ccw"></use></svg> Reset</button>
+       <button class="btn btn-ghost btn-sm" onclick="_expandSharing('${sectionKey}')"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit</button>`
+    : `<button class="btn btn-ghost btn-sm" onclick="_expandSharing('${sectionKey}')"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Override sharing</button>`;
 
   return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border-radius:8px">
     <svg class="icon" aria-hidden="true" style="color:var(--muted);flex-shrink:0"><use href="#${icon}"></use></svg>
@@ -12335,19 +12468,14 @@ function _renderItemSharingSummary(item) {
   </div>`;
 }
 
-// Full picker UI shown when the panel is expanded. Four states (radio):
-// inherit / private / allow / deny. Plus a read-only multi-select that
-// works alongside inherit AND allow (so you can say "allow these 3,
-// and of those 3, mark one as read-only").
-function _renderItemSharingPicker(item) {
-  const share = item.share;
-  // Determine current mode (which radio is selected)
+// Expanded picker UI. Four radio modes + optional readOnly chip group.
+function _renderSharingPicker(sectionKey, record) {
+  const share = record.share;
   let mode = 'inherit';
   if (share === 'private') mode = 'private';
   else if (typeof share === 'object') {
     if (Array.isArray(share.allow)) mode = 'allow';
     else if (Array.isArray(share.deny)) mode = 'deny';
-    // readOnly without allow/deny still counts as 'inherit' for the radio
   }
 
   const allowSet    = new Set(Array.isArray(share?.allow)    ? share.allow    : []);
@@ -12356,163 +12484,152 @@ function _renderItemSharingPicker(item) {
 
   const radio = (val, label, help) => `
     <label style="display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:8px;cursor:pointer;border:1px solid ${mode===val?'var(--accent)':'var(--border)'};background:${mode===val?'rgba(232,168,56,0.08)':'transparent'};margin-bottom:6px">
-      <input type="radio" name="item-share-mode" value="${val}" ${mode===val?'checked':''} onchange="_setItemSharingMode('${val}')" style="accent-color:var(--accent);margin-top:2px;cursor:pointer">
+      <input type="radio" name="${sectionKey}-share-mode" value="${val}" ${mode===val?'checked':''} onchange="_setSharingMode('${sectionKey}','${val}')" style="accent-color:var(--accent);margin-top:2px;cursor:pointer">
       <div style="flex:1">
         <div style="font-size:13px;font-weight:600;color:var(--text)">${esc(label)}</div>
         <div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4">${esc(help)}</div>
       </div>
     </label>`;
 
-  // Per-share chips, used inside allow / deny / readOnly multi-select. The
-  // shareCodeSet param decides which are pre-checked.
-  const shareChips = (shareCodeSet, action, disabled) => _shareTargets.map(t => {
-    const checked = shareCodeSet.has(t.code);
-    return `<button class="btn btn-ghost btn-sm" ${disabled?'disabled':''} onclick="${action}('${t.code}')"
+  const shareChips = (selSet, key, disabled) => _shareTargets.map(t => {
+    const checked = selSet.has(t.code);
+    return `<button class="btn btn-ghost btn-sm" ${disabled?'disabled':''} onclick="_toggleSharingArr('${sectionKey}','${key}','${t.code}')"
       style="padding:5px 12px;border-radius:99px;font-size:12px;border:1px solid ${checked?'var(--accent)':'var(--border)'};background:${checked?'rgba(232,168,56,0.15)':'var(--bg)'};color:${checked?'var(--accent)':'var(--muted)'};${disabled?'opacity:0.4;cursor:not-allowed':''}">
       ${checked?'<svg class="icon icon-sm" aria-hidden="true"><use href="#i-check"></use></svg> ':''}${esc(t.name)}
     </button>`;
   }).join('');
 
-  const showAllowList    = mode === 'allow';
-  const showDenyList     = mode === 'deny';
-  // ReadOnly applies to allow members (downgrade allowed share to view) OR
-  // to inherit (downgrade everyone-otherwise-rw to view). It's mutually
-  // exclusive with 'deny' and 'private' (those drop the record entirely,
-  // so read-only would be meaningless).
-  const showReadOnly     = mode === 'inherit' || mode === 'allow';
+  const noun = _SHARING_SECTIONS[sectionKey]?.noun || 'record';
+  const showAllowList = mode === 'allow';
+  const showDenyList  = mode === 'deny';
+  const showReadOnly  = mode === 'inherit' || mode === 'allow';
 
   return `
     <div style="padding:12px;background:var(--surface2);border-radius:8px">
       ${radio('inherit', 'Inherit (default)', 'Use the section-level permission for every share.')}
-      ${radio('private', 'Private — owner only', 'Hide this item from every share. Nobody sees it.')}
+      ${radio('private', 'Private — owner only', `Hide this ${noun} from every share. Nobody sees it.`)}
       ${radio('allow',   'Only specific shares', 'Hide from everyone EXCEPT the shares you tick below.')}
       ${radio('deny',    'Hide from specific shares', 'Show to everyone EXCEPT the shares you tick below.')}
 
       ${showAllowList ? `
         <div style="margin-top:12px">
           <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">Allowed shares</div>
-          <div style="display:flex;flex-wrap:wrap;gap:6px">${shareChips(allowSet, '_toggleItemSharingAllow', false)}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">${shareChips(allowSet, 'allow', false)}</div>
         </div>` : ''}
 
       ${showDenyList ? `
         <div style="margin-top:12px">
           <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">Denied shares</div>
-          <div style="display:flex;flex-wrap:wrap;gap:6px">${shareChips(denySet, '_toggleItemSharingDeny', false)}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">${shareChips(denySet, 'deny', false)}</div>
         </div>` : ''}
 
       ${showReadOnly ? `
         <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
           <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">Read-only for these shares</div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.4">Selected shares can see this item but never edit it, even if they have edit perm on the whole section.</div>
-          <div style="display:flex;flex-wrap:wrap;gap:6px">${shareChips(readOnlySet, '_toggleItemSharingReadOnly', mode==='deny'||mode==='private')}</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.4">Selected shares can see this ${esc(noun)} but never edit it, even if they have edit perm on the whole section.</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">${shareChips(readOnlySet, 'readOnly', mode==='deny'||mode==='private')}</div>
         </div>` : ''}
 
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:6px">
-        <button class="btn btn-ghost btn-sm" onclick="_collapseItemSharing()">Done</button>
+        <button class="btn btn-ghost btn-sm" onclick="_collapseSharing('${sectionKey}')">Done</button>
       </div>
     </div>`;
 }
 
-// ── Sharing panel interactions ──────────────────────────────────────────
-// All of these mutate items.find(... editingId).share, persist via
-// saveData(), and re-render the panel. Re-push to shares happens
-// debounced via _syncQueue.enqueue.
+// ── Sharing panel interactions (generic, section-keyed) ─────────────────
+// Each handler resolves to its section's spec, mutates the record via the
+// spec's findRecord(), persists via spec.save(), and re-renders.
 
-function _expandItemSharing() {
-  _itemSharingExpanded = true;
-  const item = items.find(i => i.id === editingId);
-  if (item) _renderItemSharingPanel(item);
+function _expandSharing(sectionKey) {
+  _sharingExpanded[sectionKey] = true;
+  const spec = _SHARING_SECTIONS[sectionKey];
+  if (!spec) return;
+  const rec = spec.findRecord(spec.currentId());
+  if (rec) _renderSharingPanel(sectionKey, rec);
 }
 
-function _collapseItemSharing() {
-  _itemSharingExpanded = false;
-  const item = items.find(i => i.id === editingId);
-  if (item) _renderItemSharingPanel(item);
+function _collapseSharing(sectionKey) {
+  _sharingExpanded[sectionKey] = false;
+  const spec = _SHARING_SECTIONS[sectionKey];
+  if (!spec) return;
+  const rec = spec.findRecord(spec.currentId());
+  if (rec) _renderSharingPanel(sectionKey, rec);
 }
 
-async function _clearItemSharing() {
-  const item = items.find(i => i.id === editingId);
-  if (!item) return;
-  delete item.share;
-  item.updatedAt = new Date().toISOString();
-  await saveData();
-  _itemSharingExpanded = false;
-  _renderItemSharingPanel(item);
+async function _clearSharing(sectionKey) {
+  const spec = _SHARING_SECTIONS[sectionKey];
+  if (!spec) return;
+  const rec = spec.findRecord(spec.currentId());
+  if (!rec) return;
+  delete rec.share;
+  rec.updatedAt = new Date().toISOString();
+  await spec.save();
+  _sharingExpanded[sectionKey] = false;
+  _renderSharingPanel(sectionKey, rec);
   _syncQueue.enqueue('Updating sharing…');
-  // Re-push to all shares so the change propagates immediately
   _rePushAllShares();
 }
 
-function _setItemSharingMode(mode) {
-  const item = items.find(i => i.id === editingId);
-  if (!item) return;
-  // Preserve readOnly across mode flips when it still makes sense
-  // (inherit and allow keep it; private and deny clear it).
-  const oldReadOnly = (typeof item.share === 'object' && Array.isArray(item.share?.readOnly))
-    ? item.share.readOnly : [];
+function _setSharingMode(sectionKey, mode) {
+  const spec = _SHARING_SECTIONS[sectionKey];
+  if (!spec) return;
+  const rec = spec.findRecord(spec.currentId());
+  if (!rec) return;
+  // Preserve readOnly across mode flips when it still makes sense.
+  // Inherit and allow keep it; private and deny clear it.
+  const oldReadOnly = (typeof rec.share === 'object' && Array.isArray(rec.share?.readOnly))
+    ? rec.share.readOnly : [];
 
   if (mode === 'inherit') {
-    if (oldReadOnly.length) {
-      item.share = { readOnly: oldReadOnly };
-    } else {
-      delete item.share;
-    }
+    if (oldReadOnly.length) rec.share = { readOnly: oldReadOnly };
+    else                    delete rec.share;
   } else if (mode === 'private') {
-    item.share = 'private';
+    rec.share = 'private';
   } else if (mode === 'allow') {
-    const oldAllow = (typeof item.share === 'object' && Array.isArray(item.share?.allow))
-      ? item.share.allow : [];
-    item.share = { allow: oldAllow };
-    if (oldReadOnly.length) item.share.readOnly = oldReadOnly;
+    const oldAllow = (typeof rec.share === 'object' && Array.isArray(rec.share?.allow))
+      ? rec.share.allow : [];
+    rec.share = { allow: oldAllow };
+    if (oldReadOnly.length) rec.share.readOnly = oldReadOnly;
   } else if (mode === 'deny') {
-    const oldDeny = (typeof item.share === 'object' && Array.isArray(item.share?.deny))
-      ? item.share.deny : [];
-    item.share = { deny: oldDeny };
+    const oldDeny = (typeof rec.share === 'object' && Array.isArray(rec.share?.deny))
+      ? rec.share.deny : [];
+    rec.share = { deny: oldDeny };
   }
-  item.updatedAt = new Date().toISOString();
-  saveData();
-  _renderItemSharingPanel(item);
+  rec.updatedAt = new Date().toISOString();
+  spec.save();
+  _renderSharingPanel(sectionKey, rec);
   _syncQueue.enqueue('Updating sharing…');
   _rePushAllShares();
 }
 
-function _toggleItemSharingAllow(shareCode)   { _toggleItemSharingArr('allow',    shareCode); }
-function _toggleItemSharingDeny(shareCode)    { _toggleItemSharingArr('deny',     shareCode); }
-function _toggleItemSharingReadOnly(shareCode){ _toggleItemSharingArr('readOnly', shareCode); }
-
-function _toggleItemSharingArr(key, shareCode) {
-  const item = items.find(i => i.id === editingId);
-  if (!item || typeof item.share !== 'object' || item.share === null) {
-    // Defensive: if share isn't an object the chip shouldn't have been
-    // tappable, but guard anyway. Initialise an empty object so the
-    // toggle can proceed.
-    item.share = {};
+function _toggleSharingArr(sectionKey, key, shareCode) {
+  const spec = _SHARING_SECTIONS[sectionKey];
+  if (!spec) return;
+  const rec = spec.findRecord(spec.currentId());
+  if (!rec) return;
+  if (typeof rec.share !== 'object' || rec.share === null) {
+    rec.share = {};
   }
-  const cur = Array.isArray(item.share[key]) ? [...item.share[key]] : [];
+  const cur = Array.isArray(rec.share[key]) ? [...rec.share[key]] : [];
   const idx = cur.indexOf(shareCode);
   if (idx === -1) cur.push(shareCode);
   else cur.splice(idx, 1);
-  if (cur.length) {
-    item.share[key] = cur;
-  } else {
-    delete item.share[key];
+  if (cur.length) rec.share[key] = cur;
+  else            delete rec.share[key];
+  // Auto-clean: empty share object → delete entirely (= inherit)
+  if (typeof rec.share === 'object' && Object.keys(rec.share).length === 0) {
+    delete rec.share;
   }
-  // If the object is now empty (no allow/deny/readOnly), clear it entirely
-  // — that's just "inherit" without the noise.
-  if (typeof item.share === 'object' && Object.keys(item.share).length === 0) {
-    delete item.share;
-  }
-  item.updatedAt = new Date().toISOString();
-  saveData();
-  _renderItemSharingPanel(item);
+  rec.updatedAt = new Date().toISOString();
+  spec.save();
+  _renderSharingPanel(sectionKey, rec);
   _syncQueue.enqueue('Updating sharing…');
   _rePushAllShares();
 }
 
 // Re-push every share so per-record perm changes take effect immediately
-// on the guest side. Without this, the change would still flow through
-// the next debounced sync, just a bit later. Worth doing here for fast
-// feedback when the owner is actively configuring overrides.
+// on the guest side. Worth doing for fast feedback when the owner is
+// actively configuring overrides.
 async function _rePushAllShares() {
   if (!Array.isArray(_shareTargets) || !_shareTargets.length) return;
   for (const t of _shareTargets) {
@@ -22465,10 +22582,25 @@ function _renderTransactionRow(tx) {
   const catName = cat ? cat.name : 'Uncategorised';
   const catColor = cat ? cat.color : 'var(--muted)';
   const where = tx.where || '(no merchant)';
+  // Owner-only sharing indicator — small shield/eye-off icon shown next to
+  // the merchant name when the tx has a custom sharing override. Tooltip
+  // describes the state. Guests never see this; their view is already
+  // filtered server-side.
+  const shareInd = (isOwner() && tx.share != null) ? (() => {
+    const sh = tx.share;
+    let icon = 'i-shield', title = 'Custom sharing';
+    if (sh === 'private') { icon = 'i-eye-off'; title = 'Private — owner only'; }
+    else if (typeof sh === 'object') {
+      if (Array.isArray(sh.allow))     title = `Visible to ${sh.allow.length} share${sh.allow.length===1?'':'s'} only`;
+      else if (Array.isArray(sh.deny)) title = `Hidden from ${sh.deny.length} share${sh.deny.length===1?'':'s'}`;
+      if (Array.isArray(sh.readOnly) && sh.readOnly.length) title += ` · read-only for ${sh.readOnly.length}`;
+    }
+    return `<svg class="icon icon-sm" aria-hidden="true" title="${_escapeHtml(title)}" style="color:var(--muted);margin-left:6px;vertical-align:-2px"><use href="#${icon}"></use></svg>`;
+  })() : '';
   return `
     <div class="spend-tx-row" onclick="openSpendTxEditor('${tx.id}')">
       <div class="spend-tx-info">
-        <div class="spend-tx-where">${_escapeHtml(where)}</div>
+        <div class="spend-tx-where">${_escapeHtml(where)}${shareInd}</div>
         <div class="spend-tx-cat"><span class="budget-cat-dot" style="background:${catColor}"></span>${_escapeHtml(catName)}</div>
       </div>
       <div class="spend-tx-amount">${_money(tx.amount)}</div>
@@ -22619,6 +22751,20 @@ async function confirmQuickAdd() {
 }
 
 // ── Transaction edit modal ─────────────────────────────────────────────────
+// Register the transaction section with the sharing-panel module.
+// Transactions live in a month-keyed map (`transactions[yyyymm][id]`)
+// rather than a flat array — getTransaction handles the lookup, and
+// saveBudgetSpendLocal persists transactions + categories specifically
+// (the smaller save path that updateTransaction uses too).
+registerSharingSection('transaction', {
+  findRecord: (id) => getTransaction(id),
+  currentId:  ()   => _spendEditingTxId,
+  save:       ()   => saveBudgetSpendLocal(),
+  mountSectionEl: () => document.getElementById('tx-sharing-section'),
+  mountContentEl: () => document.getElementById('tx-sharing-content'),
+  noun: 'spend',
+});
+
 function openSpendTxEditor(txId) {
   const tx = getTransaction(txId);
   if (!tx) return;
@@ -22637,6 +22783,9 @@ function openSpendTxEditor(txId) {
 
   openModal('spend-tx-modal');
   setTimeout(() => document.getElementById('spend-tx-where').focus(), 50);
+  // Render the sharing panel for this transaction. Hidden by the module
+  // when no shares exist or when not the owner.
+  openSharingPanelFor('transaction');
 }
 
 async function saveSpendTxFromEditor() {
@@ -26314,7 +26463,18 @@ function renderGroceryListPicker() {
         <div onclick="switchGroceryList('${l.id}')" style="display:flex;flex-direction:column;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;cursor:pointer;transition:border-color 0.15s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
           <div style="display:flex;align-items:center;gap:14px">
             <div style="flex:1;min-width:0">
-              <div style="font-size:16px;font-weight:700;margin-bottom:3px">${modeBadge}${esc(l.name)}</div>
+              <div style="font-size:16px;font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:6px">${modeBadge}<span>${esc(l.name)}</span>${(isOwner() && l.share != null) ? (() => {
+                // Per-list sharing override indicator (owner-only).
+                const sh = l.share;
+                let icon = 'i-shield', title = 'Custom sharing';
+                if (sh === 'private') { icon = 'i-eye-off'; title = 'Private — owner only'; }
+                else if (typeof sh === 'object') {
+                  if (Array.isArray(sh.allow))     title = `Visible to ${sh.allow.length} share${sh.allow.length===1?'':'s'} only`;
+                  else if (Array.isArray(sh.deny)) title = `Hidden from ${sh.deny.length} share${sh.deny.length===1?'':'s'}`;
+                  if (Array.isArray(sh.readOnly) && sh.readOnly.length) title += ` · read-only for ${sh.readOnly.length}`;
+                }
+                return `<svg class="icon icon-sm" aria-hidden="true" title="${esc(title)}" style="color:var(--muted)"><use href="#${icon}"></use></svg>`;
+              })() : ''}</div>
               <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">
                 ${l.store ? `<svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> ${esc(l.store)} · ` : ''}${statusBits} · ${fmt(l.updatedAt)}
               </div>
@@ -26388,6 +26548,23 @@ function openAddGroceryList() {
   _openGroceryListModal(null);
 }
 
+// Track the grocery list currently open in the editor overlay. Set when
+// the overlay is shown for an existing list (not a new one); read by the
+// sharing-panel section spec's currentId(). Cleared on overlay teardown
+// via the MutationObserver that already hides/restores the FAB.
+let _editingGroceryListId = null;
+
+// Register the grocery-list section with the sharing-panel module. Save
+// path is _saveGroceryLists (lists are user-level, not per-household).
+registerSharingSection('groceryList', {
+  findRecord: (id) => groceryLists.find(l => l.id === id),
+  currentId:  ()   => _editingGroceryListId,
+  save:       ()   => _saveGroceryLists(),
+  mountSectionEl: () => document.getElementById('gl-sharing-section'),
+  mountContentEl: () => document.getElementById('gl-sharing-content'),
+  noun: 'list',
+});
+
 function editGroceryList(id) {
   _openGroceryListModal(id);
 }
@@ -26395,6 +26572,11 @@ function editGroceryList(id) {
 function _openGroceryListModal(id) {
   document.getElementById('grocery-list-picker-overlay')?.remove();
   const list = id ? groceryLists.find(l => l.id === id) : null;
+  // Track which list is being edited so the sharing-panel spec can find
+  // the right record via currentId(). Null for the "new list" flow —
+  // sharing-panel won't render in that case (the record doesn't exist yet).
+  _editingGroceryListId = list ? id : null;
+
   const overlay = document.createElement('div');
   overlay.id = 'grocery-list-picker-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(0,0,0,0.7);display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px)';
@@ -26403,6 +26585,13 @@ function _openGroceryListModal(id) {
   // via the MutationObserver below so all three dismissal paths (Cancel
   // button, backdrop click, _saveGroceryListModal) are covered automatically.
   _hideFabForCustomOverlay(overlay);
+  // Sharing panel mount points — only meaningful when editing an existing
+  // list (a new list has no id yet, can't carry a share field).
+  const sharingMount = list ? `
+      <div id="gl-sharing-section" style="margin-bottom:14px;display:none">
+        <label style="font-size:12px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;display:block;margin-bottom:6px"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Sharing</label>
+        <div id="gl-sharing-content"></div>
+      </div>` : '';
   overlay.innerHTML = `
     <div style="background:var(--surface);border-radius:20px 20px 0 0;width:100%;max-width:560px;padding:24px 20px 36px;box-shadow:0 -8px 32px rgba(0,0,0,0.5)">
       <div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 18px"></div>
@@ -26415,21 +26604,34 @@ function _openGroceryListModal(id) {
         <label style="font-size:12px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;display:block;margin-bottom:4px">Store (optional)</label>
         <input id="gl-store" class="form-input" type="text" value="${esc(list?.store||'')}" placeholder="e.g. Tesco, Lidl, Amazon…" autocomplete="off">
       </div>
+      ${sharingMount}
       <div style="display:flex;gap:10px">
-        <button onclick="document.getElementById('grocery-list-picker-overlay').remove()" style="flex:1;padding:13px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:16px;font-weight:600;cursor:pointer">Cancel</button>
+        <button onclick="_closeGroceryListModal()" style="flex:1;padding:13px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:16px;font-weight:600;cursor:pointer">Cancel</button>
         <button onclick="_saveGroceryListModal('${id||''}')" style="flex:2;padding:13px;border-radius:10px;border:none;background:var(--accent);color:#111;font-size:16px;font-weight:700;cursor:pointer">${list ? 'Save' : 'Create list'}</button>
       </div>
     </div>`;
-  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  overlay.addEventListener('click', e => { if (e.target === overlay) _closeGroceryListModal(); });
   document.body.appendChild(overlay);
   setTimeout(() => document.getElementById('gl-name').focus(), 100);
+  // Render the sharing panel after the overlay is in the DOM. No-op when
+  // creating a new list (mount points don't exist).
+  if (list) openSharingPanelFor('groceryList');
+}
+
+// Helper: dismiss the overlay AND clear the editing-id tracker so any
+// stale sharing-panel calls (e.g. from a fast re-open) don't find a
+// record from the previous session. Kept in one place because all three
+// dismissal paths (Cancel button, backdrop tap, Save) call it.
+function _closeGroceryListModal() {
+  document.getElementById('grocery-list-picker-overlay')?.remove();
+  _editingGroceryListId = null;
 }
 
 async function _saveGroceryListModal(id) {
   const name  = document.getElementById('gl-name')?.value.trim();
   const store = document.getElementById('gl-store')?.value.trim();
   if (!name) { toast('Enter a list name'); return; }
-  document.getElementById('grocery-list-picker-overlay')?.remove();
+  _closeGroceryListModal();
 
   if (id) {
     const list = groceryLists.find(l => l.id === id);
