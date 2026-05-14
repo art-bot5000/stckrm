@@ -13590,7 +13590,12 @@ async function bulkDelete() {
   }
   const n = set.size;
   const noun = (n === 1) ? spec.noun : spec.pluralNoun;
-  if (!confirm(`Move ${n} ${noun} to the recycle bin?\n\nYou can restore them within 30 days.`)) return;
+  // Spec opts into a different confirm message when delete is permanent
+  // (e.g. budget transactions which use tombstones — no recycle bin).
+  const confirmMsg = spec.deleteIsPermanent
+    ? `Delete ${n} ${noun}? This can't be undone.`
+    : `Move ${n} ${noun} to the recycle bin?\n\nYou can restore them within 30 days.`;
+  if (!confirm(confirmMsg)) return;
   const ids = [...set];
   for (const id of ids) {
     const rec = spec.findRecord(id);
@@ -13601,7 +13606,10 @@ async function bulkDelete() {
   exitBulkSelectMode();
   if (spec.rerender) spec.rerender();
   _syncQueue?.enqueue?.('Updating…');
-  toast(`Moved ${n} ${noun} to recycle bin`);
+  const toastMsg = spec.deleteIsPermanent
+    ? `Deleted ${n} ${noun}`
+    : `Moved ${n} ${noun} to recycle bin`;
+  toast(toastMsg);
 }
 
 async function bulkArchive() {
@@ -23153,13 +23161,24 @@ function _renderTransactionRow(tx) {
     return `<svg class="icon icon-sm" aria-hidden="true" title="${_escapeHtml(title)}" style="color:var(--muted);margin-left:6px;vertical-align:-2px"><use href="#${icon}"></use></svg>`;
   })() : '';
   return `
-    <div class="spend-tx-row" onclick="openSpendTxEditor('${tx.id}')">
+    <div class="spend-tx-row${bulkSelectionHas('transaction', tx.id) ? ' selected' : ''}" data-bulk-id="${tx.id}" data-bulk-section="transaction" onclick="onSpendTxRowClick(event,'${tx.id}')">
       <div class="spend-tx-info">
         <div class="spend-tx-where">${_escapeHtml(where)}${shareInd}</div>
         <div class="spend-tx-cat"><span class="budget-cat-dot" style="background:${catColor}"></span>${_escapeHtml(catName)}</div>
       </div>
       <div class="spend-tx-amount">${_money(tx.amount)}</div>
     </div>`;
+}
+
+// Click handler for spend tx rows. In bulk-select mode, toggles selection;
+// otherwise opens the tx editor as before.
+function onSpendTxRowClick(event, id) {
+  if (isBulkSelectMode('transaction')) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    toggleBulkSelection('transaction', id);
+    return;
+  }
+  openSpendTxEditor(id);
 }
 
 // ── Period navigation ──────────────────────────────────────────────────────
@@ -23318,6 +23337,54 @@ registerSharingSection('transaction', {
   mountSectionEl: () => document.getElementById('tx-sharing-section'),
   mountContentEl: () => document.getElementById('tx-sharing-content'),
   noun: 'spend',
+});
+
+// Register the transaction section with the bulk-select module (Pass 2d).
+// Unit: a single spend (one row inside a day group). Unlike the other
+// sections, transactions DON'T use _deletedAt — they hard-delete via the
+// budgetTransactionDeletedIds tombstone Set + a remove from the
+// transactions[yyyymm] map. That means the bulk confirm copy needs to
+// say "This can't be undone" (no recycle bin), driven by the
+// deleteIsPermanent flag.
+//
+// applyDelete: mirror of deleteTransaction — find the month bucket,
+// remove from it, prune empty buckets, add to tombstone Set. Per-record
+// _findTransaction is O(n) per call but n is small in practice.
+registerBulkSelectSection('transaction', {
+  findRecord: (id) => getTransaction(id),
+  save:       ()   => saveBudgetSpendLocal(),
+  rerender:   ()   => {
+    // Spend rows live inside the budget tab's "spend" panel. Only re-render
+    // that one panel if it's currently active; otherwise the next visit
+    // to the budget tab will paint fresh data anyway.
+    if (_currentView === 'budget' && _budgetActivePanel === 'spend') renderBudgetSpend();
+    else if (_currentView === 'budget' && _budgetActivePanel === 'dashboard') renderBudgetDashboard();
+  },
+  getVisibleIds: () => Array.from(document.querySelectorAll('#view-budget [data-bulk-id][data-bulk-section="transaction"]'))
+                        .map(el => el.getAttribute('data-bulk-id'))
+                        .filter(Boolean),
+  permCheck:  ()   => {
+    if (!canWrite('budget')) { showLockBanner('budget'); return false; }
+    return true;
+  },
+  applyDelete: (tx) => {
+    // Mirror deleteTransaction's logic. The tx object passed in is a
+    // direct reference into transactions[yyyymm][id], so we re-find its
+    // month bucket to do the removal cleanly. Tombstone set add prevents
+    // a sync resurrection.
+    const located = _findTransaction(tx.id);
+    if (!located) return;
+    delete transactions[located.yyyymm][tx.id];
+    if (Object.keys(transactions[located.yyyymm]).length === 0) {
+      delete transactions[located.yyyymm];
+    }
+    budgetTransactionDeletedIds.add(tx.id);
+  },
+  // No applyArchive — transactions don't have an archived state.
+  deleteIsPermanent: true,
+  sectionPermKey:    'budget',
+  noun:              'spend',
+  pluralNoun:        'spends',
 });
 
 function openSpendTxEditor(txId) {

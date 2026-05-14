@@ -4292,3 +4292,11 @@ body.bulk-select-mode-reminder [data-bulk-disabled="true"]:hover {
    bulk Share in the action bar cover their function. */
 body.bulk-select-mode-reminder .reminder-card-actions { display: none !important; }
 body.bulk-select-mode-reminder [data-bulk-disabled="true"] .reminder-card-actions { display: none !important; }
+
+/* ─── Spend tx rows — bulk-select mode (Pass 2d) ─────────────────────────
+   Tx rows in the spend list get the same .selected outline + accent tint
+   as the other sections. Day-group headers (.spend-day-heading) stay
+   unaffected — they're labels, not selectable rows. */
+body.bulk-select-mode-transaction .spend-tx-row { cursor: pointer; transition: outline 0.12s; }
+body.bulk-select-mode-transaction .spend-tx-row:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.spend-tx-row.selected { outline: 2px solid var(--accent); outline-offset: -2px; background: rgba(232,168,56,0.05); }

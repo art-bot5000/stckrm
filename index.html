@@ -2181,6 +2181,13 @@
         <!-- populated -->
       </div>
 
+      <!-- Spend list toolbar (Pass 2d) — currently just the Select entry.
+           Sits between the category tiles and the tx list, aligned right
+           so it's discoverable without dominating the section. -->
+      <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
+        <button class="btn btn-ghost btn-sm" onclick="enterBulkSelectMode('transaction')" title="Select transactions"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Select</button>
+      </div>
+
       <!-- Transactions, grouped by day -->
       <div id="budget-spend-tx-list" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px">
         <!-- populated -->
