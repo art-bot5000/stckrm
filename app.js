@@ -13579,11 +13579,13 @@ function toggleBulkSelection(sectionKey, id) {
   if (set.has(id)) set.delete(id);
   else             set.add(id);
   _renderBulkSelectBar();
-  // Light visual update on the affected card/row only — cheaper than a
-  // full rerender. Caller can also rerender if they need to (e.g. when
-  // selection drives more than just the .selected class).
-  const el = document.querySelector(`[data-bulk-id="${id}"][data-bulk-section="${sectionKey}"]`);
-  if (el) el.classList.toggle('selected', set.has(id));
+  // Full re-render via the spec — guarantees the visual stays in sync
+  // with the selection set regardless of how the section's elements
+  // are wrapped (e.g. categories have a wrapped _renderCategoryTile
+  // that produced fragile querySelector targets). Cost is minor —
+  // dozens of elements at most per section.
+  const spec = _getActiveSpec();
+  if (spec && spec.rerender) spec.rerender();
 }
 
 // "All" button — toggles every currently-visible record in the section.
