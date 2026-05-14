@@ -4267,3 +4267,28 @@ body.bulk-select-mode-grocery .grocery-picker-card:hover { outline: 2px solid va
 /* Suppress per-card buttons in select mode — the action bar's bulk
    Delete / Share covers their function across the selection. */
 body.bulk-select-mode-grocery .grocery-picker-card-actions { display: none !important; }
+
+/* ─── Reminder cards — bulk-select mode (Pass 2c) ──────────────────────
+   Standalone reminder cards get the same .selected outline + accent tint
+   as Stockroom cards. Item-attached cards (data-bulk-disabled) grey out
+   to signal they aren't selectable here — the user has to go to the
+   item editor in Stockroom to override their sharing.
+   The per-card action row (Mark replaced / Edit / Delete chip) is
+   suppressed in select mode so taps go to selection toggle only. */
+body.bulk-select-mode-reminder .reminder-card { cursor: pointer; transition: outline 0.12s; }
+body.bulk-select-mode-reminder .reminder-card:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.reminder-card.selected { outline: 2px solid var(--accent); outline-offset: -2px; background: rgba(232,168,56,0.05); }
+/* Item-attached cards aren't selectable — visually grey out and disable
+   the hover affordance so the user knows. They still respond to clicks
+   to open the timeline. */
+body.bulk-select-mode-reminder [data-bulk-disabled="true"] {
+  opacity: 0.45;
+  pointer-events: auto; /* keep clicks working for timeline */
+}
+body.bulk-select-mode-reminder [data-bulk-disabled="true"]:hover {
+  outline: none;
+}
+/* Hide the per-card action buttons row in select mode — bulk Delete +
+   bulk Share in the action bar cover their function. */
+body.bulk-select-mode-reminder .reminder-card-actions { display: none !important; }
+body.bulk-select-mode-reminder [data-bulk-disabled="true"] .reminder-card-actions { display: none !important; }

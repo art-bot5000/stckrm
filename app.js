@@ -6012,6 +6012,19 @@ function renderRemindersRecycleBin() {
   bin.innerHTML = headerHTML + `<div class="recycle-bin-rows">${rowsHTML}</div>`;
 }
 
+// Click handler for reminder cards. In bulk-select mode, toggles selection
+// for standalone reminders (item-attached ones don't reach this handler —
+// see reminderCardHTML's clickHandler branch which routes them straight
+// to openReminderTimeline). Outside select mode, opens the timeline.
+function onReminderCardClick(event, id) {
+  if (isBulkSelectMode('reminder')) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    toggleBulkSelection('reminder', id);
+    return;
+  }
+  openReminderTimeline(id);
+}
+
 function reminderCardHTML(r) {
   const days     = getReminderDaysUntil(r);
   const status   = getReminderStatus(r);
@@ -6038,7 +6051,18 @@ function reminderCardHTML(r) {
     : 'Never replaced';
   const nextLabel = dueDate ? `Next: ${fmtDate(dueDate.toISOString().slice(0,10))}` : 'Set a date to track';
 
-  return `<div data-reminder-id="${r.id}" style="background:var(--surface);border:1px solid ${borderColor};border-radius:12px;padding:14px 16px;margin-bottom:10px;display:flex;gap:12px;align-items:flex-start;cursor:pointer;transition:border-color 0.15s,box-shadow 0.15s" onclick="openReminderTimeline('${r.id}')" title="Tap to view timeline">
+  // Bulk-select wiring (Pass 2c). Standalone reminders are selectable;
+  // item-attached ones are marked disabled so they grey out in select
+  // mode but still respond to taps normally (their click still opens
+  // the timeline). The bulk-attrs and class only apply to standalone.
+  const bulkAttrs = isFromItem
+    ? `data-bulk-disabled="true"`
+    : `class="reminder-card${bulkSelectionHas('reminder', r.id) ? ' selected' : ''}" data-bulk-id="${r.id}" data-bulk-section="reminder"`;
+  const clickHandler = isFromItem
+    ? `openReminderTimeline('${r.id}')`
+    : `onReminderCardClick(event,'${r.id}')`;
+
+  return `<div data-reminder-id="${r.id}" ${bulkAttrs} style="background:var(--surface);border:1px solid ${borderColor};border-radius:12px;padding:14px 16px;margin-bottom:10px;display:flex;gap:12px;align-items:flex-start;cursor:pointer;transition:border-color 0.15s,box-shadow 0.15s,outline 0.12s" onclick="${clickHandler}" title="Tap to view timeline">
     <div style="flex:1;min-width:0">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
         <span style="font-size:15px;font-weight:700;color:var(--text)">${esc(r.itemName || r.name)}</span>
@@ -6065,7 +6089,7 @@ function reminderCardHTML(r) {
         ${intervalLabel} · ${lastLabel}<br>${nextLabel}
       </div>
       ${r.notes ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-top:6px"><svg class="icon" aria-hidden="true"><use href="#i-message-square"></use></svg> ${esc(r.notes)}</div>` : ''}
-      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap" onclick="event.stopPropagation()">
+      <div class="reminder-card-actions" style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap" onclick="event.stopPropagation()">
         <button class="btn btn-primary btn-sm" onclick="openLogReplacementModal('${r.id}')"><svg class="icon" aria-hidden="true"><use href="#i-check-circle-2"></use></svg> Mark replaced</button>
         ${!isFromItem
           ? `<button class="btn btn-ghost btn-sm" onclick="openEditReminderModal('${r.id}')"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit</button>`
@@ -6382,6 +6406,42 @@ registerSharingSection('reminder', {
   mountSectionEl: () => document.getElementById('rem-sharing-section'),
   mountContentEl: () => document.getElementById('rem-sharing-content'),
   noun: 'reminder',
+});
+
+// Register the reminder section with the bulk-select module (Pass 2c).
+// Scope: STANDALONE reminders ONLY (in the reminders[] array). Item-
+// attached reminders (those derived from item.replacementReminders[])
+// inherit their parent item's sharing — for those, the user goes to
+// Stockroom and overrides the item. We mark item-attached cards as
+// data-bulk-disabled in the render so they visually grey out in select
+// mode and are skipped by getVisibleIds.
+//
+// No archive — reminders have no _archived state. Action bar shows
+// [All | Share | Delete | Cancel].
+registerBulkSelectSection('reminder', {
+  findRecord: (id) => reminders.find(r => r.id === id),
+  save:       ()   => saveReminders(),
+  rerender:   ()   => renderReminders(),
+  // Only standalone cards have data-bulk-id (item-attached ones get a
+  // data-bulk-disabled instead — see reminderCardHTML), so this selector
+  // naturally excludes them.
+  getVisibleIds: () => Array.from(document.querySelectorAll('#view-reminders [data-bulk-id][data-bulk-section="reminder"]'))
+                        .map(el => el.getAttribute('data-bulk-id'))
+                        .filter(Boolean),
+  permCheck:  ()   => {
+    if (!canWrite('reminders')) { showLockBanner('reminders'); return false; }
+    return true;
+  },
+  applyDelete: (rem) => {
+    rem._deletedAt = new Date().toISOString();
+    if (typeof touchField === 'function') {
+      try { touchField(rem, '_deletedAt'); } catch(_) {}
+    }
+  },
+  // No applyArchive — action bar omits Archive automatically.
+  sectionPermKey: 'reminders',
+  noun:           'reminder',
+  pluralNoun:     'reminders',
 });
 
 function openEditReminderModal(id) {

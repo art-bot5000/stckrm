@@ -1887,7 +1887,10 @@
         <h2 style="font-size:18px;font-weight:700;margin:0"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-bell"></use></svg> Reminders</h2>
         <p style="font-size:12px;color:var(--muted);margin-top:3px">Set reminders for Stockroom items or anything else</p>
       </div>
-      <button class="btn btn-primary btn-sm" onclick="openAddReminderModal()"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Reminder</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-ghost btn-sm" onclick="enterBulkSelectMode('reminder')" title="Select reminders"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Select</button>
+        <button class="btn btn-primary btn-sm" onclick="openAddReminderModal()"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Reminder</button>
+      </div>
     </div>
 
     <!-- Overdue / due soon nudge bar -->
