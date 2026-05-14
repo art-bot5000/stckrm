@@ -850,6 +850,7 @@
     #view-stock #stock-search-toolbar { flex-direction: row; flex-wrap: nowrap; gap: 10px; justify-content: flex-start; }
     #view-stock #stock-toolbar-wrap  { flex: 0 0 135px; max-width: 135px; min-width: 0; }
     #view-stock #stock-sort-wrap     { flex: 0 0 135px; max-width: 135px; min-width: 0; }
+    #view-stock #stock-select-wrap   { flex: 0 0 110px; max-width: 110px; min-width: 0; }
     #view-report { max-width: 100%; }
     /* Compact-width views (~800px, left-aligned to match Stockroom and Report) */
     #view-grocery,
@@ -2142,13 +2143,13 @@ body.note-open { overflow: hidden; touch-action: none; }
 }
 
 
-/* Mobile: filters + sort split 50/50 on a single row. The #stock-search-wrap
-   that used to occupy the full first row was removed when the global search
-   took over. */
+/* Mobile: filters + sort split 50/50 on row 1; Select gets row 2 at
+   100% width. Wrapping is handled by flex-wrap on #stock-search-toolbar. */
 @media (max-width: 899px) {
   #view-stock #stock-search-toolbar { flex-wrap: wrap; }
   #view-stock #stock-toolbar-wrap  { flex: 1 1 calc(50% - 5px); max-width: calc(50% - 5px); }
   #view-stock #stock-sort-wrap     { flex: 1 1 calc(50% - 5px); max-width: calc(50% - 5px); }
+  #view-stock #stock-select-wrap   { flex: 1 1 100%; max-width: 100%; }
 }
 
 
@@ -4189,4 +4190,61 @@ body.global-search-open { overflow: hidden; touch-action: none; }
    alongside the rest of the sidebar via the existing #app-nav rules. */
 @media (max-width: 899px) {
   .app-nav-search-wrap { display: none; }
+}
+
+/* ─── Stockroom multi-select mode (Pass 1) ──────────────────────────────
+   When body has .stock-select-mode, cards swap their hover affordances
+   for a click-to-toggle behaviour. .selected gives the visual cue. The
+   floating action bar (#stock-select-bar) sits above the FAB on desktop
+   and replaces it on mobile (the FAB hides while in select mode). */
+body.stock-select-mode .item-card { cursor: pointer; transition: outline 0.12s; }
+body.stock-select-mode .item-card:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.item-card.selected { outline: 2px solid var(--accent); outline-offset: -2px; background: rgba(232,168,56,0.05); }
+/* Card per-item action menu (the kebab/chip) is suppressed in select mode
+   so taps go straight to selection toggle. */
+body.stock-select-mode .card-actions,
+body.stock-select-mode .swipe-hint { display: none !important; }
+/* Hide the existing FAB when select mode is active; the action bar takes
+   over the same role. */
+body.stock-select-mode #fab-btn { display: none !important; }
+
+.stock-select-bar {
+  position: fixed;
+  z-index: 700;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+  backdrop-filter: blur(6px);
+  max-width: calc(100vw - 24px);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.stock-select-bar-count {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--muted);
+  padding-right: 8px;
+  border-right: 1px solid var(--border);
+  margin-right: 4px;
+  white-space: nowrap;
+}
+@media (max-width: 899px) {
+  .stock-select-bar {
+    bottom: 12px;
+    left: 8px;
+    right: 8px;
+    transform: none;
+    max-width: none;
+    border-radius: 16px;
+    padding: 10px 12px;
+    font-size: 13px;
+  }
 }

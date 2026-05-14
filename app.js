@@ -2029,6 +2029,13 @@ let _sharingExpanded = {};
 // Populated by registerSharingSection() — see the registration calls in
 // each section's editor. Pre-declared here (empty) so TDZ never throws.
 let _SHARING_SECTIONS = {};
+// ─── Stockroom multi-select state (Pass 1) ────────────────────────────
+// Set of item ids currently selected for a bulk action. Selection mode is
+// "on" when this set is non-empty OR _stockSelectMode is true. The mode
+// flag lets the user enter selection mode before picking the first item
+// (the bar appears with "0 selected"). Cleared on exit / after action.
+let _stockSelection = new Set();
+let _stockSelectMode = false;
 let tempStorePrices = []; // also declared in scanner.js; declared here so openAddModal works before scanner.js loads
 let activeFilter = 'all';
 let activeCadence = 'all';
@@ -8503,7 +8510,7 @@ function cardHTML(item, threshold) {
   const tagsInlineHTML = cardSelectedTagsInline(item);
 
   return `
-  <div class="item-card" style="border-left:3px solid ${color}" data-id="${item.id}"
+  <div class="item-card${_stockSelection.has(item.id) ? ' selected' : ''}" style="border-left:3px solid ${color}" data-id="${item.id}" data-item-id="${item.id}"
     onclick="onCardClick(event,'${item.id}')"
     onmouseenter="onCardHoverEnter('${item.id}')"
     onmouseleave="onCardHoverLeave('${item.id}')"
@@ -8780,6 +8787,14 @@ function _dismissCardActions(id) {
 // Suppress the open-edit click if a long-press just fired (touch path);
 // otherwise always open the edit modal (and dismiss any open overlay first).
 function onCardClick(event, id) {
+  // Multi-select mode (Pass 1): when active, taps toggle the item's
+  // selection instead of opening the editor. Action menus + hover are
+  // also suppressed (the swipe-hint chip isn't useful here either).
+  if (_stockSelectMode) {
+    if (event && event.stopPropagation) event.stopPropagation();
+    toggleStockSelection(id);
+    return;
+  }
   const st = _cardActionState.by[id] || {};
   if (st.suppressClick) {
     st.suppressClick = false;
@@ -11404,6 +11419,12 @@ function _restoreFromBillingLockscreens() {
 }
 
 function showView(name, btn) {
+  // Exit stockroom multi-select mode when switching to any other tab.
+  // The action bar is body-level so it'd otherwise stick around. Skip
+  // when staying on stock (e.g. re-clicking the tab).
+  if (_stockSelectMode && name !== 'stock' && name !== 'shopping') {
+    exitStockSelectMode();
+  }
   _currentViewName = name;
   // Restore any previously-hidden view content from billing lockscreens
   // before swapping to the new view (cheap; idempotent if nothing hidden).
@@ -13292,6 +13313,311 @@ async function saveStartedUsing() {
   scheduleRender('grid', 'dashboard');
   setTimeout(syncAll, 400);
   toast('Start date saved — stock clock updated ✓');
+}
+
+// ─── Stockroom multi-select / bulk actions (Pass 1) ──────────────────────
+// Entry: "Select" button in the Stockroom toolbar enters _stockSelectMode.
+// In that mode, tapping a card adds/removes it from _stockSelection
+// (instead of opening the editor). A floating action bar at the bottom
+// shows the selection count + Delete / Archive / Share / Cancel actions.
+
+function enterStockSelectMode() {
+  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
+  _stockSelectMode = true;
+  _stockSelection.clear();
+  document.body.classList.add('stock-select-mode');
+  _renderStockSelectionBar();
+  scheduleRender('grid');
+}
+
+function exitStockSelectMode() {
+  _stockSelectMode = false;
+  _stockSelection.clear();
+  document.body.classList.remove('stock-select-mode');
+  _renderStockSelectionBar();
+  scheduleRender('grid');
+}
+
+// Card click handler when in select mode. Cards call this from their
+// onclick instead of openEditModal when body has .stock-select-mode.
+function toggleStockSelection(id) {
+  if (!_stockSelectMode) return;
+  if (_stockSelection.has(id)) _stockSelection.delete(id);
+  else                         _stockSelection.add(id);
+  _renderStockSelectionBar();
+  // Mark/unmark just this card visually — cheaper than full re-render
+  const cardEl = document.querySelector(`[data-item-id="${id}"]`);
+  if (cardEl) cardEl.classList.toggle('selected', _stockSelection.has(id));
+}
+
+// Select-all toggle in the action bar. "All" means everything currently
+// visible in the grid (filtered by the active filter set + search), NOT
+// every item in the database. That matches the user's mental model —
+// "select all of what I see."
+function toggleStockSelectAll() {
+  // Read the rendered grid's card ids — respects current filters/sort.
+  const visibleIds = Array.from(document.querySelectorAll('#items-grid [data-item-id]'))
+    .map(el => el.getAttribute('data-item-id'))
+    .filter(Boolean);
+  const allSelected = visibleIds.length > 0 && visibleIds.every(id => _stockSelection.has(id));
+  if (allSelected) {
+    visibleIds.forEach(id => _stockSelection.delete(id));
+  } else {
+    visibleIds.forEach(id => _stockSelection.add(id));
+  }
+  _renderStockSelectionBar();
+  scheduleRender('grid');
+}
+
+// Render the floating bottom bar. Idempotent — creates the element on
+// first call, updates innerText / button state on subsequent calls.
+function _renderStockSelectionBar() {
+  let bar = document.getElementById('stock-select-bar');
+  if (!_stockSelectMode) {
+    if (bar) bar.remove();
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'stock-select-bar';
+    bar.className = 'stock-select-bar';
+    document.body.appendChild(bar);
+  }
+  const n = _stockSelection.size;
+  const disabled = n === 0 ? 'disabled style="opacity:0.5;cursor:not-allowed"' : '';
+  bar.innerHTML = `
+    <div class="stock-select-bar-count">${n} selected</div>
+    <button class="btn btn-ghost btn-sm" onclick="toggleStockSelectAll()" title="Toggle select all">All</button>
+    <button class="btn btn-ghost btn-sm" ${disabled} onclick="bulkStockShare()" title="Share selected"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg> Share</button>
+    <button class="btn btn-ghost btn-sm" ${disabled} onclick="bulkStockArchive()" title="Archive selected"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg> Archive</button>
+    <button class="btn btn-ghost btn-sm" ${disabled} onclick="bulkStockDelete()" title="Delete selected" style="color:var(--danger)"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
+    <button class="btn btn-ghost btn-sm" onclick="exitStockSelectMode()" title="Exit selection">Cancel</button>
+  `;
+}
+
+async function bulkStockDelete() {
+  if (!_stockSelection.size) return;
+  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
+  const n = _stockSelection.size;
+  if (!confirm(`Move ${n} item${n===1?'':'s'} to the recycle bin?\n\nYou can restore them within 30 days.`)) return;
+  const ids = [..._stockSelection];
+  const now = new Date().toISOString();
+  for (const id of ids) {
+    const item = items.find(i => i.id === id);
+    if (!item) continue;
+    item._deletedAt = now;
+    if (typeof touchField === 'function') { try { touchField(item, '_deletedAt'); } catch(_) {} }
+  }
+  await saveData();
+  exitStockSelectMode();
+  scheduleRender('grid', 'dashboard', 'shopping');
+  _syncQueue.enqueue('Updating…');
+  toast(`Moved ${n} item${n===1?'':'s'} to recycle bin`);
+}
+
+async function bulkStockArchive() {
+  if (!_stockSelection.size) return;
+  if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
+  const n = _stockSelection.size;
+  const ids = [..._stockSelection];
+  const now = new Date().toISOString();
+  for (const id of ids) {
+    const item = items.find(i => i.id === id);
+    if (!item) continue;
+    item._archived = true;
+    item.updatedAt = now;
+  }
+  await saveData();
+  exitStockSelectMode();
+  scheduleRender('grid', 'dashboard');
+  _syncQueue.enqueue();
+  toast(`Archived ${n} item${n===1?'':'s'}`);
+}
+
+// Open the bulk-share modal. Lists existing shares (each with an "Add to
+// this share" action) plus a "+ Create new share" button. The modal is
+// built inline because it's only used in this flow.
+function bulkStockShare() {
+  if (!_stockSelection.size) return;
+  if (!isOwner()) { toast('Only the owner can share items'); return; }
+  const n = _stockSelection.size;
+  // If no shares exist yet, skip the picker and go straight to new-share.
+  const existing = Array.isArray(_shareTargets) ? _shareTargets.filter(t => !t._deletedAt) : [];
+
+  document.getElementById('bulk-share-overlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'bulk-share-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:650;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)';
+  // Hide FAB while open — see _hideFabForCustomOverlay
+  _hideFabForCustomOverlay(overlay);
+
+  const existingRows = existing.length ? existing.map(t => `
+    <div onclick="bulkStockShareAppendToExisting('${t.code}')" style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <div style="width:32px;height:32px;border-radius:50%;background:${esc(t.colour||'var(--accent)')};display:flex;align-items:center;justify-content:center;color:#111;font-weight:700;font-size:13px;flex-shrink:0">${esc((t.name||'?').charAt(0).toUpperCase())}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px;font-weight:600;color:var(--text)">${esc(t.name)}</div>
+        <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${esc(t.guestEmail||'(no email)')}</div>
+      </div>
+      <svg class="icon icon-sm" aria-hidden="true" style="color:var(--muted)"><use href="#i-plus"></use></svg>
+    </div>`).join('') : `<p style="font-size:13px;color:var(--muted);font-style:italic;padding:8px 4px;margin:0">No existing shares yet.</p>`;
+
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;width:100%;max-width:480px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 12px 48px rgba(0,0,0,0.5)">
+      <div style="padding:18px 18px 12px;border-bottom:1px solid var(--border)">
+        <h3 style="font-size:17px;font-weight:700;margin:0 0 4px 0"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent);vertical-align:-3px"><use href="#i-share-2"></use></svg> Share ${n} item${n===1?'':'s'}</h3>
+        <p style="font-size:12px;color:var(--muted);margin:0">Append to an existing share, or create a new one — recipients will see ONLY these items.</p>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:14px 18px">
+        ${existing.length ? `<div style="font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Add to existing share</div>` : ''}
+        ${existingRows}
+        <button onclick="bulkStockShareCreateNew()" style="width:100%;padding:13px;border-radius:10px;border:1px dashed var(--accent);background:transparent;color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;margin-top:8px;display:flex;align-items:center;justify-content:center;gap:6px">
+          <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Create new share with these items
+        </button>
+      </div>
+      <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end">
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('bulk-share-overlay').remove()">Cancel</button>
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+// Append the current selection to an existing share's allow list. Each
+// selected item gets share.allow extended with shareCode (or share.allow
+// initialised to [shareCode] if no override existed). Existing readOnly
+// entries are preserved. Existing deny entries are NOT cleared — if the
+// item was specifically denied to this share, that takes precedence;
+// user has to clear the deny manually.
+async function bulkStockShareAppendToExisting(shareCode) {
+  document.getElementById('bulk-share-overlay')?.remove();
+  if (!_stockSelection.size) return;
+  const ids = [..._stockSelection];
+  const now = new Date().toISOString();
+  let appended = 0;
+  let alreadyDenied = 0;
+  for (const id of ids) {
+    const item = items.find(i => i.id === id);
+    if (!item) continue;
+    // Skip items already explicitly denied to this share — flag for toast.
+    if (typeof item.share === 'object' && Array.isArray(item.share?.deny) && item.share.deny.includes(shareCode)) {
+      alreadyDenied++;
+      continue;
+    }
+    if (item.share == null) {
+      item.share = { allow: [shareCode] };
+    } else if (typeof item.share === 'object') {
+      const allow = Array.isArray(item.share.allow) ? item.share.allow : [];
+      if (!allow.includes(shareCode)) allow.push(shareCode);
+      item.share.allow = allow;
+    } else if (item.share === 'private') {
+      // Private → switch to explicit allow with just this share
+      item.share = { allow: [shareCode] };
+    }
+    item.updatedAt = now;
+    appended++;
+  }
+  await saveData();
+  exitStockSelectMode();
+  scheduleRender('grid');
+  _syncQueue.enqueue('Updating sharing…');
+  // Re-push that specific share so the recipient sees the new items.
+  try { await pushSharedData(shareCode); } catch(_) {}
+  const tgt = _shareTargets.find(t => t.code === shareCode);
+  const recName = tgt?.name || 'share';
+  let msg = `Added ${appended} item${appended===1?'':'s'} to ${recName}`;
+  if (alreadyDenied) msg += ` · ${alreadyDenied} skipped (explicitly denied)`;
+  toast(msg);
+}
+
+// Open the standard share-create flow (share-target-modal) pre-configured
+// for this bulk-share path: stockroom perm set to 'r' so the recipient
+// can SEE the items (per-item allow overrides what they actually see),
+// and a hidden flag _bulkShareSelectionPending so saveShareTarget knows
+// to apply the allow-list to the selected items after the share is
+// successfully created.
+function bulkStockShareCreateNew() {
+  document.getElementById('bulk-share-overlay')?.remove();
+  if (!_stockSelection.size) return;
+  // Capture selection — exitStockSelectMode will clear _stockSelection
+  // but we keep a local copy that saveShareTarget consults via the
+  // _bulkShareSelectionPending flag.
+  _bulkShareSelectionPending = { section: 'stockroom', ids: [..._stockSelection] };
+  // Open the existing share-target-modal in "create" mode. Pre-set the
+  // section perm to 'r' so the recipient can see anything we explicitly
+  // allow. Other sections default to 'none' so the new share is scoped
+  // tightly to the items being shared.
+  openAddShareTarget();
+  // openAddShareTarget runs synchronously enough that the modal is open
+  // before we get here — but the perm-grid render is async via
+  // renderShareTargetPermsGrid. Set the perms after the next tick.
+  setTimeout(() => {
+    // Default every household to {stockroom:'r', groceries:'none', ...}
+    const hhKeys = Object.keys(_shareTargetPerms || {});
+    if (!hhKeys.length) {
+      // No households initialised yet — set 'default' as the fallback
+      _shareTargetPerms = { default: { stockroom: 'r', groceries: 'none', reminders: 'none', budget: 'none' } };
+    } else {
+      for (const k of hhKeys) {
+        _shareTargetPerms[k] = { stockroom: 'r', groceries: 'none', reminders: 'none', budget: 'none' };
+      }
+    }
+    if (typeof renderShareTargetPermsGrid === 'function') renderShareTargetPermsGrid();
+    // Banner so the user knows what's about to happen on Save.
+    const modal = document.getElementById('share-target-modal');
+    let banner = document.getElementById('bulk-share-pending-banner');
+    if (modal && !banner) {
+      banner = document.createElement('div');
+      banner.id = 'bulk-share-pending-banner';
+      banner.style.cssText = 'margin:0 0 12px 0;padding:10px 12px;background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.3);border-radius:8px;font-size:12px;color:var(--text);line-height:1.4';
+      banner.innerHTML = `<svg class="icon icon-sm" aria-hidden="true" style="color:var(--accent);vertical-align:-2px"><use href="#i-share-2"></use></svg> Sharing <strong>${_bulkShareSelectionPending.ids.length} selected item${_bulkShareSelectionPending.ids.length===1?'':'s'}</strong>. Section perms are pre-set; the recipient will see only these items.`;
+      const modalEl = modal.querySelector('.modal');
+      if (modalEl) modalEl.insertBefore(banner, modalEl.firstChild?.nextSibling || null);
+    }
+  }, 30);
+}
+
+// Pending bulk-share state — set by bulkStockShareCreateNew, consumed by
+// saveShareTarget after a successful create. Cleared on cancel or save.
+let _bulkShareSelectionPending = null;
+
+// Cancel path for the share-target-modal. Wired to the modal's Cancel
+// button so we also clear the bulk-share pending state and remove the
+// banner — otherwise the next time the modal opens (for an unrelated
+// share-create) the pending allow-list would be applied to the wrong
+// share. closeModal alone wouldn't reset _bulkShareSelectionPending.
+function _cancelShareTargetModal() {
+  _bulkShareSelectionPending = null;
+  document.getElementById('bulk-share-pending-banner')?.remove();
+  closeModal('share-target-modal');
+}
+
+// Apply the pending bulk-share selection's allow-list overrides. Called
+// from saveShareTarget after a new share is successfully created and we
+// have its code. Returns nothing — fire-and-forget; failures only log.
+async function _applyBulkSharePending(newShareCode) {
+  if (!_bulkShareSelectionPending) return;
+  const { ids } = _bulkShareSelectionPending;
+  _bulkShareSelectionPending = null;
+  if (!Array.isArray(ids) || !ids.length) return;
+  const now = new Date().toISOString();
+  for (const id of ids) {
+    const item = items.find(i => i.id === id);
+    if (!item) continue;
+    if (item.share == null) {
+      item.share = { allow: [newShareCode] };
+    } else if (typeof item.share === 'object') {
+      const allow = Array.isArray(item.share.allow) ? item.share.allow : [];
+      if (!allow.includes(newShareCode)) allow.push(newShareCode);
+      item.share.allow = allow;
+    } else if (item.share === 'private') {
+      item.share = { allow: [newShareCode] };
+    }
+    item.updatedAt = now;
+  }
+  await saveData();
+  scheduleRender('grid');
+  try { await pushSharedData(newShareCode); } catch(_) {}
+  toast(`✓ Shared ${ids.length} item${ids.length===1?'':'s'}`);
 }
 
 async function archiveItem(id) {
@@ -30284,6 +30610,15 @@ async function saveShareTarget() {
       await loadShareTargets();
       closeModal('share-target-modal');
       _shareTargetDone = false; // reset for next use
+
+      // Bulk-share hand-off — if this share was created via the
+      // selection-driven flow (bulkStockShareCreateNew), apply allow
+      // overrides to the selected items now that we have a share code.
+      // Fire-and-forget — failures only toast a warn, the share itself
+      // is already created and saved.
+      try { await _applyBulkSharePending(data.code); } catch(e) { console.warn('_applyBulkSharePending failed:', e); }
+      // Clear the pending-bulk-share banner if it was inserted.
+      document.getElementById('bulk-share-pending-banner')?.remove();
 
       toast(`✓ Share created — link copied! Send it to ${name}`);
       if (kvConnected) setTimeout(syncAll, 600);

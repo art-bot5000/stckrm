@@ -1819,6 +1819,16 @@
           <option value="added">↕ Sort: Date added</option>
         </select>
       </div>
+      <!-- Select mode toggle (Pass 1 multi-select). When in select mode,
+           tapping cards toggles them in the selection set rather than
+           opening the editor; a floating action bar provides Delete /
+           Archive / Share / Cancel. -->
+      <div id="stock-select-wrap">
+        <button class="btn btn-ghost btn-sm" id="stock-select-btn" onclick="enterStockSelectMode()"
+          style="display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:36px">
+          <svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Select
+        </button>
+      </div>
     </div>
 
       <div id="filter-panel" style="display:none;flex-direction:column;gap:8px;margin-bottom:10px;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:10px">
@@ -3782,7 +3792,7 @@
       <button class="btn btn-ghost btn-sm full" onclick="copyShareLink()"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg> Copy link</button>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('share-target-modal')">Cancel</button>
+      <button class="btn btn-ghost" onclick="_cancelShareTargetModal()">Cancel</button>
       <button class="btn btn-primary" id="share-target-save-btn" onclick="handleShareTargetBtn()">Create &amp; get link</button>
     </div>
   </div>
