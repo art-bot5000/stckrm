@@ -13604,6 +13604,21 @@ function toggleBulkSelectAll() {
 // updates innerHTML on subsequent calls. Shared across all sections;
 // labels adapt via spec.pluralNoun and spec.canArchive (Archive button
 // hidden when the section doesn't support archiving).
+// Maps a bulk-select section key to the view container element it should
+// mount into. Mounting inside the view container (rather than #main)
+// means the bar's auto-margin centers it against the SECTION's
+// horizontal extent — which matters because most views (grocery,
+// reminders, budget) have max-width 800px and are LEFT-aligned within
+// #main (1100px). Centering inside #main offset the bar right of the
+// section content. Centering inside the section keeps the bar visually
+// under the data.
+const _BULK_SECTION_VIEW_HOST = {
+  stock:    'view-stock',
+  grocery:  'view-grocery',
+  reminder: 'view-reminders',
+  category: 'view-budget',
+};
+
 function _renderBulkSelectBar() {
   let bar = document.getElementById('bulk-select-bar');
   if (!_bulkSelectActiveSection) {
@@ -13617,13 +13632,14 @@ function _renderBulkSelectBar() {
     bar = document.createElement('div');
     bar.id = 'bulk-select-bar';
     bar.className = 'bulk-select-bar';
-    // Mount inside #main (the content column) so it sticks to the
-    // bottom of the content rather than the viewport. The CSS uses
-    // position:sticky on desktop and switches back to position:fixed
-    // on mobile (where full-width pinning is the conventional pattern).
-    // Falls back to body if #main isn't mounted yet — defensive, the
-    // bar render should never happen before app boot.
-    const host = document.getElementById('main') || document.body;
+    // Mount inside the active section's view container so the bar
+    // centers against the section content (which is left-anchored at
+    // ~800px inside #main's 1100px). Falls back to #main, then body,
+    // if the view container isn't mounted — defensive.
+    const viewId = _BULK_SECTION_VIEW_HOST[_bulkSelectActiveSection];
+    const host   = (viewId && document.getElementById(viewId))
+                || document.getElementById('main')
+                || document.body;
     host.appendChild(bar);
   }
   const n = set.size;
