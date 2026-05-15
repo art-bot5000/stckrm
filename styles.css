@@ -2125,16 +2125,11 @@ body.note-open { overflow: hidden; touch-action: none; }
 }
 
 
-/* Mobile: three equal-width buttons on one row in the order
-   Manage > Filters > Sort. Uses flex `order` so DOM stays as-is for
-   desktop (which has its own fixed-width rules above and keeps the
-   original Filters > Sort > Manage layout). */
-
-/* Manage button — base styles for both desktop and mobile. Previously
-   these lived as an inline style="..." on the button element in
-   index.html, but inline styles always win over @media rules, which
-   made it impossible to centre the icon on mobile. Moving the rules
-   here so the @media block below can override them cleanly. */
+/* ── Manage button base styles ───────────────────────────────────────
+   Previously these lived as an inline style="..." on the button in
+   index.html, which always beat @media rules and made it impossible
+   to centre the icon+label on mobile. Lifting them here so the mobile
+   override below can win cleanly. */
 #view-stock #stock-select-btn {
   display: flex;
   align-items: center;
@@ -2155,6 +2150,10 @@ body.note-open { overflow: hidden; touch-action: none; }
 }
 #view-stock #stock-select-btn:hover { color: var(--text); }
 
+/* Mobile: three equal-width buttons on one row in the order
+   Manage > Filters > Sort. Uses flex `order` so DOM stays as-is for
+   desktop (which has its own fixed-width rules above and keeps the
+   original Filters > Sort > Manage layout). */
 @media (max-width: 899px) {
   #view-stock #stock-search-toolbar { flex-wrap: wrap; }
   #view-stock #stock-toolbar-wrap  { flex: 1 1 calc(33.333% - 7px); max-width: calc(33.333% - 7px); order: 2; }
@@ -2163,11 +2162,10 @@ body.note-open { overflow: hidden; touch-action: none; }
   /* Sort dropdown gets tight padding on mobile so "Sort: Status" still fits
      in a third-width button without truncation. */
   #view-stock #stock-sort-wrap #sort-select { padding-left: 8px; padding-right: 22px; }
-  /* Manage button on mobile: hide the text label and centre the remaining
-     icon. With the inline style removed from index.html, these rules
-     simply override the desktop base above — no !important needed. */
-  #view-stock #stock-select-btn               { justify-content: center; padding: 5px; gap: 0; }
-  #view-stock #stock-select-btn .manage-label { display: none; }
+  /* Manage button on mobile: centre the icon+label as a pair with tight
+     padding so the word "Manage" fits at one-third width. The label
+     stays visible — discoverability matters more than absolute symmetry. */
+  #view-stock #stock-select-btn { justify-content: center; padding: 5px 8px; gap: 6px; }
 }
 
 
