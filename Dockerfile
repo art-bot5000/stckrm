@@ -11,7 +11,7 @@ RUN npm install
 # Frontend source files live at the repo root, not in src/. The previous
 # Dockerfile copied from src/ which silently became stale, so root-level
 # edits never reached production.
-COPY app.js scanner.js styles.css index.html landing.html sw.js manifest.json admin.html favicon.ico icon-16.png icon-32.png icon-48.png icon-96.png icon-144.png icon-180.png icon-192.png icon-512.png icon-512-maskable.png icon-1024.png logo.png og-image.png ./
+COPY app.js scanner.js styles.css index.html landing.html sw.js manifest.json admin.html favicon.ico icon-16.png icon-32.png icon-48.png icon-96.png icon-144.png icon-180.png icon-192.png icon-512.png icon-512-maskable.png icon-1024.png ./
 RUN mkdir -p public && \
     npx terser app.js --compress --mangle --comments false -o public/app.js && \
     npx terser scanner.js --compress --mangle --comments false -o public/scanner.js && \
@@ -34,8 +34,6 @@ RUN mkdir -p public && \
     cp manifest.json public/manifest.json && \
     cp favicon.ico public/favicon.ico && \
     cp icon-16.png icon-32.png icon-48.png icon-96.png icon-144.png icon-180.png icon-192.png icon-512.png icon-512-maskable.png icon-1024.png public/ && \
-    cp logo.png public/logo.png && \
-    cp og-image.png public/og-image.png && \
     cp admin.html public/admin.html
 
 FROM denoland/deno:2.3.1
