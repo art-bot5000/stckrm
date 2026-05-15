@@ -2491,11 +2491,6 @@ async function loadData() {
   if (Array.isArray(loadedItems)) items = loadedItems;
   if (loadedSettings && typeof loadedSettings === 'object') settings = { ...settings, ...loadedSettings };
 
-  // Apply user's theme preference now that settings are loaded — this
-  // re-runs applyTheme with the persisted choice, replacing the early
-  // dark-default paint that happened before settings were ready.
-  if (typeof applyTheme === 'function') applyTheme();
-
   // Backfill localStorage from user settings so early-firing browser events (beforeinstallprompt)
   // also see the dismissed flag without waiting for a network sync
   if (settings._installDismissed) {
@@ -19801,9 +19796,6 @@ function renderSettingsForUser() {
   updateHeaderGreeting();
   _updateSidebarProfile();
   renderAccountSecurity();
-  // Sync theme segmented control with current preference. Safe to call
-  // even if buttons aren't mounted — the helper no-ops on missing IDs.
-  _updateThemeUI();
 }
 
 function updateSyncPill(state, provider) {
@@ -19837,127 +19829,39 @@ function updateSyncPill(state, provider) {
 
 
 // ═══════════════════════════════════════════════════════════
-//  THEME SYSTEM — Light / Dark / System
+//  ADAPTIVE DARK MODE 2.0 — Time-of-day colour temperature
 // ═══════════════════════════════════════════════════════════
-// settings.theme can be 'system' | 'light' | 'dark' (default: 'system').
-// applyTheme() sets <html data-theme="..."> so styles.css can scope tokens
-// off it, updates the <meta name="theme-color"> for mobile browser chrome,
-// and re-runs applyAdaptiveColourTemp() to pick the right hue overrides
-// for whichever mode is now active.
-
-function _resolveTheme(pref) {
-  // 'system' resolves to the current OS preference; everything else
-  // passes through unchanged.
-  if (pref === 'light' || pref === 'dark') return pref;
-  try {
-    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-  } catch (e) {
-    return 'dark';
-  }
-}
-
-function applyTheme() {
-  const pref     = (settings && settings.theme) || 'system';
-  const resolved = _resolveTheme(pref);
-  // Setting data-theme on <html> drives the [data-theme="light"] CSS
-  // overrides. We always set it explicitly (rather than removing) so
-  // dark mode has data-theme="dark" — useful for any future overrides
-  // that need to disambiguate from the no-attribute default.
-  document.documentElement.setAttribute('data-theme', resolved);
-  // Keep the browser/PWA chrome in sync. The static <meta> value in
-  // index.html is just the initial-paint fallback.
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', resolved === 'light' ? '#f5f3ec' : '#0f1117');
-  // Re-apply the time-of-day surface/accent shifts for the new mode.
-  if (typeof applyAdaptiveColourTemp === 'function') applyAdaptiveColourTemp();
-  // Update the segmented control in Preferences if it's mounted.
-  _updateThemeUI();
-}
-
-function setTheme(pref) {
-  if (!['system', 'light', 'dark'].includes(pref)) pref = 'system';
-  settings.theme = pref;
-  // Save without re-rendering everything — applyTheme handles UI.
-  _saveSettings();
-  applyTheme();
-}
-
-function _updateThemeUI() {
-  const pref = (settings && settings.theme) || 'system';
-  ['system', 'light', 'dark'].forEach(opt => {
-    const btn = document.getElementById('theme-seg-' + opt);
-    if (!btn) return;
-    const active = opt === pref;
-    btn.classList.toggle('active', active);
-    btn.setAttribute('aria-checked', active ? 'true' : 'false');
-  });
-}
-
-// Live-update when the OS theme flips (e.g. Android auto-dark at sunset)
-// and the user has 'system' selected. matchMedia listener is wired once
-// at module load; the guard inside re-checks pref each time it fires so
-// switching away from 'system' silently stops responding.
-try {
-  const mql = window.matchMedia('(prefers-color-scheme: light)');
-  const handler = () => {
-    if (((settings && settings.theme) || 'system') === 'system') applyTheme();
-  };
-  if (mql.addEventListener) mql.addEventListener('change', handler);
-  else if (mql.addListener)  mql.addListener(handler); // Safari < 14 fallback
-} catch (e) { /* matchMedia unavailable — ignore */ }
-
-
-// ═══════════════════════════════════════════════════════════
-//  ADAPTIVE COLOUR TEMPERATURE — Time-of-day tuning
-// ═══════════════════════════════════════════════════════════
-// Subtle hue/opacity shifts that vary by time of day to give the UI a
-// gentle circadian feel. Now theme-aware: dark mode keeps its original
-// punchy --ok / --accent2 overrides, while light mode applies a milder
-// version (surface-opacity nudges only — the dark-mode hex values would
-// wash out on white surfaces).
 
 function applyAdaptiveColourTemp() {
   const h = new Date().getHours();
-  const mode = document.documentElement.getAttribute('data-theme') || 'dark';
+  // The viewport-tint overlay was removed — it painted an orange/amber wash
+  // over every view except Notes (which has its own opaque bg), creating
+  // an inconsistent look. We keep the subtle --ok / --accent2 hue shifts
+  // through the day since those are tied to specific UI elements, not a
+  // full-screen overlay.
   const tint = 'rgba(0,0,0,0)';
   let surfaceOpacity = '0.82';
 
-  if (mode === 'light') {
-    // Light mode: surface opacity shifts only. Skip the --ok / --accent2
-    // overrides — the dark-tuned hex values are too desaturated for white
-    // backgrounds and the light palette already has well-tuned accent
-    // colours. We let the CSS-defined light-mode values stand.
-    if (h >= 22 || h < 6)       surfaceOpacity = '0.96'; // night: nearly opaque (less translucency at night)
-    else if (h >= 6  && h < 10) surfaceOpacity = '0.88'; // morning: crisp
-    else if (h >= 18 && h < 22) surfaceOpacity = '0.92'; // evening
-    else                        surfaceOpacity = '0.90'; // daytime
+  if (h >= 22 || h < 6) {
+    // Late night / early morning: more opaque surfaces
+    surfaceOpacity = '0.92';
+    document.documentElement.style.setProperty('--ok',    '#3db87a');
+    document.documentElement.style.setProperty('--accent2','#4f82e0');
+  } else if (h >= 6 && h < 10) {
+    // Morning: cool blue-white, crisp
+    surfaceOpacity = '0.78';
+    document.documentElement.style.setProperty('--ok',    '#4cbb8a');
+    document.documentElement.style.setProperty('--accent2','#5b8dee');
+  } else if (h >= 18 && h < 22) {
+    // Evening
+    surfaceOpacity = '0.86';
+    document.documentElement.style.setProperty('--ok',    '#45b882');
+    document.documentElement.style.setProperty('--accent2','#547ee8');
   } else {
-    // Dark mode: the original Stockroom adaptive palette.
-    if (h >= 22 || h < 6) {
-      surfaceOpacity = '0.92';
-      document.documentElement.style.setProperty('--ok',    '#3db87a');
-      document.documentElement.style.setProperty('--accent2','#4f82e0');
-    } else if (h >= 6 && h < 10) {
-      surfaceOpacity = '0.78';
-      document.documentElement.style.setProperty('--ok',    '#4cbb8a');
-      document.documentElement.style.setProperty('--accent2','#5b8dee');
-    } else if (h >= 18 && h < 22) {
-      surfaceOpacity = '0.86';
-      document.documentElement.style.setProperty('--ok',    '#45b882');
-      document.documentElement.style.setProperty('--accent2','#547ee8');
-    } else {
-      surfaceOpacity = '0.82';
-      document.documentElement.style.setProperty('--ok',    '#4cbb8a');
-      document.documentElement.style.setProperty('--accent2','#5b8dee');
-    }
-  }
-
-  // Switching from dark to light: clear any inline --ok / --accent2
-  // overrides we may have set during a prior dark-mode pass, so the
-  // light-mode CSS values take effect.
-  if (mode === 'light') {
-    document.documentElement.style.removeProperty('--ok');
-    document.documentElement.style.removeProperty('--accent2');
+    // Daytime: neutral
+    surfaceOpacity = '0.82';
+    document.documentElement.style.setProperty('--ok',    '#4cbb8a');
+    document.documentElement.style.setProperty('--accent2','#5b8dee');
   }
 
   document.documentElement.style.setProperty('--temp-tint', tint);
@@ -37651,3 +37555,470 @@ renderBudget = async function() {
     renderBudgetBasicMode();
   }
 };
+// ═══════════════════════════════════════════════════════════════════
+//  OMNIBOX — Pass 1
+// ═══════════════════════════════════════════════════════════════════
+// The omnibox is the persistent input bar at the top of every tab.
+// It replaces the modal-based global search and adds six action
+// buttons (Search / Stockroom / Groceries / Reminders / Notes /
+// Spend) that operate on the text in the input.
+//
+// The existing search engine (runGlobalSearch, _searchStockroom etc.)
+// is reused unchanged — we just retarget its renderer at the omnibox's
+// own results container. _navigateToSearchResult is also reused; it
+// closes the omnibox via closeGlobalSearch's body-class cleanup, which
+// we still trigger here for compatibility.
+//
+// Architecture:
+//   - #omnibox in index.html has data-state="collapsed" by default.
+//   - onOmniboxFocus / onOmniboxInput flip it to "expanded" and run
+//     the same debounced search as the old global modal did.
+//   - The action buttons (.omnibox-action) call omniboxAction(kind),
+//     which routes to the existing add-flow for that destination.
+//   - Pass 2 will add intent detection — for now all buttons are
+//     always enabled and Search is the Enter-key default.
+
+const _OMNIBOX = {
+  active: false,
+  debounceTimer: null,
+  query: '',
+  // Set to true once auto-grow is wired so we don't double-bind.
+  autoGrowBound: false,
+};
+
+function _omniboxEl()      { return document.getElementById('omnibox'); }
+function _omniboxInput()   { return document.getElementById('omnibox-input'); }
+function _omniboxResults() { return document.getElementById('omnibox-results'); }
+
+function onOmniboxFocus() {
+  expandOmnibox();
+}
+
+// Expand the omnibox panel. Idempotent — safe to call from focus,
+// keyboard shortcut, paste, etc.
+function expandOmnibox() {
+  const omni = _omniboxEl();
+  if (!omni) return;
+  omni.setAttribute('data-state', 'expanded');
+  _OMNIBOX.active = true;
+  document.body.classList.add('omnibox-expanded');
+  // Show the collapse chevron (mobile users need a way to dismiss the
+  // panel without losing what they typed). Clear-X visibility is
+  // managed separately based on input value.
+  const collapseBtn = document.getElementById('omnibox-collapse-btn');
+  if (collapseBtn) collapseBtn.style.display = '';
+  _refreshOmniboxClearButton();
+}
+
+// Collapse without clearing the input. Useful when the user is mid-typing
+// and wants to see the page again — they can tap back in to resume.
+function collapseOmnibox() {
+  const omni = _omniboxEl();
+  if (!omni) return;
+  omni.setAttribute('data-state', 'collapsed');
+  _OMNIBOX.active = false;
+  document.body.classList.remove('omnibox-expanded');
+  const collapseBtn = document.getElementById('omnibox-collapse-btn');
+  if (collapseBtn) collapseBtn.style.display = 'none';
+  // Blur the input so the keyboard dismisses on mobile.
+  try { _omniboxInput()?.blur(); } catch(_) {}
+}
+
+// Clear input + results, keep panel expanded with focus.
+function clearOmnibox() {
+  const inp = _omniboxInput();
+  if (inp) { inp.value = ''; }
+  _OMNIBOX.query = '';
+  clearTimeout(_OMNIBOX.debounceTimer);
+  _renderOmniboxEmpty();
+  _refreshOmniboxClearButton();
+  _autoGrowOmnibox();
+  try { inp?.focus(); } catch(_) {}
+}
+
+// Show/hide the clear-X based on whether the input has any text.
+function _refreshOmniboxClearButton() {
+  const btn = document.getElementById('omnibox-clear-btn');
+  const inp = _omniboxInput();
+  if (!btn || !inp) return;
+  btn.style.display = inp.value ? '' : 'none';
+}
+
+// Auto-grow the textarea from 1 line up to ~4 lines, then stop (CSS
+// caps overflow to hidden). Without this the field stays at 1 line
+// even after wrapping, which feels broken when pasting a block.
+function _autoGrowOmnibox() {
+  const ta = _omniboxInput();
+  if (!ta) return;
+  // Reset to single line first so we can measure scrollHeight cleanly.
+  ta.style.height = 'auto';
+  // Cap at the CSS max-height (96px) — anything taller stays scrollable
+  // internally rather than pushing the panel down.
+  const h = Math.min(ta.scrollHeight, 96);
+  ta.style.height = h + 'px';
+}
+
+function _renderOmniboxEmpty() {
+  const container = _omniboxResults();
+  if (!container) return;
+  container.innerHTML = '<div class="omnibox-empty">Type to search or use the buttons below to add.</div>';
+}
+
+// Fires on every keystroke. Same debounce window as the old global
+// search (120ms). Routes the query through runGlobalSearch by
+// temporarily aliasing the results container — see the
+// _redirectSearchRender helper.
+function onOmniboxInput() {
+  const inp = _omniboxInput();
+  if (!inp) return;
+  _autoGrowOmnibox();
+  _refreshOmniboxClearButton();
+  const q = (inp.value || '').trim();
+  _OMNIBOX.query = q;
+  clearTimeout(_OMNIBOX.debounceTimer);
+  if (!q) { _renderOmniboxEmpty(); return; }
+  _OMNIBOX.debounceTimer = setTimeout(() => {
+    try { _runOmniboxSearch(q); } catch (err) { console.error('Omnibox search failed:', err); }
+  }, 120);
+}
+
+// Run the existing runGlobalSearch but route its output into the
+// omnibox's #omnibox-results container instead of #global-search-
+// results. We do this by temporarily swapping IDs — cheap and
+// reversible. Avoids forking the searcher.
+function _runOmniboxSearch(q) {
+  const omniResults    = _omniboxResults();
+  const oldModalResults = document.getElementById('global-search-results');
+  if (!omniResults) return;
+
+  // runGlobalSearch queries by ID 'global-search-results'. The cleanest
+  // way to redirect without touching that code is to rename the modal
+  // container (if it exists) and give our own container that ID for
+  // the duration of the call. Restore IDs after.
+  let renamed = false;
+  if (oldModalResults && oldModalResults !== omniResults) {
+    oldModalResults.id = 'global-search-results__shadowed';
+    omniResults.id = 'global-search-results';
+    renamed = true;
+  } else {
+    // Old modal absent (or already shadowed) — just give our container
+    // the expected ID for this call.
+    omniResults.id = 'global-search-results';
+    renamed = true;
+  }
+
+  try {
+    runGlobalSearch(q);
+  } finally {
+    if (renamed) {
+      // Restore. The omnibox container goes back to its own ID; the
+      // shadowed modal container (if any) gets its original ID back.
+      omniResults.id = 'omnibox-results';
+      const shadowed = document.getElementById('global-search-results__shadowed');
+      if (shadowed) shadowed.id = 'global-search-results';
+    }
+  }
+}
+
+// Keyboard handler. Enter = run primary action (Pass 1: always Search).
+// Esc = collapse.
+function onOmniboxKeyDown(e) {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    collapseOmnibox();
+    return;
+  }
+  if (e.key === 'Enter') {
+    // Pass 1: Enter is "smart" but only between Search-with-results and
+    // Search-without. Pass 2 will swap in the detected destination if
+    // no results exist and an intent was detected.
+    if (!e.shiftKey) {
+      e.preventDefault();
+      _omniboxEnterSmart();
+    }
+    // Shift+Enter inserts a newline — useful for the eventual Reminders /
+    // Notes paths that accept multi-line input. Auto-grow handles it.
+  }
+}
+
+// "Smart" Enter handling. Pass 1 implementation:
+//   - If there are search results, jump to the first one.
+//   - Otherwise, fall back to Search action (which is a no-op visually
+//     since the empty-results state is already shown).
+// Pass 2 replaces the fallback with the detected destination action.
+function _omniboxEnterSmart() {
+  // Look for the first .global-search-row inside our results container.
+  const firstRow = _omniboxResults()?.querySelector('.global-search-row');
+  if (firstRow) {
+    // Simulate a click — reuses the existing onclick handler which calls
+    // _navigateToSearchResult with the right payload.
+    firstRow.click();
+    return;
+  }
+  // No results — Pass 1 fallback is just "do nothing useful but don't
+  // submit a form either". Pass 2 swaps in the detected add action.
+}
+
+// ── Action button handler ───────────────────────────────────────────
+// Routes the current input text to the right add-flow. Each branch
+// re-uses existing functions so this layer stays thin.
+function omniboxAction(kind) {
+  const text = (_omniboxInput()?.value || '').trim();
+  if (!text && kind !== 'search') {
+    toast('Type something first');
+    return;
+  }
+  switch (kind) {
+    case 'search':
+      // Search is mostly a no-op — typing already runs the search live.
+      // We use this button as a "make sure I'm in search mode" cue and
+      // a focus target on mobile when the user wants to dismiss the
+      // keyboard and tap a result.
+      try { _omniboxInput()?.blur(); } catch(_) {}
+      return;
+
+    case 'stockroom':
+      return _omniboxAddToStockroom(text);
+
+    case 'groceries':
+      return _omniboxAddToGroceries(text);
+
+    case 'reminders':
+      return _omniboxAddToReminders(text);
+
+    case 'notes':
+      return _omniboxAddToNotes(text);
+
+    case 'spend':
+      return _omniboxAddToSpend(text);
+
+    default:
+      console.warn('Unknown omnibox action:', kind);
+  }
+}
+
+// ── Stockroom ──
+// Routes through the existing Quick Add path. We open the modal,
+// stuff the text in, call saveQuickAdd. The modal opens briefly so
+// the user can confirm/back out — Pass 3 may inline this.
+function _omniboxAddToStockroom(text) {
+  if (typeof openQuickAdd !== 'function' || typeof saveQuickAdd !== 'function') {
+    toast('Stockroom add not available');
+    return;
+  }
+  openQuickAdd();
+  // openQuickAdd clears the input then focuses it on a setTimeout. We
+  // need to set the value AFTER that runs.
+  setTimeout(() => {
+    const qaInput = document.getElementById('quick-add-input');
+    if (!qaInput) return;
+    qaInput.value = text;
+    if (typeof updateQuickAddPreview === 'function') updateQuickAddPreview();
+    _omniboxAfterAddCleanup();
+  }, 120);
+}
+
+// ── Groceries ──
+// Open the Quick List overlay with the text pre-filled. User confirms
+// list name and saves.
+function _omniboxAddToGroceries(text) {
+  if (typeof openQuickList !== 'function') {
+    toast('Quick List not available');
+    return;
+  }
+  openQuickList();
+  // Wait for the overlay's input to mount, then fill it.
+  setTimeout(() => {
+    const inp = document.getElementById('quick-list-input');
+    if (!inp) return;
+    inp.value = text;
+    if (typeof _quickListAutocomplete === 'function') {
+      try { _quickListAutocomplete(text); } catch(_) {}
+    }
+    _omniboxAfterAddCleanup();
+  }, 120);
+}
+
+// ── Reminders ──
+// Split text on commas AND newlines, each entry becomes a reminder
+// with a default 3-month cadence. This is faster than opening the
+// modal for each one. The user can edit individual reminders later.
+async function _omniboxAddToReminders(text) {
+  if (typeof saveReminders !== 'function') {
+    toast('Reminders not available');
+    return;
+  }
+  // Permission check — match what saveReminder does.
+  if (typeof canWrite === 'function' && !canWrite('reminders')) {
+    if (typeof showLockBanner === 'function') showLockBanner('reminders');
+    return;
+  }
+  const names = text.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+  if (!names.length) { toast('Type at least one reminder'); return; }
+  const now = new Date().toISOString();
+  for (const name of names) {
+    reminders.push({
+      id:           (typeof uid === 'function') ? uid() : ('r_' + Date.now() + '_' + Math.random().toString(36).slice(2,6)),
+      name,
+      interval:     3,
+      unit:         'months',
+      lastReplaced: null,
+      notes:        '',
+      linkedItemId: null,
+      createdAt:    now,
+    });
+  }
+  await saveReminders();
+  if (typeof _syncQueue !== 'undefined' && _syncQueue?.enqueue) _syncQueue.enqueue();
+  if (typeof renderReminders === 'function') renderReminders();
+  toast(`${names.length} reminder${names.length === 1 ? '' : 's'} added`);
+  _omniboxAfterAddCleanup(true);
+}
+
+// ── Notes ──
+// Create one note with the typed text as the body. Title is the first
+// line (or first 60 chars if the line is long). Sets contenteditable
+// innerHTML correctly since note bodies use innerHTML, not .value.
+async function _omniboxAddToNotes(text) {
+  if (typeof saveNotes !== 'function' || typeof notes === 'undefined') {
+    toast('Notes not available');
+    return;
+  }
+  if (typeof canWrite === 'function' && !canWrite('notes')) {
+    if (typeof showLockBanner === 'function') showLockBanner('notes');
+    return;
+  }
+  // First line becomes the title; rest becomes the body. If only one
+  // line, use it as title and leave body empty (user can expand later).
+  const lines = text.split('\n');
+  const firstLine = (lines[0] || '').trim();
+  const rest = lines.slice(1).join('\n').trim();
+  const title = firstLine.length > 60 ? firstLine.slice(0, 60) : firstLine;
+  // Note bodies are stored as innerHTML — convert newlines to <br>.
+  const bodyHTML = rest ? rest.replace(/\n/g, '<br>') : '';
+  const now = new Date().toISOString();
+  const newNote = {
+    id:               (typeof _noteUid === 'function') ? _noteUid() : ('n_' + Date.now() + '_' + Math.random().toString(36).slice(2,6)),
+    title,
+    body:             bodyHTML,
+    locked:           false,
+    pinned:           false,
+    archived:         false,
+    colour:           null,
+    tickBoxesVisible: false,
+    tickBoxes:        {},
+    createdAt:        now,
+    updatedAt:        now,
+    deletedAt:        null,
+  };
+  notes.push(newNote);
+  await saveNotes();
+  if (typeof _syncNoteIfConnected === 'function') {
+    try { await _syncNoteIfConnected(); } catch(_) {}
+  }
+  if (typeof renderNotes === 'function') renderNotes();
+  toast('Note added');
+  _omniboxAfterAddCleanup(true);
+}
+
+// ── Spend ──
+// Open the Spend Quick Add modal with the text pre-filled. The modal
+// has its own parser/preview that's already excellent — we just
+// stuff text in. Pass 3 will render the preview inline in the omnibox
+// itself and bypass the modal entirely.
+function _omniboxAddToSpend(text) {
+  if (typeof openQuickAddSpend !== 'function') {
+    toast('Spend add not available');
+    return;
+  }
+  openQuickAddSpend();
+  setTimeout(() => {
+    const inp = document.getElementById('spend-quick-add-input');
+    if (!inp) return;
+    inp.value = text;
+    if (typeof quickAddInputChanged === 'function') {
+      try { quickAddInputChanged(); } catch(_) {}
+    }
+    _omniboxAfterAddCleanup();
+  }, 120);
+}
+
+// Common cleanup after an action fires. If `fullyHandled` is true the
+// action completed without opening another modal — clear input and
+// collapse. Otherwise (modal opened) just keep the omnibox out of the
+// way; the user will continue in the modal.
+function _omniboxAfterAddCleanup(fullyHandled) {
+  if (fullyHandled) {
+    clearOmnibox();
+    collapseOmnibox();
+  } else {
+    // A modal is now open — collapse omnibox so its expanded panel
+    // doesn't visually stack on top of the modal backdrop.
+    collapseOmnibox();
+  }
+}
+
+// ── Keyboard shortcut: Cmd/Ctrl+K focuses the omnibox ──
+// The old _globalSearchKeyShortcut opened the modal. Hijack the same
+// shortcut to focus the omnibox instead. The OLD handler is still in
+// app.js (it calls openGlobalSearch) — we don't remove it because the
+// modal is still present in the DOM; instead the new handler runs
+// first and stops propagation. If our handler ever fails to bind,
+// the old one is a harmless fallback.
+function _omniboxKeyShortcut(e) {
+  // Don't trigger if the user is already typing in a text field other
+  // than ours (avoids stealing Cmd+K from rich editors).
+  const t = e.target;
+  if (t && (t.id === 'omnibox-input')) return;
+  const isMac = navigator.platform && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+  const mod = isMac ? e.metaKey : e.ctrlKey;
+  if (mod && e.key && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    e.stopPropagation();
+    const inp = _omniboxInput();
+    if (!inp) return;
+    expandOmnibox();
+    try { inp.focus(); inp.select(); } catch(_) {}
+  }
+}
+
+// ── Outside-click handler: collapse when the user taps away ──
+// Without this, the expanded panel stays open until the user explicitly
+// dismisses it, which is annoying when they tap a tab or a card behind.
+function _omniboxOutsideClick(e) {
+  if (!_OMNIBOX.active) return;
+  const omni = _omniboxEl();
+  if (!omni) return;
+  if (omni.contains(e.target)) return;
+  // Don't collapse if the click landed inside any modal — search
+  // results lead to modals (note editor, item card, etc.) opening,
+  // and those clicks shouldn't trigger a collapse race.
+  const modalOpen = document.querySelector('.modal-backdrop.show, .modal-backdrop[style*="display: flex"], .modal-backdrop[style*="display:flex"]');
+  if (modalOpen && modalOpen.contains(e.target)) return;
+  collapseOmnibox();
+}
+
+// ── Init ──
+// Wires the global keydown shortcut + outside-click handler. Idempotent.
+function initOmnibox() {
+  // Auto-grow on resize too (orientation change on mobile).
+  if (!_OMNIBOX.autoGrowBound) {
+    window.addEventListener('resize', _autoGrowOmnibox);
+    _OMNIBOX.autoGrowBound = true;
+  }
+  document.addEventListener('keydown', _omniboxKeyShortcut, true); // capture phase
+  document.addEventListener('click', _omniboxOutsideClick);
+  // Render initial empty state so the panel isn't blank if focused
+  // before any input.
+  _renderOmniboxEmpty();
+}
+
+// Call init once on DOM ready. The rest of the app's init runs from
+// the `init()` function further down — we tag onto DOMContentLoaded
+// directly here so the omnibox is wired even if init() bails on an
+// error elsewhere.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initOmnibox);
+} else {
+  initOmnibox();
+}

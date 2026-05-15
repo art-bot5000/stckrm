@@ -110,8 +110,6 @@
   <symbol id="i-flame" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"/></symbol>
   <symbol id="i-wind" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12.8 19.6A2 2 0 1 0 14 16H2"/><path d="M17.5 8a2.5 2.5 0 1 1 2 4H2"/><path d="M9.8 4.4A2 2 0 1 1 11 8H2"/></symbol>
   <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></symbol>
-  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
-  <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></symbol>
   <symbol id="i-thermometer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/></symbol>
   <symbol id="i-shopping-basket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 11-1 9"/><path d="m19 11-4-7"/><path d="M2 11h20"/><path d="m3.5 11 1.6 7.4a2 2 0 0 0 2 1.6h9.8a2 2 0 0 0 2-1.6l1.7-7.4"/><path d="M4.5 15.5h15"/><path d="m5 11 4-7"/><path d="m9 11 1 9"/></symbol>
   <symbol id="i-map-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></symbol>
@@ -1527,18 +1525,6 @@
       <div class="sync-dot"></div>
       <span id="sync-label">Local only</span>
     </div>
-    <!-- Global search button — mobile only; sits between sync pill and the
-         notification bell. Opens #global-search-modal which searches across
-         every section (Stockroom items, Notes, Reminders, Groceries, Bills,
-         settings labels, etc.) and presents results grouped by section with
-         the current tab's results pinned first. See openGlobalSearch in
-         app.js. The matching desktop entry lives in the sidebar nav above
-         the Connected pill — see #global-search-nav-btn. -->
-    <button id="global-search-btn" type="button" onclick="openGlobalSearch()"
-      aria-label="Search" title="Search"
-      style="background:none;border:none;cursor:pointer;padding:4px 6px;display:flex;align-items:center;color:var(--muted);border-radius:8px">
-      <svg class="icon icon-lg" aria-hidden="true"><use href="#i-search"></use></svg>
-    </button>
     <button class="btn btn-ghost btn-sm" onclick="openQuickAdd()" title="Quick add multiple items"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg></button>
     <button class="btn btn-primary btn-sm" onclick="openAddModal()">+ Add Item</button>
     <!-- Burger menu (mobile only, hidden via CSS on desktop) — opens an
@@ -1671,16 +1657,6 @@
     <button class="app-nav-link"        data-view="report"     onclick="navTo('report')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> <span>Report</span></button>
     <button class="app-nav-link"        data-view="budget"     onclick="navTo('budget')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
   </div>
-  <!-- Desktop sidebar search button — sits in its own block between the
-       primary nav links and the bottom utility cluster (Connected pill,
-       Notifications, Billing, Account & Security, Settings). Mirrors the
-       mobile #global-search-btn but styled to match sidebar links. -->
-  <div class="app-nav-search-wrap">
-    <button id="global-search-nav-btn" type="button" class="app-nav-link app-nav-search-btn" onclick="openGlobalSearch()" aria-label="Search everything">
-      <svg class="icon icon-tab" aria-hidden="true"><use href="#i-search"></use></svg>
-      <span>Search</span>
-    </button>
-  </div>
   <div class="app-nav-bottom">
     <div id="app-nav-sync" class="sync-pill pending app-nav-sync-pill" onclick="handleSyncPillTap()">
       <div class="sync-dot"></div>
@@ -1703,6 +1679,69 @@
     <button class="app-nav-link" data-view="settings" onclick="navTo('settings')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg> <span>Settings</span></button>
   </div>
 </nav>
+
+<!-- ═══ OMNIBOX ═══
+     Persistent input bar at top of every tab. Replaces the old
+     #global-search-modal. Collapsed = single-line search/add field.
+     Focused/typing = expanded panel with live search results above
+     and action buttons (Search/Stockroom/Groceries/Reminders/Notes/
+     Spend) at the bottom.
+     The internal search engine (runGlobalSearch, _searchStockroom etc.)
+     is reused as-is; only the UI shell is new. See OMNIBOX section in
+     app.js for the wiring. -->
+<div id="omnibox" class="omnibox" data-state="collapsed">
+  <!-- Collapsed/input row — always visible -->
+  <div class="omnibox-input-row">
+    <svg class="icon icon-lg omnibox-input-icon" aria-hidden="true"><use href="#i-search"></use></svg>
+    <textarea id="omnibox-input" rows="1" placeholder="Search or add…"
+      autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+      oninput="onOmniboxInput()"
+      onfocus="onOmniboxFocus()"
+      onkeydown="onOmniboxKeyDown(event)"></textarea>
+    <button id="omnibox-clear-btn" class="omnibox-clear" onclick="clearOmnibox()"
+      aria-label="Clear" title="Clear" style="display:none">
+      <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+    </button>
+    <button id="omnibox-collapse-btn" class="omnibox-clear" onclick="collapseOmnibox()"
+      aria-label="Close" title="Close" style="display:none">
+      <svg class="icon" aria-hidden="true"><use href="#i-chevron-up"></use></svg>
+    </button>
+  </div>
+
+  <!-- Expanded panel — visible when data-state="expanded" -->
+  <div class="omnibox-panel" id="omnibox-panel">
+    <!-- Live search results, populated by runGlobalSearch -->
+    <div class="omnibox-results" id="omnibox-results">
+      <div class="omnibox-empty">Type to search or use the buttons below to add.</div>
+    </div>
+    <!-- Action buttons -->
+    <div class="omnibox-actions" id="omnibox-actions">
+      <button class="omnibox-action" data-action="search" onclick="omniboxAction('search')">
+        <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg> Search
+      </button>
+      <button class="omnibox-action" data-action="stockroom" onclick="omniboxAction('stockroom')"
+        title="Add to Stockroom — comma-separated item names. Example: yoghurt, eggs, bread">
+        <svg class="icon" aria-hidden="true"><use href="#i-package"></use></svg> Stockroom
+      </button>
+      <button class="omnibox-action" data-action="groceries" onclick="omniboxAction('groceries')"
+        title="Add to a new Quick List — comma-separated items. Example: 2 milk, bread, apples">
+        <svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Groceries
+      </button>
+      <button class="omnibox-action" data-action="reminders" onclick="omniboxAction('reminders')"
+        title="Add reminders — comma or newline separated. Example: change toothbrush, replace filter">
+        <svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Reminders
+      </button>
+      <button class="omnibox-action" data-action="notes" onclick="omniboxAction('notes')"
+        title="Create one note with this text">
+        <svg class="icon" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> Notes
+      </button>
+      <button class="omnibox-action" data-action="spend" onclick="omniboxAction('spend')"
+        title="Add transactions — where amount [category]. Example: tesco 47.50 shopping">
+        <svg class="icon" aria-hidden="true"><use href="#i-banknote"></use></svg> Spend
+      </button>
+    </div>
+  </div>
+</div>
 
 <!-- ═══ MAIN ═══ -->
 <div id="main">
@@ -2892,23 +2931,6 @@
           <select id="setting-threshold" onchange="saveSettings()" style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
             <option value="10">10%</option><option value="15">15%</option><option value="20" selected>20%</option><option value="25">25%</option><option value="33">33%</option>
           </select>
-        </div>
-        <div class="acc-sec-row">
-          <div class="acc-sec-label">
-            <div class="acc-sec-h">Theme</div>
-            <div class="acc-sec-p">Match system, or pick a fixed look</div>
-          </div>
-          <div class="theme-seg" role="radiogroup" aria-label="Theme">
-            <button type="button" class="theme-seg-btn" id="theme-seg-system" role="radio" aria-checked="true" onclick="setTheme('system')" title="Match system setting">
-              <svg class="icon" aria-hidden="true"><use href="#i-monitor"></use></svg>System
-            </button>
-            <button type="button" class="theme-seg-btn" id="theme-seg-light" role="radio" aria-checked="false" onclick="setTheme('light')" title="Always light">
-              <svg class="icon" aria-hidden="true"><use href="#i-sun"></use></svg>Light
-            </button>
-            <button type="button" class="theme-seg-btn" id="theme-seg-dark" role="radio" aria-checked="false" onclick="setTheme('dark')" title="Always dark">
-              <svg class="icon" aria-hidden="true"><use href="#i-moon"></use></svg>Dark
-            </button>
-          </div>
         </div>
         <div class="acc-sec-row">
           <div class="acc-sec-label">

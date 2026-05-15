@@ -1,8 +1,3 @@
-  /* ── Theme tokens ──────────────────────────────────────────────────
-     Dark is the default. Light mode applies when <html data-theme="light">.
-     The applyTheme() function in app.js sets data-theme based on the
-     user's settings.theme preference ('system' | 'light' | 'dark'),
-     resolving 'system' via prefers-color-scheme. */
   :root {
     --bg: #0f1117; --surface: #1a1d27; --surface2: #22263a;
     --border: #2e3350; --accent: #e8a838; --accent2: #5b8dee;
@@ -18,38 +13,6 @@
     --glass-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 1px 0 rgba(255,255,255,0.05) inset;
     --card-shadow: 0 2px 12px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.04) inset;
     --card-shadow-hover: 0 6px 24px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset;
-  }
-  /* ── LIGHT MODE ──────────────────────────────────────────────────
-     Warm off-white palette. Amber and blue accents darkened slightly
-     for AA contrast on light surfaces. Shadows softened. */
-  html[data-theme="light"] {
-    --bg: #f5f3ec;          /* warm off-white, easier on the eye than stark white */
-    --surface: #ffffff;
-    --surface2: #ebe8df;
-    --border: #d8d4c8;
-    --accent: #c08418;      /* amber, darker for contrast on white */
-    --accent2: #3b6fd0;     /* blue, darker for contrast on white */
-    --danger: #c83838;
-    --warn: #c08418;
-    --ok: #2e9560;
-    --text: #1a1d27;        /* very dark blue-grey (was --surface in dark) */
-    --muted: #6b6f7d;
-    --glass-border: rgba(0,0,0,0.08);
-    --glass-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 1px 0 rgba(255,255,255,0.6) inset;
-    --card-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 1px 0 rgba(255,255,255,0.5) inset;
-    --card-shadow-hover: 0 6px 20px rgba(0,0,0,0.1), 0 1px 0 rgba(255,255,255,0.6) inset;
-  }
-  /* Smooth crossfade when toggling theme — applied to props the
-     theme actually changes. Skipped for users with reduced-motion. */
-  html, body, .settings-card, .modal, .acc-sec-card, .item-card,
-  .note-card, #app-nav, #app-header, .tab, .btn, input, select, textarea {
-    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    html, body, .settings-card, .modal, .acc-sec-card, .item-card,
-    .note-card, #app-nav, #app-header, .tab, .btn, input, select, textarea {
-      transition: none;
-    }
   }
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   body { background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; }
@@ -4354,163 +4317,226 @@ body.bulk-select-mode-category .budget-cat-row:hover { outline: 2px solid var(--
    so taps go straight to selection toggle. The action bar covers the
    bulk equivalent of these actions. */
 body.bulk-select-mode-category .budget-cat-row .bill-actions { display: none !important; }
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 1
+   Persistent top-of-app input bar. Collapsed = ~44px single-line
+   field. Focused/typing = expanded panel with live search results
+   above and action buttons (Search/Stockroom/Groceries/Reminders/
+   Notes/Spend) at the bottom.
 
-/* ═══════════════════════════════════════════════════════════════════════
-   THEME PICKER — Segmented control in Preferences
-   ═══════════════════════════════════════════════════════════════════════
-   Three buttons (System / Light / Dark) styled as a unified pill group,
-   matching the visual weight of the .acc-sec-select dropdowns in the
-   same Preferences card. */
-.theme-seg {
-  display: inline-flex;
+   Reuses the .global-search-* result row classes for the inner result
+   list so we don't duplicate styling — runGlobalSearch's renderer just
+   targets #omnibox-results instead of #global-search-results.
+
+   Mobile (<900px): omnibox sits below #app-header. When expanded,
+   covers from below the header to mid-screen (max-height: 70vh).
+   Desktop (≥900px): omnibox sits at top of #main, sidebar already
+   handles primary nav. Expanded panel anchors below the input row.
+═══════════════════════════════════════════════════════════════════ */
+
+/* ── Container ── */
+.omnibox {
+  /* Sticky so it stays at the top of the viewport as the user scrolls.
+     On mobile it sits below the 56px #app-header (which is also sticky
+     at top:0, z-index 100). We sit at top:56px to land just under it.
+     On desktop the header is hidden — see media query below. */
+  position: sticky;
+  top: 56px;
+  z-index: 95;
   background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 2px;
-  gap: 0;
+  border-bottom: 1px solid var(--border);
+  /* When expanded, allow children to escape (so the panel can sit on
+     top of subsequent content). */
+}
+.omnibox[data-state="expanded"] {
+  border-bottom-color: transparent;
+}
+
+/* ── Input row (always visible) ── */
+.omnibox-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.omnibox-input-icon {
+  color: var(--muted);
   flex-shrink: 0;
 }
-.theme-seg-btn {
+#omnibox-input {
+  flex: 1;
+  min-width: 0;
   background: transparent;
   border: none;
-  color: var(--muted);
+  outline: none;
+  color: var(--text);
   font-family: var(--sans);
-  font-size: 12px;
-  font-weight: 600;
-  padding: 6px 12px;
-  border-radius: 6px;
+  /* iOS auto-zooms inputs <16px — keep at 16px to avoid the zoom flicker. */
+  font-size: 16px;
+  line-height: 1.4;
+  padding: 4px 0;
+  resize: none;
+  overflow: hidden;       /* hide scrollbars; height is JS-controlled */
+  max-height: 96px;       /* ≈4 lines at 16px/1.4 */
+}
+#omnibox-input::placeholder { color: var(--muted); }
+
+.omnibox-clear {
+  background: transparent;
+  border: none;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  color: var(--muted);
+  padding: 6px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.omnibox-clear:hover { background: var(--surface2); color: var(--text); }
+
+/* ── Expanded panel ── */
+/* Hidden by default; data-state="expanded" reveals it. */
+.omnibox-panel {
+  display: none;
+  flex-direction: column;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  /* Box-shadow at the bottom makes the panel feel like it floats over
+     the content beneath. Subtle — matches the .global-search-panel feel. */
+  box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+}
+.omnibox[data-state="expanded"] .omnibox-panel {
+  display: flex;
+}
+
+/* Results pane reuses .global-search-* row classes so we don't duplicate
+   the markup that runGlobalSearch emits. We just give the wrapper a
+   bounded max-height so it scrolls instead of pushing the action
+   buttons off-screen. */
+.omnibox-results {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  max-height: 50vh;
+  min-height: 0;
+}
+.omnibox-empty {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 24px 16px;
+}
+
+/* Re-skin .global-search-section etc. when they appear inside #omnibox-
+   results. The classes are identical — they just need the slight
+   padding tweak because we're not inside a modal anymore. */
+.omnibox-results .global-search-section { padding: 4px 0 2px; }
+.omnibox-results .global-search-section-title { padding: 8px 14px 4px; }
+.omnibox-results .global-search-row { padding: 8px 14px; }
+
+/* ── Action button row ── */
+.omnibox-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.omnibox-action {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  white-space: nowrap;
-  -webkit-tap-highlight-color: transparent;
-}
-.theme-seg-btn:hover {
-  color: var(--text);
-}
-.theme-seg-btn.active {
-  background: var(--accent);
-  color: #111;
-}
-.theme-seg-btn .icon {
-  width: 13px;
-  height: 13px;
-}
-/* In light mode, the amber accent on white-ish dropdown background
-   benefits from a touch more weight on the active state */
-html[data-theme="light"] .theme-seg-btn.active {
-  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
-   LIGHT MODE — Chrome overrides
-   ═══════════════════════════════════════════════════════════════════════
-   A number of UI surfaces (tabs, modals, settings cards, sidebar, etc.)
-   hardcode rgba(26,29,39,...) — the dark mode --surface value — directly
-   in their background declarations because they want a specific opacity
-   that var(--surface) can't express. In light mode these need to flip to
-   a white-ish base. Each override below mirrors the original rule's
-   opacity but uses 255,255,255 (white) instead, plus tweaks to .btn-ghost
-   etc. where a 4% white tint on a white card is invisible.
-
-   Scoped under html[data-theme="light"] so dark mode stays untouched. */
-
-html[data-theme="light"] #app-header {
-  background: rgba(255,255,255,var(--surface-opacity));
-  box-shadow: 0 1px 0 rgba(0,0,0,0.05), 0 4px 20px rgba(0,0,0,0.06);
-}
-html[data-theme="light"] #tabs {
-  background: rgba(255,255,255,0.7);
-}
-html[data-theme="light"] .settings-card {
-  background: rgba(255,255,255,0.7);
-}
-html[data-theme="light"] .modal {
-  background: rgba(255,255,255,0.92);
-  box-shadow: var(--glass-shadow), 0 0 0 1px rgba(0,0,0,0.03) inset;
-}
-html[data-theme="light"] #app-nav {
-  background: rgba(255,255,255,0.95);
-  border-right: 1px solid var(--glass-border);
-}
-html[data-theme="light"] .settings-collapsible-header {
-  background: rgba(255,255,255,0.7);
-}
-html[data-theme="light"] .settings-collapsible-header:hover,
-html[data-theme="light"] .settings-collapsible-header:active {
-  background: rgba(232,232,220,0.8);
-}
-html[data-theme="light"] #view-settings .settings-section-header {
-  background: rgba(255,255,255,0.7);
-}
-
-/* Ghost buttons — a 4% white tint on a white card is invisible. Use a
-   light grey tint instead. Hover bumps to a slightly stronger grey. */
-html[data-theme="light"] .btn-ghost {
-  background: rgba(0,0,0,0.03);
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
   border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.12s;
+  white-space: nowrap;
 }
-html[data-theme="light"] .btn-ghost:hover {
-  background: rgba(0,0,0,0.06);
+.omnibox-action:hover {
+  background: var(--surface);
   border-color: var(--muted);
 }
-
-/* Item card hover — white-on-white border doesn't pop. Use the accent
-   instead, which already happens elsewhere via :hover. The hardcoded
-   rgba(255,255,255,0.12) at styles.css ~line 185 needs to be replaced. */
-html[data-theme="light"] .item-card:hover {
+.omnibox-action:active {
+  transform: scale(0.97);
+}
+.omnibox-action .icon {
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+/* Disabled state — used in Pass 2 by intent detection. Kept here so
+   Pass 2 just flips the disabled attribute and the styling is ready. */
+.omnibox-action:disabled,
+.omnibox-action[data-disabled="true"] {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+/* Detected primary action — Pass 2 hook. */
+.omnibox-action[data-primary="true"] {
+  background: var(--accent);
+  color: #111;
   border-color: var(--accent);
+  box-shadow: 0 2px 8px rgba(232,168,56,0.3);
+}
+.omnibox-action[data-primary="true"] .icon { color: #111; }
+
+/* ── Mobile (<900px) ── */
+@media (max-width: 899px) {
+  /* On mobile the omnibox sits below the 56px header. When expanded,
+     limit its overall height so the user can still see the underlying
+     tabs/content peeking out — feels like a panel that dropped, not a
+     full-screen takeover. */
+  .omnibox[data-state="expanded"] .omnibox-results {
+    max-height: 40vh;
+  }
+  /* Tab grid is currently 24px below — give it a little less since
+     the omnibox already pushes everything down. */
+  .omnibox-input-row { padding: 7px 12px; }
+  .omnibox-actions { padding: 8px 10px; gap: 5px; }
+  .omnibox-action { padding: 7px 10px; font-size: 12px; }
+  .omnibox-action .icon { width: 13px; height: 13px; }
 }
 
-/* Hover backgrounds that use white-tint don't work on a white surface.
-   Note rows, etc. — flip the tint to a dark one. */
-html[data-theme="light"] .note-row:hover {
-  background: rgba(0,0,0,0.025);
-}
-html[data-theme="light"] .note-row:active {
-  background: rgba(0,0,0,0.04);
-}
-
-/* Mobile menu dropdown uses var(--surface) which is now white — but it
-   sits over the app and needs visual separation. The card-shadow
-   override above already takes care of that via the new shadow tokens. */
-
-/* Mobile menu hover tint — the amber 7% tint reads as a faint cream
-   on white; bump it for better feedback. */
-html[data-theme="light"] .mobile-menu-item:hover {
-  background: rgba(192,132,24,0.10);
-}
-html[data-theme="light"] .app-nav-link:hover {
-  background: rgba(192,132,24,0.08);
-}
-html[data-theme="light"] .app-nav-link.active {
-  background: rgba(192,132,24,0.14);
+/* ── Desktop (≥900px) ── */
+@media (min-width: 900px) {
+  /* Header is hidden on desktop (sidebar replaces it), so the omnibox
+     sits at the very top. The sidebar (220px wide) is fixed-position,
+     so the omnibox needs to sit to the right of it. The body of #main
+     already has margin-left: 220px to clear the sidebar; we want the
+     omnibox to match that. */
+  .omnibox {
+    top: 0;
+    margin-left: 220px;
+  }
+  .omnibox-input-row { padding: 10px 36px; }
+  .omnibox-actions { padding: 12px 36px; }
+  .omnibox-results .global-search-section-title { padding-left: 36px; padding-right: 36px; }
+  .omnibox-results .global-search-row { padding-left: 36px; padding-right: 36px; }
+  .omnibox-empty { padding: 28px 36px; }
 }
 
-/* Tab .active state uses color:#111 because the amber accent is a warm
-   golden — dark text on amber works in both modes. No override needed
-   for that. Same for .btn-primary. */
-
-/* Modal backdrop dim — works fine in both modes (just a dimming layer
-   over whatever's underneath). Left as-is. */
-
-/* Hairline borders that hardcode rgba(46,51,80,...) — that's the dark
-   --border colour. Replace with a light hairline. */
-html[data-theme="light"] .report-table td,
-html[data-theme="light"] .log-entry,
-html[data-theme="light"] .tag-input-row,
-html[data-theme="light"] .grocery-item,
-html[data-theme="light"] .dept-manage-row,
-html[data-theme="light"] .setting-row {
-  border-bottom-color: rgba(0,0,0,0.06);
+/* ── Wizard / full-screen mode escape hatches ──
+   The wizard and the full-screen grocery list view hide the rest of the
+   chrome — hide the omnibox along with them. */
+body.wizard-active .omnibox,
+body.grocery-list-open .omnibox,
+body.note-open .omnibox {
+  display: none !important;
 }
 
-/* ──────────────────────────────────────────────────────────────────────
-   Light-mode status pill backgrounds — the .sync-pill, item status
-   chips etc. often layer a coloured rgba tint over the chrome. These
-   were tuned against the dark blue surface; on white they look pale.
-   Left as-is for v1 — the colours still parse as "good / warning /
-   error" semantically; we can tune visually in a follow-up pass.
-   ────────────────────────────────────────────────────────────────────── */
+/* ── Scroll lock when expanded on mobile ──
+   When typing actively, prevent the background from scrolling — same
+   pattern as body.global-search-open. The omnibox itself sets/clears
+   this class on focus/collapse. */
+body.omnibox-expanded { /* reserved for future scroll-lock if needed */ }
