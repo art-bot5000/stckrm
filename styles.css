@@ -4540,3 +4540,45 @@ body.note-open .omnibox {
    pattern as body.global-search-open. The omnibox itself sets/clears
    this class on focus/collapse. */
 body.omnibox-expanded { /* reserved for future scroll-lock if needed */ }
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 2: Intent hint
+   Small label that sits above the action buttons, telling the user
+   what the omnibox thinks they're trying to do ("Looks like a note",
+   "Add to Stockroom (keyword)", etc.). Updated by _applyOmniboxIntent
+   in app.js.
+
+   Hidden when there's no detected intent — keeps the panel clean for
+   empty input or ambiguous short queries.
+═══════════════════════════════════════════════════════════════════ */
+.omnibox-intent-hint {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--accent);
+  padding: 8px 14px 0;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  /* Slight pulse animation when the hint changes — tiny affordance to
+     draw the eye when the user's input crosses a detection threshold. */
+  animation: omniboxHintFade 0.18s ease-out;
+}
+@keyframes omniboxHintFade {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (min-width: 900px) {
+  .omnibox-intent-hint {
+    padding-left: 36px;
+    padding-right: 36px;
+  }
+}
+
+/* When the hint sits directly above the actions row, the actions row's
+   own border-top would duplicate ours. Suppress the actions border in
+   that case so we only get one separator line. */
+.omnibox-intent-hint + .omnibox-actions {
+  border-top: none;
+  padding-top: 8px;
+}

@@ -38022,3 +38022,288 @@ if (document.readyState === 'loading') {
 } else {
   initOmnibox();
 }
+// ═══════════════════════════════════════════════════════════════════
+//  OMNIBOX — Pass 2: Intent detection
+// ═══════════════════════════════════════════════════════════════════
+// Reads the omnibox input and decides which action buttons make sense.
+// Each detected destination produces a state in {disabled, normal,
+// primary}. Search is always 'normal' (never disabled, never primary).
+//
+// Strategy: keyword override wins. If no keyword matches, shape rules
+// pick a primary and a set of enabled siblings.
+//
+// Called from onOmniboxInput after each keystroke (existing handler is
+// patched at the bottom of this section). Output goes to button state
+// + an intent-hint line above the action row.
+
+const _OMNIBOX_INTENT = {
+  // Last computed state, useful for the smart-Enter fallback.
+  state: null,
+};
+
+// Regex helpers — defined once at module scope to avoid re-compiling.
+
+// Decimal amount: "47.50", "£12", "12.00". Strong Spend signal.
+// Whole numbers alone (e.g. "3") are NOT counted because they could be
+// quantities. The Spend parser itself accepts whole numbers, but for
+// intent detection we want a stronger signal to avoid false positives.
+const _RE_DECIMAL_AMOUNT = /(?:£\s*\d+(?:\.\d+)?)|(?:\b\d+\.\d{1,2}\b)/;
+
+// Keyword prefixes — case-insensitive. Match at start of input, followed
+// by colon or whitespace. The `\s*` after `:` allows "note:something".
+const _KEYWORD_RULES = [
+  { re: /^(?:note|n)\s*[:\-]\s*/i,            kind: 'notes' },
+  { re: /^(?:remind|reminder|r)\s*[:\-]\s*/i, kind: 'reminders' },
+  { re: /^(?:spend|s)\s*[:\-]\s*/i,           kind: 'spend' },
+  { re: /^(?:add|stock|stockroom)\s*[:\-]\s*/i, kind: 'stockroom' },
+  { re: /^(?:list|grocery|groceries|g)\s*[:\-]\s*/i, kind: 'groceries' },
+  { re: /^(?:find|search)\s*[:\-]\s*/i,       kind: 'search-only' },
+];
+
+// Returns { primary: kind|null, enabled: Set<kind>, hint: string,
+//           strippedText: string }
+// `strippedText` is the input with any keyword prefix removed —
+// callers that fire the detected action should use this, so
+// "note: pick up keys" becomes "pick up keys" in the new note.
+function _omniboxDetectIntent(text) {
+  const result = {
+    primary: null,
+    enabled: new Set(['search']), // search is always enabled
+    hint: '',
+    strippedText: text,
+  };
+  const trimmed = (text || '').trim();
+  if (!trimmed) {
+    // Empty input — all enabled, no primary, no hint.
+    result.enabled = new Set(['search', 'stockroom', 'groceries', 'reminders', 'notes', 'spend']);
+    return result;
+  }
+
+  // ── 1. Keyword override ──
+  for (const rule of _KEYWORD_RULES) {
+    const m = trimmed.match(rule.re);
+    if (!m) continue;
+    result.strippedText = trimmed.slice(m[0].length);
+    if (rule.kind === 'search-only') {
+      // 'find:' or 'search:' — only Search makes sense. Everything else greys.
+      result.primary = null;
+      result.enabled = new Set(['search']);
+      result.hint = 'Searching…';
+      return result;
+    }
+    // Add destination as primary; only that + search enabled.
+    result.primary = rule.kind;
+    result.enabled = new Set(['search', rule.kind]);
+    result.hint = _intentHintLabel(rule.kind, true);
+    return result;
+  }
+
+  // ── 2. Shape detection ──
+  const commaCount = (trimmed.match(/,/g) || []).length;
+  const newlineCount = (trimmed.match(/\n/g) || []).length;
+  const hasDecimalAmount = _RE_DECIMAL_AMOUNT.test(trimmed);
+  const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+  const charCount = trimmed.length;
+
+  // 2a. Decimal amount → Spend is primary.
+  // Stockroom and Groceries get disabled (amounts don't belong in their
+  // input). Notes and Reminders stay disabled too — if the user wanted
+  // a note about a price, they'd use the 'note:' keyword.
+  if (hasDecimalAmount) {
+    result.primary = 'spend';
+    result.enabled = new Set(['search', 'spend']);
+    result.hint = _intentHintLabel('spend', false);
+    return result;
+  }
+
+  // 2b. Long prose with no commas → Notes (primary) + Reminders enabled.
+  // Threshold: more than ~6 words OR more than ~40 chars, AND zero commas.
+  // Newlines (multi-line paste) also push toward Notes.
+  if (commaCount === 0 && (wordCount > 6 || charCount > 40 || newlineCount > 0)) {
+    result.primary = 'notes';
+    result.enabled = new Set(['search', 'notes', 'reminders']);
+    result.hint = 'Looks like a note';
+    return result;
+  }
+
+  // 2c. Multiple comma-separated short items → Stockroom (primary),
+  // Groceries + Reminders also enabled. This is the "milk, eggs, bread"
+  // case — could be any of the three list-like destinations.
+  if (commaCount >= 1 || newlineCount >= 1) {
+    result.primary = 'stockroom';
+    result.enabled = new Set(['search', 'stockroom', 'groceries', 'reminders']);
+    result.hint = `${Math.max(commaCount, newlineCount) + 1} items`;
+    return result;
+  }
+
+  // 2d. Single short word/phrase → all enabled, lean Search (no primary
+  // highlighted; user picks). This is the "I just typed yoghurt and want
+  // to find it OR add it" state.
+  result.enabled = new Set(['search', 'stockroom', 'groceries', 'reminders', 'notes', 'spend']);
+  result.hint = '';
+  return result;
+}
+
+function _intentHintLabel(kind, fromKeyword) {
+  const fromKW = fromKeyword ? ' (keyword)' : '';
+  switch (kind) {
+    case 'stockroom':  return 'Add to Stockroom' + fromKW;
+    case 'groceries':  return 'Add to a grocery list' + fromKW;
+    case 'reminders':  return 'Add reminders' + fromKW;
+    case 'notes':      return 'Create a note' + fromKW;
+    case 'spend':      return 'Log spend' + fromKW;
+    default:           return '';
+  }
+}
+
+// Apply a computed intent to the DOM — update button data-primary /
+// data-disabled attrs, set the hint line, and persist to _OMNIBOX_INTENT
+// for the Enter handler.
+function _applyOmniboxIntent(intent) {
+  _OMNIBOX_INTENT.state = intent;
+  const actions = document.querySelectorAll('#omnibox-actions .omnibox-action');
+  actions.forEach(btn => {
+    const kind = btn.getAttribute('data-action');
+    const enabled = intent.enabled.has(kind);
+    const primary = intent.primary === kind;
+    btn.toggleAttribute('disabled', !enabled);
+    if (!enabled) {
+      btn.setAttribute('data-disabled', 'true');
+    } else {
+      btn.removeAttribute('data-disabled');
+    }
+    if (primary) {
+      btn.setAttribute('data-primary', 'true');
+    } else {
+      btn.removeAttribute('data-primary');
+    }
+  });
+
+  // Update hint line (lazy-create if missing — hint container is added
+  // by the index.html patch, but be defensive in case of partial deploy).
+  let hint = document.getElementById('omnibox-intent-hint');
+  if (!hint) {
+    const actionsEl = document.getElementById('omnibox-actions');
+    if (actionsEl && actionsEl.parentNode) {
+      hint = document.createElement('div');
+      hint.id = 'omnibox-intent-hint';
+      hint.className = 'omnibox-intent-hint';
+      actionsEl.parentNode.insertBefore(hint, actionsEl);
+    }
+  }
+  if (hint) {
+    if (intent.hint) {
+      hint.textContent = intent.hint;
+      hint.style.display = '';
+    } else {
+      hint.textContent = '';
+      hint.style.display = 'none';
+    }
+  }
+}
+
+// ── Patch onOmniboxInput to run intent detection ──
+// We don't redefine the function — we wrap it. The original (Pass 1) is
+// captured, then a new handler runs detection alongside the search call.
+// Wrapping avoids touching Pass 1 code, which keeps the rollback story
+// simple if Pass 2 needs to be reverted.
+const _ORIG_onOmniboxInput = (typeof onOmniboxInput === 'function') ? onOmniboxInput : null;
+
+function onOmniboxInput() {
+  // Call the original Pass 1 handler (auto-grow, clear-button refresh,
+  // debounced search). If it was somehow missing, gracefully degrade —
+  // intent detection still runs.
+  if (_ORIG_onOmniboxInput) {
+    try { _ORIG_onOmniboxInput.call(this); } catch (err) {
+      console.error('Original onOmniboxInput failed:', err);
+    }
+  }
+  // Then run intent detection. Synchronous — cheap regex work, no
+  // debounce needed. Updates buttons immediately so the user gets
+  // instant feedback as they type.
+  try {
+    const text = (_omniboxInput()?.value || '');
+    const intent = _omniboxDetectIntent(text);
+    _applyOmniboxIntent(intent);
+  } catch (err) {
+    console.error('Omnibox intent detection failed:', err);
+  }
+}
+
+// ── Patch _omniboxEnterSmart for intent fallback ──
+// Pass 1 just jumped to the first result and did nothing on no-results.
+// Pass 2: if no results AND an intent was detected, run that action.
+const _ORIG_omniboxEnterSmart = (typeof _omniboxEnterSmart === 'function') ? _omniboxEnterSmart : null;
+
+function _omniboxEnterSmart() {
+  // If there's a search result, jump to it — same as Pass 1.
+  const firstRow = _omniboxResults()?.querySelector('.global-search-row');
+  if (firstRow) {
+    firstRow.click();
+    return;
+  }
+  // No results — try the detected primary action.
+  const state = _OMNIBOX_INTENT.state;
+  if (state && state.primary) {
+    omniboxAction(state.primary);
+    return;
+  }
+  // No results, no intent — Pass 1 fallback (do nothing).
+  // Could toast a hint here but that gets noisy.
+}
+
+// ── Patch omniboxAction to use stripped text when keyword present ──
+// "note: buy milk" should create a note titled "buy milk", not
+// "note: buy milk". The detection function already strips the prefix
+// in result.strippedText — we use that when an intent is active.
+const _ORIG_omniboxAction = (typeof omniboxAction === 'function') ? omniboxAction : null;
+
+function omniboxAction(kind) {
+  // Search always uses raw text (no stripping — user might genuinely
+  // be searching for "note:").
+  if (kind === 'search') {
+    return _ORIG_omniboxAction ? _ORIG_omniboxAction.call(this, kind) : undefined;
+  }
+  // For add actions: if intent state has a primary matching this kind
+  // AND the strippedText differs from raw, use stripped. This handles
+  // "note: pick up keys" → action with "pick up keys".
+  const state = _OMNIBOX_INTENT.state;
+  if (state && state.primary === kind && state.strippedText !== undefined) {
+    const raw = _omniboxInput()?.value || '';
+    if (state.strippedText !== raw.trim() && state.strippedText !== '') {
+      // Temporarily swap input value to the stripped form, fire the
+      // original handler, then restore. The handler reads the input's
+      // value, so the cleanest swap point is right here.
+      const inp = _omniboxInput();
+      const original = inp ? inp.value : '';
+      if (inp) inp.value = state.strippedText;
+      try {
+        return _ORIG_omniboxAction ? _ORIG_omniboxAction.call(this, kind) : undefined;
+      } finally {
+        // Restore. If the action cleared the input (full-handled case),
+        // the cleanup already happened — but restoring a stale value
+        // would be bad. So we ONLY restore if the input still has our
+        // stripped value (i.e. action opened a modal and didn't clear).
+        if (inp && inp.value === state.strippedText) {
+          inp.value = original;
+        }
+      }
+    }
+  }
+  // No intent / no stripping needed — straight passthrough.
+  return _ORIG_omniboxAction ? _ORIG_omniboxAction.call(this, kind) : undefined;
+}
+
+// ── Initial state: run detection once on init so an empty omnibox
+// shows the right "all enabled, no primary" state from the start ──
+// initOmnibox in Pass 1 already calls _renderOmniboxEmpty. We tag on
+// here to apply initial intent (which is just "all enabled").
+(function _omniboxPass2InitialState() {
+  // Defer to next tick so initOmnibox has run and buttons exist.
+  setTimeout(() => {
+    try {
+      const intent = _omniboxDetectIntent('');
+      _applyOmniboxIntent(intent);
+    } catch (_) { /* harmless on init */ }
+  }, 50);
+})();
