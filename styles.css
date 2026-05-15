@@ -4940,3 +4940,68 @@ body.omnibox-expanded {
 .omnibox[data-state="expanded"] .omnibox-input-row {
   border-bottom: 1px solid var(--border);
 }
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 8: Icon-alongside button style on mobile
+
+   Pass 5 introduced a 3×2 grid with `flex-direction: column` (icon
+   above label) to mirror what looked like the tab style. After
+   real-device review the tabs actually render icon-alongside-label
+   at the user's device width, so this pass aligns the omnibox
+   buttons with the base `.tab` rule: icon left, label right, larger
+   font.
+
+   Keeps:
+   - 3×2 CSS grid (3 columns, 2 rows)
+   - `order:` values from Pass 5 so the visual layout is:
+       Row 1: Stockroom │ Spend     │ Notes
+       Row 2: Groceries │ Reminders │ Search
+   - Mobile-only scoping; desktop horizontal pill row stays as-is.
+
+   Changes:
+   - flex-direction: column → row (the default — just unset it)
+   - Centering switches: icon and text still grouped centrally inside
+     each cell, but they sit side-by-side
+   - font-size: 11px → 13px (matches base .tab)
+   - font-weight: 600 → 700 (matches .tab)
+   - gap: 4px → 5px (matches .tab)
+   - icon size: 13px → 18px (closer to .tab's icon-tab feel without
+     crowding the cell)
+   - padding: tightened slightly so the larger text + icon fits.
+═══════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 899px) {
+  /* The grid itself is already 3 columns from Pass 5 — leave that
+     untouched. Only the per-cell button styling changes here. */
+
+  .omnibox-actions .omnibox-action {
+    /* Reset the column direction set in Pass 5 — back to default row. */
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    /* Match base .tab: 5px gap between icon and label. */
+    gap: 5px;
+    /* Larger font + bolder, matching base .tab spec. */
+    font-size: 13px;
+    font-weight: 700;
+    /* Tighter vertical padding now that the cell is shorter (no
+       stacked icon+text). Horizontal padding stays minimal so labels
+       like "Reminders" / "Stockroom" don't get truncated. */
+    padding: 9px 6px;
+    white-space: nowrap;
+    text-align: center;
+    /* Allow the label to truncate gracefully if a future translation
+       makes it longer than the cell — without this it could push the
+       icon off-screen. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Icon sized to read alongside 13px text — 18px is the same size
+     the ≤600px tab rule uses, and looks visually balanced next to
+     the bolder label. */
+  .omnibox-actions .omnibox-action .icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+  }
+}
