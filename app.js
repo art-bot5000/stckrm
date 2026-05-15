@@ -38307,3 +38307,175 @@ function omniboxAction(kind) {
     } catch (_) { /* harmless on init */ }
   }, 50);
 })();
+// ═══════════════════════════════════════════════════════════════════
+//  OMNIBOX — Pass 2 FIX
+// ═══════════════════════════════════════════════════════════════════
+// The previous Pass 2 used a "wrap the original function" pattern which
+// fell apart because BOTH function declarations live in the same global
+// scope — the second `function onOmniboxInput()` declaration shadows
+// the first at parse time, and the `_ORIG_*` captures point at the
+// wrapper itself, causing infinite recursion and silent failure.
+//
+// Fix: replace the broken wrappers with single, merged function
+// definitions that combine Pass 1 and Pass 2 behaviour. We assign to
+// the names directly (no wrapping) so the bug can't recur.
+//
+// Also includes the override change: greyed-out action buttons remain
+// clickable. The greying is visual guidance only — the user can always
+// force an action against the suggestion.
+
+// ── Make all action buttons always clickable ──
+// Pass 1's _applyOmniboxIntent set the `disabled` attribute when a
+// destination wasn't in the enabled set. Remove that — we keep the
+// visual cue (lower opacity via [data-disabled]) but allow clicks.
+// We override _applyOmniboxIntent fully here (re-assignment, not wrap).
+_applyOmniboxIntent = function _applyOmniboxIntent(intent) {
+  _OMNIBOX_INTENT.state = intent;
+  const actions = document.querySelectorAll('#omnibox-actions .omnibox-action');
+  actions.forEach(btn => {
+    const kind = btn.getAttribute('data-action');
+    const enabled = intent.enabled.has(kind);
+    const primary = intent.primary === kind;
+    // KEY CHANGE vs Pass 2 original: never set the `disabled` attribute.
+    // The button stays clickable. We use [data-disabled="true"] only as
+    // a CSS hook for the dimmed appearance.
+    if (!enabled) {
+      btn.setAttribute('data-disabled', 'true');
+    } else {
+      btn.removeAttribute('data-disabled');
+    }
+    if (primary) {
+      btn.setAttribute('data-primary', 'true');
+    } else {
+      btn.removeAttribute('data-primary');
+    }
+  });
+
+  // Hint line — same as Pass 2.
+  let hint = document.getElementById('omnibox-intent-hint');
+  if (!hint) {
+    const actionsEl = document.getElementById('omnibox-actions');
+    if (actionsEl && actionsEl.parentNode) {
+      hint = document.createElement('div');
+      hint.id = 'omnibox-intent-hint';
+      hint.className = 'omnibox-intent-hint';
+      actionsEl.parentNode.insertBefore(hint, actionsEl);
+    }
+  }
+  if (hint) {
+    if (intent.hint) {
+      hint.textContent = intent.hint;
+      hint.style.display = '';
+    } else {
+      hint.textContent = '';
+      hint.style.display = 'none';
+    }
+  }
+};
+
+// ── Replace onOmniboxInput with the merged version ──
+// This is the single source of truth for typing handling. Combines
+// Pass 1 (auto-grow, clear-btn refresh, debounced search) and Pass 2
+// (intent detection).
+onOmniboxInput = function onOmniboxInput() {
+  const inp = _omniboxInput();
+  if (!inp) return;
+  // Pass 1 behaviour
+  _autoGrowOmnibox();
+  _refreshOmniboxClearButton();
+  const q = (inp.value || '').trim();
+  _OMNIBOX.query = q;
+  clearTimeout(_OMNIBOX.debounceTimer);
+
+  // Pass 2 behaviour: run intent detection synchronously (cheap).
+  try {
+    const intent = _omniboxDetectIntent(inp.value || '');
+    _applyOmniboxIntent(intent);
+  } catch (err) {
+    console.error('Omnibox intent detection failed:', err);
+  }
+
+  // Pass 1 behaviour: debounced search.
+  if (!q) { _renderOmniboxEmpty(); return; }
+  _OMNIBOX.debounceTimer = setTimeout(() => {
+    try { _runOmniboxSearch(q); } catch (err) { console.error('Omnibox search failed:', err); }
+  }, 120);
+};
+
+// ── Replace _omniboxEnterSmart with the merged version ──
+// Pass 1: jump to first result; do nothing if no results.
+// Pass 2: jump to first result; run detected action if no results.
+_omniboxEnterSmart = function _omniboxEnterSmart() {
+  const firstRow = _omniboxResults()?.querySelector('.global-search-row');
+  if (firstRow) {
+    firstRow.click();
+    return;
+  }
+  const state = _OMNIBOX_INTENT.state;
+  if (state && state.primary) {
+    omniboxAction(state.primary);
+    return;
+  }
+  // No results, no intent — silent no-op (Pass 1 behaviour preserved).
+};
+
+// ── Replace omniboxAction with the merged version ──
+// Pass 1: route text through add-flow for the chosen destination.
+// Pass 2: strip keyword prefix from text when intent matches.
+// Plus: this is now the SINGLE definition so no recursion can happen.
+omniboxAction = function omniboxAction(kind) {
+  const inp = _omniboxInput();
+  const rawText = (inp?.value || '').trim();
+
+  // Search always uses raw text — user might literally be searching
+  // for "note:" or similar.
+  if (kind === 'search') {
+    try { inp?.blur(); } catch(_) {}
+    return;
+  }
+
+  // Empty input check — only for non-search actions.
+  if (!rawText) {
+    if (typeof toast === 'function') toast('Type something first');
+    return;
+  }
+
+  // Decide what text to send to the action.
+  // If detected intent matches this action AND there's a stripped
+  // version (keyword was present), use that. Otherwise use raw.
+  let textForAction = rawText;
+  const state = _OMNIBOX_INTENT.state;
+  if (state && state.primary === kind && typeof state.strippedText === 'string') {
+    const stripped = state.strippedText.trim();
+    if (stripped) textForAction = stripped;
+  }
+
+  switch (kind) {
+    case 'stockroom':  return _omniboxAddToStockroom(textForAction);
+    case 'groceries':  return _omniboxAddToGroceries(textForAction);
+    case 'reminders':  return _omniboxAddToReminders(textForAction);
+    case 'notes':      return _omniboxAddToNotes(textForAction);
+    case 'spend':      return _omniboxAddToSpend(textForAction);
+    default:
+      console.warn('Unknown omnibox action:', kind);
+  }
+};
+
+// ── Recompute initial state ──
+// Buttons may have been left in a stale state from the broken Pass 2
+// wrappers (e.g. with `disabled` attribute set). Force a fresh
+// computation now that the fixed handlers are in place.
+(function _omniboxPass2FixInitialState() {
+  setTimeout(() => {
+    try {
+      // Strip any stale `disabled` attributes left over from the
+      // broken Pass 2 wrappers.
+      document.querySelectorAll('#omnibox-actions .omnibox-action[disabled]').forEach(btn => {
+        btn.removeAttribute('disabled');
+      });
+      const inp = _omniboxInput();
+      const intent = _omniboxDetectIntent(inp?.value || '');
+      _applyOmniboxIntent(intent);
+    } catch (_) { /* harmless on init */ }
+  }, 50);
+})();

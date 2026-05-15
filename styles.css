@@ -4582,3 +4582,28 @@ body.omnibox-expanded { /* reserved for future scroll-lock if needed */ }
   border-top: none;
   padding-top: 8px;
 }
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 2 FIX
+   Override the data-disabled rule so greyed-out action buttons remain
+   clickable. The visual dimming stays as a guidance cue, but the user
+   can always force-click an action against the suggestion.
+
+   Specifically targets [data-disabled="true"] only — leaves the
+   `:disabled` rule intact in case any other code paths set the
+   real disabled attribute.
+═══════════════════════════════════════════════════════════════════ */
+.omnibox-action[data-disabled="true"] {
+  /* Reset blocking properties from the original Pass 1 rule. */
+  pointer-events: auto;
+  cursor: pointer;
+  /* Keep the dim opacity so it's still clear which buttons are the
+     "recommended" path vs the "available but not suggested" ones. */
+  opacity: 0.4;
+}
+/* Subtle hover state so the user knows the button IS clickable even
+   when greyed — without making it look like a primary CTA. */
+.omnibox-action[data-disabled="true"]:hover {
+  opacity: 0.65;
+  background: var(--surface);
+  border-color: var(--muted);
+}
