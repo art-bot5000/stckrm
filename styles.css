@@ -4846,3 +4846,97 @@ body.note-open .omnibox-backdrop,
 body.global-search-open .omnibox-backdrop {
   display: none !important;
 }
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 6: Overlay expanded panel + blurred backdrop
+
+   Two changes from Pass 5:
+   1. Expanded panel becomes an out-of-flow overlay instead of an
+      in-flow expansion. Content beneath stays put — the panel floats
+      on top.
+   2. The backdrop uses backdrop-filter:blur() to obscure content
+      behind it instead of a heavy dark dim. Light dim layered on top
+      of the blur keeps the panel readable.
+
+   Approach:
+   - `.omnibox` stays sticky-positioned at top. The collapsed input
+     row remains in flow at all times.
+   - `.omnibox-panel` switches to `position: absolute` anchored to
+     the bottom edge of `.omnibox` (which is its positioning context
+     because sticky implies a positioning context). The panel always
+     sits directly below the input row regardless of auto-grow.
+   - Because the panel is absolute, it doesn't reserve flow space —
+     content beneath the omnibox doesn't get pushed down.
+   - Body scroll is locked while expanded (mirrors the existing global-
+     search modal pattern) so content can't scroll under the panel.
+═══════════════════════════════════════════════════════════════════ */
+
+/* ── Panel becomes an absolute overlay when expanded ──
+   Anchored to the bottom of the omnibox via top: 100%. Width inherits
+   from `left: 0; right: 0` against the omnibox's box, which spans
+   full-width on mobile and clears the sidebar on desktop already. */
+.omnibox[data-state="expanded"] .omnibox-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  /* Cap height so a very long results list doesn't reach the bottom
+     of the screen; the panel scrolls internally instead. The 110px
+     reserves space for the header (mobile) + input row + a small gap. */
+  max-height: calc(100vh - 110px);
+  display: flex;
+  flex-direction: column;
+  z-index: 96;
+  /* Drop shadow to detach the panel visually from the input row above
+     and the backdrop below — gives it the "floating" feel. */
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Mobile (<900px) ── */
+@media (max-width: 899px) {
+  .omnibox[data-state="expanded"] .omnibox-panel {
+    border-radius: 0 0 12px 12px;
+  }
+
+  /* Backdrop: full-viewport blur + light dim. Sits below the panel
+     (z:94 from Pass 5) and above page content. Replaces the Pass 5
+     heavy dim with a softer blur + light tint. */
+  .omnibox-backdrop {
+    /* Start below the header on mobile (still 56px from Pass 5). */
+    background: rgba(0, 0, 0, 0.25);
+    backdrop-filter: blur(8px) saturate(140%);
+    -webkit-backdrop-filter: blur(8px) saturate(140%);
+  }
+}
+
+/* ── Desktop (≥900px) ── */
+@media (min-width: 900px) {
+  .omnibox[data-state="expanded"] .omnibox-panel {
+    border-radius: 0 0 14px 14px;
+  }
+
+  /* Desktop backdrop — Pass 5 left this hidden on desktop, keep it
+     hidden. The horizontal pill row of buttons + the floating panel
+     feel less like a takeover; no need to dim content. */
+  .omnibox-backdrop {
+    display: none !important;
+  }
+}
+
+/* ── Body scroll lock when expanded ──
+   Without this, content can scroll under the floating panel which is
+   weird — the page would visually disconnect from the omnibox. Match
+   the existing body.note-open / body.global-search-open pattern. */
+body.omnibox-expanded {
+  overflow: hidden;
+  touch-action: none;
+}
+
+/* ── Re-tame the no-longer-needed bottom border on the omnibox ──
+   When the panel was in flow, we suppressed the omnibox-input-row
+   bottom border in the expanded state (so the panel butted seamlessly).
+   With the panel now overlaying, the input row is on its own — give it
+   back its bottom border so it reads as a self-contained input above
+   the floating panel. */
+.omnibox[data-state="expanded"] .omnibox-input-row {
+  border-bottom: 1px solid var(--border);
+}
