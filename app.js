@@ -38479,3 +38479,282 @@ omniboxAction = function omniboxAction(kind) {
     } catch (_) { /* harmless on init */ }
   }, 50);
 })();
+// ═══════════════════════════════════════════════════════════════════
+//  OMNIBOX — Pass 3: Inline Spend preview + direct commit
+// ═══════════════════════════════════════════════════════════════════
+// When intent detection picks `spend` as the primary action, this
+// pass renders the parsed transaction chips directly inside the
+// omnibox panel (above the action buttons), and rewires the Spend
+// button to commit them directly without opening the Spend Quick Add
+// modal.
+//
+// Reuses _renderQuickAddChip (for the chip markup), parseQuickAddInput
+// (for parsing) and commitQuickAdd (for actual persistence). All three
+// are already factored cleanly in the existing Spend code path — no
+// changes needed there.
+//
+// Layout when spend is primary:
+//   [results pane]
+//   [omnibox-spend-preview — chips: today, parsed entries]
+//   [omnibox-intent-hint — "Log spend"]
+//   [action buttons]
+
+// ── Inline preview container management ──
+// Lazy-create the preview block inside the omnibox panel. Sits between
+// the results pane and the intent hint. Hidden by default; shown only
+// when intent === spend.
+function _ensureOmniboxSpendPreviewEl() {
+  let el = document.getElementById('omnibox-spend-preview');
+  if (el) return el;
+  const panel = document.getElementById('omnibox-panel');
+  if (!panel) return null;
+  // Insert before the intent hint if it exists, otherwise before actions.
+  const intentHint = document.getElementById('omnibox-intent-hint');
+  const actionsEl  = document.getElementById('omnibox-actions');
+  const anchor     = intentHint || actionsEl;
+  if (!anchor) return null;
+  el = document.createElement('div');
+  el.id = 'omnibox-spend-preview';
+  el.className = 'omnibox-spend-preview';
+  el.style.display = 'none';
+  panel.insertBefore(el, anchor);
+  return el;
+}
+
+// Render the spend preview from current input. Called from the merged
+// onOmniboxInput handler after intent is computed. If intent is not
+// spend, the preview is hidden (and the button reverts to the modal-
+// opening behaviour from Pass 1).
+function _renderOmniboxSpendPreview() {
+  const el = _ensureOmniboxSpendPreviewEl();
+  if (!el) return { validCount: 0, totalCount: 0 };
+
+  const state = _OMNIBOX_INTENT.state;
+  const isSpendIntent = state && state.primary === 'spend';
+  if (!isSpendIntent) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return { validCount: 0, totalCount: 0 };
+  }
+
+  // Use the stripped text if the user typed "spend: …" — strippedText
+  // already trims the keyword. Otherwise raw input.
+  const rawInput  = _omniboxInput()?.value || '';
+  const sourceTxt = (typeof state.strippedText === 'string' && state.strippedText.trim())
+    ? state.strippedText
+    : rawInput;
+
+  // Parser handles newlines by treating them as comma separators (same
+  // behaviour as confirmQuickAdd). parseQuickAddInput exists in the
+  // budget/spend code and is already used by the modal preview.
+  if (typeof parseQuickAddInput !== 'function' || typeof _renderQuickAddChip !== 'function') {
+    // Spend code not loaded yet — bail quietly. Will retry on next keystroke.
+    el.style.display = 'none';
+    return { validCount: 0, totalCount: 0 };
+  }
+  const normalised = sourceTxt.replace(/\n/g, ',');
+  const parsed = parseQuickAddInput(normalised);
+  const validCount = parsed.filter(p => p.ok && p.amount > 0).length;
+  const totalCount = parsed.length;
+
+  if (totalCount === 0) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return { validCount, totalCount };
+  }
+
+  // Today's date (used at commit time). Shown for transparency — users
+  // who want to log spend for a different day should still open the
+  // full Spend modal where the date picker lives.
+  const today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+  // Header + chips + footer summary. The footer count uses validCount
+  // so users see "Add 2 of 3" if one entry is unparseable.
+  const headerHTML = `<div class="omnibox-spend-preview-header">
+    <span class="omnibox-spend-preview-label">Will log on ${_escapeHtml(today)}</span>
+  </div>`;
+  const chipsHTML  = `<div class="omnibox-spend-preview-chips">${parsed.map(_renderQuickAddChip).join('')}</div>`;
+  el.innerHTML = headerHTML + chipsHTML;
+  el.style.display = '';
+  return { validCount, totalCount };
+}
+
+// ── Commit handler: turn parsed entries into transactions, no modal ──
+// Mirrors confirmQuickAdd but reads from the omnibox input and uses
+// today's date implicitly.
+async function _omniboxCommitSpend() {
+  if (typeof parseQuickAddInput !== 'function' || typeof commitQuickAdd !== 'function') {
+    if (typeof toast === 'function') toast('Spend code not loaded');
+    return;
+  }
+  // Bail out if there are no budget categories yet — same gate the
+  // modal-opening flow uses. Drop the user into the setup flow instead.
+  if (typeof getActiveBudgetCategories === 'function' && getActiveBudgetCategories().length === 0) {
+    if (typeof openBudgetSetupModal === 'function') {
+      openBudgetSetupModal();
+    } else if (typeof toast === 'function') {
+      toast('Set up budget categories first');
+    }
+    return;
+  }
+
+  const state = _OMNIBOX_INTENT.state;
+  const rawInput = _omniboxInput()?.value || '';
+  const sourceTxt = (state && state.primary === 'spend' &&
+                    typeof state.strippedText === 'string' && state.strippedText.trim())
+    ? state.strippedText
+    : rawInput;
+  const normalised = sourceTxt.replace(/\n/g, ',');
+  const parsed = parseQuickAddInput(normalised).filter(p => p.ok && p.amount > 0);
+  if (parsed.length === 0) {
+    if (typeof toast === 'function') toast('Nothing to add — needs an amount');
+    return;
+  }
+  try {
+    const created = await commitQuickAdd(parsed, { date: null }); // null → today
+    if (typeof toast === 'function') {
+      toast(`Added ${created.length} transaction${created.length === 1 ? '' : 's'}`);
+    }
+    // Refresh budget views if currently visible — matches what
+    // confirmQuickAdd does at the end of its handler.
+    if (typeof _currentView !== 'undefined' && _currentView === 'budget') {
+      if (typeof _budgetActivePanel !== 'undefined') {
+        if (_budgetActivePanel === 'spend' && typeof renderBudgetSpend === 'function') {
+          renderBudgetSpend();
+        } else if (_budgetActivePanel === 'dashboard' && typeof renderBudgetDashboard === 'function') {
+          renderBudgetDashboard();
+        }
+      }
+    }
+    // Clear and collapse — full handled, no follow-up modal needed.
+    if (typeof clearOmnibox === 'function') clearOmnibox();
+    if (typeof collapseOmnibox === 'function') collapseOmnibox();
+  } catch (err) {
+    console.error('_omniboxCommitSpend failed:', err);
+    if (typeof toast === 'function') toast('Could not add — please try again');
+  }
+}
+
+// ── Override the Spend branch in omniboxAction ──
+// Pass 2-fix already redefined omniboxAction as a single direct function.
+// We redefine it again here to insert inline-commit behaviour for spend,
+// keeping all other branches unchanged. No wrapping pattern this time —
+// just a full reassignment with the spend case substituted.
+omniboxAction = function omniboxAction(kind) {
+  const inp = _omniboxInput();
+  const rawText = (inp?.value || '').trim();
+
+  // Search: blur to dismiss keyboard, leave state alone.
+  if (kind === 'search') {
+    try { inp?.blur(); } catch (_) {}
+    return;
+  }
+
+  // Empty input check for non-search actions.
+  if (!rawText) {
+    if (typeof toast === 'function') toast('Type something first');
+    return;
+  }
+
+  // Keyword-stripped text for the matching action (Pass 2 behaviour).
+  let textForAction = rawText;
+  const state = _OMNIBOX_INTENT.state;
+  if (state && state.primary === kind && typeof state.strippedText === 'string') {
+    const stripped = state.strippedText.trim();
+    if (stripped) textForAction = stripped;
+  }
+
+  switch (kind) {
+    case 'stockroom':  return _omniboxAddToStockroom(textForAction);
+    case 'groceries':  return _omniboxAddToGroceries(textForAction);
+    case 'reminders':  return _omniboxAddToReminders(textForAction);
+    case 'notes':      return _omniboxAddToNotes(textForAction);
+
+    case 'spend': {
+      // Pass 3 change: if intent has been computed and there are valid
+      // parsed entries, commit inline. Otherwise fall back to opening
+      // the modal — handles the case where the user clicked Spend on
+      // input that wasn't detected as spend (e.g. force-clicked the
+      // dimmed Spend button on "milk, eggs" — opening the modal lets
+      // them recover by editing in the full Spend UI).
+      const haveValid = state && state.primary === 'spend';
+      if (haveValid && typeof _omniboxCommitSpend === 'function') {
+        return _omniboxCommitSpend();
+      }
+      // Fallback: pre-fill modal (Pass 1 behaviour for non-spend intent).
+      return _omniboxAddToSpend(textForAction);
+    }
+
+    default:
+      console.warn('Unknown omnibox action:', kind);
+  }
+};
+
+// ── Hook the preview into onOmniboxInput ──
+// Pass 2-fix already wrote onOmniboxInput as a direct assignment. We
+// redefine it here to add the preview render call after intent
+// detection, before the debounced search.
+onOmniboxInput = function onOmniboxInput() {
+  const inp = _omniboxInput();
+  if (!inp) return;
+  _autoGrowOmnibox();
+  _refreshOmniboxClearButton();
+  const q = (inp.value || '').trim();
+  _OMNIBOX.query = q;
+  clearTimeout(_OMNIBOX.debounceTimer);
+
+  // Intent detection — synchronous.
+  try {
+    const intent = _omniboxDetectIntent(inp.value || '');
+    _applyOmniboxIntent(intent);
+  } catch (err) {
+    console.error('Omnibox intent detection failed:', err);
+  }
+
+  // Pass 3 addition: render inline spend preview if intent is spend.
+  // This is cheap (just re-runs the parser + DOM update). Done synchronously
+  // so the preview updates as the user types each digit of an amount.
+  try { _renderOmniboxSpendPreview(); } catch (err) {
+    console.error('Omnibox spend preview failed:', err);
+  }
+
+  // Debounced search.
+  if (!q) { _renderOmniboxEmpty(); return; }
+  _OMNIBOX.debounceTimer = setTimeout(() => {
+    try { _runOmniboxSearch(q); } catch (err) { console.error('Omnibox search failed:', err); }
+  }, 120);
+};
+
+// ── Clear the preview when the omnibox collapses or clears ──
+// The preview is rendered into a static container; if we don't clear
+// it on collapse, the next time the user opens the omnibox they see
+// stale chips from a previous session.
+//
+// We replace clearOmnibox with a merged version (no wrapping —
+// avoids the hoisting/recursion trap that bit Pass 2). The Pass 1
+// behaviour is reproduced inline, then the preview cleanup added.
+clearOmnibox = function clearOmnibox() {
+  const inp = _omniboxInput();
+  if (inp) { inp.value = ''; }
+  _OMNIBOX.query = '';
+  clearTimeout(_OMNIBOX.debounceTimer);
+  _renderOmniboxEmpty();
+  _refreshOmniboxClearButton();
+  _autoGrowOmnibox();
+  // Pass 3 addition: clear stale spend preview chips.
+  const el = document.getElementById('omnibox-spend-preview');
+  if (el) { el.innerHTML = ''; el.style.display = 'none'; }
+  try { inp?.focus(); } catch (_) {}
+};
+
+// ── Initial render so the preview block is set up correctly ──
+// Defer to next tick so the panel DOM is in place.
+(function _omniboxPass3InitialState() {
+  setTimeout(() => {
+    try {
+      _ensureOmniboxSpendPreviewEl();
+      // Recompute preview against current input (likely empty on init).
+      _renderOmniboxSpendPreview();
+    } catch (_) { /* harmless on init */ }
+  }, 60);
+})();

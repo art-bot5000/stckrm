@@ -4607,3 +4607,134 @@ body.omnibox-expanded { /* reserved for future scroll-lock if needed */ }
   background: var(--surface);
   border-color: var(--muted);
 }
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 3: Inline Spend preview + hover hints
+═══════════════════════════════════════════════════════════════════ */
+
+/* ── Inline Spend preview block ──
+   Sits between the search results and the intent hint when spend is
+   the detected intent. Reuses .quick-add-chip styling from the
+   existing Spend Quick Add modal so chips look identical to what
+   the user sees in that modal. */
+.omnibox-spend-preview {
+  padding: 10px 14px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+.omnibox-spend-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.omnibox-spend-preview-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.omnibox-spend-preview-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* When the preview sits directly above the intent hint, suppress the
+   hint's own border-top so we only get one separator line — matches
+   the trick the .omnibox-intent-hint + .omnibox-actions selector uses. */
+.omnibox-spend-preview + .omnibox-intent-hint {
+  border-top: none;
+}
+
+@media (min-width: 900px) {
+  .omnibox-spend-preview {
+    padding-left: 36px;
+    padding-right: 36px;
+  }
+}
+
+/* ── Hover hints on Stockroom / Groceries / Spend buttons ──
+   Replaces the native `title=` tooltips which are slow, native-styled,
+   and broken on mobile. Pure CSS via [data-hint] attribute on the
+   button; ::after pseudo-element absolutely-positioned above.
+
+   Only shown on devices that support hover (skips mobile / touch by
+   default — touch users tap the button instead). */
+@media (hover: hover) {
+  .omnibox-action[data-hint] {
+    position: relative;
+  }
+  .omnibox-action[data-hint]::after {
+    content: attr(data-hint);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%) translateY(2px);
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    font-family: var(--sans);
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+    max-width: 320px;
+    /* Word-wrap fallback for narrow viewports */
+    overflow-wrap: anywhere;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.12s, transform 0.12s;
+    /* Float above neighbouring buttons and the panel border. */
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .omnibox-action[data-hint]:hover::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  /* On the rightmost buttons the centered tooltip can clip off-screen.
+     Allow wrapping for those. The `white-space: nowrap` above keeps
+     short hints on a single line; this rule kicks in only when the
+     content is long enough to wrap. */
+  .omnibox-action[data-hint]:last-of-type::after,
+  .omnibox-action[data-hint]:nth-last-of-type(2)::after {
+    white-space: normal;
+    width: 240px;
+    text-align: left;
+  }
+}
+
+/* Mobile: tap-to-show via :focus. Tooltip appears below the button
+   instead of above (more room, less likely to be covered by the
+   on-screen keyboard if it shows up). */
+@media (hover: none) {
+  .omnibox-action[data-hint]:focus {
+    position: relative;
+  }
+  .omnibox-action[data-hint]:focus::after {
+    content: attr(data-hint);
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    font-family: var(--sans);
+    letter-spacing: 0;
+    text-transform: none;
+    width: max-content;
+    max-width: 80vw;
+    pointer-events: none;
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+}
