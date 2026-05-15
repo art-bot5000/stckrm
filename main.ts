@@ -7130,13 +7130,34 @@ async function sendBackupHeartbeatEmail(): Promise<{ ok: boolean; error?: string
       counts[top] = (counts[top] || 0) + 1;
     }
 
-    // Most recent auto snapshot from R2
+    // Most recent auto snapshot from R2. After the per-user backup
+    // migration, snapshots live at `user-backup/{emailHash}/auto-{ts}.json`
+    // — the old whole-DB `auto/{ts}.json` path is no longer written to
+    // (only `pre-restore/...` ever touches the legacy path now). Listing
+    // just `auto/` returned the migration-day snapshot forever, falsely
+    // reporting "Backup needs attention" while per-user backups were
+    // happening every 5 minutes. Fix: list ALL R2 contents once, filter
+    // for any path containing 'auto-' or starting with 'auto/', and pick
+    // the most recent. Same listing is reused for the totals below.
     let latestSnap: { key: string; size: number; lastModified: string } | null = null;
+    let totalSnapshots = 0;
+    let totalBytes = 0;
     let r2Status = 'not configured';
+    let everything: Array<{ key: string; size: number; lastModified: string }> = [];
     if (r2Configured()) {
       try {
-        const all = await listR2Snapshots('auto/');
-        latestSnap = all.at(-1) || null;
+        everything = await listR2Snapshots('');
+        totalSnapshots = everything.length;
+        totalBytes = everything.reduce((s, x) => s + x.size, 0);
+        // Filter for auto snapshots only. Per-user path:
+        //   user-backup/{emailHash}/auto-{ts}.json
+        // Legacy path (no longer written):
+        //   auto/{ts}.json
+        // Skip pre-restore / pre-delete / manual labels.
+        const autoOnly = everything.filter(s =>
+          s.key.startsWith('auto/') || /\/auto-\d/.test(s.key)
+        );
+        latestSnap = autoOnly.at(-1) || null;
         r2Status = latestSnap ? 'ok' : 'configured but no snapshots found';
       } catch (e) {
         r2Status = `error: ${(e as Error)?.message || e}`;
@@ -7145,17 +7166,6 @@ async function sendBackupHeartbeatEmail(): Promise<{ ok: boolean; error?: string
 
     // Pending changes? If dirty, the next 5-min cron will pick them up.
     const pendingChanges = await _isKVDirty();
-
-    // Total R2 storage used (rough — listing only auto/ above)
-    let totalSnapshots = 0;
-    let totalBytes = 0;
-    if (r2Configured() && r2Status === 'ok') {
-      try {
-        const everything = await listR2Snapshots('');
-        totalSnapshots = everything.length;
-        totalBytes = everything.reduce((s, x) => s + x.size, 0);
-      } catch (_) { /* non-fatal */ }
-    }
 
     const fmtBytes = (n: number) => {
       if (!n) return '0 B';
