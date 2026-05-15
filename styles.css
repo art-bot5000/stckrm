@@ -4738,3 +4738,111 @@ body.omnibox-expanded { /* reserved for future scroll-lock if needed */ }
     box-shadow: 0 4px 12px rgba(0,0,0,0.4);
   }
 }
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 4: Mobile 3×2 grid + darkened backdrop
+
+   Mobile-only changes. Desktop keeps the horizontal pill row.
+
+   Grid layout (mobile, <900px):
+     Row 1: Stockroom │ Spend     │ Notes
+     Row 2: Groceries │ Reminders │ Search
+
+   Source order in HTML is: Search, Stockroom, Groceries, Reminders,
+   Notes, Spend — kept that way so tab/keyboard order still hits
+   Search first. Visual order on mobile is driven by `order:` on each
+   button. Desktop ignores `order:` because flex-row honours it but
+   we're using the pre-existing flex-wrap layout which renders in
+   source order at full width without explicit order values.
+═══════════════════════════════════════════════════════════════════ */
+
+/* ── Mobile (<900px): 3×2 grid ── */
+@media (max-width: 899px) {
+  .omnibox-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-auto-rows: 1fr;
+    gap: 6px;
+    padding: 10px 12px;
+  }
+
+  /* Reset the default action button so it sits as a grid cell, not a
+     horizontal pill. Mirrors the tab-bar style: icon above label,
+     centered, equal cells. */
+  .omnibox-actions .omnibox-action {
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 10px 4px;
+    font-size: 11px;
+    white-space: nowrap;
+    text-align: center;
+    min-width: 0;
+    overflow: hidden;
+    /* Reset the pill-row hover transform — looks odd on a grid cell. */
+  }
+  .omnibox-actions .omnibox-action .icon {
+    width: 18px;
+    height: 18px;
+  }
+
+  /* Explicit cell positions via flex `order`. Grid auto-placement
+     fills source-order; `order` on grid items relocates them. The
+     numbers correspond to grid cells 1..6 (row-major). */
+  .omnibox-actions .omnibox-action[data-action="stockroom"] { order: 1; }
+  .omnibox-actions .omnibox-action[data-action="spend"]     { order: 2; }
+  .omnibox-actions .omnibox-action[data-action="notes"]     { order: 3; }
+  .omnibox-actions .omnibox-action[data-action="groceries"] { order: 4; }
+  .omnibox-actions .omnibox-action[data-action="reminders"] { order: 5; }
+  .omnibox-actions .omnibox-action[data-action="search"]    { order: 6; }
+}
+
+/* ── Mobile backdrop ──
+   Darkens the page content behind the expanded omnibox panel.
+   `omnibox-backdrop` is created by JS on init and appended to body.
+   Hidden by default (opacity 0, pointer-events none). When the
+   .visible class is added, it fades in and intercepts taps so the
+   user can tap-to-collapse.
+
+   Sits at top: 0 with the omnibox panel above it via z-index. The
+   panel is z:95 and sticky at top:56px (below header). Backdrop is
+   z:94 so the panel sits above. */
+.omnibox-backdrop {
+  display: none; /* gated by media query below */
+}
+
+@media (max-width: 899px) {
+  .omnibox-backdrop {
+    display: block;
+    position: fixed;
+    /* Cover everything from the bottom of the header down. Header is
+       56px tall and pinned at top:0. Omnibox panel itself sits over
+       the top of the backdrop and is z:95 so it stays crisp. */
+    top: 56px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 94;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease-out;
+    /* Belt-and-braces: prevent the backdrop from intercepting page
+       scroll when invisible. */
+    -webkit-tap-highlight-color: transparent;
+  }
+  .omnibox-backdrop.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* Wizard / full-screen mode escape hatches — already hide the omnibox
+   itself; also suppress the backdrop so it doesn't lurk behind those
+   modal states. */
+body.wizard-active .omnibox-backdrop,
+body.grocery-list-open .omnibox-backdrop,
+body.note-open .omnibox-backdrop,
+body.global-search-open .omnibox-backdrop {
+  display: none !important;
+}

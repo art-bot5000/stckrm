@@ -38758,3 +38758,135 @@ clearOmnibox = function clearOmnibox() {
     } catch (_) { /* harmless on init */ }
   }, 60);
 })();
+// ═══════════════════════════════════════════════════════════════════
+//  OMNIBOX — Pass 3 FIX
+// ═══════════════════════════════════════════════════════════════════
+// Bug: clicking the clear-X cleared the input and preview, but left
+// the action buttons in whatever state intent detection had set —
+// so Spend stayed gold-highlighted even though the input was empty.
+//
+// Fix: include a fresh intent detection pass inside clearOmnibox so
+// the button states return to the "empty input = all enabled, no
+// primary" baseline.
+//
+// Replaces clearOmnibox via direct assignment (not function-decl
+// wrapping — the Pass 2 bug taught us why).
+
+clearOmnibox = function clearOmnibox() {
+  const inp = _omniboxInput();
+  if (inp) { inp.value = ''; }
+  _OMNIBOX.query = '';
+  clearTimeout(_OMNIBOX.debounceTimer);
+  _renderOmniboxEmpty();
+  _refreshOmniboxClearButton();
+  _autoGrowOmnibox();
+  // Clear stale spend preview chips (Pass 3 behaviour).
+  const previewEl = document.getElementById('omnibox-spend-preview');
+  if (previewEl) { previewEl.innerHTML = ''; previewEl.style.display = 'none'; }
+  // Pass 3 FIX: re-run intent detection against the empty input so
+  // button states reset to the baseline (all enabled, no primary,
+  // no hint). Without this the buttons keep their last detected
+  // state from before the clear.
+  try {
+    const intent = _omniboxDetectIntent('');
+    _applyOmniboxIntent(intent);
+  } catch (_) { /* harmless */ }
+  try { inp?.focus(); } catch (_) {}
+};
+// ═══════════════════════════════════════════════════════════════════
+//  OMNIBOX — Pass 4: Mobile 3×2 button grid + darkened backdrop
+// ═══════════════════════════════════════════════════════════════════
+// Two related mobile-only enhancements:
+//
+//   1. Action button row becomes a 3×2 grid mirroring the tab bar
+//      (icon above label, equal cells). Source order in HTML stays
+//      put — visual order is controlled by CSS `order` on each button.
+//      Desktop layout (horizontal pill row) is unchanged.
+//
+//   2. When the omnibox is expanded on mobile, a dark backdrop appears
+//      over the content beneath the panel. Tapping the backdrop
+//      collapses the panel but preserves the typed text (so the user
+//      can resume by tapping the input again).
+//
+// All CSS lives in styles.css; this JS handles only:
+//   - Inserting the backdrop element into the DOM on init
+//   - Wiring its tap handler to collapseOmnibox()
+//   - Toggling its visibility from expand/collapse functions
+
+// ── Backdrop element management ──
+// Single backdrop element appended once on init. Hidden by default;
+// shown when omnibox is expanded on mobile (CSS handles the media-query
+// gating so desktop never sees it). z-index sits below the omnibox
+// panel (which is z:95) but above the rest of the app (typical content
+// z is 0–80).
+function _ensureOmniboxBackdrop() {
+  let el = document.getElementById('omnibox-backdrop');
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = 'omnibox-backdrop';
+  el.className = 'omnibox-backdrop';
+  el.setAttribute('aria-hidden', 'true');
+  // Tap collapses but keeps the input text — exactly the "I want to see
+  // the page again but not lose my typing" affordance the user asked
+  // for. collapseOmnibox already preserves input value (it just hides
+  // the panel and blurs the input).
+  el.addEventListener('click', () => {
+    if (typeof collapseOmnibox === 'function') collapseOmnibox();
+  });
+  // Append at body level (NOT inside #omnibox) so it can cover all
+  // page content regardless of stacking context.
+  document.body.appendChild(el);
+  return el;
+}
+
+// Show/hide the backdrop. Called from expand/collapse handlers below.
+// The visible state is driven by a CSS class so we can transition
+// opacity smoothly via the stylesheet.
+function _setOmniboxBackdropVisible(visible) {
+  const el = _ensureOmniboxBackdrop();
+  if (!el) return;
+  if (visible) {
+    el.classList.add('visible');
+  } else {
+    el.classList.remove('visible');
+  }
+}
+
+// ── Reassign expandOmnibox / collapseOmnibox to manage the backdrop ──
+// Same pattern as previous passes: direct reassignment (no wrapping
+// function-declared names) to dodge the hoisting trap from Pass 2.
+// We reproduce the Pass 1 body of each function and add backdrop calls.
+
+expandOmnibox = function expandOmnibox() {
+  const omni = _omniboxEl();
+  if (!omni) return;
+  omni.setAttribute('data-state', 'expanded');
+  _OMNIBOX.active = true;
+  document.body.classList.add('omnibox-expanded');
+  const collapseBtn = document.getElementById('omnibox-collapse-btn');
+  if (collapseBtn) collapseBtn.style.display = '';
+  _refreshOmniboxClearButton();
+  // Pass 4 addition: show the dark backdrop on mobile.
+  _setOmniboxBackdropVisible(true);
+};
+
+collapseOmnibox = function collapseOmnibox() {
+  const omni = _omniboxEl();
+  if (!omni) return;
+  omni.setAttribute('data-state', 'collapsed');
+  _OMNIBOX.active = false;
+  document.body.classList.remove('omnibox-expanded');
+  const collapseBtn = document.getElementById('omnibox-collapse-btn');
+  if (collapseBtn) collapseBtn.style.display = 'none';
+  try { _omniboxInput()?.blur(); } catch (_) {}
+  // Pass 4 addition: hide the dark backdrop.
+  _setOmniboxBackdropVisible(false);
+};
+
+// ── Init: insert backdrop element so it's ready before first expand ──
+// Deferred to next tick to keep init order safe against partial DOM.
+(function _omniboxPass4Init() {
+  setTimeout(() => {
+    try { _ensureOmniboxBackdrop(); } catch (_) {}
+  }, 60);
+})();
