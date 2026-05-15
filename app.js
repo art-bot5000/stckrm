@@ -1920,6 +1920,54 @@ function _scrubGuestRecords(records) {
 // doesn't already have, and rejects tx writes against non-shared
 // categories) — different from the field-stripping this helper did.
 
+// ── Per-note sharing filter ─────────────────────────────────────────────
+// Notes don't sit under a section perm (unlike stock/grocery/reminder/
+// budget). The rule for notes is:
+//   - Absent or null `share` field           → owner-only (private)
+//   - share === 'private'                    → owner-only (explicit)
+//   - share is an object with allow[]        → only those shares see it
+//
+// This is a DIFFERENT default from other record types, which inherit
+// section perm when the field is absent. Notes have no section perm to
+// inherit from, so absence means "private" rather than "ask the section."
+//
+// Excludes locked notes (locked-and-shared is incoherent — recipients
+// don't have the note password) and trashed notes (deletedAt set —
+// recipient should not see what the owner has thrown away).
+//
+// Returns a NEW array of shallow-cloned note records with the `share`
+// field STRIPPED (owner-only; guests must never see who else has access).
+// Body is included in full for unlocked notes — locked notes never get
+// here because they're filtered out before we even try.
+function _filterNotesForShare(notes, shareCode) {
+  if (!Array.isArray(notes) || !shareCode) return [];
+  const out = [];
+  for (const n of notes) {
+    if (!n || !n.id) continue;
+    if (n.locked) continue;             // never share locked notes
+    if (n.deletedAt) continue;          // never share trashed notes
+    // Notes-specific resolve: absent → 'none', not section-inherit.
+    const sh = n.share;
+    let perm = 'none';
+    if (sh && sh !== 'private' && typeof sh === 'object') {
+      if (Array.isArray(sh.deny) && sh.deny.includes(shareCode)) {
+        perm = 'none';
+      } else if (Array.isArray(sh.allow) && sh.allow.includes(shareCode)) {
+        perm = (Array.isArray(sh.readOnly) && sh.readOnly.includes(shareCode))
+          ? 'r' : 'rw';
+      }
+    }
+    if (perm === 'none') continue;
+    // Shallow clone, strip share field, annotate effective perm for
+    // recipient (same pattern as filtered categories/items).
+    const { share: _drop, ...rest } = n;
+    void _drop;
+    rest._shareEffectivePerm = perm;
+    out.push(rest);
+  }
+  return out;
+}
+
 // ── Round 1 debug helper ─────────────────────────────────────────────────
 // No UI exists yet for setting per-record perms — Round 1 is foundation
 // only. This helper lets you set, clear, and inspect the `share` field on
@@ -1941,19 +1989,23 @@ window.shareDebug = {
   // Inspect: list all records with non-default share state across all sections
   list() {
     const sections = {
-      items, groceryItems, groceryLists, reminders, budgetCategories,
+      items, groceryItems, groceryLists, reminders, budgetCategories, notes,
     };
     for (const [name, arr] of Object.entries(sections)) {
       if (!Array.isArray(arr)) continue;
       const overridden = arr.filter(r => r.share != null);
       if (!overridden.length) { console.log(`${name}: (none with overrides)`); continue; }
       console.log(`${name}: ${overridden.length} with overrides`);
-      overridden.forEach(r => console.log(`  ${r.id}  ${r.name||'(unnamed)'}  →`, r.share));
+      overridden.forEach(r => console.log(`  ${r.id}  ${r.name||r.title||'(unnamed)'}  →`, r.share));
     }
     // Per-tx sharing was removed in Pass 2d-rollback. Pass 2e-a adds
     // per-category sharing — set via:
     //   shareDebug.set('budgetCategories', '<catId>', { allow: ['<shareCode>'] })
     // Then shareDebug.push() to propagate.
+    // Pass 3a: per-note sharing. Same shape as other sections, but
+    // notes default to PRIVATE when the `share` field is absent (no
+    // section perm to inherit from). Set via:
+    //   shareDebug.set('notes', '<noteId>', { allow: ['<shareCode>'] })
   },
 
   // Set the share field on a specific record. value can be 'private',
@@ -2020,6 +2072,7 @@ window.shareDebug = {
     if (section === 'groceryLists')      return groceryLists;
     if (section === 'reminders')         return reminders;
     if (section === 'budgetCategories')  return budgetCategories;
+    if (section === 'notes')             return notes;
     // 'transactions' branch removed in Pass 2d-rollback. Per-tx sharing
     // is gone. Pass 2e uses per-category sharing via 'budgetCategories'.
     return null;
@@ -2078,6 +2131,23 @@ let _noteRedoStack = new Map();    // noteId → string[]
 let _noteBodyDirty = false;        // unsaved changes flag
 let _noteAutoSaveTimer = null;
 let _noteOtpPending = false;       // waiting for 2FA OTP input
+
+// ── Shared notes (Pass 3a) ────────────────────────────────────────────
+// Notes received via shares from other people, grouped by share code so
+// the UI can attribute them ("shared by Carla", etc). Each push from
+// the owner REPLACES the bucket for that share code wholesale —
+// reconcile-by-full-set means notes the owner stopped sharing simply
+// vanish from the bucket on next sync, no tombstones needed.
+//
+// This bucket is intentionally separate from the user's own `notes[]`
+// array. Merging shared-incoming notes into `notes` would cause the
+// guest's next own-account push to re-publish them, creating loops and
+// ownership confusion.
+//
+// Pass 3a: the bucket is filled by absorb but no UI reads it yet.
+// Pass 3b will surface it as a "Shared with you" section in the Notes
+// view. Pass 3c adds bulk-select on the user's personal notes.
+let _sharedNotesIncoming = new Map();   // shareCode → Note[]
 
 // Drive / Dropbox — disabled in KV build (kept as no-op vars to avoid reference errors)
 let driveConnected   = false;
@@ -2420,6 +2490,11 @@ async function loadData() {
 
   if (Array.isArray(loadedItems)) items = loadedItems;
   if (loadedSettings && typeof loadedSettings === 'object') settings = { ...settings, ...loadedSettings };
+
+  // Apply user's theme preference now that settings are loaded — this
+  // re-runs applyTheme with the persisted choice, replacing the early
+  // dark-default paint that happened before settings were ready.
+  if (typeof applyTheme === 'function') applyTheme();
 
   // Backfill localStorage from user settings so early-firing browser events (beforeinstallprompt)
   // also see the dismissed flag without waiting for a network sync
@@ -12606,11 +12681,22 @@ function _renderSharingPanel(sectionKey, record) {
 
 // One-line summary of the current state. Visible in the collapsed view.
 function _renderSharingSummary(sectionKey, record) {
+  const spec = _SHARING_SECTIONS[sectionKey];
+  const defaultBehavior = spec?.defaultBehavior || 'inherit';
   const share = record.share;
   let label, icon;
   if (share == null) {
-    label = `Inherits from household — visible to ${_shareTargets.length} share${_shareTargets.length===1?'':'s'} per section perms`;
-    icon  = 'i-share-2';
+    // Section default. For most sections (items, groceries, etc.) the
+    // absent-field case means "inherit section perm". For notes (and
+    // potentially future sections without a section perm), it means
+    // "private — owner only", since there's nothing to inherit FROM.
+    if (defaultBehavior === 'private') {
+      label = `Private — owner only`;
+      icon  = 'i-eye-off';
+    } else {
+      label = `Inherits from household — visible to ${_shareTargets.length} share${_shareTargets.length===1?'':'s'} per section perms`;
+      icon  = 'i-share-2';
+    }
   } else if (share === 'private') {
     label = `Private — owner only`;
     icon  = 'i-eye-off';
@@ -12626,10 +12712,13 @@ function _renderSharingSummary(sectionKey, record) {
     icon  = 'i-alert-triangle';
   }
 
+  // Reset button is meaningful only when there's a non-null share field.
+  // For notes (defaultBehavior=private), Reset just clears to the same
+  // private state — still valid as a "discard overrides" action.
   const action = (share != null)
     ? `<button class="btn btn-ghost btn-sm" onclick="_clearSharing('${sectionKey}')" style="margin-right:6px"><svg class="icon" aria-hidden="true"><use href="#i-rotate-ccw"></use></svg> Reset</button>
        <button class="btn btn-ghost btn-sm" onclick="_expandSharing('${sectionKey}')"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg> Edit</button>`
-    : `<button class="btn btn-ghost btn-sm" onclick="_expandSharing('${sectionKey}')"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Override sharing</button>`;
+    : `<button class="btn btn-ghost btn-sm" onclick="_expandSharing('${sectionKey}')"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> ${defaultBehavior === 'private' ? 'Share with someone' : 'Override sharing'}</button>`;
 
   return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface2);border-radius:8px">
     <svg class="icon" aria-hidden="true" style="color:var(--muted);flex-shrink:0"><use href="#${icon}"></use></svg>
@@ -12640,8 +12729,13 @@ function _renderSharingSummary(sectionKey, record) {
 
 // Expanded picker UI. Four radio modes + optional readOnly chip group.
 function _renderSharingPicker(sectionKey, record) {
+  const spec = _SHARING_SECTIONS[sectionKey];
+  const defaultBehavior = spec?.defaultBehavior || 'inherit';
   const share = record.share;
-  let mode = 'inherit';
+  // Default mode mirrors the section's default behaviour when there's
+  // no override. For most sections that's 'inherit'; for notes (and
+  // any future default-private section) it's 'private'.
+  let mode = defaultBehavior === 'private' ? 'private' : 'inherit';
   if (share === 'private') mode = 'private';
   else if (typeof share === 'object') {
     if (Array.isArray(share.allow)) mode = 'allow';
@@ -12669,17 +12763,17 @@ function _renderSharingPicker(sectionKey, record) {
     </button>`;
   }).join('');
 
-  const noun = _SHARING_SECTIONS[sectionKey]?.noun || 'record';
+  const noun = spec?.noun || 'record';
   const showAllowList = mode === 'allow';
   const showDenyList  = mode === 'deny';
   const showReadOnly  = mode === 'inherit' || mode === 'allow';
 
   return `
     <div style="padding:12px;background:var(--surface2);border-radius:8px">
-      ${radio('inherit', 'Inherit (default)', 'Use the section-level permission for every share.')}
+      ${defaultBehavior === 'private' ? '' : radio('inherit', 'Inherit (default)', 'Use the section-level permission for every share.')}
       ${radio('private', 'Private — owner only', `Hide this ${noun} from every share. Nobody sees it.`)}
-      ${radio('allow',   'Only specific shares', 'Hide from everyone EXCEPT the shares you tick below.')}
-      ${radio('deny',    'Hide from specific shares', 'Show to everyone EXCEPT the shares you tick below.')}
+      ${radio('allow',   'Only specific shares', `Visible only to the shares you tick below.`)}
+      ${defaultBehavior === 'private' ? '' : radio('deny',    'Hide from specific shares', 'Show to everyone EXCEPT the shares you tick below.')}
 
       ${showAllowList ? `
         <div style="margin-top:12px">
@@ -19285,6 +19379,33 @@ async function kvSyncNow(silent = false) {
         }
         await saveNotes();
       }
+      // ── Shared notes (Pass 3a) ──
+      // Opposite guard from the notes merge above: only runs for SHARE
+      // pulls (guest absorbing the owner's payload). Replaces the bucket
+      // for this share code wholesale — reconcile-by-full-set means
+      // notes the owner stopped sharing simply vanish from the bucket.
+      // Stored in a SEPARATE local bucket from the guest's own `notes`
+      // to prevent the guest's next own-account push from re-publishing
+      // them and creating ownership confusion.
+      if (_shareState && _shareState.code && Array.isArray(remote.sharedNotes)) {
+        // Defensive scrub: shared notes are owner-only by definition, but
+        // strip `share` field anyway in case a stale payload carries it.
+        const cleaned = remote.sharedNotes.map(n => {
+          if (!n || n.share === undefined) return n;
+          const { share: _drop, ...rest } = n;
+          void _drop;
+          return rest;
+        });
+        _sharedNotesIncoming.set(_shareState.code, cleaned);
+        // If the user is currently looking at the notes view, refresh it
+        // so newly-absorbed shared notes appear in the "Shared with you"
+        // section without requiring tab navigation. The notes view isn't
+        // in RENDER_REGIONS (which targets stockroom/shopping/etc), so
+        // scheduleRender below won't pick it up automatically.
+        if (_currentView === 'notes' && typeof renderNotes === 'function') {
+          renderNotes().catch(e => console.warn('renderNotes after absorb:', e));
+        }
+      }
       if (remote.householdDir) {
         const localProfiles = await getProfiles();
         let changed = false;
@@ -19680,6 +19801,9 @@ function renderSettingsForUser() {
   updateHeaderGreeting();
   _updateSidebarProfile();
   renderAccountSecurity();
+  // Sync theme segmented control with current preference. Safe to call
+  // even if buttons aren't mounted — the helper no-ops on missing IDs.
+  _updateThemeUI();
 }
 
 function updateSyncPill(state, provider) {
@@ -19713,39 +19837,127 @@ function updateSyncPill(state, provider) {
 
 
 // ═══════════════════════════════════════════════════════════
-//  ADAPTIVE DARK MODE 2.0 — Time-of-day colour temperature
+//  THEME SYSTEM — Light / Dark / System
 // ═══════════════════════════════════════════════════════════
+// settings.theme can be 'system' | 'light' | 'dark' (default: 'system').
+// applyTheme() sets <html data-theme="..."> so styles.css can scope tokens
+// off it, updates the <meta name="theme-color"> for mobile browser chrome,
+// and re-runs applyAdaptiveColourTemp() to pick the right hue overrides
+// for whichever mode is now active.
+
+function _resolveTheme(pref) {
+  // 'system' resolves to the current OS preference; everything else
+  // passes through unchanged.
+  if (pref === 'light' || pref === 'dark') return pref;
+  try {
+    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  } catch (e) {
+    return 'dark';
+  }
+}
+
+function applyTheme() {
+  const pref     = (settings && settings.theme) || 'system';
+  const resolved = _resolveTheme(pref);
+  // Setting data-theme on <html> drives the [data-theme="light"] CSS
+  // overrides. We always set it explicitly (rather than removing) so
+  // dark mode has data-theme="dark" — useful for any future overrides
+  // that need to disambiguate from the no-attribute default.
+  document.documentElement.setAttribute('data-theme', resolved);
+  // Keep the browser/PWA chrome in sync. The static <meta> value in
+  // index.html is just the initial-paint fallback.
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', resolved === 'light' ? '#f5f3ec' : '#0f1117');
+  // Re-apply the time-of-day surface/accent shifts for the new mode.
+  if (typeof applyAdaptiveColourTemp === 'function') applyAdaptiveColourTemp();
+  // Update the segmented control in Preferences if it's mounted.
+  _updateThemeUI();
+}
+
+function setTheme(pref) {
+  if (!['system', 'light', 'dark'].includes(pref)) pref = 'system';
+  settings.theme = pref;
+  // Save without re-rendering everything — applyTheme handles UI.
+  _saveSettings();
+  applyTheme();
+}
+
+function _updateThemeUI() {
+  const pref = (settings && settings.theme) || 'system';
+  ['system', 'light', 'dark'].forEach(opt => {
+    const btn = document.getElementById('theme-seg-' + opt);
+    if (!btn) return;
+    const active = opt === pref;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-checked', active ? 'true' : 'false');
+  });
+}
+
+// Live-update when the OS theme flips (e.g. Android auto-dark at sunset)
+// and the user has 'system' selected. matchMedia listener is wired once
+// at module load; the guard inside re-checks pref each time it fires so
+// switching away from 'system' silently stops responding.
+try {
+  const mql = window.matchMedia('(prefers-color-scheme: light)');
+  const handler = () => {
+    if (((settings && settings.theme) || 'system') === 'system') applyTheme();
+  };
+  if (mql.addEventListener) mql.addEventListener('change', handler);
+  else if (mql.addListener)  mql.addListener(handler); // Safari < 14 fallback
+} catch (e) { /* matchMedia unavailable — ignore */ }
+
+
+// ═══════════════════════════════════════════════════════════
+//  ADAPTIVE COLOUR TEMPERATURE — Time-of-day tuning
+// ═══════════════════════════════════════════════════════════
+// Subtle hue/opacity shifts that vary by time of day to give the UI a
+// gentle circadian feel. Now theme-aware: dark mode keeps its original
+// punchy --ok / --accent2 overrides, while light mode applies a milder
+// version (surface-opacity nudges only — the dark-mode hex values would
+// wash out on white surfaces).
 
 function applyAdaptiveColourTemp() {
   const h = new Date().getHours();
-  // The viewport-tint overlay was removed — it painted an orange/amber wash
-  // over every view except Notes (which has its own opaque bg), creating
-  // an inconsistent look. We keep the subtle --ok / --accent2 hue shifts
-  // through the day since those are tied to specific UI elements, not a
-  // full-screen overlay.
+  const mode = document.documentElement.getAttribute('data-theme') || 'dark';
   const tint = 'rgba(0,0,0,0)';
   let surfaceOpacity = '0.82';
 
-  if (h >= 22 || h < 6) {
-    // Late night / early morning: more opaque surfaces
-    surfaceOpacity = '0.92';
-    document.documentElement.style.setProperty('--ok',    '#3db87a');
-    document.documentElement.style.setProperty('--accent2','#4f82e0');
-  } else if (h >= 6 && h < 10) {
-    // Morning: cool blue-white, crisp
-    surfaceOpacity = '0.78';
-    document.documentElement.style.setProperty('--ok',    '#4cbb8a');
-    document.documentElement.style.setProperty('--accent2','#5b8dee');
-  } else if (h >= 18 && h < 22) {
-    // Evening
-    surfaceOpacity = '0.86';
-    document.documentElement.style.setProperty('--ok',    '#45b882');
-    document.documentElement.style.setProperty('--accent2','#547ee8');
+  if (mode === 'light') {
+    // Light mode: surface opacity shifts only. Skip the --ok / --accent2
+    // overrides — the dark-tuned hex values are too desaturated for white
+    // backgrounds and the light palette already has well-tuned accent
+    // colours. We let the CSS-defined light-mode values stand.
+    if (h >= 22 || h < 6)       surfaceOpacity = '0.96'; // night: nearly opaque (less translucency at night)
+    else if (h >= 6  && h < 10) surfaceOpacity = '0.88'; // morning: crisp
+    else if (h >= 18 && h < 22) surfaceOpacity = '0.92'; // evening
+    else                        surfaceOpacity = '0.90'; // daytime
   } else {
-    // Daytime: neutral
-    surfaceOpacity = '0.82';
-    document.documentElement.style.setProperty('--ok',    '#4cbb8a');
-    document.documentElement.style.setProperty('--accent2','#5b8dee');
+    // Dark mode: the original Stockroom adaptive palette.
+    if (h >= 22 || h < 6) {
+      surfaceOpacity = '0.92';
+      document.documentElement.style.setProperty('--ok',    '#3db87a');
+      document.documentElement.style.setProperty('--accent2','#4f82e0');
+    } else if (h >= 6 && h < 10) {
+      surfaceOpacity = '0.78';
+      document.documentElement.style.setProperty('--ok',    '#4cbb8a');
+      document.documentElement.style.setProperty('--accent2','#5b8dee');
+    } else if (h >= 18 && h < 22) {
+      surfaceOpacity = '0.86';
+      document.documentElement.style.setProperty('--ok',    '#45b882');
+      document.documentElement.style.setProperty('--accent2','#547ee8');
+    } else {
+      surfaceOpacity = '0.82';
+      document.documentElement.style.setProperty('--ok',    '#4cbb8a');
+      document.documentElement.style.setProperty('--accent2','#5b8dee');
+    }
+  }
+
+  // Switching from dark to light: clear any inline --ok / --accent2
+  // overrides we may have set during a prior dark-mode pass, so the
+  // light-mode CSS values take effect.
+  if (mode === 'light') {
+    document.documentElement.style.removeProperty('--ok');
+    document.documentElement.style.removeProperty('--accent2');
   }
 
   document.documentElement.style.setProperty('--temp-tint', tint);
@@ -31366,6 +31578,15 @@ async function pushSharedData(code, shareKey) {
         budgetAccountDeletedIds:     canSeeBudget ? [...budgetAccountDeletedIds]   : [],
         incomeTemplateDeletedIds:    canSeeBudget ? [...incomeTemplateDeletedIds]  : [],
         incomeEntryDeletedIds:       canSeeBudget ? [...incomeEntryDeletedIds]    : [],
+        // Per-note sharing. Notes don't sit under a section perm — each
+        // note's `share` field is the sole gate. _filterNotesForShare
+        // walks the notes array, includes any whose share resolves to
+        // r/rw for THIS share code, drops locked + trashed notes, and
+        // strips the owner-only `share` field. Annotates each note with
+        // `_shareEffectivePerm: 'r' | 'rw'` so the recipient's UI knows
+        // whether the note is read-only or editable. (Pass 3a: no rw
+        // semantics enforced yet on the guest side — that lands in 3b.)
+        sharedNotes: _filterNotesForShare(notes, code),
         lastSynced:  new Date().toISOString(),
       });
       const ciphertext  = await encryptWithShareKey(sk, payload);
@@ -31515,6 +31736,12 @@ async function absorbSharedData(code, hKey) {
   if (Array.isArray(payload.groceries))     payload.groceries     = _scrubGuestRecords(payload.groceries);
   if (Array.isArray(payload.groceryLists))  payload.groceryLists  = _scrubGuestRecords(payload.groceryLists);
   if (Array.isArray(payload.reminders))     payload.reminders     = _scrubGuestRecords(payload.reminders);
+  // sharedNotes is OWNER-ONLY data — the owner pushes shared notes to
+  // their guests; guests never push shared notes back. If a guest's
+  // payload carries this field (buggy or malicious), drop it before
+  // absorb so it can't poison the owner's local _sharedNotesIncoming
+  // bucket on the next cycle or otherwise affect state.
+  if ('sharedNotes' in payload) delete payload.sharedNotes;
   // Transaction scrub removed in Pass 2d-rollback (no per-tx share field
   // to scrub). Pass 2e-a will replace this with a category-membership
   // check on absorb so guests can't introduce categories the owner
@@ -33345,19 +33572,19 @@ async function renderNotes() {
   const empty = document.getElementById('notes-empty');
   if (!grid) return;
 
-  // Show a heads-up banner for guests in shared households — notes are
-  // intentionally not part of household sharing (they're more personal),
-  // and per-note granular sharing is the planned future model. Without
-  // this, a guest might assume their notes will sync to the owner like
-  // groceries / reminders do. Banner is injected before the search bar
-  // for visibility; removed cleanly when the user is no longer a guest.
+  // Show a heads-up banner for guests in shared households — their own
+  // personal notes aren't household-shared (only the owner's notes that
+  // they've individually shared with you appear in "Shared with you").
+  // This banner explains why their personal notes don't sync to the
+  // owner's account, distinct from groceries/reminders which DO sync
+  // at section-perm level.
   let banner = document.getElementById('notes-share-info-banner');
   if (_shareState) {
     if (!banner) {
       banner = document.createElement('div');
       banner.id = 'notes-share-info-banner';
       banner.style.cssText = 'background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.3);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--text);display:flex;gap:8px;align-items:flex-start';
-      banner.innerHTML = '<svg class="icon" aria-hidden="true" style="color:var(--accent);flex-shrink:0;margin-top:1px"><use href="#i-info"></use></svg><div><strong>Notes aren’t synced across households yet.</strong><br><span style="color:var(--muted)">These notes are personal to your own account. Per-note sharing is coming soon.</span></div>';
+      banner.innerHTML = '<svg class="icon" aria-hidden="true" style="color:var(--accent);flex-shrink:0;margin-top:1px"><use href="#i-info"></use></svg><div><strong>Your notes are personal.</strong><br><span style="color:var(--muted)">Notes here are only on your account. The owner can share individual notes with you — those appear under <em>Shared with you</em>.</span></div>';
       const header = document.getElementById('notes-header');
       if (header && header.parentNode) {
         header.parentNode.insertBefore(banner, header.nextSibling);
@@ -33390,7 +33617,16 @@ async function renderNotes() {
   // removed when the global search took over — searching notes goes
   // through the global search modal instead.
 
-  if (!visible.length) {
+  // Determine if there are shared notes for the current filter that
+  // would render even if personal notes are empty. Shared notes only
+  // appear in the 'all' filter (they don't participate in pinned/
+  // archived/trash concepts from the recipient's perspective).
+  const hasSharedToRender = _notesFilter === 'all'
+    && _sharedNotesIncoming
+    && _sharedNotesIncoming.size > 0
+    && Array.from(_sharedNotesIncoming.values()).some(arr => Array.isArray(arr) && arr.length > 0);
+
+  if (!visible.length && !hasSharedToRender) {
     grid.innerHTML = '';
     if (empty) empty.style.display = 'block';
     return;
@@ -33446,6 +33682,35 @@ async function renderNotes() {
     return `<div class="notes-section-label" style="padding:8px 0 4px"><svg class="icon" aria-hidden="true" style="vertical-align:-3px"><use href="#i-notebook-pen"></use></svg> Notes</div>`;
   }
 
+  // ── "Shared with you" section (Pass 3b) ──
+  // Renders ABOVE personal notes when _sharedNotesIncoming has entries
+  // from any share. Only visible on the 'all' filter (pinned/archived/
+  // trash filters apply to personal notes only — shared notes don't
+  // participate in those concepts from the recipient's perspective).
+  // Each card opens the read-only viewer modal on tap.
+  if (_notesFilter === 'all' && _sharedNotesIncoming && _sharedNotesIncoming.size > 0) {
+    let sharedHtml = '';
+    let totalShared = 0;
+    for (const [shareCode, sharedArr] of _sharedNotesIncoming.entries()) {
+      if (!Array.isArray(sharedArr) || !sharedArr.length) continue;
+      // Sharer name comes from _shareState.ownerName when we're a guest
+      // of this share. Currently a guest can only have one share open
+      // at a time, so this is reliable. Multi-share guests (future)
+      // would need a share-code → name map.
+      const sharerName = (_shareState && _shareState.code === shareCode)
+        ? (_shareState.ownerName || 'a household member')
+        : 'someone';
+      sharedArr.forEach(n => {
+        sharedHtml += _sharedNoteCardHTML(n, shareCode, sharerName);
+        totalShared++;
+      });
+    }
+    if (totalShared > 0) {
+      html += `<div class="notes-section-label" style="padding:8px 0 4px"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg> Shared with you</div>`;
+      html += sharedHtml;
+    }
+  }
+
   visible.forEach(n => {
     const tier = _noteTier(n);
     if (showHeaders && tier !== lastTier) {
@@ -33456,6 +33721,68 @@ async function renderNotes() {
   });
 
   grid.innerHTML = html;
+}
+
+// Card for a note shared FROM someone else, rendered in the "Shared
+// with you" section. Distinct from _noteCardHTML — no pin/archive/
+// delete actions (the recipient doesn't own this note), no selection
+// for bulk-select (Pass 3c excludes shared notes from bulk operations).
+// Tap opens the read-only viewer modal.
+function _sharedNoteCardHTML(n, shareCode, sharerName) {
+  const bgStyle    = n.colour ? `background:${n.colour};` : '';
+  const rawPreview = n.body || '';
+  const _tmpDiv = document.createElement('div'); _tmpDiv.innerHTML = rawPreview;
+  const previewText = (_tmpDiv.innerText || _tmpDiv.textContent || '').trim();
+  const preview = previewText.slice(0, 120) + (previewText.length > 120 ? '…' : '');
+  return `<div class="note-row" style="${bgStyle}" onclick="openSharedNoteViewer('${esc(shareCode)}','${esc(n.id)}')">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(n.title || 'Untitled')}</div>
+        <div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:2px"><svg class="icon icon-sm" aria-hidden="true" style="vertical-align:-2px"><use href="#i-share-2"></use></svg> shared by ${esc(sharerName)}</div>
+      </div>
+    </div>
+    ${preview ? `<div style="font-size:12px;color:var(--muted);line-height:1.5;white-space:pre-wrap;word-break:break-word">${esc(preview)}</div>` : ''}
+  </div>`;
+}
+
+// Open the shared-note viewer for a specific note. Read-only — body is
+// rendered as innerHTML but the container is not contenteditable. No
+// autosave, no toolbar, no editing actions. Tap the back button to
+// return to the notes list.
+function openSharedNoteViewer(shareCode, noteId) {
+  const arr = _sharedNotesIncoming?.get(shareCode);
+  const n = Array.isArray(arr) ? arr.find(x => x.id === noteId) : null;
+  if (!n) { console.warn('openSharedNoteViewer: note not found', shareCode, noteId); return; }
+  const overlay   = document.getElementById('shared-note-viewer-overlay');
+  const titleEl   = document.getElementById('shared-note-viewer-title');
+  const attribEl  = document.getElementById('shared-note-viewer-attribution');
+  const bodyEl    = document.getElementById('shared-note-viewer-body');
+  if (!overlay || !titleEl || !bodyEl) return;
+  const sharerName = (_shareState && _shareState.code === shareCode)
+    ? (_shareState.ownerName || 'a household member')
+    : 'someone';
+  titleEl.textContent  = n.title || 'Untitled';
+  // Attribution shows sharer + perm (r vs rw, from the per-note effective
+  // perm annotated by the owner's filter). For Pass 3b, rw is not yet
+  // editor-enabled — display is informational only.
+  const permLabel = n._shareEffectivePerm === 'rw' ? 'read & write' : 'read-only';
+  attribEl.innerHTML = `<svg class="icon icon-sm" aria-hidden="true"><use href="#i-share-2"></use></svg> shared by ${esc(sharerName)} · ${esc(permLabel)}`;
+  // Body. innerHTML because notes are stored as HTML (rich text in the
+  // editor). Container is NOT contenteditable; viewer is strictly read.
+  bodyEl.innerHTML = n.body || '';
+  bodyEl.style.background = n.colour || 'transparent';
+  overlay.style.display = 'flex';
+  document.body.classList.add('note-open');
+}
+
+function closeSharedNoteViewer() {
+  const overlay = document.getElementById('shared-note-viewer-overlay');
+  if (overlay) overlay.style.display = 'none';
+  document.body.classList.remove('note-open');
+  // Clear body so we don't keep stale HTML in memory (or visible on
+  // a flash if the viewer reopens quickly with a different note).
+  const bodyEl = document.getElementById('shared-note-viewer-body');
+  if (bodyEl) bodyEl.innerHTML = '';
 }
 
 function _noteCardHTML(n) {
@@ -33475,6 +33802,14 @@ function _noteCardHTML(n) {
   if (n.pinned)  icons.push('<svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg>');
   if (n.locked)  icons.push(isUnlocked ? '<svg class="icon" aria-hidden="true"><use href="#i-unlock"></use></svg>' : '<svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>');
   if (n.archived) icons.push('<svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg>');
+  // Owner-only share indicator. Visible when the note has an explicit
+  // share state. Hidden for guests viewing their own (always-private)
+  // notes, and for owners' notes that haven't been shared yet (no
+  // share field). Matches the indicator pattern used on stockroom /
+  // grocery / reminder / category cards.
+  if (isOwner() && n.share != null) {
+    icons.push('<svg class="icon" aria-hidden="true" style="color:var(--accent)" title="Shared"><use href="#i-share-2"></use></svg>');
+  }
   if (n.deletedAt) {
     const daysLeft = Math.max(0, 30 - Math.round((Date.now()-new Date(n.deletedAt).getTime())/MS_PER_DAY));
     icons.push(`<span style="font-size:10px;color:var(--danger);font-family:var(--mono)">🗑 ${daysLeft}d</span>`);
@@ -33699,6 +34034,11 @@ async function openNoteEditor(noteId) {
     document.getElementById('note-lock-screen').style.display = 'none';
     _renderNoteEditor(n, false);
     _showNoteBody(n); // always set body (clears previous note's content from contenteditable)
+    // Brand-new note: hide the sharing panel until the user titles it.
+    // (Sharing an untitled note from the editor would be confusing; the
+    // user can save first via title-input, then re-open to share.)
+    const sharingEl = document.getElementById('note-sharing-section');
+    if (sharingEl) sharingEl.style.display = 'none';
     document.getElementById('note-title-input')?.focus();
     saveNotes().catch(e => console.warn('saveNotes:', e));
     return;
@@ -33725,6 +34065,9 @@ async function openNoteEditor(noteId) {
   // FAB and locks background scroll while the editor is up.
   document.body.classList.add('note-open');
   _renderNoteEditor(n, n.locked && !isUnlocked);
+  // Show/hide the per-note sharing panel based on note state. Suppressed
+  // for locked, trashed, and untitled notes.
+  _showNoteSharingPanel(n);
 
   if (n.locked && !isUnlocked) {
     _showNoteLockScreen(n);
@@ -33782,6 +34125,41 @@ function _renderNoteEditor(n, showLock) {
   const hasReminder = reminders.some(r => r.linkedNoteId === n.id);
   const rBtn = document.getElementById('note-btn-reminder');
   if (rBtn) rBtn.classList.toggle('active', hasReminder);
+}
+
+// ── Per-note sharing-panel registration (Pass 3b) ──────────────────────
+// Notes don't have a section perm — each note's `share` field is the
+// sole gate. defaultBehavior: 'private' tells the generic sharing-panel
+// module that absent `share` means owner-only (instead of inherit).
+//
+// Locked notes can't be shared (recipients don't have the password);
+// the panel is suppressed for them in _showNoteSharingPanel() below.
+registerSharingSection('note', {
+  findRecord: (id) => notes.find(n => n.id === id),
+  currentId:  ()   => _editingNoteId,
+  save:       ()   => saveNotes(),
+  mountSectionEl: () => document.getElementById('note-sharing-section'),
+  mountContentEl: () => document.getElementById('note-sharing-content'),
+  noun: 'note',
+  defaultBehavior: 'private',  // no section perm to inherit from
+});
+
+// Decide whether to show the per-note sharing panel for the currently
+// open note. Hidden for: new (untitled) notes, locked notes, and trashed
+// notes. Hidden via spec.mountSectionEl. Called after _renderNoteEditor
+// from openNoteEditor.
+function _showNoteSharingPanel(n) {
+  const sectionEl = document.getElementById('note-sharing-section');
+  if (!sectionEl) return;
+  // New unsaved notes (no title yet) — skip; user should title it first
+  // before deciding to share. Avoids early "share my empty note" UX.
+  // Locked notes — never shared.
+  // Trashed notes — can't share something thrown away.
+  if (!n || !n.title || n.locked || n.deletedAt) {
+    sectionEl.style.display = 'none';
+    return;
+  }
+  openSharingPanelFor('note');  // module renders the summary
 }
 
 function _showNoteLockScreen(n) {
@@ -34457,6 +34835,15 @@ function onNoteTitleInput() {
   _noteAutoSaveTimer = setTimeout(_autoSaveNote, 1200);
   const n = notes.find(x => x.id === _editingNoteId);
   if (n && n.locked) _resetNoteActivity(n.id);
+  // Update the title on the record so the sharing-panel visibility
+  // check (which gates on title being non-empty) sees the latest state.
+  // Without this, the panel stays hidden after the user types a title
+  // because _showNoteSharingPanel was only called once at editor open.
+  if (n) {
+    const titleEl = document.getElementById('note-title-input');
+    if (titleEl) n.title = titleEl.value;
+    _showNoteSharingPanel(n);
+  }
 }
 
 function onNoteBodyInput() {
