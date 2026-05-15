@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'stockroom-kv-v383';
+const CACHE_VERSION = 'stockroom-kv-v384';
 // Namespace the cache by hostname so staging and production PWAs don't
 // fight over the same cache when both are installed on the same device.
 // Production hostnames (stckrm.com, app.stckrm.com, stckrm.fly.dev) all
@@ -168,11 +168,15 @@ self.addEventListener('notificationclick', event => {
 // this device, e.g. user hasn't trusted it), we show the fallbackTitle
 // with no body — generic enough that we never leak content.
 
-// IDB names — must match constants in app.js (DEVICE_DB_NAME, etc.)
+// IDB names — must match constants in app.js (DEVICE_DB_NAME, DEVICE_INFO_DB_NAME).
+// The main user data DB is now per-user (stockroom_u_<hash>), so we can't read
+// device-scoped values from it — we don't know which user is signed in here.
+// Bootstrap values live in stockroom-device-info, which is a single device-
+// scoped DB shared by all users on this device.
 const PUSH_DEVICE_DB_NAME    = 'stockroom-kv-device';
 const PUSH_DEVICE_STORE_NAME = 'keys';
-const PUSH_MAIN_DB_NAME      = 'stockroom';
-const PUSH_SETTINGS_STORE    = 'settings';
+const PUSH_INFO_DB_NAME      = 'stockroom-device-info';
+const PUSH_INFO_STORE        = 'kv';
 
 function _pushOpenDb(name) {
   return new Promise((resolve, reject) => {
@@ -215,9 +219,9 @@ async function _pushDeriveWrapKey(deviceSecret) {
 // secret into IDB on sign-in — see _saveDeviceSecretToIdb in app.js).
 async function _pushLoadDataKey() {
   try {
-    const deviceId = await _pushIdbGet(PUSH_MAIN_DB_NAME, PUSH_SETTINGS_STORE, '_pushDeviceId');
+    const deviceId = await _pushIdbGet(PUSH_INFO_DB_NAME, PUSH_INFO_STORE, '_pushDeviceId');
     if (!deviceId) return null;
-    const deviceSecret = await _pushIdbGet(PUSH_MAIN_DB_NAME, PUSH_SETTINGS_STORE, '_pushDeviceSecret');
+    const deviceSecret = await _pushIdbGet(PUSH_INFO_DB_NAME, PUSH_INFO_STORE, '_pushDeviceSecret');
     if (!deviceSecret) return null;
     const stored = await _pushIdbGet(PUSH_DEVICE_DB_NAME, PUSH_DEVICE_STORE_NAME, deviceId);
     if (!stored) return null;
