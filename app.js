@@ -2414,6 +2414,16 @@ const STATUS_LABEL = { critical:`<span class='status-dot status-critical'></span
 // We clear EVERY data-bearing store. Per-user setup flags (device_setup_<id>_*)
 // are preserved as they're already keyed by deviceId, not user.
 async function _wipeStaleUserDataForSwitch(newEmailHash) {
+  // ── DEMO-MODE HARD STOP ──────────────────────────────────────────────
+  // This function uses dbPut, which routes to the demo storage shim when
+  // _demoMode is true. If invoked while demo is active, the wipe would
+  // silently write empty arrays to in-memory demo storage and leave real
+  // IDB completely untouched — making the function appear to succeed
+  // while the actual local data of the previous user remains intact.
+  // No legitimate caller should hit this; throwing is louder than warn.
+  if (window._demoMode) {
+    throw new Error('_wipeStaleUserDataForSwitch called while in demo mode — aborting to prevent shim bypass');
+  }
   console.log('[user-switch] Wiping stale data for switch to', newEmailHash);
   // Core data stores
   await dbPut('items',            'items',            []);
@@ -9139,11 +9149,6 @@ const TAG_COLORS = [
   { bg:'rgba(100,180,200,0.15)', border:'rgba(100,180,200,0.5)', text:'#64b4c8' },  // teal
   { bg:'rgba(160,140,210,0.15)', border:'rgba(160,140,210,0.5)', text:'#a08cd2' },  // lavender
   { bg:'rgba(140,160,180,0.15)', border:'rgba(140,160,180,0.5)', text:'#8ca0b4' },  // slate
-  { bg:'rgba(220,140,180,0.15)', border:'rgba(220,140,180,0.5)', text:'#dc8cb4' },  // rose
-  { bg:'rgba(170,170,170,0.15)', border:'rgba(170,170,170,0.5)', text:'#aaaaaa' },  // pewter
-  { bg:'rgba(120,130,210,0.15)', border:'rgba(120,130,210,0.5)', text:'#7882d2' },  // indigo
-  { bg:'rgba(136,178,158,0.15)', border:'rgba(136,178,158,0.5)', text:'#88b29e' },  // sage
-  { bg:'rgba(200,160,176,0.15)', border:'rgba(200,160,176,0.5)', text:'#c8a0b0' },  // dusty rose
 ];
 
 // Muted palette offered in the tag picker. Avoids red, orange, green which
@@ -9158,8 +9163,6 @@ const TAG_PICKER_PALETTE = [
   { name:'Rose',      bg:'rgba(220,140,180,0.15)', border:'rgba(220,140,180,0.5)', text:'#dc8cb4' },
   { name:'Pewter',    bg:'rgba(170,170,170,0.15)', border:'rgba(170,170,170,0.5)', text:'#aaaaaa' },
   { name:'Indigo',    bg:'rgba(120,130,210,0.15)', border:'rgba(120,130,210,0.5)', text:'#7882d2' },
-  { name:'Sage',      bg:'rgba(136,178,158,0.15)', border:'rgba(136,178,158,0.5)', text:'#88b29e' },
-  { name:'Dusty Rose',bg:'rgba(200,160,176,0.15)', border:'rgba(200,160,176,0.5)', text:'#c8a0b0' },
 ];
 
 // Resolve the colour trio for a given tag index. Per-tag colour comes from
@@ -9173,7 +9176,7 @@ function getTagColor(i) {
 let activeTagFilter = null; // null = all, 0-4 = tag index
 
 function getCustomTags() {
-  return settings.customTags || ['','','','','','','','','',''];
+  return settings.customTags || ['','','','',''];
 }
 
 function cardTagsHTML(item) {
@@ -9282,9 +9285,9 @@ function openCardTagPickerForCreate() {
   const tags = getCustomTags();
   const defined = tags.filter(t => t && t.trim());
   const newForm = document.getElementById('card-tag-picker-new-form');
-  if (newForm) newForm.style.display = (defined.length >= 10) ? 'none' : 'flex';
+  if (newForm) newForm.style.display = (defined.length >= 5) ? 'none' : 'flex';
   const maxNote = document.getElementById('card-tag-picker-max-note');
-  if (maxNote) maxNote.style.display = (defined.length >= 10) ? 'block' : 'none';
+  if (maxNote) maxNote.style.display = (defined.length >= 5) ? 'block' : 'none';
   const modal = document.getElementById('card-tag-picker-modal');
   if (modal) modal.classList.add('active');
   // Focus the name input
@@ -9330,11 +9333,11 @@ function _renderCardTagPicker() {
     }).join('');
     swatches.dataset.built = '1';
   }
-  // Show "max tags reached" hint if 10 already defined
+  // Show "max tags reached" hint if 5 already defined
   const newForm = document.getElementById('card-tag-picker-new-form');
-  if (newForm) newForm.style.display = (defined.length >= 10) ? 'none' : 'flex';
+  if (newForm) newForm.style.display = (defined.length >= 5) ? 'none' : 'flex';
   const maxNote = document.getElementById('card-tag-picker-max-note');
-  if (maxNote) maxNote.style.display = (defined.length >= 10) ? 'block' : 'none';
+  if (maxNote) maxNote.style.display = (defined.length >= 5) ? 'block' : 'none';
 }
 
 function _selectTagSwatch(idx) {
@@ -9374,7 +9377,7 @@ async function createTagFromPicker() {
   // Find first empty slot
   const slot = tags.findIndex(t => !t || !t.trim());
   if (slot === -1) {
-    toast('Maximum 10 tags — delete one first');
+    toast('Maximum 5 tags — delete one first');
     return;
   }
   // Also enforce duplicate prevention
@@ -9383,9 +9386,9 @@ async function createTagFromPicker() {
     return;
   }
   // Apply
-  if (!settings.customTags) settings.customTags = ['','','','','','','','','',''];
+  if (!settings.customTags) settings.customTags = ['','','','',''];
   settings.customTags[slot] = name;
-  if (!settings.tagColors) settings.tagColors = [null, null, null, null, null, null, null, null, null, null];
+  if (!settings.tagColors) settings.tagColors = [null, null, null, null, null];
   const swatchIdx = _getSelectedTagSwatch();
   settings.tagColors[slot] = TAG_PICKER_PALETTE[swatchIdx];
   settings.customTagsUpdatedAt = new Date().toISOString();
@@ -9407,12 +9410,9 @@ function buildTagFilterBar() {
   if (!bar) return;
   const tags = getCustomTags();
   const defined = tags.map((t,i) => ({t,i})).filter(({t}) => t && t.trim());
-  const hasRoom = defined.length < 10;
+  const hasRoom = defined.length < 5;
 
-  // Compute status counts and push them into the collapsible filter panel
-  // buttons as inverted-colour dot badges (small filled circle with the
-  // count number inside, dark text on coloured bg). The pills used to live
-  // inline in this bar — they were duplicating the panel's filters.
+  // Compute status counts (same logic as the old health dashboard)
   const threshold = settings.threshold;
   let critical = 0, warn = 0, ok = 0;
   items.forEach(item => {
@@ -9424,19 +9424,27 @@ function buildTagFilterBar() {
     else if (status === 'warn') warn++;
     else if (status === 'ok') ok++;
   });
-  const setCount = (key, n) => {
-    const el = document.querySelector(`#filter-bar .status-count[data-key="${key}"]`);
-    if (!el) return;
-    el.textContent = n;
-    el.style.display = n > 0 ? 'inline-flex' : 'none';
-  };
-  setCount('critical', critical);
-  setCount('warn',     warn);
-  setCount('ok',       ok);
+  const activeStatus = (typeof activeFilter !== 'undefined' && activeFilter) ? activeFilter : 'all';
+  const statusPill = (count, key, label, color) => count === 0 ? '' :
+    `<button class="tag-filter-chip status-pill${activeStatus===key?' active':''}"
+       style="${activeStatus===key
+         ? `background:${color}26;border-color:${color}80;color:${color}`
+         : `border-color:${color}55;color:${color}`}"
+       onclick="setFilter('status','${key}',this)">
+       <span class="status-dot" style="background:${color}"></span> ${label} <strong>${count}</strong>
+     </button>`;
+  const statusPills =
+    statusPill(critical, 'critical', 'Critical', '#e85050') +
+    statusPill(warn,     'warn',     'Low',      '#e8a838') +
+    statusPill(ok,       'ok',       'Good',     '#4cbb8a');
 
-  // Inline bar is now purely the custom-tag bar. No "Filters:" label, no
-  // status pills, no separator dot, no "All" chip. When no tags are
-  // defined, the bar shows just the "+ Tag" chip on its own.
+  const label = `<span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Filters:</span>`;
+  const allChip = (defined.length || statusPills)
+    ? `<button class="tag-filter-chip${activeTagFilter===null && activeStatus==='all'?' active':''}" onclick="clearAllInlineFilters(this)">All</button>`
+    : '';
+  const sep = (statusPills && defined.length)
+    ? `<span class="filter-bar-sep" aria-hidden="true"></span>`
+    : '';
   const chips = defined.map(({t,i}) => {
     const c = getTagColor(i);
     const isActive = activeTagFilter === i;
@@ -9452,7 +9460,7 @@ function buildTagFilterBar() {
     ? `<button class="tag-filter-chip tag-filter-add" onclick="openCardTagPickerForCreate()" title="Create tag">+ Tag</button>`
     : '';
 
-  bar.innerHTML = chips + addBtn;
+  bar.innerHTML = label + allChip + statusPills + sep + chips + addBtn;
 }
 
 function buildShoppingTagFilterBarInline() {
@@ -9460,7 +9468,7 @@ function buildShoppingTagFilterBarInline() {
   if (!bar) return;
   const tags = getCustomTags();
   const defined = tags.map((t,i) => ({t,i})).filter(({t}) => t && t.trim());
-  const hasRoom = defined.length < 10;
+  const hasRoom = defined.length < 5;
 
   const label = `<span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Tags:</span>`;
   const allChip = defined.length
@@ -14720,11 +14728,11 @@ async function _doClearAll() {
   incomeTemplateDeletedIds.clear();
   incomeEntryDeletedIds.clear();
 
-  // Custom user-defined tags — ten-slot array. Reset to empty slots so the
-  // UI stays consistent (existing code defaults to ['','','','','','','','','',''] when
+  // Custom user-defined tags — five-slot array. Reset to empty slots so the
+  // UI stays consistent (existing code defaults to ['','','','',''] when
   // missing). User-facing settings like country/threshold/email schedule
   // are deliberately preserved — those are configuration, not user content.
-  settings.customTags = ['', '', '', '', '', '', '', '', '', ''];
+  settings.customTags = ['', '', '', '', ''];
   settings.customTagsUpdatedAt = new Date().toISOString();
 
   // ── Persist the wiped state to IDB ───────────────────────────────────
@@ -16250,6 +16258,17 @@ async function kvRegister() {
 }
 
 async function kvLogin() {
+  // ── DEMO-MODE GUARD ──────────────────────────────────────────────────
+  // If this tab is in demo mode, the in-memory globals contain demo data
+  // and the IDB shim is intercepting reads/writes. Trying to "sign in"
+  // in place would race demo state into the new user's session. The
+  // bulletproof fix is to reload the tab to a clean state first — the
+  // login screen will reappear with no demo state in memory.
+  if (window._demoMode) {
+    console.warn('kvLogin: demo mode active — reloading to clean state before sign-in');
+    location.href = '/?action=login';
+    return;
+  }
   const email      = document.getElementById('kv-login-email')?.value.trim();
   const passphrase = document.getElementById('kv-login-pass')?.value;
   const errEl      = document.getElementById('kv-login-error');
@@ -16452,6 +16471,15 @@ async function kvRegisterWithPasskey() {
 
 
 async function kvLoginWithPasskey() {
+  // ── DEMO-MODE GUARD ──────────────────────────────────────────────────
+  // See the rationale in kvLogin — same problem, same fix. Reload to a
+  // clean tab state so no demo data can leak into the authenticated
+  // session.
+  if (window._demoMode) {
+    console.warn('kvLoginWithPasskey: demo mode active — reloading to clean state before sign-in');
+    location.href = '/?action=login';
+    return;
+  }
   // Support both the normal input and the remembered-email display input
   const email  = (document.getElementById('kv-login-email')?.value.trim()) ||
                  (document.getElementById('kv-login-email-display')?.value.trim());
@@ -18936,6 +18964,18 @@ function showPassphrasePrompt(subtitleOverride = null) {
 
 // ── Sync: push encrypted data to KV ────────
 async function kvPush() {
+  // ── DEMO-MODE HARD STOP ──────────────────────────────────────────────
+  // Refuse to push if demo mode is active. The in-memory globals may
+  // contain demo data, and pushing them would clobber the real account's
+  // cloud blob with sample data. See the broader demo→authenticated leak
+  // path: a tab that was previously signed in then visited ?action=demo
+  // ends up with kvConnected=true + _kvKey valid + demo data in items[].
+  // This guard is the primary defence — no matter how demo data leaks
+  // into globals, it can never reach the server.
+  if (window._demoMode) {
+    console.warn('kvPush: blocked — demo mode is active');
+    return;
+  }
   if (!kvConnected || !_kvEmailHash) {
     console.warn('kvPush: not connected, skipping');
     return;
@@ -19069,6 +19109,15 @@ async function kvPull() {
 
 // ── syncNow for KV mode ────────────────────
 async function kvSyncNow(silent = false) {
+  // ── DEMO-MODE HARD STOP ──────────────────────────────────────────────
+  // Same rationale as kvPush — refuse to sync (which pulls then pushes)
+  // while demo mode is active. Belt-and-braces with the kvPush guard:
+  // sync's merge step could otherwise pollute the real items[] with
+  // demo entries before the push step runs.
+  if (window._demoMode) {
+    console.warn('kvSyncNow: blocked — demo mode is active');
+    return;
+  }
   if (!kvConnected && !_shareState) return;
   if (kvConnected && (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken))) {
     console.warn('kvSyncNow: missing credentials, skipping');
@@ -32470,7 +32519,7 @@ async function init() {
     }
   }
 
-  handleURLAction(); // processes ?join= and replaces loading state with join screen
+  await handleURLAction(); // processes ?join= and replaces loading state with join screen
 
   buildCountryGrid();
   buildSettingsCountrySelect();
@@ -33348,7 +33397,7 @@ function showShareJoinConfirm(shareData) { toast(`✓ Joined ${shareData.ownerNa
 // ═══════════════════════════════════════════════════════════
 //  URL ACTION HANDLER — moved from scanner.js
 // ═══════════════════════════════════════════════════════════
-function handleURLAction() {
+async function handleURLAction() {
   // ── Share join link: ?join=CODE ──────────────────────────
   const joinParams = new URLSearchParams(location.search);
   const joinCode   = joinParams.get('join');
@@ -33380,6 +33429,61 @@ function handleURLAction() {
   // Sets the global demo flag (which the dbGet/dbPut/dbDelete shim picks
   // up) and signals the init flow to skip wizard/login and seed data.
   // No backend calls are made — kvConnected stays false, sync paths bail.
+  //
+  // ── DEMO-WHILE-SIGNED-IN GUARD ────────────────────────────────────────
+  // If this tab already has an authenticated session (kvConnected with a
+  // valid _kvKey), entering demo mode in place is dangerous: the demo
+  // seed populates in-memory globals with sample data, and any
+  // subsequent kvSyncNow/kvPush would write that demo data to the
+  // signed-in user's cloud blob using their real auth credentials. The
+  // bug was observed in May 2026 where a user (pete@artbot5000.com)
+  // changed the URL of an authenticated tab to /?action=demo and the
+  // background sync timer then pushed demo data to their real account.
+  //
+  // Fix: refuse to enter demo while signed in. Offer to sign out first.
+  // The sign-out cleanup must run BEFORE _demoMode flips to true,
+  // otherwise the dbPut writes inside cleanup would route to the demo
+  // storage shim and leave real IDB/localStorage state intact.
+  if (action === 'demo' && kvConnected) {
+    const proceed = confirm(
+      "You're signed in. Entering demo mode requires signing out on this tab.\n\n" +
+      "Your data stays safe on the server — you can sign back in any time.\n\n" +
+      "Continue to demo mode?"
+    );
+    if (!proceed) {
+      // User cancelled — strip the query string and open the app normally
+      history.replaceState(null, '', location.pathname);
+      return;
+    }
+    // Perform a minimal in-place sign-out. We deliberately do NOT call
+    // kvSignOut() because (a) it shows its own confirm prompt and (b)
+    // it schedules a location.reload() that would undo the demo entry.
+    // The cleanup below mirrors kvSignOut's essentials: clear all
+    // session credentials, drop the in-memory auth state, and remove
+    // the persisted session pointers in localStorage and IDB. Real-IDB
+    // user data is left in place (it belongs to the signed-out user and
+    // a future kvRestoreSession will re-establish it on next sign-in).
+    try {
+      localStorage.removeItem('stockroom_kv_session');
+      localStorage.removeItem('stockroom_kv_session_key');
+      localStorage.removeItem('stockroom_device_secret');
+      localStorage.removeItem('stockroom_kv_key_fallback');
+      localStorage.removeItem('stockroom_seen');
+      try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
+      // dbPut here while _demoMode is still false → writes hit real IDB
+      try { await dbPut('settings', 'stockroom_kv_session', null); } catch(e) {}
+    } catch(e) { console.warn('demo-entry sign-out cleanup failed (continuing):', e.message); }
+    // Drop in-memory auth state so kvSyncNow's own credential guard bails
+    // even if my _demoMode guards were ever bypassed.
+    kvConnected     = false;
+    _kvEmail        = '';
+    _kvEmailHash    = '';
+    _kvVerifier     = '';
+    _kvSessionToken = '';
+    _kvKey          = null;
+    _shareState     = null;
+    // Fall through into the normal demo-entry block below.
+  }
   if (action === 'demo') {
     window._demoMode = true;
     window._landingAction = 'demo';
