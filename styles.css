@@ -5005,3 +5005,27 @@ body.omnibox-expanded {
     flex-shrink: 0;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   APP LOGO MARK — used in mobile header and desktop sidebar
+   The actual sizing is provided per-instance via width/height attrs on
+   the <img> tag. This rule handles cross-cutting concerns: vertical
+   optical alignment with the wordmark text, and the slight nudge to
+   make the bar-stack visually centre with caps-height of "STOCKROOM".
+═══════════════════════════════════════════════════════════════════ */
+.app-logo-mark {
+  display: inline-block;
+  flex-shrink: 0;
+  /* The logo has slightly more visual weight at the top than the
+     bottom (top bar is shortest, bottom bar is medium, middle is
+     longest). Without this nudge it appears to sit ~1px too low
+     next to the wordmark text. */
+  transform: translateY(-1px);
+}
+
+/* Hide the logo mark on the very narrow mobile screens (≤340px wide,
+   e.g. old iPhone SE) where the header is tight and the wordmark +
+   bell + burger already crowd the row. The text logo stays. */
+@media (max-width: 340px) {
+  #app-header .app-logo-mark { display: none; }
+}

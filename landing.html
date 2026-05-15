@@ -11,6 +11,16 @@
   <meta property="og:title" content="STOCKROOM — Never run out. Never over-buy.">
   <meta property="og:description" content="Track everything in your home. Get one monthly shopping list. Save time, money, and the planet.">
   <meta property="og:type" content="website">
+  <meta property="og:url" content="https://stckrm.com">
+  <meta property="og:image" content="https://stckrm.com/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="STOCKROOM logo with tagline: Never run out. Never over-buy.">
+  <!-- Twitter Card — Twitter prefers its own tag set but falls back to OG. -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="STOCKROOM — Never run out. Never over-buy.">
+  <meta name="twitter:description" content="Track everything in your home. Get one monthly shopping list.">
+  <meta name="twitter:image" content="https://stckrm.com/og-image.png">
 
   <link rel="manifest" href="https://app.stckrm.com/manifest.json">
   <!-- ═══ FAVICON & APP ICONS ═══
@@ -117,6 +127,19 @@
       color: var(--accent);
     }
     .brand-icon svg { width: 16px; height: 16px; }
+    /* Brand logo image — replaces the old SVG-in-styled-box pattern.
+       Sized to read as a proper mark next to the wordmark, not a tiny
+       avatar. The width/height attrs on the <img> already define the
+       intrinsic size; this rule just sets display + spacing. */
+    .brand-logo {
+      display: inline-block;
+      flex-shrink: 0;
+      /* Slight vertical optical adjustment — the logo's vertical
+         centre sits ~3px below true centre due to the bottom bar
+         being indented from the right; nudging up by 1px aligns it
+         better with the wordmark's cap-height. */
+      transform: translateY(-1px);
+    }
 
     .header-actions {
       display: flex; align-items: center; gap: 10px;
@@ -1182,7 +1205,7 @@
 <header>
   <div class="header-inner">
     <a class="brand" href="/" aria-label="STOCKROOM home">
-      <span class="brand-icon"><svg aria-hidden="true"><use href="#i-package"/></svg></span>
+      <img src="/logo.png" alt="" class="brand-logo" width="46" height="34">
       <span>STOCKROOM</span>
     </a>
     <div class="header-actions">
@@ -1843,7 +1866,7 @@
 <footer>
   <div class="footer-inner">
     <a class="brand" href="/">
-      <span class="brand-icon"><svg aria-hidden="true"><use href="#i-package"/></svg></span>
+      <img src="/logo.png" alt="" class="brand-logo" width="46" height="34">
       <span>STOCKROOM</span>
     </a>
     <div class="footer-links">
