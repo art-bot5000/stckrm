@@ -1506,6 +1506,19 @@ body.note-open { overflow: hidden; touch-action: none; }
   margin-left: auto;
 }
 .card-stars-row .card-star { font-size: 11px; line-height: 1; }
+/* Right-side group inside .card-top: holds the status badge and the
+   optional share-indicator (eye icon) as a single unit so they stay
+   together against the right edge of the card header. Without this
+   wrapper, justify-content:space-between on .card-top spreads three
+   children evenly, pushing the status badge into the middle when the
+   share-indicator is present. */
+.card-top-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
 .card-status {
   font-family: var(--mono);
   font-size: 10px;
@@ -2116,6 +2129,32 @@ body.note-open { overflow: hidden; touch-action: none; }
    Manage > Filters > Sort. Uses flex `order` so DOM stays as-is for
    desktop (which has its own fixed-width rules above and keeps the
    original Filters > Sort > Manage layout). */
+
+/* Manage button — base styles for both desktop and mobile. Previously
+   these lived as an inline style="..." on the button element in
+   index.html, but inline styles always win over @media rules, which
+   made it impossible to centre the icon on mobile. Moving the rules
+   here so the @media block below can override them cleanly. */
+#view-stock #stock-select-btn {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  height: 36px;
+  padding: 5px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: normal;
+  cursor: pointer;
+  outline: none;
+}
+#view-stock #stock-select-btn:hover { color: var(--text); }
+
 @media (max-width: 899px) {
   #view-stock #stock-search-toolbar { flex-wrap: wrap; }
   #view-stock #stock-toolbar-wrap  { flex: 1 1 calc(33.333% - 7px); max-width: calc(33.333% - 7px); order: 2; }
@@ -2125,11 +2164,9 @@ body.note-open { overflow: hidden; touch-action: none; }
      in a third-width button without truncation. */
   #view-stock #stock-sort-wrap #sort-select { padding-left: 8px; padding-right: 22px; }
   /* Manage button on mobile: hide the text label and centre the remaining
-     icon. !important is needed to defeat the button's own inline styles
-     (justify-content:flex-start; padding:5px 12px), which would otherwise
-     push the icon to the far left of a third-width button and leave the
-     rest looking blank. */
-  #view-stock #stock-select-btn               { justify-content: center !important; padding: 5px !important; gap: 0 !important; }
+     icon. With the inline style removed from index.html, these rules
+     simply override the desktop base above — no !important needed. */
+  #view-stock #stock-select-btn               { justify-content: center; padding: 5px; gap: 0; }
   #view-stock #stock-select-btn .manage-label { display: none; }
 }
 
