@@ -2124,9 +2124,12 @@ body.note-open { overflow: hidden; touch-action: none; }
   /* Sort dropdown gets tight padding on mobile so "Sort: Status" still fits
      in a third-width button without truncation. */
   #view-stock #stock-sort-wrap #sort-select { padding-left: 8px; padding-right: 22px; }
-  /* Manage button label gets hidden — icon only — to keep all three
-     buttons looking like equal peers without text overflow. */
-  #view-stock #stock-select-btn { justify-content: center; padding: 5px; }
+  /* Manage button on mobile: hide the text label and centre the remaining
+     icon. !important is needed to defeat the button's own inline styles
+     (justify-content:flex-start; padding:5px 12px), which would otherwise
+     push the icon to the far left of a third-width button and leave the
+     rest looking blank. */
+  #view-stock #stock-select-btn               { justify-content: center !important; padding: 5px !important; gap: 0 !important; }
   #view-stock #stock-select-btn .manage-label { display: none; }
 }
 

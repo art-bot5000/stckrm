@@ -9149,6 +9149,11 @@ const TAG_COLORS = [
   { bg:'rgba(100,180,200,0.15)', border:'rgba(100,180,200,0.5)', text:'#64b4c8' },  // teal
   { bg:'rgba(160,140,210,0.15)', border:'rgba(160,140,210,0.5)', text:'#a08cd2' },  // lavender
   { bg:'rgba(140,160,180,0.15)', border:'rgba(140,160,180,0.5)', text:'#8ca0b4' },  // slate
+  { bg:'rgba(220,140,180,0.15)', border:'rgba(220,140,180,0.5)', text:'#dc8cb4' },  // rose
+  { bg:'rgba(170,170,170,0.15)', border:'rgba(170,170,170,0.5)', text:'#aaaaaa' },  // pewter
+  { bg:'rgba(120,130,210,0.15)', border:'rgba(120,130,210,0.5)', text:'#7882d2' },  // indigo
+  { bg:'rgba(136,178,158,0.15)', border:'rgba(136,178,158,0.5)', text:'#88b29e' },  // sage
+  { bg:'rgba(200,160,176,0.15)', border:'rgba(200,160,176,0.5)', text:'#c8a0b0' },  // dusty rose
 ];
 
 // Muted palette offered in the tag picker. Avoids red, orange, green which
@@ -9163,6 +9168,8 @@ const TAG_PICKER_PALETTE = [
   { name:'Rose',      bg:'rgba(220,140,180,0.15)', border:'rgba(220,140,180,0.5)', text:'#dc8cb4' },
   { name:'Pewter',    bg:'rgba(170,170,170,0.15)', border:'rgba(170,170,170,0.5)', text:'#aaaaaa' },
   { name:'Indigo',    bg:'rgba(120,130,210,0.15)', border:'rgba(120,130,210,0.5)', text:'#7882d2' },
+  { name:'Sage',      bg:'rgba(136,178,158,0.15)', border:'rgba(136,178,158,0.5)', text:'#88b29e' },
+  { name:'Dusty Rose',bg:'rgba(200,160,176,0.15)', border:'rgba(200,160,176,0.5)', text:'#c8a0b0' },
 ];
 
 // Resolve the colour trio for a given tag index. Per-tag colour comes from
@@ -9176,7 +9183,7 @@ function getTagColor(i) {
 let activeTagFilter = null; // null = all, 0-4 = tag index
 
 function getCustomTags() {
-  return settings.customTags || ['','','','',''];
+  return settings.customTags || ['','','','','','','','','',''];
 }
 
 function cardTagsHTML(item) {
@@ -9285,9 +9292,9 @@ function openCardTagPickerForCreate() {
   const tags = getCustomTags();
   const defined = tags.filter(t => t && t.trim());
   const newForm = document.getElementById('card-tag-picker-new-form');
-  if (newForm) newForm.style.display = (defined.length >= 5) ? 'none' : 'flex';
+  if (newForm) newForm.style.display = (defined.length >= 10) ? 'none' : 'flex';
   const maxNote = document.getElementById('card-tag-picker-max-note');
-  if (maxNote) maxNote.style.display = (defined.length >= 5) ? 'block' : 'none';
+  if (maxNote) maxNote.style.display = (defined.length >= 10) ? 'block' : 'none';
   const modal = document.getElementById('card-tag-picker-modal');
   if (modal) modal.classList.add('active');
   // Focus the name input
@@ -9333,11 +9340,11 @@ function _renderCardTagPicker() {
     }).join('');
     swatches.dataset.built = '1';
   }
-  // Show "max tags reached" hint if 5 already defined
+  // Show "max tags reached" hint if 10 already defined
   const newForm = document.getElementById('card-tag-picker-new-form');
-  if (newForm) newForm.style.display = (defined.length >= 5) ? 'none' : 'flex';
+  if (newForm) newForm.style.display = (defined.length >= 10) ? 'none' : 'flex';
   const maxNote = document.getElementById('card-tag-picker-max-note');
-  if (maxNote) maxNote.style.display = (defined.length >= 5) ? 'block' : 'none';
+  if (maxNote) maxNote.style.display = (defined.length >= 10) ? 'block' : 'none';
 }
 
 function _selectTagSwatch(idx) {
@@ -9377,7 +9384,7 @@ async function createTagFromPicker() {
   // Find first empty slot
   const slot = tags.findIndex(t => !t || !t.trim());
   if (slot === -1) {
-    toast('Maximum 5 tags — delete one first');
+    toast('Maximum 10 tags — delete one first');
     return;
   }
   // Also enforce duplicate prevention
@@ -9386,9 +9393,9 @@ async function createTagFromPicker() {
     return;
   }
   // Apply
-  if (!settings.customTags) settings.customTags = ['','','','',''];
+  if (!settings.customTags) settings.customTags = ['','','','','','','','','',''];
   settings.customTags[slot] = name;
-  if (!settings.tagColors) settings.tagColors = [null, null, null, null, null];
+  if (!settings.tagColors) settings.tagColors = [null, null, null, null, null, null, null, null, null, null];
   const swatchIdx = _getSelectedTagSwatch();
   settings.tagColors[slot] = TAG_PICKER_PALETTE[swatchIdx];
   settings.customTagsUpdatedAt = new Date().toISOString();
@@ -9410,9 +9417,12 @@ function buildTagFilterBar() {
   if (!bar) return;
   const tags = getCustomTags();
   const defined = tags.map((t,i) => ({t,i})).filter(({t}) => t && t.trim());
-  const hasRoom = defined.length < 5;
+  const hasRoom = defined.length < 10;
 
-  // Compute status counts (same logic as the old health dashboard)
+  // Compute status counts and push them into the collapsible filter panel
+  // buttons as inverted-colour dot badges (small filled circle with the
+  // count number inside, dark text on coloured bg). The pills used to live
+  // inline in this bar — they were duplicating the panel's filters.
   const threshold = settings.threshold;
   let critical = 0, warn = 0, ok = 0;
   items.forEach(item => {
@@ -9424,27 +9434,19 @@ function buildTagFilterBar() {
     else if (status === 'warn') warn++;
     else if (status === 'ok') ok++;
   });
-  const activeStatus = (typeof activeFilter !== 'undefined' && activeFilter) ? activeFilter : 'all';
-  const statusPill = (count, key, label, color) => count === 0 ? '' :
-    `<button class="tag-filter-chip status-pill${activeStatus===key?' active':''}"
-       style="${activeStatus===key
-         ? `background:${color}26;border-color:${color}80;color:${color}`
-         : `border-color:${color}55;color:${color}`}"
-       onclick="setFilter('status','${key}',this)">
-       <span class="status-dot" style="background:${color}"></span> ${label} <strong>${count}</strong>
-     </button>`;
-  const statusPills =
-    statusPill(critical, 'critical', 'Critical', '#e85050') +
-    statusPill(warn,     'warn',     'Low',      '#e8a838') +
-    statusPill(ok,       'ok',       'Good',     '#4cbb8a');
+  const setCount = (key, n) => {
+    const el = document.querySelector(`#filter-bar .status-count[data-key="${key}"]`);
+    if (!el) return;
+    el.textContent = n;
+    el.style.display = n > 0 ? 'inline-flex' : 'none';
+  };
+  setCount('critical', critical);
+  setCount('warn',     warn);
+  setCount('ok',       ok);
 
-  const label = `<span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Filters:</span>`;
-  const allChip = (defined.length || statusPills)
-    ? `<button class="tag-filter-chip${activeTagFilter===null && activeStatus==='all'?' active':''}" onclick="clearAllInlineFilters(this)">All</button>`
-    : '';
-  const sep = (statusPills && defined.length)
-    ? `<span class="filter-bar-sep" aria-hidden="true"></span>`
-    : '';
+  // Inline bar is now purely the custom-tag bar. No "Filters:" label, no
+  // status pills, no separator dot, no "All" chip. When no tags are
+  // defined, the bar shows just the "+ Tag" chip on its own.
   const chips = defined.map(({t,i}) => {
     const c = getTagColor(i);
     const isActive = activeTagFilter === i;
@@ -9460,7 +9462,7 @@ function buildTagFilterBar() {
     ? `<button class="tag-filter-chip tag-filter-add" onclick="openCardTagPickerForCreate()" title="Create tag">+ Tag</button>`
     : '';
 
-  bar.innerHTML = label + allChip + statusPills + sep + chips + addBtn;
+  bar.innerHTML = chips + addBtn;
 }
 
 function buildShoppingTagFilterBarInline() {
@@ -9468,7 +9470,7 @@ function buildShoppingTagFilterBarInline() {
   if (!bar) return;
   const tags = getCustomTags();
   const defined = tags.map((t,i) => ({t,i})).filter(({t}) => t && t.trim());
-  const hasRoom = defined.length < 5;
+  const hasRoom = defined.length < 10;
 
   const label = `<span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Tags:</span>`;
   const allChip = defined.length
@@ -14728,11 +14730,11 @@ async function _doClearAll() {
   incomeTemplateDeletedIds.clear();
   incomeEntryDeletedIds.clear();
 
-  // Custom user-defined tags — five-slot array. Reset to empty slots so the
-  // UI stays consistent (existing code defaults to ['','','','',''] when
+  // Custom user-defined tags — ten-slot array. Reset to empty slots so the
+  // UI stays consistent (existing code defaults to ['','','','','','','','','',''] when
   // missing). User-facing settings like country/threshold/email schedule
   // are deliberately preserved — those are configuration, not user content.
-  settings.customTags = ['', '', '', '', ''];
+  settings.customTags = ['', '', '', '', '', '', '', '', '', ''];
   settings.customTagsUpdatedAt = new Date().toISOString();
 
   // ── Persist the wiped state to IDB ───────────────────────────────────
