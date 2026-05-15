@@ -8,25 +8,6 @@
 <meta http-equiv="Expires" content="0">
 <title>STOCKROOM — Household Consumables Tracker (KV)</title>
 <link rel="manifest" href="manifest.json">
-<!-- ═══ FAVICON & APP ICONS ═══
-     Modern browsers prefer the explicit PNG sizes via <link rel="icon">.
-     favicon.ico is a multi-resolution fallback (16/32/48) for older
-     browsers and contexts that auto-fetch /favicon.ico without parsing
-     HTML (RSS readers, link previews, etc.).
-     icon-180 is the iOS Apple Touch Icon — opaque, no transparency,
-     iOS applies its own rounded corners.
-     icon-192 / icon-512 are referenced from manifest.json for PWA
-     install. The maskable 512 is also in the manifest for Android
-     adaptive icons. -->
-<link rel="icon" type="image/png" sizes="16x16" href="/icon-16.png">
-<link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
-<link rel="icon" type="image/png" sizes="48x48" href="/icon-48.png">
-<link rel="icon" type="image/png" sizes="96x96" href="/icon-96.png">
-<link rel="icon" type="image/png" sizes="144x144" href="/icon-144.png">
-<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
-<link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
-<link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png">
-<link rel="shortcut icon" href="/favicon.ico">
 <meta name="theme-color" content="#0f1117">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1521,8 +1502,7 @@
 <!-- ═══ HEADER ═══ -->
 <div id="app-header">
   <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-    <div style="cursor:pointer;flex-shrink:0;display:flex;align-items:center;gap:8px" onclick="openProfilePicker()" title="Switch or add household">
-      <img src="/logo.png" alt="" class="app-logo-mark" width="32" height="24">
+    <div style="cursor:pointer;flex-shrink:0" onclick="openProfilePicker()" title="Switch or add household">
       <div class="logo">STOCKROOM <span id="profile-label" class="profile-label-subtitle">/ HOUSEHOLD TRACKER</span></div>
     </div>
     <div id="header-greeting" style="font-size:12px;color:var(--muted);display:none;align-items:center;gap:4px"></div>
@@ -1545,6 +1525,18 @@
       <div class="sync-dot"></div>
       <span id="sync-label">Local only</span>
     </div>
+    <!-- Global search button — mobile only; sits between sync pill and the
+         notification bell. Opens #global-search-modal which searches across
+         every section (Stockroom items, Notes, Reminders, Groceries, Bills,
+         settings labels, etc.) and presents results grouped by section with
+         the current tab's results pinned first. See openGlobalSearch in
+         app.js. The matching desktop entry lives in the sidebar nav above
+         the Connected pill — see #global-search-nav-btn. -->
+    <button id="global-search-btn" type="button" onclick="openGlobalSearch()"
+      aria-label="Search" title="Search"
+      style="background:none;border:none;cursor:pointer;padding:4px 6px;display:flex;align-items:center;color:var(--muted);border-radius:8px">
+      <svg class="icon icon-lg" aria-hidden="true"><use href="#i-search"></use></svg>
+    </button>
     <button class="btn btn-ghost btn-sm" onclick="openQuickAdd()" title="Quick add multiple items"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg></button>
     <button class="btn btn-primary btn-sm" onclick="openAddModal()">+ Add Item</button>
     <!-- Burger menu (mobile only, hidden via CSS on desktop) — opens an
@@ -1663,8 +1655,7 @@
 <!-- ═══ APP SIDEBAR (desktop only) ═══ -->
 <nav id="app-nav">
   <div class="app-nav-logo">
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <img src="/logo.png" alt="" class="app-logo-mark" width="28" height="21" style="flex-shrink:0">
+    <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
       <div class="logo" style="font-size:11px;letter-spacing:3px;cursor:pointer;flex-shrink:0" onclick="openProfilePicker()">STOCKROOM</div>
       <span id="app-nav-profile" style="font-size:12px;color:var(--muted);font-family:var(--sans);cursor:pointer;white-space:nowrap" onclick="openProfilePicker()"></span>
     </div>
@@ -1677,6 +1668,16 @@
     <button class="app-nav-link"        data-view="savings"    onclick="navTo('savings')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-piggy-bank"></use></svg> <span>Savings</span></button>
     <button class="app-nav-link"        data-view="report"     onclick="navTo('report')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> <span>Report</span></button>
     <button class="app-nav-link"        data-view="budget"     onclick="navTo('budget')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
+  </div>
+  <!-- Desktop sidebar search button — sits in its own block between the
+       primary nav links and the bottom utility cluster (Connected pill,
+       Notifications, Billing, Account & Security, Settings). Mirrors the
+       mobile #global-search-btn but styled to match sidebar links. -->
+  <div class="app-nav-search-wrap">
+    <button id="global-search-nav-btn" type="button" class="app-nav-link app-nav-search-btn" onclick="openGlobalSearch()" aria-label="Search everything">
+      <svg class="icon icon-tab" aria-hidden="true"><use href="#i-search"></use></svg>
+      <span>Search</span>
+    </button>
   </div>
   <div class="app-nav-bottom">
     <div id="app-nav-sync" class="sync-pill pending app-nav-sync-pill" onclick="handleSyncPillTap()">
@@ -1700,67 +1701,6 @@
     <button class="app-nav-link" data-view="settings" onclick="navTo('settings')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg> <span>Settings</span></button>
   </div>
 </nav>
-
-<!-- ═══ OMNIBOX ═══
-     Persistent input bar at top of every tab. Replaces the old
-     #global-search-modal. Collapsed = single-line search/add field.
-     Focused/typing = expanded panel with live search results above
-     and action buttons (Search/Stockroom/Groceries/Reminders/Notes/
-     Spend) at the bottom.
-     The internal search engine (runGlobalSearch, _searchStockroom etc.)
-     is reused as-is; only the UI shell is new. See OMNIBOX section in
-     app.js for the wiring. -->
-<div id="omnibox" class="omnibox" data-state="collapsed">
-  <!-- Collapsed/input row — always visible -->
-  <div class="omnibox-input-row">
-    <svg class="icon icon-lg omnibox-input-icon" aria-hidden="true"><use href="#i-search"></use></svg>
-    <textarea id="omnibox-input" rows="1" placeholder="Search or add…"
-      autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
-      oninput="onOmniboxInput()"
-      onfocus="onOmniboxFocus()"
-      onkeydown="onOmniboxKeyDown(event)"></textarea>
-    <button id="omnibox-clear-btn" class="omnibox-clear" onclick="clearOmnibox()"
-      aria-label="Clear" title="Clear" style="display:none">
-      <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
-    </button>
-    <button id="omnibox-collapse-btn" class="omnibox-clear" onclick="collapseOmnibox()"
-      aria-label="Close" title="Close" style="display:none">
-      <svg class="icon" aria-hidden="true"><use href="#i-chevron-up"></use></svg>
-    </button>
-  </div>
-
-  <!-- Expanded panel — visible when data-state="expanded" -->
-  <div class="omnibox-panel" id="omnibox-panel">
-    <!-- Live search results, populated by runGlobalSearch -->
-    <div class="omnibox-results" id="omnibox-results">
-      <div class="omnibox-empty">Type to search or use the buttons below to add.</div>
-    </div>
-    <!-- Action buttons -->
-    <div class="omnibox-actions" id="omnibox-actions">
-      <button class="omnibox-action" data-action="search" onclick="omniboxAction('search')">
-        <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg> Search
-      </button>
-      <button class="omnibox-action" data-action="stockroom" onclick="omniboxAction('stockroom')"
-        data-hint="Add items — comma-separated. Example: yoghurt, eggs, bread">
-        <svg class="icon" aria-hidden="true"><use href="#i-package"></use></svg> Stockroom
-      </button>
-      <button class="omnibox-action" data-action="groceries" onclick="omniboxAction('groceries')"
-        data-hint="Add to a Quick List — comma items. Example: 2 milk, bread, apples">
-        <svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Groceries
-      </button>
-      <button class="omnibox-action" data-action="reminders" onclick="omniboxAction('reminders')">
-        <svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Reminders
-      </button>
-      <button class="omnibox-action" data-action="notes" onclick="omniboxAction('notes')">
-        <svg class="icon" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> Notes
-      </button>
-      <button class="omnibox-action" data-action="spend" onclick="omniboxAction('spend')"
-        data-hint="Add to Spend — [where] [amount] [category] e.g. Tesco 50.45 shopping">
-        <svg class="icon" aria-hidden="true"><use href="#i-banknote"></use></svg> Spend
-      </button>
-    </div>
-  </div>
-</div>
 
 <!-- ═══ MAIN ═══ -->
 <div id="main">
@@ -1896,7 +1836,7 @@
         <button id="stock-select-btn" onclick="enterStockSelectMode()"
           title="Manage items — multi-select for share / archive / delete"
           style="display:flex;align-items:center;justify-content:flex-start;gap:8px;width:100%;height:36px;padding:5px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-family:var(--sans);font-size:12px;font-weight:normal;cursor:pointer;outline:none">
-          <svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Manage
+          <svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> <span class="manage-label">Manage</span>
         </button>
       </div>
     </div>
@@ -1905,9 +1845,9 @@
         <div id="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Status:</span>
           <button class="filter-chip active" onclick="setFilter('status','all',this)">All</button>
-          <button class="filter-chip" onclick="setFilter('status','critical',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Critical</button>
-          <button class="filter-chip" onclick="setFilter('status','warn',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Low</button>
-          <button class="filter-chip" onclick="setFilter('status','ok',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Good</button>
+          <button class="filter-chip" onclick="setFilter('status','critical',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Critical <span class="status-count" data-key="critical" style="display:none">0</span></button>
+          <button class="filter-chip" onclick="setFilter('status','warn',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Low <span class="status-count" data-key="warn" style="display:none">0</span></button>
+          <button class="filter-chip" onclick="setFilter('status','ok',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Good <span class="status-count" data-key="ok" style="display:none">0</span></button>
           <button class="filter-chip" onclick="setFilter('cadence','monthly',this)"><svg class="icon" aria-hidden="true"><use href="#i-calendar-days"></use></svg> Monthly</button>
           <button class="filter-chip" onclick="setFilter('cadence','bulk',this)"><svg class="icon" aria-hidden="true"><use href="#i-package"></use></svg> Bulk</button>
           <button class="filter-chip" onclick="setFilter('status','archived',this)" style="opacity:0.7"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg> Archived</button>
