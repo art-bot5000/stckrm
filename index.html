@@ -8,6 +8,25 @@
 <meta http-equiv="Expires" content="0">
 <title>STOCKROOM — Household Consumables Tracker (KV)</title>
 <link rel="manifest" href="manifest.json">
+<!-- ═══ FAVICON & APP ICONS ═══
+     Modern browsers prefer the explicit PNG sizes via <link rel="icon">.
+     favicon.ico is a multi-resolution fallback (16/32/48) for older
+     browsers and contexts that auto-fetch /favicon.ico without parsing
+     HTML (RSS readers, link previews, etc.).
+     icon-180 is the iOS Apple Touch Icon — opaque, no transparency,
+     iOS applies its own rounded corners.
+     icon-192 / icon-512 are referenced from manifest.json for PWA
+     install. The maskable 512 is also in the manifest for Android
+     adaptive icons. -->
+<link rel="icon" type="image/png" sizes="16x16" href="/icon-16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
+<link rel="icon" type="image/png" sizes="48x48" href="/icon-48.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/icon-96.png">
+<link rel="icon" type="image/png" sizes="144x144" href="/icon-144.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png">
+<link rel="shortcut icon" href="/favicon.ico">
 <meta name="theme-color" content="#0f1117">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1734,7 +1753,7 @@
         <svg class="icon" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> Notes
       </button>
       <button class="omnibox-action" data-action="spend" onclick="omniboxAction('spend')"
-        data-hint="Where amount [category]. Example: tesco 47.50 shopping">
+        data-hint="Add to Spend — [where] [amount] [category] e.g. Tesco 50.45 shopping">
         <svg class="icon" aria-hidden="true"><use href="#i-banknote"></use></svg> Spend
       </button>
     </div>

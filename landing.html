@@ -13,6 +13,20 @@
   <meta property="og:type" content="website">
 
   <link rel="manifest" href="https://app.stckrm.com/manifest.json">
+  <!-- ═══ FAVICON & APP ICONS ═══
+       Same set as index.html — files live in /app/public and are
+       served from both apex (stckrm.com) and app subdomain via the
+       Caddy `handle` blocks. Root-relative paths resolve correctly
+       on whichever hostname the landing is served from. -->
+  <link rel="icon" type="image/png" sizes="16x16" href="/icon-16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
+  <link rel="icon" type="image/png" sizes="48x48" href="/icon-48.png">
+  <link rel="icon" type="image/png" sizes="96x96" href="/icon-96.png">
+  <link rel="icon" type="image/png" sizes="144x144" href="/icon-144.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png">
+  <link rel="shortcut icon" href="/favicon.ico">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
