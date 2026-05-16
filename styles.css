@@ -4503,3 +4503,535 @@ body.bulk-select-mode-category .budget-cat-row:hover { outline: 2px solid var(--
    so taps go straight to selection toggle. The action bar covers the
    bulk equivalent of these actions. */
 body.bulk-select-mode-category .budget-cat-row .bill-actions { display: none !important; }
+<<<<<<< Updated upstream
+=======
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 1
+   Persistent top-of-app input bar. Collapsed = ~44px single-line
+   field. Focused/typing = expanded panel with live search results
+   above and action buttons (Search/Stockroom/Groceries/Reminders/
+   Notes/Spend) at the bottom.
+
+   Reuses the .global-search-* result row classes for the inner result
+   list so we don't duplicate styling — runGlobalSearch's renderer just
+   targets #omnibox-results instead of #global-search-results.
+
+   Mobile (<900px): omnibox sits below #app-header. When expanded,
+   covers from below the header to mid-screen (max-height: 70vh).
+   Desktop (≥900px): omnibox sits at top of #main, sidebar already
+   handles primary nav. Expanded panel anchors below the input row.
+═══════════════════════════════════════════════════════════════════ */
+
+/* ── Container ── */
+.omnibox {
+  /* Sticky so it stays at the top of the viewport as the user scrolls.
+     On mobile it sits below the 56px #app-header (which is also sticky
+     at top:0, z-index 100). We sit at top:56px to land just under it.
+     On desktop the header is hidden — see media query below. */
+  position: sticky;
+  top: 56px;
+  z-index: 95;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  /* When expanded, allow children to escape (so the panel can sit on
+     top of subsequent content). */
+}
+.omnibox[data-state="expanded"] {
+  border-bottom-color: transparent;
+}
+
+/* ── Input row (always visible) ── */
+.omnibox-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.omnibox-input-icon {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+#omnibox-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--sans);
+  /* iOS auto-zooms inputs <16px — keep at 16px to avoid the zoom flicker. */
+  font-size: 16px;
+  line-height: 1.4;
+  padding: 4px 0;
+  resize: none;
+  overflow: hidden;       /* hide scrollbars; height is JS-controlled */
+  max-height: 96px;       /* ≈4 lines at 16px/1.4 */
+}
+#omnibox-input::placeholder { color: var(--muted); }
+
+.omnibox-clear {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 6px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.omnibox-clear:hover { background: var(--surface2); color: var(--text); }
+
+/* ── Expanded panel ── */
+/* Hidden by default; data-state="expanded" reveals it. */
+.omnibox-panel {
+  display: none;
+  flex-direction: column;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  /* Box-shadow at the bottom makes the panel feel like it floats over
+     the content beneath. Subtle — matches the .global-search-panel feel. */
+  box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+}
+.omnibox[data-state="expanded"] .omnibox-panel {
+  display: flex;
+}
+
+/* Results pane reuses .global-search-* row classes so we don't duplicate
+   the markup that runGlobalSearch emits. We just give the wrapper a
+   bounded max-height so it scrolls instead of pushing the action
+   buttons off-screen. */
+.omnibox-results {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  max-height: 50vh;
+  min-height: 0;
+}
+.omnibox-empty {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 24px 16px;
+}
+
+/* Re-skin .global-search-section etc. when they appear inside #omnibox-
+   results. The classes are identical — they just need the slight
+   padding tweak because we're not inside a modal anymore. */
+.omnibox-results .global-search-section { padding: 4px 0 2px; }
+.omnibox-results .global-search-section-title { padding: 8px 14px 4px; }
+.omnibox-results .global-search-row { padding: 8px 14px; }
+
+/* ── Action button row ── */
+.omnibox-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.omnibox-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.12s;
+  white-space: nowrap;
+}
+.omnibox-action:hover {
+  background: var(--surface);
+  border-color: var(--muted);
+}
+.omnibox-action:active {
+  transform: scale(0.97);
+}
+.omnibox-action .icon {
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+/* Disabled state — used in Pass 2 by intent detection. Kept here so
+   Pass 2 just flips the disabled attribute and the styling is ready. */
+.omnibox-action:disabled,
+.omnibox-action[data-disabled="true"] {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+/* Detected primary action — Pass 2 hook. */
+.omnibox-action[data-primary="true"] {
+  background: var(--accent);
+  color: #111;
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px rgba(232,168,56,0.3);
+}
+.omnibox-action[data-primary="true"] .icon { color: #111; }
+
+/* ── Mobile (<900px) ── */
+@media (max-width: 899px) {
+  /* On mobile the omnibox sits below the 56px header. When expanded,
+     limit its overall height so the user can still see the underlying
+     tabs/content peeking out — feels like a panel that dropped, not a
+     full-screen takeover. */
+  .omnibox[data-state="expanded"] .omnibox-results {
+    max-height: 40vh;
+  }
+  /* Tab grid is currently 24px below — give it a little less since
+     the omnibox already pushes everything down. */
+  .omnibox-input-row { padding: 7px 12px; }
+  .omnibox-actions { padding: 8px 10px; gap: 5px; }
+  .omnibox-action { padding: 7px 10px; font-size: 12px; }
+  .omnibox-action .icon { width: 13px; height: 13px; }
+}
+
+/* ── Desktop (≥900px) ── */
+@media (min-width: 900px) {
+  /* Header is hidden on desktop (sidebar replaces it), so the omnibox
+     sits at the very top. The sidebar (220px wide) is fixed-position,
+     so the omnibox needs to sit to the right of it. The body of #main
+     already has margin-left: 220px to clear the sidebar; we want the
+     omnibox to match that. */
+  .omnibox {
+    top: 0;
+    margin-left: 220px;
+  }
+  .omnibox-input-row { padding: 10px 36px; }
+  .omnibox-actions { padding: 12px 36px; }
+  .omnibox-results .global-search-section-title { padding-left: 36px; padding-right: 36px; }
+  .omnibox-results .global-search-row { padding-left: 36px; padding-right: 36px; }
+  .omnibox-empty { padding: 28px 36px; }
+}
+
+/* ── Wizard / full-screen mode escape hatches ──
+   The wizard and the full-screen grocery list view hide the rest of the
+   chrome — hide the omnibox along with them. */
+body.wizard-active .omnibox,
+body.grocery-list-open .omnibox,
+body.note-open .omnibox {
+  display: none !important;
+}
+
+/* ── Scroll lock when expanded on mobile ──
+   When typing actively, prevent the background from scrolling — same
+   pattern as body.global-search-open. The omnibox itself sets/clears
+   this class on focus/collapse. */
+body.omnibox-expanded { /* reserved for future scroll-lock if needed */ }
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 2: Intent hint
+   Small label that sits above the action buttons, telling the user
+   what the omnibox thinks they're trying to do ("Looks like a note",
+   "Add to Stockroom (keyword)", etc.). Updated by _applyOmniboxIntent
+   in app.js.
+
+   Hidden when there's no detected intent — keeps the panel clean for
+   empty input or ambiguous short queries.
+═══════════════════════════════════════════════════════════════════ */
+.omnibox-intent-hint {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--accent);
+  padding: 8px 14px 0;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  /* Slight pulse animation when the hint changes — tiny affordance to
+     draw the eye when the user's input crosses a detection threshold. */
+  animation: omniboxHintFade 0.18s ease-out;
+}
+@keyframes omniboxHintFade {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (min-width: 900px) {
+  .omnibox-intent-hint {
+    padding-left: 36px;
+    padding-right: 36px;
+  }
+}
+
+/* When the hint sits directly above the actions row, the actions row's
+   own border-top would duplicate ours. Suppress the actions border in
+   that case so we only get one separator line. */
+.omnibox-intent-hint + .omnibox-actions {
+  border-top: none;
+  padding-top: 8px;
+}
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 2 FIX
+   Override the data-disabled rule so greyed-out action buttons remain
+   clickable. The visual dimming stays as a guidance cue, but the user
+   can always force-click an action against the suggestion.
+
+   Specifically targets [data-disabled="true"] only — leaves the
+   `:disabled` rule intact in case any other code paths set the
+   real disabled attribute.
+═══════════════════════════════════════════════════════════════════ */
+.omnibox-action[data-disabled="true"] {
+  /* Reset blocking properties from the original Pass 1 rule. */
+  pointer-events: auto;
+  cursor: pointer;
+  /* Keep the dim opacity so it's still clear which buttons are the
+     "recommended" path vs the "available but not suggested" ones. */
+  opacity: 0.4;
+}
+/* Subtle hover state so the user knows the button IS clickable even
+   when greyed — without making it look like a primary CTA. */
+.omnibox-action[data-disabled="true"]:hover {
+  opacity: 0.65;
+  background: var(--surface);
+  border-color: var(--muted);
+}
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 3: Inline Spend preview + hover hints
+═══════════════════════════════════════════════════════════════════ */
+
+/* ── Inline Spend preview block ──
+   Sits between the search results and the intent hint when spend is
+   the detected intent. Reuses .quick-add-chip styling from the
+   existing Spend Quick Add modal so chips look identical to what
+   the user sees in that modal. */
+.omnibox-spend-preview {
+  padding: 10px 14px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+.omnibox-spend-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.omnibox-spend-preview-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.omnibox-spend-preview-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* When the preview sits directly above the intent hint, suppress the
+   hint's own border-top so we only get one separator line — matches
+   the trick the .omnibox-intent-hint + .omnibox-actions selector uses. */
+.omnibox-spend-preview + .omnibox-intent-hint {
+  border-top: none;
+}
+
+@media (min-width: 900px) {
+  .omnibox-spend-preview {
+    padding-left: 36px;
+    padding-right: 36px;
+  }
+}
+
+/* ── Hover hints on Stockroom / Groceries / Spend buttons ──
+   Replaces the native `title=` tooltips which are slow, native-styled,
+   and broken on mobile. Pure CSS via [data-hint] attribute on the
+   button; ::after pseudo-element absolutely-positioned above.
+
+   Only shown on devices that support hover (skips mobile / touch by
+   default — touch users tap the button instead). */
+@media (hover: hover) {
+  .omnibox-action[data-hint] {
+    position: relative;
+  }
+  .omnibox-action[data-hint]::after {
+    content: attr(data-hint);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%) translateY(2px);
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    font-family: var(--sans);
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+    max-width: 320px;
+    /* Word-wrap fallback for narrow viewports */
+    overflow-wrap: anywhere;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.12s, transform 0.12s;
+    /* Float above neighbouring buttons and the panel border. */
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .omnibox-action[data-hint]:hover::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  /* On the rightmost buttons the centered tooltip can clip off-screen.
+     Allow wrapping for those. The `white-space: nowrap` above keeps
+     short hints on a single line; this rule kicks in only when the
+     content is long enough to wrap. */
+  .omnibox-action[data-hint]:last-of-type::after,
+  .omnibox-action[data-hint]:nth-last-of-type(2)::after {
+    white-space: normal;
+    width: 240px;
+    text-align: left;
+  }
+}
+
+/* Mobile: tap-to-show via :focus. Tooltip appears below the button
+   instead of above (more room, less likely to be covered by the
+   on-screen keyboard if it shows up). */
+@media (hover: none) {
+  .omnibox-action[data-hint]:focus {
+    position: relative;
+  }
+  .omnibox-action[data-hint]:focus::after {
+    content: attr(data-hint);
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    font-family: var(--sans);
+    letter-spacing: 0;
+    text-transform: none;
+    width: max-content;
+    max-width: 80vw;
+    pointer-events: none;
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+}
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 4: Mobile 3×2 grid + darkened backdrop
+
+   Mobile-only changes. Desktop keeps the horizontal pill row.
+
+   Grid layout (mobile, <900px):
+     Row 1: Stockroom │ Spend     │ Notes
+     Row 2: Groceries │ Reminders │ Search
+
+   Source order in HTML is: Search, Stockroom, Groceries, Reminders,
+   Notes, Spend — kept that way so tab/keyboard order still hits
+   Search first. Visual order on mobile is driven by `order:` on each
+   button. Desktop ignores `order:` because flex-row honours it but
+   we're using the pre-existing flex-wrap layout which renders in
+   source order at full width without explicit order values.
+═══════════════════════════════════════════════════════════════════ */
+
+/* ── Mobile (<900px): 3×2 grid ── */
+@media (max-width: 899px) {
+  .omnibox-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-auto-rows: 1fr;
+    gap: 6px;
+    padding: 10px 12px;
+  }
+
+  /* Reset the default action button so it sits as a grid cell, not a
+     horizontal pill. Mirrors the tab-bar style: icon above label,
+     centered, equal cells. */
+  .omnibox-actions .omnibox-action {
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 10px 4px;
+    font-size: 11px;
+    white-space: nowrap;
+    text-align: center;
+    min-width: 0;
+    overflow: hidden;
+    /* Reset the pill-row hover transform — looks odd on a grid cell. */
+  }
+  .omnibox-actions .omnibox-action .icon {
+    width: 18px;
+    height: 18px;
+  }
+
+  /* Explicit cell positions via flex `order`. Grid auto-placement
+     fills source-order; `order` on grid items relocates them. The
+     numbers correspond to grid cells 1..6 (row-major). */
+  .omnibox-actions .omnibox-action[data-action="stockroom"] { order: 1; }
+  .omnibox-actions .omnibox-action[data-action="spend"]     { order: 2; }
+  .omnibox-actions .omnibox-action[data-action="notes"]     { order: 3; }
+  .omnibox-actions .omnibox-action[data-action="groceries"] { order: 4; }
+  .omnibox-actions .omnibox-action[data-action="reminders"] { order: 5; }
+  .omnibox-actions .omnibox-action[data-action="search"]    { order: 6; }
+}
+
+/* ── Mobile backdrop ──
+   Darkens the page content behind the expanded omnibox panel.
+   `omnibox-backdrop` is created by JS on init and appended to body.
+   Hidden by default (opacity 0, pointer-events none). When the
+   .visible class is added, it fades in and intercepts taps so the
+   user can tap-to-collapse.
+
+   Sits at top: 0 with the omnibox panel above it via z-index. The
+   panel is z:95 and sticky at top:56px (below header). Backdrop is
+   z:94 so the panel sits above. */
+.omnibox-backdrop {
+  display: none; /* gated by media query below */
+}
+
+@media (max-width: 899px) {
+  .omnibox-backdrop {
+    display: block;
+    position: fixed;
+    /* Cover everything from the bottom of the header down. Header is
+       56px tall and pinned at top:0. Omnibox panel itself sits over
+       the top of the backdrop and is z:95 so it stays crisp. */
+    top: 56px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 94;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease-out;
+    /* Belt-and-braces: prevent the backdrop from intercepting page
+       scroll when invisible. */
+    -webkit-tap-highlight-color: transparent;
+  }
+  .omnibox-backdrop.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* Wizard / full-screen mode escape hatches — already hide the omnibox
+   itself; also suppress the backdrop so it doesn't lurk behind those
+   modal states. */
+body.wizard-active .omnibox-backdrop,
+body.grocery-list-open .omnibox-backdrop,
+body.note-open .omnibox-backdrop,
+body.global-search-open .omnibox-backdrop {
+  display: none !important;
+}
+>>>>>>> Stashed changes

@@ -1549,8 +1549,12 @@
 <!-- ═══ HEADER ═══ -->
 <div id="app-header">
   <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+<<<<<<< Updated upstream
     <div style="cursor:pointer;flex-shrink:0;display:flex;align-items:center;gap:8px" onclick="openProfilePicker()" title="Switch or add household">
       <img src="/logo.png" alt="" class="brand-logo brand-logo-mobile" width="33" height="24">
+=======
+    <div style="cursor:pointer;flex-shrink:0" onclick="openProfilePicker()" title="Switch or add household">
+>>>>>>> Stashed changes
       <div class="logo">STOCKROOM <span id="profile-label" class="profile-label-subtitle">/ HOUSEHOLD TRACKER</span></div>
     </div>
     <div id="header-greeting" style="font-size:12px;color:var(--muted);display:none;align-items:center;gap:4px"></div>
@@ -1703,8 +1707,12 @@
 <!-- ═══ APP SIDEBAR (desktop only) ═══ -->
 <nav id="app-nav">
   <div class="app-nav-logo">
+<<<<<<< Updated upstream
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <img src="/logo.png" alt="" class="brand-logo brand-logo-sidebar" width="29" height="21" onclick="openProfilePicker()" style="cursor:pointer">
+=======
+    <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+>>>>>>> Stashed changes
       <div class="logo" style="font-size:11px;letter-spacing:3px;cursor:pointer;flex-shrink:0" onclick="openProfilePicker()">STOCKROOM</div>
       <span id="app-nav-profile" style="font-size:12px;color:var(--muted);font-family:var(--sans);cursor:pointer;white-space:nowrap" onclick="openProfilePicker()"></span>
     </div>
@@ -1751,6 +1759,70 @@
   </div>
 </nav>
 
+<<<<<<< Updated upstream
+=======
+<!-- ═══ OMNIBOX ═══
+     Persistent input bar at top of every tab. Replaces the old
+     #global-search-modal. Collapsed = single-line search/add field.
+     Focused/typing = expanded panel with live search results above
+     and action buttons (Search/Stockroom/Groceries/Reminders/Notes/
+     Spend) at the bottom.
+     The internal search engine (runGlobalSearch, _searchStockroom etc.)
+     is reused as-is; only the UI shell is new. See OMNIBOX section in
+     app.js for the wiring. -->
+<div id="omnibox" class="omnibox" data-state="collapsed">
+  <!-- Collapsed/input row — always visible -->
+  <div class="omnibox-input-row">
+    <svg class="icon icon-lg omnibox-input-icon" aria-hidden="true"><use href="#i-search"></use></svg>
+    <textarea id="omnibox-input" rows="1" placeholder="Search or add…"
+      autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+      oninput="onOmniboxInput()"
+      onfocus="onOmniboxFocus()"
+      onkeydown="onOmniboxKeyDown(event)"></textarea>
+    <button id="omnibox-clear-btn" class="omnibox-clear" onclick="clearOmnibox()"
+      aria-label="Clear" title="Clear" style="display:none">
+      <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+    </button>
+    <button id="omnibox-collapse-btn" class="omnibox-clear" onclick="collapseOmnibox()"
+      aria-label="Close" title="Close" style="display:none">
+      <svg class="icon" aria-hidden="true"><use href="#i-chevron-up"></use></svg>
+    </button>
+  </div>
+
+  <!-- Expanded panel — visible when data-state="expanded" -->
+  <div class="omnibox-panel" id="omnibox-panel">
+    <!-- Live search results, populated by runGlobalSearch -->
+    <div class="omnibox-results" id="omnibox-results">
+      <div class="omnibox-empty">Type to search or use the buttons below to add.</div>
+    </div>
+    <!-- Action buttons -->
+    <div class="omnibox-actions" id="omnibox-actions">
+      <button class="omnibox-action" data-action="search" onclick="omniboxAction('search')">
+        <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg> Search
+      </button>
+      <button class="omnibox-action" data-action="stockroom" onclick="omniboxAction('stockroom')"
+        data-hint="Add items — comma-separated. Example: yoghurt, eggs, bread">
+        <svg class="icon" aria-hidden="true"><use href="#i-package"></use></svg> Stockroom
+      </button>
+      <button class="omnibox-action" data-action="groceries" onclick="omniboxAction('groceries')"
+        data-hint="Add to a Quick List — comma items. Example: 2 milk, bread, apples">
+        <svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Groceries
+      </button>
+      <button class="omnibox-action" data-action="reminders" onclick="omniboxAction('reminders')">
+        <svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Reminders
+      </button>
+      <button class="omnibox-action" data-action="notes" onclick="omniboxAction('notes')">
+        <svg class="icon" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> Notes
+      </button>
+      <button class="omnibox-action" data-action="spend" onclick="omniboxAction('spend')"
+        data-hint="Where amount [category]. Example: tesco 47.50 shopping">
+        <svg class="icon" aria-hidden="true"><use href="#i-banknote"></use></svg> Spend
+      </button>
+    </div>
+  </div>
+</div>
+
+>>>>>>> Stashed changes
 <!-- ═══ MAIN ═══ -->
 <div id="main">
   <!-- Trial / billing status banner — shown when ≤7 days of trial left, or past_due, or grace ending -->
