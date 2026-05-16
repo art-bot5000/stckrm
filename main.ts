@@ -6,6 +6,104 @@
 //  Email: Resend API, same cron system.
 // ═══════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════
+//  ENVIRONMENT VALIDATION — fails loud at startup
+// ═══════════════════════════════════════════════════════════
+// Two-tier check:
+//   REQUIRED  — secrets the app cannot run correctly without.
+//               Missing one → hard exit, deploy fails. This is
+//               intentional: a deploy that "succeeds" but has a
+//               silently-broken billing/auth path is worse than a
+//               deploy that visibly fails.
+//   OPTIONAL  — secrets that enable optional features. Missing
+//               one → log a warning at startup, app continues
+//               with that feature disabled.
+//
+// Hard-fail behaviour is gated on running inside Fly (detected via
+// FLY_APP_NAME, which Fly sets automatically on every machine).
+// Locally — no FLY_APP_NAME present — missing REQUIRED secrets
+// downgrade to warnings so dev workflows aren't blocked.
+//
+// Escape hatch: set STOCKROOM_SKIP_ENV_VALIDATION=1 to bypass even
+// in production. Intended for emergency rollback scenarios where
+// the validator itself has a bug; should never be needed in normal
+// operation.
+
+const REQUIRED_ENV: Array<{ key: string; feature: string }> = [
+  { key: 'ADMIN_SECRET',          feature: 'Admin endpoint authentication (security-critical)' },
+  { key: 'STRIPE_SECRET_KEY',     feature: 'Stripe billing API' },
+  { key: 'STRIPE_WEBHOOK_SECRET', feature: 'Stripe webhook signature verification (security-critical)' },
+  { key: 'STRIPE_PRICE_ID',       feature: 'Stripe checkout / subscription' },
+  { key: 'RESEND_API_KEY',        feature: 'Email delivery (auth OTPs, share invites, notifications)' },
+];
+
+const OPTIONAL_ENV: Array<{ key: string; feature: string }> = [
+  { key: 'VAPID_PUBLIC_KEY',      feature: 'Web push notifications' },
+  { key: 'VAPID_PRIVATE_KEY',     feature: 'Web push notifications' },
+  { key: 'R2_ACCOUNT_ID',         feature: 'Cloudflare R2 storage (note bodies)' },
+  { key: 'R2_ACCESS_KEY_ID',      feature: 'Cloudflare R2 storage (note bodies)' },
+  { key: 'R2_SECRET_ACCESS_KEY',  feature: 'Cloudflare R2 storage (note bodies)' },
+  { key: 'R2_BUCKET_NAME',        feature: 'Cloudflare R2 storage (note bodies)' },
+  { key: 'PUSH_DISPATCH_SECRET',  feature: 'Scheduled push dispatch authentication' },
+  { key: 'STRIPE_PUBLISHABLE_KEY',feature: 'Stripe client-side (publishable; sent to browser)' },
+];
+
+(function validateEnvironment() {
+  const isFly       = !!Deno.env.get('FLY_APP_NAME');
+  const skipFlag    = Deno.env.get('STOCKROOM_SKIP_ENV_VALIDATION') === '1';
+  const flyAppName  = Deno.env.get('FLY_APP_NAME') || '(local)';
+  const flyRegion   = Deno.env.get('FLY_REGION')   || '(local)';
+
+  console.log('─── Environment validation ───');
+  console.log(`  Host: ${isFly ? 'Fly' : 'local'} (${flyAppName} / ${flyRegion})`);
+  if (skipFlag) {
+    console.log('  ⚠ STOCKROOM_SKIP_ENV_VALIDATION=1 — all checks bypassed');
+    return;
+  }
+
+  // Check REQUIRED. Missing → fatal on Fly, warn locally.
+  const missingRequired: string[] = [];
+  for (const { key, feature } of REQUIRED_ENV) {
+    const present = !!Deno.env.get(key);
+    if (present) {
+      console.log(`  ✓ ${key.padEnd(24)} ${feature}`);
+    } else {
+      missingRequired.push(key);
+      console.log(`  ✗ ${key.padEnd(24)} MISSING — ${feature}`);
+    }
+  }
+
+  // Check OPTIONAL. Missing → warn (always, never fatal).
+  for (const { key, feature } of OPTIONAL_ENV) {
+    const present = !!Deno.env.get(key);
+    if (present) {
+      console.log(`  ✓ ${key.padEnd(24)} ${feature}`);
+    } else {
+      console.log(`  · ${key.padEnd(24)} not set — ${feature} disabled`);
+    }
+  }
+
+  if (missingRequired.length === 0) {
+    console.log('─── All required secrets present ───');
+    return;
+  }
+
+  // Hard fail only on Fly. Locally we want the dev workflow to keep
+  // working with degraded features; the warnings above are enough.
+  if (isFly) {
+    console.error('');
+    console.error('═══ FATAL: required environment variables missing ═══');
+    console.error(`  Missing: ${missingRequired.join(', ')}`);
+    console.error('  Set them via: flyctl secrets set KEY=value');
+    console.error('  Or to bypass this check (NOT RECOMMENDED):');
+    console.error('    flyctl secrets set STOCKROOM_SKIP_ENV_VALIDATION=1');
+    console.error('═══════════════════════════════════════════════════════');
+    Deno.exit(1);
+  } else {
+    console.log(`  ⚠ Running locally with ${missingRequired.length} required secret(s) missing — features will degrade or break`);
+  }
+})();
+
 const env = {
   APP_URL:       Deno.env.get('APP_URL')       || 'https://stckrm.fly.dev',
   WORKER_URL:    Deno.env.get('WORKER_URL')    || '',
@@ -7130,34 +7228,13 @@ async function sendBackupHeartbeatEmail(): Promise<{ ok: boolean; error?: string
       counts[top] = (counts[top] || 0) + 1;
     }
 
-    // Most recent auto snapshot from R2. After the per-user backup
-    // migration, snapshots live at `user-backup/{emailHash}/auto-{ts}.json`
-    // — the old whole-DB `auto/{ts}.json` path is no longer written to
-    // (only `pre-restore/...` ever touches the legacy path now). Listing
-    // just `auto/` returned the migration-day snapshot forever, falsely
-    // reporting "Backup needs attention" while per-user backups were
-    // happening every 5 minutes. Fix: list ALL R2 contents once, filter
-    // for any path containing 'auto-' or starting with 'auto/', and pick
-    // the most recent. Same listing is reused for the totals below.
+    // Most recent auto snapshot from R2
     let latestSnap: { key: string; size: number; lastModified: string } | null = null;
-    let totalSnapshots = 0;
-    let totalBytes = 0;
     let r2Status = 'not configured';
-    let everything: Array<{ key: string; size: number; lastModified: string }> = [];
     if (r2Configured()) {
       try {
-        everything = await listR2Snapshots('');
-        totalSnapshots = everything.length;
-        totalBytes = everything.reduce((s, x) => s + x.size, 0);
-        // Filter for auto snapshots only. Per-user path:
-        //   user-backup/{emailHash}/auto-{ts}.json
-        // Legacy path (no longer written):
-        //   auto/{ts}.json
-        // Skip pre-restore / pre-delete / manual labels.
-        const autoOnly = everything.filter(s =>
-          s.key.startsWith('auto/') || /\/auto-\d/.test(s.key)
-        );
-        latestSnap = autoOnly.at(-1) || null;
+        const all = await listR2Snapshots('auto/');
+        latestSnap = all.at(-1) || null;
         r2Status = latestSnap ? 'ok' : 'configured but no snapshots found';
       } catch (e) {
         r2Status = `error: ${(e as Error)?.message || e}`;
@@ -7166,6 +7243,17 @@ async function sendBackupHeartbeatEmail(): Promise<{ ok: boolean; error?: string
 
     // Pending changes? If dirty, the next 5-min cron will pick them up.
     const pendingChanges = await _isKVDirty();
+
+    // Total R2 storage used (rough — listing only auto/ above)
+    let totalSnapshots = 0;
+    let totalBytes = 0;
+    if (r2Configured() && r2Status === 'ok') {
+      try {
+        const everything = await listR2Snapshots('');
+        totalSnapshots = everything.length;
+        totalBytes = everything.reduce((s, x) => s + x.size, 0);
+      } catch (_) { /* non-fatal */ }
+    }
 
     const fmtBytes = (n: number) => {
       if (!n) return '0 B';
