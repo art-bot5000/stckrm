@@ -2491,6 +2491,11 @@ async function loadData() {
   if (Array.isArray(loadedItems)) items = loadedItems;
   if (loadedSettings && typeof loadedSettings === 'object') settings = { ...settings, ...loadedSettings };
 
+  // Apply user's theme preference now that settings are loaded — this
+  // re-runs applyTheme with the persisted choice, replacing the early
+  // dark-default paint that happened before settings were ready.
+  if (typeof applyTheme === 'function') applyTheme();
+
   // Backfill localStorage from user settings so early-firing browser events (beforeinstallprompt)
   // also see the dismissed flag without waiting for a network sync
   if (settings._installDismissed) {
@@ -19796,6 +19801,9 @@ function renderSettingsForUser() {
   updateHeaderGreeting();
   _updateSidebarProfile();
   renderAccountSecurity();
+  // Sync theme segmented control with current preference. Safe to call
+  // even if buttons aren't mounted — the helper no-ops on missing IDs.
+  _updateThemeUI();
 }
 
 function updateSyncPill(state, provider) {
@@ -19829,11 +19837,88 @@ function updateSyncPill(state, provider) {
 
 
 // ═══════════════════════════════════════════════════════════
-//  ADAPTIVE DARK MODE 2.0 — Time-of-day colour temperature
+//  THEME SYSTEM — Light / Dark / System
 // ═══════════════════════════════════════════════════════════
+// settings.theme can be 'system' | 'light' | 'dark' (default: 'system').
+// applyTheme() sets <html data-theme="..."> so styles.css can scope tokens
+// off it, updates the <meta name="theme-color"> for mobile browser chrome,
+// and re-runs applyAdaptiveColourTemp() to pick the right hue overrides
+// for whichever mode is now active.
+
+function _resolveTheme(pref) {
+  // 'system' resolves to the current OS preference; everything else
+  // passes through unchanged.
+  if (pref === 'light' || pref === 'dark') return pref;
+  try {
+    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  } catch (e) {
+    return 'dark';
+  }
+}
+
+function applyTheme() {
+  const pref     = (settings && settings.theme) || 'system';
+  const resolved = _resolveTheme(pref);
+  // Setting data-theme on <html> drives the [data-theme="light"] CSS
+  // overrides. We always set it explicitly (rather than removing) so
+  // dark mode has data-theme="dark" — useful for any future overrides
+  // that need to disambiguate from the no-attribute default.
+  document.documentElement.setAttribute('data-theme', resolved);
+  // Keep the browser/PWA chrome in sync. The static <meta> value in
+  // index.html is just the initial-paint fallback.
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', resolved === 'light' ? '#f5f3ec' : '#0f1117');
+  // Re-apply the time-of-day surface/accent shifts for the new mode.
+  if (typeof applyAdaptiveColourTemp === 'function') applyAdaptiveColourTemp();
+  // Update the segmented control in Preferences if it's mounted.
+  _updateThemeUI();
+}
+
+function setTheme(pref) {
+  if (!['system', 'light', 'dark'].includes(pref)) pref = 'system';
+  settings.theme = pref;
+  // Save without re-rendering everything — applyTheme handles UI.
+  _saveSettings();
+  applyTheme();
+}
+
+function _updateThemeUI() {
+  const pref = (settings && settings.theme) || 'system';
+  ['system', 'light', 'dark'].forEach(opt => {
+    const btn = document.getElementById('theme-seg-' + opt);
+    if (!btn) return;
+    const active = opt === pref;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-checked', active ? 'true' : 'false');
+  });
+}
+
+// Live-update when the OS theme flips (e.g. Android auto-dark at sunset)
+// and the user has 'system' selected. matchMedia listener is wired once
+// at module load; the guard inside re-checks pref each time it fires so
+// switching away from 'system' silently stops responding.
+try {
+  const mql = window.matchMedia('(prefers-color-scheme: light)');
+  const handler = () => {
+    if (((settings && settings.theme) || 'system') === 'system') applyTheme();
+  };
+  if (mql.addEventListener) mql.addEventListener('change', handler);
+  else if (mql.addListener)  mql.addListener(handler); // Safari < 14 fallback
+} catch (e) { /* matchMedia unavailable — ignore */ }
+
+
+// ═══════════════════════════════════════════════════════════
+//  ADAPTIVE COLOUR TEMPERATURE — Time-of-day tuning
+// ═══════════════════════════════════════════════════════════
+// Subtle hue/opacity shifts that vary by time of day to give the UI a
+// gentle circadian feel. Theme-aware: dark mode keeps its original
+// punchy --ok / --accent2 overrides, while light mode applies a milder
+// version (surface-opacity nudges only — the dark-mode hex values would
+// wash out on white surfaces).
 
 function applyAdaptiveColourTemp() {
   const h = new Date().getHours();
+  const mode = document.documentElement.getAttribute('data-theme') || 'dark';
   // The viewport-tint overlay was removed — it painted an orange/amber wash
   // over every view except Notes (which has its own opaque bg), creating
   // an inconsistent look. We keep the subtle --ok / --accent2 hue shifts
@@ -19842,26 +19927,46 @@ function applyAdaptiveColourTemp() {
   const tint = 'rgba(0,0,0,0)';
   let surfaceOpacity = '0.82';
 
-  if (h >= 22 || h < 6) {
-    // Late night / early morning: more opaque surfaces
-    surfaceOpacity = '0.92';
-    document.documentElement.style.setProperty('--ok',    '#3db87a');
-    document.documentElement.style.setProperty('--accent2','#4f82e0');
-  } else if (h >= 6 && h < 10) {
-    // Morning: cool blue-white, crisp
-    surfaceOpacity = '0.78';
-    document.documentElement.style.setProperty('--ok',    '#4cbb8a');
-    document.documentElement.style.setProperty('--accent2','#5b8dee');
-  } else if (h >= 18 && h < 22) {
-    // Evening
-    surfaceOpacity = '0.86';
-    document.documentElement.style.setProperty('--ok',    '#45b882');
-    document.documentElement.style.setProperty('--accent2','#547ee8');
+  if (mode === 'light') {
+    // Light mode: surface opacity shifts only. Skip the --ok / --accent2
+    // overrides — the dark-tuned hex values are too desaturated for white
+    // backgrounds and the light palette already has well-tuned accent
+    // colours. We let the CSS-defined light-mode values stand.
+    if (h >= 22 || h < 6)       surfaceOpacity = '0.96'; // night: nearly opaque (less translucency at night)
+    else if (h >= 6  && h < 10) surfaceOpacity = '0.88'; // morning: crisp
+    else if (h >= 18 && h < 22) surfaceOpacity = '0.92'; // evening
+    else                        surfaceOpacity = '0.90'; // daytime
   } else {
-    // Daytime: neutral
-    surfaceOpacity = '0.82';
-    document.documentElement.style.setProperty('--ok',    '#4cbb8a');
-    document.documentElement.style.setProperty('--accent2','#5b8dee');
+    // Dark mode: the original Stockroom adaptive palette.
+    if (h >= 22 || h < 6) {
+      // Late night / early morning: more opaque surfaces
+      surfaceOpacity = '0.92';
+      document.documentElement.style.setProperty('--ok',    '#3db87a');
+      document.documentElement.style.setProperty('--accent2','#4f82e0');
+    } else if (h >= 6 && h < 10) {
+      // Morning: cool blue-white, crisp
+      surfaceOpacity = '0.78';
+      document.documentElement.style.setProperty('--ok',    '#4cbb8a');
+      document.documentElement.style.setProperty('--accent2','#5b8dee');
+    } else if (h >= 18 && h < 22) {
+      // Evening
+      surfaceOpacity = '0.86';
+      document.documentElement.style.setProperty('--ok',    '#45b882');
+      document.documentElement.style.setProperty('--accent2','#547ee8');
+    } else {
+      // Daytime: neutral
+      surfaceOpacity = '0.82';
+      document.documentElement.style.setProperty('--ok',    '#4cbb8a');
+      document.documentElement.style.setProperty('--accent2','#5b8dee');
+    }
+  }
+
+  // Switching from dark to light: clear any inline --ok / --accent2
+  // overrides we may have set during a prior dark-mode pass, so the
+  // light-mode CSS values take effect.
+  if (mode === 'light') {
+    document.documentElement.style.removeProperty('--ok');
+    document.documentElement.style.removeProperty('--accent2');
   }
 
   document.documentElement.style.setProperty('--temp-tint', tint);

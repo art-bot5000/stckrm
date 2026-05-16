@@ -1,3 +1,8 @@
+  /* ── Theme tokens ──────────────────────────────────────────────────
+     Dark is the default. Light mode applies when <html data-theme="light">.
+     The applyTheme() function in app.js sets data-theme based on the
+     user's settings.theme preference ('system' | 'light' | 'dark'),
+     resolving 'system' via prefers-color-scheme. */
   :root {
     --bg: #0f1117; --surface: #1a1d27; --surface2: #22263a;
     --border: #2e3350; --accent: #e8a838; --accent2: #5b8dee;
@@ -13,6 +18,38 @@
     --glass-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 1px 0 rgba(255,255,255,0.05) inset;
     --card-shadow: 0 2px 12px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.04) inset;
     --card-shadow-hover: 0 6px 24px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset;
+  }
+  /* ── LIGHT MODE ──────────────────────────────────────────────────
+     Warm off-white palette. Amber and blue accents darkened slightly
+     for AA contrast on light surfaces. Shadows softened. */
+  html[data-theme="light"] {
+    --bg: #f5f3ec;          /* warm off-white, easier on the eye than stark white */
+    --surface: #ffffff;
+    --surface2: #ebe8df;
+    --border: #d8d4c8;
+    --accent: #c08418;      /* amber, darker for contrast on white */
+    --accent2: #3b6fd0;     /* blue, darker for contrast on white */
+    --danger: #c83838;
+    --warn: #c08418;
+    --ok: #2e9560;
+    --text: #1a1d27;        /* very dark blue-grey (was --surface in dark) */
+    --muted: #6b6f7d;
+    --glass-border: rgba(0,0,0,0.08);
+    --glass-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 1px 0 rgba(255,255,255,0.6) inset;
+    --card-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 1px 0 rgba(255,255,255,0.5) inset;
+    --card-shadow-hover: 0 6px 20px rgba(0,0,0,0.1), 0 1px 0 rgba(255,255,255,0.6) inset;
+  }
+  /* Smooth crossfade when toggling theme — applied to props the
+     theme actually changes. Skipped for users with reduced-motion. */
+  html, body, .settings-card, .modal, .acc-sec-card, .item-card,
+  .note-card, #app-nav, #app-header, .tab, .btn, input, select, textarea {
+    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html, body, .settings-card, .modal, .acc-sec-card, .item-card,
+    .note-card, #app-nav, #app-header, .tab, .btn, input, select, textarea {
+      transition: none;
+    }
   }
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   body { background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; }
@@ -4941,3 +4978,151 @@ body.note-open .omnibox-backdrop,
 body.global-search-open .omnibox-backdrop {
   display: none !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THEME PICKER — Segmented control in Preferences
+   ═══════════════════════════════════════════════════════════════════════
+   Three buttons (System / Light / Dark) styled as a unified pill group,
+   matching the visual weight of the .acc-sec-select dropdowns in the
+   same Preferences card. */
+.theme-seg {
+  display: inline-flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 0;
+  flex-shrink: 0;
+}
+.theme-seg-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+.theme-seg-btn:hover {
+  color: var(--text);
+}
+.theme-seg-btn.active {
+  background: var(--accent);
+  color: #111;
+}
+.theme-seg-btn .icon {
+  width: 13px;
+  height: 13px;
+}
+/* In light mode, the amber accent on white-ish dropdown background
+   benefits from a touch more weight on the active state */
+html[data-theme="light"] .theme-seg-btn.active {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   LIGHT MODE — Chrome overrides
+   ═══════════════════════════════════════════════════════════════════════
+   A number of UI surfaces (tabs, modals, settings cards, sidebar, etc.)
+   hardcode rgba(26,29,39,...) — the dark mode --surface value — directly
+   in their background declarations because they want a specific opacity
+   that var(--surface) can't express. In light mode these need to flip to
+   a white-ish base. Each override below mirrors the original rule's
+   opacity but uses 255,255,255 (white) instead, plus tweaks to .btn-ghost
+   etc. where a 4% white tint on a white card is invisible.
+
+   Scoped under html[data-theme="light"] so dark mode stays untouched. */
+
+html[data-theme="light"] #app-header {
+  background: rgba(255,255,255,var(--surface-opacity));
+  box-shadow: 0 1px 0 rgba(0,0,0,0.05), 0 4px 20px rgba(0,0,0,0.06);
+}
+html[data-theme="light"] #tabs {
+  background: rgba(255,255,255,0.7);
+}
+html[data-theme="light"] .settings-card {
+  background: rgba(255,255,255,0.7);
+}
+html[data-theme="light"] .modal {
+  background: rgba(255,255,255,0.92);
+  box-shadow: var(--glass-shadow), 0 0 0 1px rgba(0,0,0,0.03) inset;
+}
+html[data-theme="light"] #app-nav {
+  background: rgba(255,255,255,0.95);
+  border-right: 1px solid var(--glass-border);
+}
+html[data-theme="light"] .settings-collapsible-header {
+  background: rgba(255,255,255,0.7);
+}
+html[data-theme="light"] .settings-collapsible-header:hover,
+html[data-theme="light"] .settings-collapsible-header:active {
+  background: rgba(232,232,220,0.8);
+}
+html[data-theme="light"] #view-settings .settings-section-header {
+  background: rgba(255,255,255,0.7);
+}
+
+/* Ghost buttons — a 4% white tint on a white card is invisible. Use a
+   light grey tint instead. Hover bumps to a slightly stronger grey. */
+html[data-theme="light"] .btn-ghost {
+  background: rgba(0,0,0,0.03);
+  border: 1px solid var(--border);
+}
+html[data-theme="light"] .btn-ghost:hover {
+  background: rgba(0,0,0,0.06);
+  border-color: var(--muted);
+}
+
+/* Item card hover — white-on-white border doesn't pop. Use the accent
+   instead, which already happens elsewhere via :hover. */
+html[data-theme="light"] .item-card:hover {
+  border-color: var(--accent);
+}
+
+/* Hover backgrounds that use white-tint don't work on a white surface.
+   Note rows, etc. — flip the tint to a dark one. */
+html[data-theme="light"] .note-row:hover {
+  background: rgba(0,0,0,0.025);
+}
+html[data-theme="light"] .note-row:active {
+  background: rgba(0,0,0,0.04);
+}
+
+/* Mobile menu hover tint — the amber 7% tint reads as a faint cream
+   on white; bump it for better feedback. */
+html[data-theme="light"] .mobile-menu-item:hover {
+  background: rgba(192,132,24,0.10);
+}
+html[data-theme="light"] .app-nav-link:hover {
+  background: rgba(192,132,24,0.08);
+}
+html[data-theme="light"] .app-nav-link.active {
+  background: rgba(192,132,24,0.14);
+}
+
+/* Hairline borders that hardcode rgba(46,51,80,...) — that's the dark
+   --border colour. Replace with a light hairline. */
+html[data-theme="light"] .report-table td,
+html[data-theme="light"] .log-entry,
+html[data-theme="light"] .tag-input-row,
+html[data-theme="light"] .grocery-item,
+html[data-theme="light"] .dept-manage-row,
+html[data-theme="light"] .setting-row {
+  border-bottom-color: rgba(0,0,0,0.06);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Light-mode status pill backgrounds — the .sync-pill, item status
+   chips etc. often layer a coloured rgba tint over the chrome. These
+   were tuned against the dark blue surface; on white they look pale.
+   Left as-is for v1 — the colours still parse as "good / warning /
+   error" semantically; we can tune visually in a follow-up pass.
+   ────────────────────────────────────────────────────────────────────── */
