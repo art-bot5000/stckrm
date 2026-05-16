@@ -113,131 +113,31 @@ function getStores(code) { return STORES_BY_COUNTRY[code] || STORES_BY_COUNTRY.O
 //  UI state (wizard, compact, notif flags) stays in localStorage.
 // ═══════════════════════════════════════════
 
-// ── Per-user IDB databases ────────────────────────────────────────────────
-// Each authenticated user gets their own database, named stockroom_u_<hash>
-// where <hash> is the first 16 chars of the user's emailHash. The demo
-// runs in stockroom_demo (a real DB, wiped clean at every demo entry).
-// Before authentication completes, dbGet/dbPut operate on stockroom_unauth,
-// a deliberately throwaway DB that the rest of the app may touch during
-// init (e.g. recovering legacy localStorage state) without affecting any
-// real user's data.
-//
-// Switching DBs is just: change _activeDbName, close _db, let the next
-// openDB() reopen against the new name. There is no migration between
-// DBs — sign-in re-syncs from the server, demo-to-account conversion
-// re-persists the in-memory state into the new DB.
+const DB_NAME    = 'stockroom';
 const DB_VERSION = 6;
 const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists','reminderDeletedIds','bills','billInstances','budgetSettings','budgetCategories','transactions','budgetCategoryDeletedIds','budgetTransactionDeletedIds','budgetAccounts','incomeTemplates','incomeEntries','budgetAccountDeletedIds','incomeTemplateDeletedIds','incomeEntryDeletedIds','billsDeletedIds','notifications'];
 
-const DB_NAME_UNAUTH = 'stockroom_unauth';
-const DB_NAME_DEMO   = 'stockroom_demo';
-const DB_NAME_LEGACY = 'stockroom'; // old single-DB name, cleaned up post-deploy
-function _userDbNameFor(emailHash) {
-  // Take first 16 chars of the hash — enough to uniquely identify in
-  // practice (collision space is 64 bits) while keeping the DB name short.
-  // emailHash is already a hex string from kvMakeEmailHash.
-  return 'stockroom_u_' + (emailHash || '').slice(0, 16);
-}
-let _activeDbName = DB_NAME_UNAUTH;
 let _db = null;
 
-// Close the cached _db handle so the next openDB() reopens against
-// _activeDbName. Called when the active user changes.
-function _resetDbHandle() {
-  if (_db) {
-    try { _db.close(); } catch(e) {}
-    _db = null;
-  }
+// ── DEMO MODE storage shim ─────────────────────────────────────────────
+// When window._demoMode is true, the three IDB primitives below route to
+// per-store in-memory Maps instead of opening the real IndexedDB. This
+// effectively gives the entire app an in-memory backend with zero changes
+// to any caller — every load/save path eventually goes through these three
+// functions. Demo data lives only for the lifetime of the tab.
+const _demoStorage = Object.fromEntries(DB_STORES.map(s => [s, new Map()]));
+function _demoStoreFor(name) {
+  if (!_demoStorage[name]) _demoStorage[name] = new Map();
+  return _demoStorage[name];
 }
-
-// Flip the active DB to the per-user database for this emailHash. Must be
-// called before any user-scoped IDB read or write on every auth-success
-// path (kvStoreSession, kvStorePasskeySession, kvRestoreSession,
-// kvRestorePasskeySession). Idempotent — calling it with the same hash
-// twice is a no-op.
-function _setActiveDbForUser(emailHash) {
-  if (!emailHash) return;
-  const newName = _userDbNameFor(emailHash);
-  if (newName === _activeDbName) return;
-  _resetDbHandle();
-  _activeDbName = newName;
-  console.log('[idb] active DB →', newName);
-}
-
-// Flip the active DB to the demo database. Wipes any previous demo data
-// first so each demo session starts clean (the old in-memory shim gave
-// us this for free by virtue of being tab-lifetime; the new on-disk
-// demo DB needs an explicit reset). Awaitable so callers can sequence
-// the seed after the reset.
-async function _setActiveDbForDemo() {
-  _resetDbHandle();
-  _activeDbName = DB_NAME_DEMO;
-  try {
-    await new Promise((resolve) => {
-      const req = indexedDB.deleteDatabase(DB_NAME_DEMO);
-      req.onsuccess = req.onerror = req.onblocked = () => resolve();
-    });
-  } catch(e) { /* non-fatal — opening will just see whatever's there */ }
-  console.log('[idb] active DB → demo (reset)');
-}
-
-// Flip the active DB back to the pre-auth throwaway. Called on sign-out.
-function _setActiveDbForSignedOut() {
-  _resetDbHandle();
-  _activeDbName = DB_NAME_UNAUTH;
-  console.log('[idb] active DB → unauth');
-}
-
-// ── Device-info DB ────────────────────────────────────────────────────────
-// A tiny device-scoped DB for values that must be reachable BEFORE we know
-// which user is signed in — bootstrap fallbacks for stockroom_device_id
-// and stockroom_kv_session (in case localStorage was cleared), plus the
-// _pushDeviceId/_pushDeviceSecret pair the service worker reads to decrypt
-// push payloads. None of this is user data; it's all per-device.
-const DEVICE_INFO_DB_NAME = 'stockroom-device-info';
-const DEVICE_INFO_STORE   = 'kv';
-let _deviceInfoDb = null;
-
-function _openDeviceInfoDb() {
-  if (_deviceInfoDb) return Promise.resolve(_deviceInfoDb);
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DEVICE_INFO_DB_NAME, 1);
-    req.onupgradeneeded = e => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(DEVICE_INFO_STORE)) {
-        db.createObjectStore(DEVICE_INFO_STORE);
-      }
-    };
-    req.onsuccess = e => { _deviceInfoDb = e.target.result; resolve(_deviceInfoDb); };
-    req.onerror   = e => reject(e.target.error);
-  });
-}
-
-async function _deviceInfoGet(key) {
-  const db = await _openDeviceInfoDb();
-  return new Promise((resolve, reject) => {
-    const tx  = db.transaction(DEVICE_INFO_STORE, 'readonly');
-    const req = tx.objectStore(DEVICE_INFO_STORE).get(key);
-    req.onsuccess = e => resolve(e.target.result ?? null);
-    req.onerror   = e => reject(e.target.error);
-  });
-}
-
-async function _deviceInfoSet(key, value) {
-  const db = await _openDeviceInfoDb();
-  return new Promise((resolve, reject) => {
-    const tx  = db.transaction(DEVICE_INFO_STORE, 'readwrite');
-    const req = tx.objectStore(DEVICE_INFO_STORE).put(value, key);
-    req.onsuccess = () => resolve();
-    req.onerror   = e => reject(e.target.error);
-  });
+function _demoClear() {
+  for (const k of Object.keys(_demoStorage)) _demoStorage[k] = new Map();
 }
 
 // ── DEMO MODE seed ──────────────────────────────────────────────────────
 // Populates every visible tab with realistic example data so the demo lands
-// on something useful. All writes go through dbPut into the stockroom_demo
-// IDB; _setActiveDbForDemo() resets that DB at every entry so each session
-// starts clean.
+// on something useful. All in-memory only — written via dbPut into the
+// _demoStorage Maps, so a tab refresh wipes it cleanly.
 //
 // Dispatcher: takes a persona ('couple' | 'family') and calls the matching
 // builder, then runs persistence + materialisation + profile setup once.
@@ -265,10 +165,9 @@ async function _seedDemoData(personaArg) {
   if (persona === 'family')      _buildDemoFamily(ctx);
   else                           _buildDemoCouple(ctx);
 
-  // ── Persist everything to the demo IDB ────────────────────────────────
+  // ── Persist everything to the in-memory shim ──────────────────────────
   // Goes through the same dbPut / save functions a real account would use,
-  // so the rest of the app sees identical data shapes. _activeDbName is
-  // stockroom_demo at this point (set by _setActiveDbForDemo on entry).
+  // so the rest of the app sees identical data shapes.
   await dbPut('items',        'items',        items);
   await dbPut('settings',     'settings',     settings);
   await dbPut('reminders',    'reminders',    reminders);
@@ -322,17 +221,16 @@ async function _seedDemoData(personaArg) {
 async function _switchDemoPersona(persona) {
   if (!window._demoMode) return;
   if (persona === window._demoPersona) return;
-  // Reset the demo DB so leftovers from the previous persona don't bleed
-  // through. _setActiveDbForDemo deletes and re-opens stockroom_demo, the
-  // direct equivalent of the old in-memory _demoClear. Local-storage flags
-  // written by some tabs (like grocery active list) are also reset.
-  await _setActiveDbForDemo();
+  // Wipe all in-memory demo state so leftovers don't bleed through. Each
+  // store gets a fresh empty Map. Local-storage flags written by some
+  // tabs (like grocery active list) are also reset to defaults.
+  if (typeof _demoClear === 'function') _demoClear();
   try { localStorage.removeItem('stockroom_active_grocery_list'); } catch(e) {}
   // Re-seed with the new persona
   await _seedDemoData(persona);
   // Re-load all in-memory state from the freshly-seeded storage so the
   // app picks it up. The standard load functions read from dbGet which
-  // now hits the demo IDB (stockroom_demo).
+  // routes to the demo shim.
   if (typeof loadData       === 'function') await loadData();        // items + settings
   if (typeof loadGrocery    === 'function') await loadGrocery();
   if (typeof loadReminders  === 'function') await loadReminders();
@@ -1395,8 +1293,8 @@ function _hideDemoBanner() {
 
 function _exitDemo() {
   if (!confirm('Exit demo? Any changes you made here will be lost.')) return;
-  // Bounce back to landing. The next demo entry will reset stockroom_demo
-  // via _setActiveDbForDemo, so we don't need to wipe anything here.
+  // Wipe in-memory state and bounce back to landing
+  _demoClear();
   window._demoMode = false;
   _hideDemoBanner();
   location.href = '/';
@@ -1601,12 +1499,10 @@ async function _demoCompleteConversion() {
   if (!_demoConvertSeed) return;
   const seed = _demoConvertSeed;
   _demoConvertSeed = null;
-  // At this point kvStoreSession has already flipped _activeDbName to the
-  // new user's stockroom_u_<hash> DB, so every dbPut below writes there.
-  // We flip _demoMode off so behaviour-gated paths (sync-blocking, banner)
-  // resume normal operation. The old stockroom_demo DB is orphaned and
-  // gets explicitly deleted at the end.
+  // Flip the storage shim BEFORE we persist — every dbPut from here on
+  // hits real IDB.
   window._demoMode = false;
+  _demoClear();
 
   // Restore the in-memory state from the snapshot. We merge user settings
   // (email, MFA config) on top of the demo settings — registration just
@@ -1635,8 +1531,9 @@ async function _demoCompleteConversion() {
     _setupCountrySet:  true, // GB was set during demo
   };
 
-  // Persist all in-memory state to the per-user IDB. Mirror the keys used
-  // by the various load/save helpers so subsequent reads find everything.
+  // Persist all in-memory state to real IDB. Each dbPut bypasses the shim
+  // now that _demoMode is false. Mirror the keys used by the various
+  // load/save helpers so subsequent reads find everything.
   try {
     await dbPut('items',            'items',            items);
     await dbPut('settings',         'settings',         settings);
@@ -1660,36 +1557,20 @@ async function _demoCompleteConversion() {
   } catch (e) {
     console.error('Demo conversion persist failed:', e);
   }
-  // Drop the orphaned demo DB — its data has been re-persisted into the
-  // user's per-user DB above. Best-effort; if another tab still has the
-  // demo DB open the delete request will block silently.
-  try { indexedDB.deleteDatabase(DB_NAME_DEMO); } catch(e) {}
   _hideDemoBanner();
   toast('Your demo data is now your account');
 }
 
 function openDB() {
   if (_db) return Promise.resolve(_db);
-  const opening = _activeDbName;
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(opening, DB_VERSION);
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = e => {
       const db = e.target.result;
       DB_STORES.forEach(s => { if (!db.objectStoreNames.contains(s)) db.createObjectStore(s); });
     };
     req.onsuccess = e => {
-      // If _activeDbName flipped mid-open (e.g. an auth event fired while
-      // we were waiting), discard this handle and let the next caller
-      // reopen against the current name. Avoids reads/writes landing in
-      // the wrong DB if a switch happened during the open.
-      const opened = e.target.result;
-      if (opening !== _activeDbName) {
-        try { opened.close(); } catch(_) {}
-        // Recurse via openDB so we pick up the current name
-        openDB().then(resolve, reject);
-        return;
-      }
-      _db = opened;
+      _db = e.target.result;
       // If another tab upgrades the DB, reset our handle so we re-open with new schema
       _db.onversionchange = () => { _db.close(); _db = null; };
       resolve(_db);
@@ -1699,6 +1580,10 @@ function openDB() {
 }
 
 async function dbGet(store, key) {
+  if (window._demoMode) {
+    const v = _demoStoreFor(store).get(key);
+    return v === undefined ? null : v;
+  }
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx  = db.transaction(store, 'readonly');
@@ -1709,6 +1594,13 @@ async function dbGet(store, key) {
 }
 
 async function dbPut(store, key, value) {
+  if (window._demoMode) {
+    // Deep-clone on write so callers mutating the value later don't corrupt
+    // the "stored" state — IDB does this naturally via structured clone.
+    try { _demoStoreFor(store).set(key, JSON.parse(JSON.stringify(value))); }
+    catch (e) { _demoStoreFor(store).set(key, value); }
+    return;
+  }
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx  = db.transaction(store, 'readwrite');
@@ -1719,6 +1611,10 @@ async function dbPut(store, key, value) {
 }
 
 async function dbDelete(store, key) {
+  if (window._demoMode) {
+    _demoStoreFor(store).delete(key);
+    return;
+  }
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx  = db.transaction(store, 'readwrite');
@@ -2506,14 +2402,52 @@ const STATUS_LABEL = { critical:`<span class='status-dot status-critical'></span
 // ═══════════════════════════════════════════
 //  PERSISTENCE — IndexedDB backed
 // ═══════════════════════════════════════════
-// ── Reset in-memory state on sign-out / user switch ───────────────────────
-// With per-user databases (stockroom_u_<emailHash>), we no longer need to
-// wipe IDB on user switch — opening a different DB by name leaves the
-// previous user's data sitting in its own DB, untouched. What we still
-// need is to clear the in-memory copies (items, notes, settings, etc.)
-// so the new session starts blank before its sync runs. This used to be
-// done as a side-effect of the now-removed _wipeStaleUserDataForSwitch.
-function _resetInMemoryUserState() {
+// ── User-switch wipe ──────────────────────────────────────────────────────
+// Clears every data-bearing IDB store and resets every in-memory variable
+// that backs one. Called when we detect that the active user has changed
+// — either at page load (loadData) or live during a sign-in (kvStoreSession).
+//
+// This is critical for shared-device scenarios: previous-user data (notes,
+// groceries, reminders, bills, budget) must not render in the new user's
+// session before the cloud sync overwrites it.
+//
+// We clear EVERY data-bearing store. Per-user setup flags (device_setup_<id>_*)
+// are preserved as they're already keyed by deviceId, not user.
+async function _wipeStaleUserDataForSwitch(newEmailHash) {
+  console.log('[user-switch] Wiping stale data for switch to', newEmailHash);
+  // Core data stores
+  await dbPut('items',            'items',            []);
+  await dbPut('items',            'notes',            []);    // notes share the items store under key 'notes'
+  await dbPut('settings',         'settings',         {});
+  await dbPut('reminders',        'reminders',        []);
+  await dbPut('groceries',        'items',            []);
+  await dbPut('departments',      'departments',      []);
+  await dbPut('groceryLists',     'groceryLists',     []);
+  await dbPut('profiles',         'profiles',         {});
+  // Budget data (financial — particularly important to wipe)
+  await dbPut('bills',            'bills',            []);
+  await dbPut('billInstances',    'billInstances',    {});
+  await dbPut('budgetSettings',   'budgetSettings',   {});
+  await dbPut('budgetCategories', 'budgetCategories', []);
+  await dbPut('transactions',     'transactions',     {});
+  await dbPut('budgetAccounts',   'budgetAccounts',   []);
+  await dbPut('incomeTemplates',  'incomeTemplates',  []);
+  await dbPut('incomeEntries',    'incomeEntries',    {});
+  // Tombstone stores — wipe so previous user's deletes don't haunt new user
+  await dbPut('deletedIds',                  'deletedIds',                  []);
+  await dbPut('groceryDeletedIds',           'groceryDeletedIds',           []);
+  await dbPut('groceryListDeletedIds',       'groceryListDeletedIds',       []);
+  await dbPut('groceryLists',                '_deletedIds',                 []);
+  await dbPut('reminderDeletedIds',          'reminderDeletedIds',          []);
+  await dbPut('budgetCategoryDeletedIds',    'budgetCategoryDeletedIds',    []);
+  await dbPut('budgetTransactionDeletedIds', 'budgetTransactionDeletedIds', []);
+  await dbPut('budgetAccountDeletedIds',     'budgetAccountDeletedIds',     []);
+  await dbPut('incomeTemplateDeletedIds',    'incomeTemplateDeletedIds',    []);
+  await dbPut('incomeEntryDeletedIds',       'incomeEntryDeletedIds',       []);
+  await dbPut('billsDeletedIds',             'billsDeletedIds',             []);
+  // Stamp the new owner so subsequent loads on the same device skip the wipe
+  if (newEmailHash) await dbPut('settings', '_activeUserHash', newEmailHash);
+  // Reset every in-memory variable that backs a wiped store
   items            = [];
   notes            = [];
   reminders        = [];
@@ -2532,8 +2466,17 @@ function _resetInMemoryUserState() {
 }
 
 async function loadData() {
-  // Per-user databases mean there's no cross-user contamination to detect.
-  // We just read whatever's in the currently-active DB.
+  // Detect user switch — if emailHash changed, wipe stale local data before sync.
+  // See _wipeStaleUserDataForSwitch above for the full rationale.
+  const storedHash = await dbGet('settings', '_activeUserHash');
+  const currentHash = _kvEmailHash || null;
+  if (currentHash && storedHash && storedHash !== currentHash) {
+    await _wipeStaleUserDataForSwitch(currentHash);
+    return;
+  }
+  if (currentHash) await dbPut('settings', '_activeUserHash', currentHash);
+
+  // Try IndexedDB first
   let loadedItems    = await dbGet('items',    'items');
   let loadedSettings = await dbGet('settings', 'settings');
 
@@ -4115,11 +4058,8 @@ async function _saveDeviceSecretToIdb() {
     const id = getOrCreateDeviceId();
     const secret = localStorage.getItem('stockroom_device_secret');
     if (!id || !secret) return;
-    // Written to device-info DB (not main per-user DB) because the SW
-    // reads this without knowing which user is signed in — device-info
-    // is the shared device-scoped DB. Keys match sw.js PUSH_INFO_* constants.
-    await _deviceInfoSet('_pushDeviceId', id);
-    await _deviceInfoSet('_pushDeviceSecret', secret);
+    await dbPut('settings', '_pushDeviceId', id);
+    await dbPut('settings', '_pushDeviceSecret', secret);
   } catch (err) {
     console.warn('[push] mirror device secret to IDB failed:', err && err.message);
   }
@@ -4128,8 +4068,8 @@ async function _saveDeviceSecretToIdb() {
 // Called on sign-out / wipe to remove the mirrored values
 async function _clearDeviceSecretFromIdb() {
   try {
-    await _deviceInfoSet('_pushDeviceId', null);
-    await _deviceInfoSet('_pushDeviceSecret', null);
+    await dbPut('settings', '_pushDeviceId', null);
+    await dbPut('settings', '_pushDeviceSecret', null);
   } catch (err) { /* non-fatal */ }
 }
 
@@ -8123,26 +8063,10 @@ const _bc = ('BroadcastChannel' in window) ? new BroadcastChannel('stockroom') :
 //   { type: 'REMINDER_REPLACED', reminderId, date } — reminder marked done in another tab
 //   { type: 'GROCERY_CHANGED' }      — grocery list changed
 //   { type: 'SETTINGS_CHANGED' }     — settings updated
-//   { type: 'USER_CHANGED' }         — active user switched in another tab; reload
 
 if (_bc) {
   _bc.onmessage = async event => {
     const { type } = event.data;
-
-    // ── USER_CHANGED ─────────────────────────────────────────────────────
-    // Another tab signed in / signed out / entered demo. Our in-memory
-    // credentials and _activeDbName still point at the previous user;
-    // continuing to operate would write to the wrong DB and could push
-    // stale data back to the server. Hard reload is the simplest correct
-    // fix — init() will read the current session from localStorage and
-    // land in the right place. Handle this FIRST so other handlers don't
-    // try to dbGet from a now-wrong active DB.
-    if (type === 'USER_CHANGED') {
-      console.log('[bc] USER_CHANGED received — reloading');
-      // Use replace so the user can't Back-button into a stale state
-      try { location.reload(); } catch(_) {}
-      return;
-    }
 
     if (type === 'DATA_CHANGED') {
       // Another tab saved items — reload from IndexedDB and re-render
@@ -8800,24 +8724,22 @@ function cardHTML(item, threshold) {
       <div class="card-top">
         <div class="card-category">${item.category||'Other'}</div>
         <div class="card-stars-row" onclick="event.stopPropagation()">${stars}</div>
-        <div class="card-top-right">
-          <div class="card-status" style="background:${color}22;color:${color}">${STATUS_LABEL[status]}</div>
-          ${(isOwner() && item.share != null) ? (() => {
-            // Per-item share override indicator (owner-only). Tells the
-            // owner at a glance which items have non-default sharing. Guest
-            // views never get this — their data is already filtered, so
-            // the policy is moot from their side.
-            const sh = item.share;
-            let icon = 'i-shield', title = 'Custom sharing';
-            if (sh === 'private') { icon = 'i-eye-off'; title = 'Private — owner only'; }
-            else if (typeof sh === 'object') {
-              if (Array.isArray(sh.allow))    title = `Visible to ${sh.allow.length} share${sh.allow.length===1?'':'s'} only`;
-              else if (Array.isArray(sh.deny))title = `Hidden from ${sh.deny.length} share${sh.deny.length===1?'':'s'}`;
-              if (Array.isArray(sh.readOnly) && sh.readOnly.length) title += ` · read-only for ${sh.readOnly.length}`;
-            }
-            return `<div class="card-share-indicator" title="${esc(title)}" style="color:var(--muted);display:flex;align-items:center" aria-label="${esc(title)}"><svg class="icon icon-sm" aria-hidden="true"><use href="#${icon}"></use></svg></div>`;
-          })() : ''}
-        </div>
+        <div class="card-status" style="background:${color}22;color:${color}">${STATUS_LABEL[status]}</div>
+        ${(isOwner() && item.share != null) ? (() => {
+          // Per-item share override indicator (owner-only). Tells the
+          // owner at a glance which items have non-default sharing. Guest
+          // views never get this — their data is already filtered, so
+          // the policy is moot from their side.
+          const sh = item.share;
+          let icon = 'i-shield', title = 'Custom sharing';
+          if (sh === 'private') { icon = 'i-eye-off'; title = 'Private — owner only'; }
+          else if (typeof sh === 'object') {
+            if (Array.isArray(sh.allow))    title = `Visible to ${sh.allow.length} share${sh.allow.length===1?'':'s'} only`;
+            else if (Array.isArray(sh.deny))title = `Hidden from ${sh.deny.length} share${sh.deny.length===1?'':'s'}`;
+            if (Array.isArray(sh.readOnly) && sh.readOnly.length) title += ` · read-only for ${sh.readOnly.length}`;
+          }
+          return `<div class="card-share-indicator" title="${esc(title)}" style="color:var(--muted);display:flex;align-items:center" aria-label="${esc(title)}"><svg class="icon icon-sm" aria-hidden="true"><use href="#${icon}"></use></svg></div>`;
+        })() : ''}
       </div>
       <div class="card-name">${esc(item.name)}</div>
       <div class="card-hero-block">
@@ -9217,11 +9139,6 @@ const TAG_COLORS = [
   { bg:'rgba(100,180,200,0.15)', border:'rgba(100,180,200,0.5)', text:'#64b4c8' },  // teal
   { bg:'rgba(160,140,210,0.15)', border:'rgba(160,140,210,0.5)', text:'#a08cd2' },  // lavender
   { bg:'rgba(140,160,180,0.15)', border:'rgba(140,160,180,0.5)', text:'#8ca0b4' },  // slate
-  { bg:'rgba(220,140,180,0.15)', border:'rgba(220,140,180,0.5)', text:'#dc8cb4' },  // rose
-  { bg:'rgba(170,170,170,0.15)', border:'rgba(170,170,170,0.5)', text:'#aaaaaa' },  // pewter
-  { bg:'rgba(120,130,210,0.15)', border:'rgba(120,130,210,0.5)', text:'#7882d2' },  // indigo
-  { bg:'rgba(136,178,158,0.15)', border:'rgba(136,178,158,0.5)', text:'#88b29e' },  // sage
-  { bg:'rgba(200,160,176,0.15)', border:'rgba(200,160,176,0.5)', text:'#c8a0b0' },  // dusty rose
 ];
 
 // Muted palette offered in the tag picker. Avoids red, orange, green which
@@ -9236,8 +9153,6 @@ const TAG_PICKER_PALETTE = [
   { name:'Rose',      bg:'rgba(220,140,180,0.15)', border:'rgba(220,140,180,0.5)', text:'#dc8cb4' },
   { name:'Pewter',    bg:'rgba(170,170,170,0.15)', border:'rgba(170,170,170,0.5)', text:'#aaaaaa' },
   { name:'Indigo',    bg:'rgba(120,130,210,0.15)', border:'rgba(120,130,210,0.5)', text:'#7882d2' },
-  { name:'Sage',      bg:'rgba(136,178,158,0.15)', border:'rgba(136,178,158,0.5)', text:'#88b29e' },
-  { name:'Dusty Rose',bg:'rgba(200,160,176,0.15)', border:'rgba(200,160,176,0.5)', text:'#c8a0b0' },
 ];
 
 // Resolve the colour trio for a given tag index. Per-tag colour comes from
@@ -9251,7 +9166,7 @@ function getTagColor(i) {
 let activeTagFilter = null; // null = all, 0-4 = tag index
 
 function getCustomTags() {
-  return settings.customTags || ['','','','','','','','','',''];
+  return settings.customTags || ['','','','',''];
 }
 
 function cardTagsHTML(item) {
@@ -9360,9 +9275,9 @@ function openCardTagPickerForCreate() {
   const tags = getCustomTags();
   const defined = tags.filter(t => t && t.trim());
   const newForm = document.getElementById('card-tag-picker-new-form');
-  if (newForm) newForm.style.display = (defined.length >= 10) ? 'none' : 'flex';
+  if (newForm) newForm.style.display = (defined.length >= 5) ? 'none' : 'flex';
   const maxNote = document.getElementById('card-tag-picker-max-note');
-  if (maxNote) maxNote.style.display = (defined.length >= 10) ? 'block' : 'none';
+  if (maxNote) maxNote.style.display = (defined.length >= 5) ? 'block' : 'none';
   const modal = document.getElementById('card-tag-picker-modal');
   if (modal) modal.classList.add('active');
   // Focus the name input
@@ -9408,11 +9323,11 @@ function _renderCardTagPicker() {
     }).join('');
     swatches.dataset.built = '1';
   }
-  // Show "max tags reached" hint if 10 already defined
+  // Show "max tags reached" hint if 5 already defined
   const newForm = document.getElementById('card-tag-picker-new-form');
-  if (newForm) newForm.style.display = (defined.length >= 10) ? 'none' : 'flex';
+  if (newForm) newForm.style.display = (defined.length >= 5) ? 'none' : 'flex';
   const maxNote = document.getElementById('card-tag-picker-max-note');
-  if (maxNote) maxNote.style.display = (defined.length >= 10) ? 'block' : 'none';
+  if (maxNote) maxNote.style.display = (defined.length >= 5) ? 'block' : 'none';
 }
 
 function _selectTagSwatch(idx) {
@@ -9452,7 +9367,7 @@ async function createTagFromPicker() {
   // Find first empty slot
   const slot = tags.findIndex(t => !t || !t.trim());
   if (slot === -1) {
-    toast('Maximum 10 tags — delete one first');
+    toast('Maximum 5 tags — delete one first');
     return;
   }
   // Also enforce duplicate prevention
@@ -9461,9 +9376,9 @@ async function createTagFromPicker() {
     return;
   }
   // Apply
-  if (!settings.customTags) settings.customTags = ['','','','','','','','','',''];
+  if (!settings.customTags) settings.customTags = ['','','','',''];
   settings.customTags[slot] = name;
-  if (!settings.tagColors) settings.tagColors = [null, null, null, null, null, null, null, null, null, null];
+  if (!settings.tagColors) settings.tagColors = [null, null, null, null, null];
   const swatchIdx = _getSelectedTagSwatch();
   settings.tagColors[slot] = TAG_PICKER_PALETTE[swatchIdx];
   settings.customTagsUpdatedAt = new Date().toISOString();
@@ -9485,12 +9400,9 @@ function buildTagFilterBar() {
   if (!bar) return;
   const tags = getCustomTags();
   const defined = tags.map((t,i) => ({t,i})).filter(({t}) => t && t.trim());
-  const hasRoom = defined.length < 10;
+  const hasRoom = defined.length < 5;
 
-  // Compute status counts and push them into the collapsible filter panel
-  // buttons as inverted-colour dot badges (small filled circle with the
-  // count number inside, dark text on coloured bg). The pills used to live
-  // inline in this bar — they were duplicating the panel's filters.
+  // Compute status counts (same logic as the old health dashboard)
   const threshold = settings.threshold;
   let critical = 0, warn = 0, ok = 0;
   items.forEach(item => {
@@ -9502,19 +9414,27 @@ function buildTagFilterBar() {
     else if (status === 'warn') warn++;
     else if (status === 'ok') ok++;
   });
-  const setCount = (key, n) => {
-    const el = document.querySelector(`#filter-bar .status-count[data-key="${key}"]`);
-    if (!el) return;
-    el.textContent = n;
-    el.style.display = n > 0 ? 'inline-flex' : 'none';
-  };
-  setCount('critical', critical);
-  setCount('warn',     warn);
-  setCount('ok',       ok);
+  const activeStatus = (typeof activeFilter !== 'undefined' && activeFilter) ? activeFilter : 'all';
+  const statusPill = (count, key, label, color) => count === 0 ? '' :
+    `<button class="tag-filter-chip status-pill${activeStatus===key?' active':''}"
+       style="${activeStatus===key
+         ? `background:${color}26;border-color:${color}80;color:${color}`
+         : `border-color:${color}55;color:${color}`}"
+       onclick="setFilter('status','${key}',this)">
+       <span class="status-dot" style="background:${color}"></span> ${label} <strong>${count}</strong>
+     </button>`;
+  const statusPills =
+    statusPill(critical, 'critical', 'Critical', '#e85050') +
+    statusPill(warn,     'warn',     'Low',      '#e8a838') +
+    statusPill(ok,       'ok',       'Good',     '#4cbb8a');
 
-  // Inline bar is now purely the custom-tag bar. No "Filters:" label, no
-  // status pills, no separator dot, no "All" chip. When no tags are
-  // defined, the bar shows just the "+ Tag" chip on its own.
+  const label = `<span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Filters:</span>`;
+  const allChip = (defined.length || statusPills)
+    ? `<button class="tag-filter-chip${activeTagFilter===null && activeStatus==='all'?' active':''}" onclick="clearAllInlineFilters(this)">All</button>`
+    : '';
+  const sep = (statusPills && defined.length)
+    ? `<span class="filter-bar-sep" aria-hidden="true"></span>`
+    : '';
   const chips = defined.map(({t,i}) => {
     const c = getTagColor(i);
     const isActive = activeTagFilter === i;
@@ -9530,7 +9450,7 @@ function buildTagFilterBar() {
     ? `<button class="tag-filter-chip tag-filter-add" onclick="openCardTagPickerForCreate()" title="Create tag">+ Tag</button>`
     : '';
 
-  bar.innerHTML = chips + addBtn;
+  bar.innerHTML = label + allChip + statusPills + sep + chips + addBtn;
 }
 
 function buildShoppingTagFilterBarInline() {
@@ -9538,7 +9458,7 @@ function buildShoppingTagFilterBarInline() {
   if (!bar) return;
   const tags = getCustomTags();
   const defined = tags.map((t,i) => ({t,i})).filter(({t}) => t && t.trim());
-  const hasRoom = defined.length < 10;
+  const hasRoom = defined.length < 5;
 
   const label = `<span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Tags:</span>`;
   const allChip = defined.length
@@ -14753,9 +14673,12 @@ async function _doClearAll() {
   }
 
   // ── Wipe every data area ─────────────────────────────────────────────
-  // This is the explicit user-initiated "clear all" path. Per-user IDBs
-  // mean we no longer have a separate user-switch wipe (each user has
-  // their own DB), so this stands alone.
+  // We mirror the structure of the user-switch wipe (_wipeStaleUserDataForSwitch)
+  // but keep this implementation independent — that helper is for the live
+  // login user-switch path; this is for explicit user-initiated clears, and
+  // we want each to evolve on its own (e.g. clear-all may eventually offer
+  // selective "clear only X" choices). They happen to clear the same stores
+  // today.
 
   // Core stockroom (including the recently-deleted bin, since those items
   // sit inside the items array with _deletedAt set).
@@ -14795,11 +14718,11 @@ async function _doClearAll() {
   incomeTemplateDeletedIds.clear();
   incomeEntryDeletedIds.clear();
 
-  // Custom user-defined tags — ten-slot array. Reset to empty slots so the
-  // UI stays consistent (existing code defaults to ['','','','','','','','','',''] when
+  // Custom user-defined tags — five-slot array. Reset to empty slots so the
+  // UI stays consistent (existing code defaults to ['','','','',''] when
   // missing). User-facing settings like country/threshold/email schedule
   // are deliberately preserved — those are configuration, not user content.
-  settings.customTags = ['', '', '', '', '', '', '', '', '', ''];
+  settings.customTags = ['', '', '', '', ''];
   settings.customTagsUpdatedAt = new Date().toISOString();
 
   // ── Persist the wiped state to IDB ───────────────────────────────────
@@ -16325,17 +16248,6 @@ async function kvRegister() {
 }
 
 async function kvLogin() {
-  // ── DEMO-MODE GUARD ──────────────────────────────────────────────────
-  // If this tab is in demo mode, the in-memory globals contain demo data
-  // and the IDB shim is intercepting reads/writes. Trying to "sign in"
-  // in place would race demo state into the new user's session. The
-  // bulletproof fix is to reload the tab to a clean state first — the
-  // login screen will reappear with no demo state in memory.
-  if (window._demoMode) {
-    console.warn('kvLogin: demo mode active — reloading to clean state before sign-in');
-    location.href = '/?action=login';
-    return;
-  }
   const email      = document.getElementById('kv-login-email')?.value.trim();
   const passphrase = document.getElementById('kv-login-pass')?.value;
   const errEl      = document.getElementById('kv-login-error');
@@ -16419,7 +16331,7 @@ async function _completePendingUnverifiedRestore() {
   try { localStorage.removeItem('stockroom_kv_session'); } catch(e) {}
   try { localStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
   try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
-  try { await _deviceInfoSet('stockroom_kv_session', null); } catch(e) {}
+  try { await dbPut('settings', 'stockroom_kv_session', null); } catch(e) {}
   toast('Email verified — please sign in to continue');
   showKvLogin();
 }
@@ -16455,7 +16367,7 @@ async function cancelUnverifiedAccount() {
   try { localStorage.removeItem('stockroom_kv_key_fallback'); } catch(e) {}
   try { localStorage.removeItem('stockroom_device_secret'); } catch(e) {}
   try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
-  try { await _deviceInfoSet('stockroom_kv_session', null); } catch(e) {}
+  try { await dbPut('settings', 'stockroom_kv_session', null); } catch(e) {}
   try { await removeWrappedKey(getOrCreateDeviceId()); } catch(e) {}
   // Reset in-memory session
   kvConnected  = false;
@@ -16538,15 +16450,6 @@ async function kvRegisterWithPasskey() {
 
 
 async function kvLoginWithPasskey() {
-  // ── DEMO-MODE GUARD ──────────────────────────────────────────────────
-  // See the rationale in kvLogin — same problem, same fix. Reload to a
-  // clean tab state so no demo data can leak into the authenticated
-  // session.
-  if (window._demoMode) {
-    console.warn('kvLoginWithPasskey: demo mode active — reloading to clean state before sign-in');
-    location.href = '/?action=login';
-    return;
-  }
   // Support both the normal input and the remembered-email display input
   const email  = (document.getElementById('kv-login-email')?.value.trim()) ||
                  (document.getElementById('kv-login-email-display')?.value.trim());
@@ -17750,18 +17653,17 @@ async function _getKeyViaPassphrase(emailHash, sessionToken, credentialId, errEl
 }
 
 async function kvStorePasskeySession(email, emailHash, sessionToken, dataKey) {
-  // ── User-scoped DB switch ─────────────────────────────────────────────
-  // Per-user databases mean each user has their own IDB (stockroom_u_<hash>),
-  // so signing in as a different user is just opening a different DB. If
-  // the new user is different from the in-memory state, also reset memory
-  // so nothing from the previous user leaks before the sync runs. Notify
-  // other tabs so they reload into the new user's session.
-  const prevHash = _kvEmailHash;
-  _setActiveDbForUser(emailHash);
-  if (prevHash && prevHash !== emailHash) {
-    _resetInMemoryUserState();
-    bcPost({ type: 'USER_CHANGED' });
-  }
+  // ── User-switch detection ─────────────────────────────────────────────
+  // Same logic as kvStoreSession — wipe stale local data if a different
+  // user is signing in than the one whose data is currently in IDB.
+  try {
+    const prevHash = await dbGet('settings', '_activeUserHash');
+    if (prevHash && prevHash !== emailHash) {
+      await _wipeStaleUserDataForSwitch(emailHash);
+    } else if (!prevHash) {
+      await dbPut('settings', '_activeUserHash', emailHash);
+    }
+  } catch(e) { console.warn('[kvStorePasskeySession] user-switch wipe failed (non-fatal):', e.message); }
 
   _kvEmail        = email;
   _kvEmailHash    = emailHash;
@@ -17775,9 +17677,8 @@ async function kvStorePasskeySession(email, emailHash, sessionToken, dataKey) {
   try {
     const sessionJson = JSON.stringify({ email, emailHash, sessionToken, authMethod: 'passkey' });
     localStorage.setItem('stockroom_kv_session', sessionJson);
-    // Mirror into device-info DB so init can find this before _activeDbName
-    // is set (i.e. before we know which user is signed in).
-    _deviceInfoSet('stockroom_kv_session', sessionJson).catch(() => {});
+    // Also persist to IDB so session survives localStorage/cookie clears
+    dbPut('settings', 'stockroom_kv_session', sessionJson).catch(() => {});
     // Cache key for 24h
     const exported = await crypto.subtle.exportKey('raw', _kvKey);
     const keyData  = btoa(String.fromCharCode(...new Uint8Array(exported)));
@@ -17803,18 +17704,21 @@ async function kvRestorePasskeySession(session) {
   } catch(e) {
     // Network error — try to restore from cached key
   }
-  // ── User-scoped DB switch ─────────────────────────────────────────────
-  // Same logic as kvStorePasskeySession — per-user DBs make a user switch
-  // a database-name flip rather than a wipe. On restore, prevHash is
-  // typically empty (page just loaded), so this normally just sets the
-  // active DB; the in-memory reset only fires if a previous in-memory
-  // user is being switched away from (unlikely on a fresh page load).
-  const prevHashR = _kvEmailHash;
-  _setActiveDbForUser(emailHash);
-  if (prevHashR && prevHashR !== emailHash) {
-    _resetInMemoryUserState();
-    bcPost({ type: 'USER_CHANGED' });
-  }
+  // ── User-switch detection ─────────────────────────────────────────────
+  // If the IDB-stamped owner differs from the session being restored, wipe
+  // stale local data BEFORE setting credentials. Without this, page reload
+  // (or app return) after switching accounts can leave the previous user's
+  // items, notes, and trash entries in memory + IDB — they then re-merge
+  // back via sync as if they belonged to the new account. See kvStoreSession
+  // for the equivalent logic on fresh sign-in.
+  try {
+    const prevHash = await dbGet('settings', '_activeUserHash');
+    if (prevHash && prevHash !== emailHash) {
+      await _wipeStaleUserDataForSwitch(emailHash);
+    } else if (!prevHash) {
+      await dbPut('settings', '_activeUserHash', emailHash);
+    }
+  } catch(e) { console.warn('[kvRestorePasskeySession] user-switch wipe failed (non-fatal):', e.message); }
 
   _kvEmail        = email;
   _kvEmailHash    = emailHash;
@@ -18355,18 +18259,16 @@ function getOrCreateDeviceId() {
   return id;
 }
 
-// On startup, also persist device ID into the device-info DB (fire-and-forget)
-// so it can be recovered if localStorage is cleared. Lives in device-info
-// because device ID is device-scoped, not user-scoped — and we need to read
-// it before _activeDbName is set on next page load.
+// On startup, also persist device ID into IDB (fire-and-forget)
+// so it can be recovered if localStorage is cleared
 ;(function _persistDeviceId() {
   try {
     const id = getOrCreateDeviceId();
-    _deviceInfoSet('stockroom_device_id', id).catch(() => {});
-    // Also try to restore from device-info DB if LS is empty
+    dbPut('settings', 'stockroom_device_id', id).catch(() => {});
+    // Also try to restore from IDB if LS is empty
     const lsId = localStorage.getItem('stockroom_device_id');
     if (!lsId) {
-      _deviceInfoGet('stockroom_device_id').then(val => {
+      dbGet('settings', 'stockroom_device_id').then(val => {
         if (val) {
           localStorage.setItem('stockroom_device_id', val);
           sessionStorage.setItem('stockroom_device_id_session', val);
@@ -18641,17 +18543,22 @@ async function clearAllTrustedDevices() {
 }
 
 async function kvStoreSession(email, emailHash, verifier, key) {
-  // ── User-scoped DB switch ─────────────────────────────────────────────
-  // Per-user databases (stockroom_u_<hash>) mean a user switch is just
-  // a database name flip. Reset in-memory state if memory currently holds
-  // a different user, and broadcast USER_CHANGED so other open tabs
-  // reload into the new session.
-  const prevHashS = _kvEmailHash;
-  _setActiveDbForUser(emailHash);
-  if (prevHashS && prevHashS !== emailHash) {
-    _resetInMemoryUserState();
-    bcPost({ type: 'USER_CHANGED' });
-  }
+  // ── User-switch detection ─────────────────────────────────────────────
+  // If a different user is signing in than the one whose data is currently
+  // sitting in IDB (e.g. after a sign-out, or registration of a new account
+  // on a device that previously held another), wipe stale local data BEFORE
+  // we set the new session credentials. Without this, the previous user's
+  // notes/groceries/budget would render in the new account on the first
+  // tab that lands on the app before kvSyncNow finishes.
+  try {
+    const prevHash = await dbGet('settings', '_activeUserHash');
+    if (prevHash && prevHash !== emailHash) {
+      await _wipeStaleUserDataForSwitch(emailHash);
+    } else if (!prevHash) {
+      // First sign-in on this device — just stamp ownership
+      await dbPut('settings', '_activeUserHash', emailHash);
+    }
+  } catch(e) { console.warn('[kvStoreSession] user-switch wipe failed (non-fatal):', e.message); }
 
   _kvEmail     = email;
   _kvEmailHash = emailHash;
@@ -18663,11 +18570,8 @@ async function kvStoreSession(email, emailHash, verifier, key) {
   try {
     const sessionJson = JSON.stringify({ email, emailHash, verifier });
     localStorage.setItem('stockroom_kv_session', sessionJson);
-    // Mirror into the device-info DB so the session survives a localStorage
-    // clear AND can be read before we know which user is signed in (i.e.
-    // before _activeDbName has been set). The previous mirror into the
-    // main DB's settings store no longer works under per-user DBs.
-    _deviceInfoSet('stockroom_kv_session', sessionJson).catch(() => {});
+    // Also persist to IDB so session survives localStorage/cookie clears
+    dbPut('settings', 'stockroom_kv_session', sessionJson).catch(() => {});
   } catch(e) {}
   // Cache key — 4 hours normally, 30 days if user asked to stay signed in
   if (key) {
@@ -18712,18 +18616,21 @@ async function kvRestoreSession() {
 
     if (!verifier) return false;
 
-    // ── User-scoped DB switch ───────────────────────────────────────────
-    // Per-user databases mean restoring a session is a database name flip.
-    // On a fresh page load, _kvEmailHash is empty so this just sets the
-    // active DB. The in-memory reset/USER_CHANGED broadcast only fire if
-    // memory holds a different prior user (rare on restore but possible
-    // if a previous restore in this tab succeeded for a different user).
-    const prevHashR2 = _kvEmailHash;
-    _setActiveDbForUser(emailHash);
-    if (prevHashR2 && prevHashR2 !== emailHash) {
-      _resetInMemoryUserState();
-      bcPost({ type: 'USER_CHANGED' });
-    }
+    // ── User-switch detection ───────────────────────────────────────────
+    // Same rationale as in kvStoreSession / kvRestorePasskeySession. If the
+    // IDB-stamped owner differs from the session we're restoring, wipe
+    // stale data BEFORE any path returns success. Without this, the May
+    // 2026 cross-account leak: previous user's items, notes, and trash
+    // entries persisted in IDB across sign-out + sign-in via session
+    // restore, because kvRestoreSession bypassed kvStoreSession entirely.
+    try {
+      const prevHash = await dbGet('settings', '_activeUserHash');
+      if (prevHash && prevHash !== emailHash) {
+        await _wipeStaleUserDataForSwitch(emailHash);
+      } else if (!prevHash) {
+        await dbPut('settings', '_activeUserHash', emailHash);
+      }
+    } catch(e) { console.warn('[kvRestoreSession] user-switch wipe failed (non-fatal):', e.message); }
 
     // Helper to fully restore session once key is found
     const restoreWith = async (key, source) => {
@@ -19027,18 +18934,6 @@ function showPassphrasePrompt(subtitleOverride = null) {
 
 // ── Sync: push encrypted data to KV ────────
 async function kvPush() {
-  // ── DEMO-MODE HARD STOP ──────────────────────────────────────────────
-  // Refuse to push if demo mode is active. The in-memory globals may
-  // contain demo data, and pushing them would clobber the real account's
-  // cloud blob with sample data. See the broader demo→authenticated leak
-  // path: a tab that was previously signed in then visited ?action=demo
-  // ends up with kvConnected=true + _kvKey valid + demo data in items[].
-  // This guard is the primary defence — no matter how demo data leaks
-  // into globals, it can never reach the server.
-  if (window._demoMode) {
-    console.warn('kvPush: blocked — demo mode is active');
-    return;
-  }
   if (!kvConnected || !_kvEmailHash) {
     console.warn('kvPush: not connected, skipping');
     return;
@@ -19172,15 +19067,6 @@ async function kvPull() {
 
 // ── syncNow for KV mode ────────────────────
 async function kvSyncNow(silent = false) {
-  // ── DEMO-MODE HARD STOP ──────────────────────────────────────────────
-  // Same rationale as kvPush — refuse to sync (which pulls then pushes)
-  // while demo mode is active. Belt-and-braces with the kvPush guard:
-  // sync's merge step could otherwise pollute the real items[] with
-  // demo entries before the push step runs.
-  if (window._demoMode) {
-    console.warn('kvSyncNow: blocked — demo mode is active');
-    return;
-  }
   if (!kvConnected && !_shareState) return;
   if (kvConnected && (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken))) {
     console.warn('kvSyncNow: missing credentials, skipping');
@@ -19615,8 +19501,8 @@ async function _doDeleteAccount() {
     localStorage.removeItem('stockroom_country_set');
     localStorage.removeItem('stockroom_protect_seen');
     try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
-    // Clear device-info DB session mirror
-    _deviceInfoSet('stockroom_kv_session', null).catch(() => {});
+    // Also clear IDB session copy
+    dbPut('settings', 'stockroom_kv_session', null).catch(() => {});
     kvConnected  = false;
     _kvEmail     = '';
     _kvEmailHash = '';
@@ -19635,7 +19521,7 @@ async function _doDeleteAccount() {
 async function kvSignOut() {
   if (!confirm('Sign out?\n\nYour encrypted data stays safely on the server. Sign back in with your email and passphrase to access it.')) return;
   // Schedule the reload FIRST, before any awaits that could throw. The async
-  // cleanup work below (removeWrappedKey, _setActiveDbForSignedOut, etc)
+  // cleanup work below (removeWrappedKey, _wipeStaleUserDataForSwitch, dbPut)
   // can occasionally reject — if it does, a reload scheduled AFTER the awaits
   // never runs and the page appears still-signed-in until the user manually
   // refreshes. By scheduling here first, the reload always fires regardless
@@ -19664,21 +19550,25 @@ async function kvSignOut() {
   try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
   // Clear session credentials (but keep permanent setup flags)
   localStorage.removeItem('stockroom_kv_session');
-  // Clear device-info DB session mirror so the user is fully signed out
-  _deviceInfoSet('stockroom_kv_session', null).catch(() => {});
+  // Also clear IDB session copy so the user is fully signed out
+  dbPut('settings', 'stockroom_kv_session', null).catch(() => {});
   localStorage.removeItem('stockroom_seen');
   // Note: keep stockroom_protect_seen and stockroom_country_set — they are permanent
   // one-time setup flags, not session data. Removing them causes the protect/country
   // screens to re-appear on every login, which is wrong.
-
-  // ── Per-user DB: switch the active DB back to the pre-auth throwaway ──
-  // The user's data stays sitting in their own stockroom_u_<hash> DB,
-  // untouched. Sign back in later → same DB reopens and the data is
-  // available immediately (subject to the usual sync). This replaces the
-  // old wipe-everything path.
-  _setActiveDbForSignedOut();
-  _resetInMemoryUserState();
-  // Reset in-memory auth state
+  // ── Wipe ALL local user data ─────────────────────────────────────────
+  // Delegate to the shared wipe so sign-out covers exactly the same stores
+  // as the user-switch wipe. Without this, signing out left notes, budget
+  // data, profiles, and tombstone stores in IDB — a cross-account data
+  // leak surfaced as "recently deleted items follow you to a new account"
+  // in May 2026. Pass null so _activeUserHash is NOT re-stamped — we also
+  // clear it explicitly below so the next sign-in stamps fresh.
+  try { await _wipeStaleUserDataForSwitch(null); } catch(e) {}
+  // Clear the active-user stamp so the next sign-in is treated as a fresh
+  // start rather than a "switch from the previous user" (the wipe above
+  // already happened, so we don't need the switch path to wipe again).
+  try { await dbPut('settings', '_activeUserHash', null); } catch(e) {}
+  // Reset in-memory auth state (data state was already reset by the wipe)
   kvConnected     = false;
   _kvEmail        = '';
   _kvEmailHash    = '';
@@ -19687,9 +19577,6 @@ async function kvSignOut() {
   _kvKey          = null;
   _shareState     = null;
   _newDeviceCheckDone = false; // re-arm check for the next sign-in
-  // Notify other tabs to reload (they may still be holding the previous
-  // user's _activeDbName + credentials in memory)
-  bcPost({ type: 'USER_CHANGED' });
   // Remove the IDB-mirrored device secret so the SW can no longer decrypt
   // push payloads after sign-out
   _clearDeviceSecretFromIdb().catch(_ => {});
@@ -32439,16 +32326,15 @@ function getShoppingPresenceBar() {
 }
 
 async function init() {
-  // ── Restore device ID from device-info DB before anything else ──────────
-  // getOrCreateDeviceId() is synchronous, so the async restore in the IIFE
-  // above may not have completed yet. If localStorage was cleared, a new random
+  // ── Restore device ID from IDB before anything else ──────────────────────
+  // getOrCreateDeviceId() is synchronous, so the async IDB restore in the IIFE
+  // below may not have completed yet. If localStorage was cleared, a new random
   // device ID would be generated, making all IDB setup-flag lookups miss.
-  // We await the restore here so the correct device ID is in localStorage
-  // before any setup-flag checks run. Reads from stockroom-device-info,
-  // which is device-scoped and reachable before any user is known.
+  // We await the IDB restore here so the correct device ID is in localStorage
+  // before any setup-flag checks run.
   if (!localStorage.getItem('stockroom_device_id')) {
     try {
-      const savedId = await _deviceInfoGet('stockroom_device_id');
+      const savedId = await dbGet('settings', 'stockroom_device_id');
       if (savedId) {
         localStorage.setItem('stockroom_device_id', savedId);
         sessionStorage.setItem('stockroom_device_id_session', savedId);
@@ -32456,52 +32342,17 @@ async function init() {
     } catch(e) {}
   }
 
-  // ── Restore kv_session from device-info DB if localStorage was cleared ──
-  // stockroom_kv_session is the gating key for kvRestoreSession(). It's
-  // mirrored into the device-info DB so a cookie/localStorage clear
-  // doesn't force a re-login. We must do this BEFORE the next block
-  // (which reads the emailHash from the session blob to set _activeDbName).
+  // ── Restore kv_session from IDB if localStorage was cleared ──────────────
+  // stockroom_kv_session is the gating key for kvRestoreSession(). We also
+  // persist it to IDB so a cookie/localStorage clear doesn't force a re-login.
   if (!localStorage.getItem('stockroom_kv_session')) {
     try {
-      const savedSession = await _deviceInfoGet('stockroom_kv_session');
+      const savedSession = await dbGet('settings', 'stockroom_kv_session');
       if (savedSession) {
         localStorage.setItem('stockroom_kv_session', savedSession);
       }
     } catch(e) {}
   }
-
-  // ── Set the active per-user DB BEFORE loading any user data ─────────────
-  // With per-user databases (stockroom_u_<emailHash>), every IDB read must
-  // hit the correct user's DB. We peek at the session blob to extract
-  // emailHash and flip _activeDbName accordingly. If there's no session,
-  // we stay on stockroom_unauth (the throwaway pre-auth DB) and loadData
-  // will see an empty database — the login screen will render and a
-  // successful sign-in will flip to the per-user DB at that point.
-  try {
-    const sessionRaw = localStorage.getItem('stockroom_kv_session');
-    if (sessionRaw) {
-      const parsed = JSON.parse(sessionRaw);
-      if (parsed && parsed.emailHash) {
-        _setActiveDbForUser(parsed.emailHash);
-      }
-    }
-  } catch(e) { console.warn('init: could not preset active DB from session blob:', e.message); }
-
-  // ── Delete the legacy stockroom DB (one-time post-deploy cleanup) ───────
-  // Old builds used a single shared 'stockroom' database for all users on
-  // a device, which was the source of the cross-account leak. New builds
-  // use per-user DBs; the legacy DB is now dead weight (and a continuing
-  // privacy risk for any data still sitting in it). Delete it once. The
-  // deletion is asynchronous and idempotent — if the DB doesn't exist,
-  // the call is a no-op. We don't await it: it's best-effort and may
-  // block if other tabs still hold connections to the legacy DB.
-  try {
-    if (!localStorage.getItem('stockroom_legacy_db_deleted_v1')) {
-      indexedDB.deleteDatabase(DB_NAME_LEGACY);
-      localStorage.setItem('stockroom_legacy_db_deleted_v1', '1');
-      console.log('[idb] legacy stockroom DB delete requested');
-    }
-  } catch(e) { /* non-fatal */ }
 
   // Load all data from IndexedDB (migrates from localStorage on first run)
   await loadData();
@@ -32617,7 +32468,7 @@ async function init() {
     }
   }
 
-  await handleURLAction(); // processes ?join= and replaces loading state with join screen
+  handleURLAction(); // processes ?join= and replaces loading state with join screen
 
   buildCountryGrid();
   buildSettingsCountrySelect();
@@ -32634,10 +32485,9 @@ async function init() {
   console.log('[DIAG] init branch: seen=', seen, 'kvConnected=', kvConnected, '_kvKey=', !!_kvKey, 'protectSeen=', protectSeen);
 
   if (window._landingAction === 'demo') {
-    // Demo mode — skip wizard, skip login, skip MFA. Seed data into the
-    // demo IDB (stockroom_demo, set as _activeDbName by _setActiveDbForDemo
-    // during URL action handling). Data persists only for this session
-    // because the demo DB is wiped on every demo entry.
+    // Demo mode — skip wizard, skip login, skip MFA. Seed in-memory data and
+    // render straight into the app. Nothing persists past this tab session
+    // because the dbGet/dbPut/dbDelete shim routes to in-memory Maps.
     document.body.classList.remove('wizard-active');
     const wiz = document.getElementById('wizard');
     if (wiz) wiz.style.display = 'none';
@@ -33496,7 +33346,7 @@ function showShareJoinConfirm(shareData) { toast(`✓ Joined ${shareData.ownerNa
 // ═══════════════════════════════════════════════════════════
 //  URL ACTION HANDLER — moved from scanner.js
 // ═══════════════════════════════════════════════════════════
-async function handleURLAction() {
+function handleURLAction() {
   // ── Share join link: ?join=CODE ──────────────────────────
   const joinParams = new URLSearchParams(location.search);
   const joinCode   = joinParams.get('join');
@@ -33525,72 +33375,10 @@ async function handleURLAction() {
   }
 
   // ── Demo mode: ?action=demo ───────────────────────────────────────────
-  // Sets the global demo flag (which behaviour-gating paths read) and
-  // signals the init flow to skip wizard/login and seed data. Storage
-  // is routed to the stockroom_demo IDB by _setActiveDbForDemo, which
-  // wipes that DB on every entry so demo data stays session-scoped.
+  // Sets the global demo flag (which the dbGet/dbPut/dbDelete shim picks
+  // up) and signals the init flow to skip wizard/login and seed data.
   // No backend calls are made — kvConnected stays false, sync paths bail.
-  //
-  // ── DEMO-WHILE-SIGNED-IN GUARD ────────────────────────────────────────
-  // If this tab already has an authenticated session (kvConnected with a
-  // valid _kvKey), entering demo mode in place is dangerous: the demo
-  // seed populates in-memory globals with sample data, and any
-  // subsequent kvSyncNow/kvPush would write that demo data to the
-  // signed-in user's cloud blob using their real auth credentials. The
-  // bug was observed in May 2026 where a user (pete@artbot5000.com)
-  // changed the URL of an authenticated tab to /?action=demo and the
-  // background sync timer then pushed demo data to their real account.
-  //
-  // Fix: refuse to enter demo while signed in. Offer to sign out first.
-  // We must flip the active DB to the demo DB BEFORE _demoMode goes true
-  // and before any data writes happen, so demo data is fully isolated
-  // from the signed-in user's per-user DB.
-  if (action === 'demo' && kvConnected) {
-    const proceed = confirm(
-      "You're signed in. Entering demo mode requires signing out on this tab.\n\n" +
-      "Your data stays safe on the server — you can sign back in any time.\n\n" +
-      "Continue to demo mode?"
-    );
-    if (!proceed) {
-      // User cancelled — strip the query string and open the app normally
-      history.replaceState(null, '', location.pathname);
-      return;
-    }
-    // Perform a minimal in-place sign-out. We deliberately do NOT call
-    // kvSignOut() because (a) it shows its own confirm prompt and (b)
-    // it schedules a location.reload() that would undo the demo entry.
-    // The cleanup below mirrors kvSignOut's essentials: clear all
-    // session credentials, drop the in-memory auth state, and remove
-    // the persisted session pointers in localStorage and the device-info
-    // DB. Real per-user IDB data is left in place — it belongs to the
-    // signed-out user and a future sign-in will reopen their DB.
-    try {
-      localStorage.removeItem('stockroom_kv_session');
-      localStorage.removeItem('stockroom_kv_session_key');
-      localStorage.removeItem('stockroom_device_secret');
-      localStorage.removeItem('stockroom_kv_key_fallback');
-      localStorage.removeItem('stockroom_seen');
-      try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
-      try { await _deviceInfoSet('stockroom_kv_session', null); } catch(e) {}
-    } catch(e) { console.warn('demo-entry sign-out cleanup failed (continuing):', e.message); }
-    // Drop in-memory auth state so kvSyncNow's own credential guard bails
-    // even if my _demoMode guards were ever bypassed.
-    kvConnected     = false;
-    _kvEmail        = '';
-    _kvEmailHash    = '';
-    _kvVerifier     = '';
-    _kvSessionToken = '';
-    _kvKey          = null;
-    _shareState     = null;
-    // Notify other tabs so they reload out of the signed-in session
-    bcPost({ type: 'USER_CHANGED' });
-    // Fall through into the normal demo-entry block below.
-  }
   if (action === 'demo') {
-    // Switch the active DB to the demo DB BEFORE flipping _demoMode.
-    // _setActiveDbForDemo deletes the previous demo DB so every demo
-    // session starts clean (matching the old in-memory shim's behaviour).
-    await _setActiveDbForDemo();
     window._demoMode = true;
     window._landingAction = 'demo';
     // Reset persona to 'couple' on every new demo session (per the spec —
@@ -37767,3 +37555,1338 @@ renderBudget = async function() {
     renderBudgetBasicMode();
   }
 };
+// ═══════════════════════════════════════════════════════════════════
+//  OMNIBOX — Pass 1
+// ═══════════════════════════════════════════════════════════════════
+// The omnibox is the persistent input bar at the top of every tab.
+// It replaces the modal-based global search and adds six action
+// buttons (Search / Stockroom / Groceries / Reminders / Notes /
+// Spend) that operate on the text in the input.
+//
+// The existing search engine (runGlobalSearch, _searchStockroom etc.)
+// is reused unchanged — we just retarget its renderer at the omnibox's
+// own results container. _navigateToSearchResult is also reused; it
+// closes the omnibox via closeGlobalSearch's body-class cleanup, which
+// we still trigger here for compatibility.
+//
+// Architecture:
+//   - #omnibox in index.html has data-state="collapsed" by default.
+//   - onOmniboxFocus / onOmniboxInput flip it to "expanded" and run
+//     the same debounced search as the old global modal did.
+//   - The action buttons (.omnibox-action) call omniboxAction(kind),
+//     which routes to the existing add-flow for that destination.
+//   - Pass 2 will add intent detection — for now all buttons are
+//     always enabled and Search is the Enter-key default.
+
+const _OMNIBOX = {
+  active: false,
+  debounceTimer: null,
+  query: '',
+  // Set to true once auto-grow is wired so we don't double-bind.
+  autoGrowBound: false,
+};
+
+function _omniboxEl()      { return document.getElementById('omnibox'); }
+function _omniboxInput()   { return document.getElementById('omnibox-input'); }
+function _omniboxResults() { return document.getElementById('omnibox-results'); }
+
+function onOmniboxFocus() {
+  expandOmnibox();
+}
+
+// Expand the omnibox panel. Idempotent — safe to call from focus,
+// keyboard shortcut, paste, etc.
+function expandOmnibox() {
+  const omni = _omniboxEl();
+  if (!omni) return;
+  omni.setAttribute('data-state', 'expanded');
+  _OMNIBOX.active = true;
+  document.body.classList.add('omnibox-expanded');
+  // Show the collapse chevron (mobile users need a way to dismiss the
+  // panel without losing what they typed). Clear-X visibility is
+  // managed separately based on input value.
+  const collapseBtn = document.getElementById('omnibox-collapse-btn');
+  if (collapseBtn) collapseBtn.style.display = '';
+  _refreshOmniboxClearButton();
+}
+
+// Collapse without clearing the input. Useful when the user is mid-typing
+// and wants to see the page again — they can tap back in to resume.
+function collapseOmnibox() {
+  const omni = _omniboxEl();
+  if (!omni) return;
+  omni.setAttribute('data-state', 'collapsed');
+  _OMNIBOX.active = false;
+  document.body.classList.remove('omnibox-expanded');
+  const collapseBtn = document.getElementById('omnibox-collapse-btn');
+  if (collapseBtn) collapseBtn.style.display = 'none';
+  // Blur the input so the keyboard dismisses on mobile.
+  try { _omniboxInput()?.blur(); } catch(_) {}
+}
+
+// Clear input + results, keep panel expanded with focus.
+function clearOmnibox() {
+  const inp = _omniboxInput();
+  if (inp) { inp.value = ''; }
+  _OMNIBOX.query = '';
+  clearTimeout(_OMNIBOX.debounceTimer);
+  _renderOmniboxEmpty();
+  _refreshOmniboxClearButton();
+  _autoGrowOmnibox();
+  try { inp?.focus(); } catch(_) {}
+}
+
+// Show/hide the clear-X based on whether the input has any text.
+function _refreshOmniboxClearButton() {
+  const btn = document.getElementById('omnibox-clear-btn');
+  const inp = _omniboxInput();
+  if (!btn || !inp) return;
+  btn.style.display = inp.value ? '' : 'none';
+}
+
+// Auto-grow the textarea from 1 line up to ~4 lines, then stop (CSS
+// caps overflow to hidden). Without this the field stays at 1 line
+// even after wrapping, which feels broken when pasting a block.
+function _autoGrowOmnibox() {
+  const ta = _omniboxInput();
+  if (!ta) return;
+  // Reset to single line first so we can measure scrollHeight cleanly.
+  ta.style.height = 'auto';
+  // Cap at the CSS max-height (96px) — anything taller stays scrollable
+  // internally rather than pushing the panel down.
+  const h = Math.min(ta.scrollHeight, 96);
+  ta.style.height = h + 'px';
+}
+
+function _renderOmniboxEmpty() {
+  const container = _omniboxResults();
+  if (!container) return;
+  container.innerHTML = '<div class="omnibox-empty">Type to search or use the buttons below to add.</div>';
+}
+
+// Fires on every keystroke. Same debounce window as the old global
+// search (120ms). Routes the query through runGlobalSearch by
+// temporarily aliasing the results container — see the
+// _redirectSearchRender helper.
+function onOmniboxInput() {
+  const inp = _omniboxInput();
+  if (!inp) return;
+  _autoGrowOmnibox();
+  _refreshOmniboxClearButton();
+  const q = (inp.value || '').trim();
+  _OMNIBOX.query = q;
+  clearTimeout(_OMNIBOX.debounceTimer);
+  if (!q) { _renderOmniboxEmpty(); return; }
+  _OMNIBOX.debounceTimer = setTimeout(() => {
+    try { _runOmniboxSearch(q); } catch (err) { console.error('Omnibox search failed:', err); }
+  }, 120);
+}
+
+// Run the existing runGlobalSearch but route its output into the
+// omnibox's #omnibox-results container instead of #global-search-
+// results. We do this by temporarily swapping IDs — cheap and
+// reversible. Avoids forking the searcher.
+function _runOmniboxSearch(q) {
+  const omniResults    = _omniboxResults();
+  const oldModalResults = document.getElementById('global-search-results');
+  if (!omniResults) return;
+
+  // runGlobalSearch queries by ID 'global-search-results'. The cleanest
+  // way to redirect without touching that code is to rename the modal
+  // container (if it exists) and give our own container that ID for
+  // the duration of the call. Restore IDs after.
+  let renamed = false;
+  if (oldModalResults && oldModalResults !== omniResults) {
+    oldModalResults.id = 'global-search-results__shadowed';
+    omniResults.id = 'global-search-results';
+    renamed = true;
+  } else {
+    // Old modal absent (or already shadowed) — just give our container
+    // the expected ID for this call.
+    omniResults.id = 'global-search-results';
+    renamed = true;
+  }
+
+  try {
+    runGlobalSearch(q);
+  } finally {
+    if (renamed) {
+      // Restore. The omnibox container goes back to its own ID; the
+      // shadowed modal container (if any) gets its original ID back.
+      omniResults.id = 'omnibox-results';
+      const shadowed = document.getElementById('global-search-results__shadowed');
+      if (shadowed) shadowed.id = 'global-search-results';
+    }
+  }
+}
+
+// Keyboard handler. Enter = run primary action (Pass 1: always Search).
+// Esc = collapse.
+function onOmniboxKeyDown(e) {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    collapseOmnibox();
+    return;
+  }
+  if (e.key === 'Enter') {
+    // Pass 1: Enter is "smart" but only between Search-with-results and
+    // Search-without. Pass 2 will swap in the detected destination if
+    // no results exist and an intent was detected.
+    if (!e.shiftKey) {
+      e.preventDefault();
+      _omniboxEnterSmart();
+    }
+    // Shift+Enter inserts a newline — useful for the eventual Reminders /
+    // Notes paths that accept multi-line input. Auto-grow handles it.
+  }
+}
+
+// "Smart" Enter handling. Pass 1 implementation:
+//   - If there are search results, jump to the first one.
+//   - Otherwise, fall back to Search action (which is a no-op visually
+//     since the empty-results state is already shown).
+// Pass 2 replaces the fallback with the detected destination action.
+function _omniboxEnterSmart() {
+  // Look for the first .global-search-row inside our results container.
+  const firstRow = _omniboxResults()?.querySelector('.global-search-row');
+  if (firstRow) {
+    // Simulate a click — reuses the existing onclick handler which calls
+    // _navigateToSearchResult with the right payload.
+    firstRow.click();
+    return;
+  }
+  // No results — Pass 1 fallback is just "do nothing useful but don't
+  // submit a form either". Pass 2 swaps in the detected add action.
+}
+
+// ── Action button handler ───────────────────────────────────────────
+// Routes the current input text to the right add-flow. Each branch
+// re-uses existing functions so this layer stays thin.
+function omniboxAction(kind) {
+  const text = (_omniboxInput()?.value || '').trim();
+  if (!text && kind !== 'search') {
+    toast('Type something first');
+    return;
+  }
+  switch (kind) {
+    case 'search':
+      // Search is mostly a no-op — typing already runs the search live.
+      // We use this button as a "make sure I'm in search mode" cue and
+      // a focus target on mobile when the user wants to dismiss the
+      // keyboard and tap a result.
+      try { _omniboxInput()?.blur(); } catch(_) {}
+      return;
+
+    case 'stockroom':
+      return _omniboxAddToStockroom(text);
+
+    case 'groceries':
+      return _omniboxAddToGroceries(text);
+
+    case 'reminders':
+      return _omniboxAddToReminders(text);
+
+    case 'notes':
+      return _omniboxAddToNotes(text);
+
+    case 'spend':
+      return _omniboxAddToSpend(text);
+
+    default:
+      console.warn('Unknown omnibox action:', kind);
+  }
+}
+
+// ── Stockroom ──
+// Routes through the existing Quick Add path. We open the modal,
+// stuff the text in, call saveQuickAdd. The modal opens briefly so
+// the user can confirm/back out — Pass 3 may inline this.
+function _omniboxAddToStockroom(text) {
+  if (typeof openQuickAdd !== 'function' || typeof saveQuickAdd !== 'function') {
+    toast('Stockroom add not available');
+    return;
+  }
+  openQuickAdd();
+  // openQuickAdd clears the input then focuses it on a setTimeout. We
+  // need to set the value AFTER that runs.
+  setTimeout(() => {
+    const qaInput = document.getElementById('quick-add-input');
+    if (!qaInput) return;
+    qaInput.value = text;
+    if (typeof updateQuickAddPreview === 'function') updateQuickAddPreview();
+    _omniboxAfterAddCleanup();
+  }, 120);
+}
+
+// ── Groceries ──
+// Open the Quick List overlay with the text pre-filled. User confirms
+// list name and saves.
+function _omniboxAddToGroceries(text) {
+  if (typeof openQuickList !== 'function') {
+    toast('Quick List not available');
+    return;
+  }
+  openQuickList();
+  // Wait for the overlay's input to mount, then fill it.
+  setTimeout(() => {
+    const inp = document.getElementById('quick-list-input');
+    if (!inp) return;
+    inp.value = text;
+    if (typeof _quickListAutocomplete === 'function') {
+      try { _quickListAutocomplete(text); } catch(_) {}
+    }
+    _omniboxAfterAddCleanup();
+  }, 120);
+}
+
+// ── Reminders ──
+// Split text on commas AND newlines, each entry becomes a reminder
+// with a default 3-month cadence. This is faster than opening the
+// modal for each one. The user can edit individual reminders later.
+async function _omniboxAddToReminders(text) {
+  if (typeof saveReminders !== 'function') {
+    toast('Reminders not available');
+    return;
+  }
+  // Permission check — match what saveReminder does.
+  if (typeof canWrite === 'function' && !canWrite('reminders')) {
+    if (typeof showLockBanner === 'function') showLockBanner('reminders');
+    return;
+  }
+  const names = text.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+  if (!names.length) { toast('Type at least one reminder'); return; }
+  const now = new Date().toISOString();
+  for (const name of names) {
+    reminders.push({
+      id:           (typeof uid === 'function') ? uid() : ('r_' + Date.now() + '_' + Math.random().toString(36).slice(2,6)),
+      name,
+      interval:     3,
+      unit:         'months',
+      lastReplaced: null,
+      notes:        '',
+      linkedItemId: null,
+      createdAt:    now,
+    });
+  }
+  await saveReminders();
+  if (typeof _syncQueue !== 'undefined' && _syncQueue?.enqueue) _syncQueue.enqueue();
+  if (typeof renderReminders === 'function') renderReminders();
+  toast(`${names.length} reminder${names.length === 1 ? '' : 's'} added`);
+  _omniboxAfterAddCleanup(true);
+}
+
+// ── Notes ──
+// Create one note with the typed text as the body. Title is the first
+// line (or first 60 chars if the line is long). Sets contenteditable
+// innerHTML correctly since note bodies use innerHTML, not .value.
+async function _omniboxAddToNotes(text) {
+  if (typeof saveNotes !== 'function' || typeof notes === 'undefined') {
+    toast('Notes not available');
+    return;
+  }
+  if (typeof canWrite === 'function' && !canWrite('notes')) {
+    if (typeof showLockBanner === 'function') showLockBanner('notes');
+    return;
+  }
+  // First line becomes the title; rest becomes the body. If only one
+  // line, use it as title and leave body empty (user can expand later).
+  const lines = text.split('\n');
+  const firstLine = (lines[0] || '').trim();
+  const rest = lines.slice(1).join('\n').trim();
+  const title = firstLine.length > 60 ? firstLine.slice(0, 60) : firstLine;
+  // Note bodies are stored as innerHTML — convert newlines to <br>.
+  const bodyHTML = rest ? rest.replace(/\n/g, '<br>') : '';
+  const now = new Date().toISOString();
+  const newNote = {
+    id:               (typeof _noteUid === 'function') ? _noteUid() : ('n_' + Date.now() + '_' + Math.random().toString(36).slice(2,6)),
+    title,
+    body:             bodyHTML,
+    locked:           false,
+    pinned:           false,
+    archived:         false,
+    colour:           null,
+    tickBoxesVisible: false,
+    tickBoxes:        {},
+    createdAt:        now,
+    updatedAt:        now,
+    deletedAt:        null,
+  };
+  notes.push(newNote);
+  await saveNotes();
+  if (typeof _syncNoteIfConnected === 'function') {
+    try { await _syncNoteIfConnected(); } catch(_) {}
+  }
+  if (typeof renderNotes === 'function') renderNotes();
+  toast('Note added');
+  _omniboxAfterAddCleanup(true);
+}
+
+// ── Spend ──
+// Open the Spend Quick Add modal with the text pre-filled. The modal
+// has its own parser/preview that's already excellent — we just
+// stuff text in. Pass 3 will render the preview inline in the omnibox
+// itself and bypass the modal entirely.
+function _omniboxAddToSpend(text) {
+  if (typeof openQuickAddSpend !== 'function') {
+    toast('Spend add not available');
+    return;
+  }
+  openQuickAddSpend();
+  setTimeout(() => {
+    const inp = document.getElementById('spend-quick-add-input');
+    if (!inp) return;
+    inp.value = text;
+    if (typeof quickAddInputChanged === 'function') {
+      try { quickAddInputChanged(); } catch(_) {}
+    }
+    _omniboxAfterAddCleanup();
+  }, 120);
+}
+
+// Common cleanup after an action fires. If `fullyHandled` is true the
+// action completed without opening another modal — clear input and
+// collapse. Otherwise (modal opened) just keep the omnibox out of the
+// way; the user will continue in the modal.
+function _omniboxAfterAddCleanup(fullyHandled) {
+  if (fullyHandled) {
+    clearOmnibox();
+    collapseOmnibox();
+  } else {
+    // A modal is now open — collapse omnibox so its expanded panel
+    // doesn't visually stack on top of the modal backdrop.
+    collapseOmnibox();
+  }
+}
+
+// ── Keyboard shortcut: Cmd/Ctrl+K focuses the omnibox ──
+// The old _globalSearchKeyShortcut opened the modal. Hijack the same
+// shortcut to focus the omnibox instead. The OLD handler is still in
+// app.js (it calls openGlobalSearch) — we don't remove it because the
+// modal is still present in the DOM; instead the new handler runs
+// first and stops propagation. If our handler ever fails to bind,
+// the old one is a harmless fallback.
+function _omniboxKeyShortcut(e) {
+  // Don't trigger if the user is already typing in a text field other
+  // than ours (avoids stealing Cmd+K from rich editors).
+  const t = e.target;
+  if (t && (t.id === 'omnibox-input')) return;
+  const isMac = navigator.platform && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+  const mod = isMac ? e.metaKey : e.ctrlKey;
+  if (mod && e.key && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    e.stopPropagation();
+    const inp = _omniboxInput();
+    if (!inp) return;
+    expandOmnibox();
+    try { inp.focus(); inp.select(); } catch(_) {}
+  }
+}
+
+// ── Outside-click handler: collapse when the user taps away ──
+// Without this, the expanded panel stays open until the user explicitly
+// dismisses it, which is annoying when they tap a tab or a card behind.
+function _omniboxOutsideClick(e) {
+  if (!_OMNIBOX.active) return;
+  const omni = _omniboxEl();
+  if (!omni) return;
+  if (omni.contains(e.target)) return;
+  // Don't collapse if the click landed inside any modal — search
+  // results lead to modals (note editor, item card, etc.) opening,
+  // and those clicks shouldn't trigger a collapse race.
+  const modalOpen = document.querySelector('.modal-backdrop.show, .modal-backdrop[style*="display: flex"], .modal-backdrop[style*="display:flex"]');
+  if (modalOpen && modalOpen.contains(e.target)) return;
+  collapseOmnibox();
+}
+
+// ── Init ──
+// Wires the global keydown shortcut + outside-click handler. Idempotent.
+function initOmnibox() {
+  // Auto-grow on resize too (orientation change on mobile).
+  if (!_OMNIBOX.autoGrowBound) {
+    window.addEventListener('resize', _autoGrowOmnibox);
+    _OMNIBOX.autoGrowBound = true;
+  }
+  document.addEventListener('keydown', _omniboxKeyShortcut, true); // capture phase
+  document.addEventListener('click', _omniboxOutsideClick);
+  // Render initial empty state so the panel isn't blank if focused
+  // before any input.
+  _renderOmniboxEmpty();
+}
+
+// Call init once on DOM ready. The rest of the app's init runs from
+// the `init()` function further down — we tag onto DOMContentLoaded
+// directly here so the omnibox is wired even if init() bails on an
+// error elsewhere.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initOmnibox);
+} else {
+  initOmnibox();
+}
+// ═══════════════════════════════════════════════════════════════════
+//  OMNIBOX — Pass 2: Intent detection
+// ═══════════════════════════════════════════════════════════════════
+// Reads the omnibox input and decides which action buttons make sense.
+// Each detected destination produces a state in {disabled, normal,
+// primary}. Search is always 'normal' (never disabled, never primary).
+//
+// Strategy: keyword override wins. If no keyword matches, shape rules
+// pick a primary and a set of enabled siblings.
+//
+// Called from onOmniboxInput after each keystroke (existing handler is
+// patched at the bottom of this section). Output goes to button state
+// + an intent-hint line above the action row.
+
+const _OMNIBOX_INTENT = {
+  // Last computed state, useful for the smart-Enter fallback.
+  state: null,
+};
+
+// Regex helpers — defined once at module scope to avoid re-compiling.
+
+// Decimal amount: "47.50", "£12", "12.00". Strong Spend signal.
+// Whole numbers alone (e.g. "3") are NOT counted because they could be
+// quantities. The Spend parser itself accepts whole numbers, but for
+// intent detection we want a stronger signal to avoid false positives.
+const _RE_DECIMAL_AMOUNT = /(?:£\s*\d+(?:\.\d+)?)|(?:\b\d+\.\d{1,2}\b)/;
+
+// Keyword prefixes — case-insensitive. Match at start of input, followed
+// by colon or whitespace. The `\s*` after `:` allows "note:something".
+const _KEYWORD_RULES = [
+  { re: /^(?:note|n)\s*[:\-]\s*/i,            kind: 'notes' },
+  { re: /^(?:remind|reminder|r)\s*[:\-]\s*/i, kind: 'reminders' },
+  { re: /^(?:spend|s)\s*[:\-]\s*/i,           kind: 'spend' },
+  { re: /^(?:add|stock|stockroom)\s*[:\-]\s*/i, kind: 'stockroom' },
+  { re: /^(?:list|grocery|groceries|g)\s*[:\-]\s*/i, kind: 'groceries' },
+  { re: /^(?:find|search)\s*[:\-]\s*/i,       kind: 'search-only' },
+];
+
+// Returns { primary: kind|null, enabled: Set<kind>, hint: string,
+//           strippedText: string }
+// `strippedText` is the input with any keyword prefix removed —
+// callers that fire the detected action should use this, so
+// "note: pick up keys" becomes "pick up keys" in the new note.
+function _omniboxDetectIntent(text) {
+  const result = {
+    primary: null,
+    enabled: new Set(['search']), // search is always enabled
+    hint: '',
+    strippedText: text,
+  };
+  const trimmed = (text || '').trim();
+  if (!trimmed) {
+    // Empty input — all enabled, no primary, no hint.
+    result.enabled = new Set(['search', 'stockroom', 'groceries', 'reminders', 'notes', 'spend']);
+    return result;
+  }
+
+  // ── 1. Keyword override ──
+  for (const rule of _KEYWORD_RULES) {
+    const m = trimmed.match(rule.re);
+    if (!m) continue;
+    result.strippedText = trimmed.slice(m[0].length);
+    if (rule.kind === 'search-only') {
+      // 'find:' or 'search:' — only Search makes sense. Everything else greys.
+      result.primary = null;
+      result.enabled = new Set(['search']);
+      result.hint = 'Searching…';
+      return result;
+    }
+    // Add destination as primary; only that + search enabled.
+    result.primary = rule.kind;
+    result.enabled = new Set(['search', rule.kind]);
+    result.hint = _intentHintLabel(rule.kind, true);
+    return result;
+  }
+
+  // ── 2. Shape detection ──
+  const commaCount = (trimmed.match(/,/g) || []).length;
+  const newlineCount = (trimmed.match(/\n/g) || []).length;
+  const hasDecimalAmount = _RE_DECIMAL_AMOUNT.test(trimmed);
+  const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+  const charCount = trimmed.length;
+
+  // 2a. Decimal amount → Spend is primary.
+  // Stockroom and Groceries get disabled (amounts don't belong in their
+  // input). Notes and Reminders stay disabled too — if the user wanted
+  // a note about a price, they'd use the 'note:' keyword.
+  if (hasDecimalAmount) {
+    result.primary = 'spend';
+    result.enabled = new Set(['search', 'spend']);
+    result.hint = _intentHintLabel('spend', false);
+    return result;
+  }
+
+  // 2b. Long prose with no commas → Notes (primary) + Reminders enabled.
+  // Threshold: more than ~6 words OR more than ~40 chars, AND zero commas.
+  // Newlines (multi-line paste) also push toward Notes.
+  if (commaCount === 0 && (wordCount > 6 || charCount > 40 || newlineCount > 0)) {
+    result.primary = 'notes';
+    result.enabled = new Set(['search', 'notes', 'reminders']);
+    result.hint = 'Looks like a note';
+    return result;
+  }
+
+  // 2c. Multiple comma-separated short items → Stockroom (primary),
+  // Groceries + Reminders also enabled. This is the "milk, eggs, bread"
+  // case — could be any of the three list-like destinations.
+  if (commaCount >= 1 || newlineCount >= 1) {
+    result.primary = 'stockroom';
+    result.enabled = new Set(['search', 'stockroom', 'groceries', 'reminders']);
+    result.hint = `${Math.max(commaCount, newlineCount) + 1} items`;
+    return result;
+  }
+
+  // 2d. Single short word/phrase → all enabled, lean Search (no primary
+  // highlighted; user picks). This is the "I just typed yoghurt and want
+  // to find it OR add it" state.
+  result.enabled = new Set(['search', 'stockroom', 'groceries', 'reminders', 'notes', 'spend']);
+  result.hint = '';
+  return result;
+}
+
+function _intentHintLabel(kind, fromKeyword) {
+  const fromKW = fromKeyword ? ' (keyword)' : '';
+  switch (kind) {
+    case 'stockroom':  return 'Add to Stockroom' + fromKW;
+    case 'groceries':  return 'Add to a grocery list' + fromKW;
+    case 'reminders':  return 'Add reminders' + fromKW;
+    case 'notes':      return 'Create a note' + fromKW;
+    case 'spend':      return 'Log spend' + fromKW;
+    default:           return '';
+  }
+}
+
+// Apply a computed intent to the DOM — update button data-primary /
+// data-disabled attrs, set the hint line, and persist to _OMNIBOX_INTENT
+// for the Enter handler.
+function _applyOmniboxIntent(intent) {
+  _OMNIBOX_INTENT.state = intent;
+  const actions = document.querySelectorAll('#omnibox-actions .omnibox-action');
+  actions.forEach(btn => {
+    const kind = btn.getAttribute('data-action');
+    const enabled = intent.enabled.has(kind);
+    const primary = intent.primary === kind;
+    btn.toggleAttribute('disabled', !enabled);
+    if (!enabled) {
+      btn.setAttribute('data-disabled', 'true');
+    } else {
+      btn.removeAttribute('data-disabled');
+    }
+    if (primary) {
+      btn.setAttribute('data-primary', 'true');
+    } else {
+      btn.removeAttribute('data-primary');
+    }
+  });
+
+  // Update hint line (lazy-create if missing — hint container is added
+  // by the index.html patch, but be defensive in case of partial deploy).
+  let hint = document.getElementById('omnibox-intent-hint');
+  if (!hint) {
+    const actionsEl = document.getElementById('omnibox-actions');
+    if (actionsEl && actionsEl.parentNode) {
+      hint = document.createElement('div');
+      hint.id = 'omnibox-intent-hint';
+      hint.className = 'omnibox-intent-hint';
+      actionsEl.parentNode.insertBefore(hint, actionsEl);
+    }
+  }
+  if (hint) {
+    if (intent.hint) {
+      hint.textContent = intent.hint;
+      hint.style.display = '';
+    } else {
+      hint.textContent = '';
+      hint.style.display = 'none';
+    }
+  }
+}
+
+// ── Patch onOmniboxInput to run intent detection ──
+// We don't redefine the function — we wrap it. The original (Pass 1) is
+// captured, then a new handler runs detection alongside the search call.
+// Wrapping avoids touching Pass 1 code, which keeps the rollback story
+// simple if Pass 2 needs to be reverted.
+const _ORIG_onOmniboxInput = (typeof onOmniboxInput === 'function') ? onOmniboxInput : null;
+
+function onOmniboxInput() {
+  // Call the original Pass 1 handler (auto-grow, clear-button refresh,
+  // debounced search). If it was somehow missing, gracefully degrade —
+  // intent detection still runs.
+  if (_ORIG_onOmniboxInput) {
+    try { _ORIG_onOmniboxInput.call(this); } catch (err) {
+      console.error('Original onOmniboxInput failed:', err);
+    }
+  }
+  // Then run intent detection. Synchronous — cheap regex work, no
+  // debounce needed. Updates buttons immediately so the user gets
+  // instant feedback as they type.
+  try {
+    const text = (_omniboxInput()?.value || '');
+    const intent = _omniboxDetectIntent(text);
+    _applyOmniboxIntent(intent);
+  } catch (err) {
+    console.error('Omnibox intent detection failed:', err);
+  }
+}
+
+// ── Patch _omniboxEnterSmart for intent fallback ──
+// Pass 1 just jumped to the first result and did nothing on no-results.
+// Pass 2: if no results AND an intent was detected, run that action.
+const _ORIG_omniboxEnterSmart = (typeof _omniboxEnterSmart === 'function') ? _omniboxEnterSmart : null;
+
+function _omniboxEnterSmart() {
+  // If there's a search result, jump to it — same as Pass 1.
+  const firstRow = _omniboxResults()?.querySelector('.global-search-row');
+  if (firstRow) {
+    firstRow.click();
+    return;
+  }
+  // No results — try the detected primary action.
+  const state = _OMNIBOX_INTENT.state;
+  if (state && state.primary) {
+    omniboxAction(state.primary);
+    return;
+  }
+  // No results, no intent — Pass 1 fallback (do nothing).
+  // Could toast a hint here but that gets noisy.
+}
+
+// ── Patch omniboxAction to use stripped text when keyword present ──
+// "note: buy milk" should create a note titled "buy milk", not
+// "note: buy milk". The detection function already strips the prefix
+// in result.strippedText — we use that when an intent is active.
+const _ORIG_omniboxAction = (typeof omniboxAction === 'function') ? omniboxAction : null;
+
+function omniboxAction(kind) {
+  // Search always uses raw text (no stripping — user might genuinely
+  // be searching for "note:").
+  if (kind === 'search') {
+    return _ORIG_omniboxAction ? _ORIG_omniboxAction.call(this, kind) : undefined;
+  }
+  // For add actions: if intent state has a primary matching this kind
+  // AND the strippedText differs from raw, use stripped. This handles
+  // "note: pick up keys" → action with "pick up keys".
+  const state = _OMNIBOX_INTENT.state;
+  if (state && state.primary === kind && state.strippedText !== undefined) {
+    const raw = _omniboxInput()?.value || '';
+    if (state.strippedText !== raw.trim() && state.strippedText !== '') {
+      // Temporarily swap input value to the stripped form, fire the
+      // original handler, then restore. The handler reads the input's
+      // value, so the cleanest swap point is right here.
+      const inp = _omniboxInput();
+      const original = inp ? inp.value : '';
+      if (inp) inp.value = state.strippedText;
+      try {
+        return _ORIG_omniboxAction ? _ORIG_omniboxAction.call(this, kind) : undefined;
+      } finally {
+        // Restore. If the action cleared the input (full-handled case),
+        // the cleanup already happened — but restoring a stale value
+        // would be bad. So we ONLY restore if the input still has our
+        // stripped value (i.e. action opened a modal and didn't clear).
+        if (inp && inp.value === state.strippedText) {
+          inp.value = original;
+        }
+      }
+    }
+  }
+  // No intent / no stripping needed — straight passthrough.
+  return _ORIG_omniboxAction ? _ORIG_omniboxAction.call(this, kind) : undefined;
+}
+
+// ── Initial state: run detection once on init so an empty omnibox
+// shows the right "all enabled, no primary" state from the start ──
+// initOmnibox in Pass 1 already calls _renderOmniboxEmpty. We tag on
+// here to apply initial intent (which is just "all enabled").
+(function _omniboxPass2InitialState() {
+  // Defer to next tick so initOmnibox has run and buttons exist.
+  setTimeout(() => {
+    try {
+      const intent = _omniboxDetectIntent('');
+      _applyOmniboxIntent(intent);
+    } catch (_) { /* harmless on init */ }
+  }, 50);
+})();
+// ═══════════════════════════════════════════════════════════════════
+//  OMNIBOX — Pass 2 FIX
+// ═══════════════════════════════════════════════════════════════════
+// The previous Pass 2 used a "wrap the original function" pattern which
+// fell apart because BOTH function declarations live in the same global
+// scope — the second `function onOmniboxInput()` declaration shadows
+// the first at parse time, and the `_ORIG_*` captures point at the
+// wrapper itself, causing infinite recursion and silent failure.
+//
+// Fix: replace the broken wrappers with single, merged function
+// definitions that combine Pass 1 and Pass 2 behaviour. We assign to
+// the names directly (no wrapping) so the bug can't recur.
+//
+// Also includes the override change: greyed-out action buttons remain
+// clickable. The greying is visual guidance only — the user can always
+// force an action against the suggestion.
+
+// ── Make all action buttons always clickable ──
+// Pass 1's _applyOmniboxIntent set the `disabled` attribute when a
+// destination wasn't in the enabled set. Remove that — we keep the
+// visual cue (lower opacity via [data-disabled]) but allow clicks.
+// We override _applyOmniboxIntent fully here (re-assignment, not wrap).
+_applyOmniboxIntent = function _applyOmniboxIntent(intent) {
+  _OMNIBOX_INTENT.state = intent;
+  const actions = document.querySelectorAll('#omnibox-actions .omnibox-action');
+  actions.forEach(btn => {
+    const kind = btn.getAttribute('data-action');
+    const enabled = intent.enabled.has(kind);
+    const primary = intent.primary === kind;
+    // KEY CHANGE vs Pass 2 original: never set the `disabled` attribute.
+    // The button stays clickable. We use [data-disabled="true"] only as
+    // a CSS hook for the dimmed appearance.
+    if (!enabled) {
+      btn.setAttribute('data-disabled', 'true');
+    } else {
+      btn.removeAttribute('data-disabled');
+    }
+    if (primary) {
+      btn.setAttribute('data-primary', 'true');
+    } else {
+      btn.removeAttribute('data-primary');
+    }
+  });
+
+  // Hint line — same as Pass 2.
+  let hint = document.getElementById('omnibox-intent-hint');
+  if (!hint) {
+    const actionsEl = document.getElementById('omnibox-actions');
+    if (actionsEl && actionsEl.parentNode) {
+      hint = document.createElement('div');
+      hint.id = 'omnibox-intent-hint';
+      hint.className = 'omnibox-intent-hint';
+      actionsEl.parentNode.insertBefore(hint, actionsEl);
+    }
+  }
+  if (hint) {
+    if (intent.hint) {
+      hint.textContent = intent.hint;
+      hint.style.display = '';
+    } else {
+      hint.textContent = '';
+      hint.style.display = 'none';
+    }
+  }
+};
+
+// ── Replace onOmniboxInput with the merged version ──
+// This is the single source of truth for typing handling. Combines
+// Pass 1 (auto-grow, clear-btn refresh, debounced search) and Pass 2
+// (intent detection).
+onOmniboxInput = function onOmniboxInput() {
+  const inp = _omniboxInput();
+  if (!inp) return;
+  // Pass 1 behaviour
+  _autoGrowOmnibox();
+  _refreshOmniboxClearButton();
+  const q = (inp.value || '').trim();
+  _OMNIBOX.query = q;
+  clearTimeout(_OMNIBOX.debounceTimer);
+
+  // Pass 2 behaviour: run intent detection synchronously (cheap).
+  try {
+    const intent = _omniboxDetectIntent(inp.value || '');
+    _applyOmniboxIntent(intent);
+  } catch (err) {
+    console.error('Omnibox intent detection failed:', err);
+  }
+
+  // Pass 1 behaviour: debounced search.
+  if (!q) { _renderOmniboxEmpty(); return; }
+  _OMNIBOX.debounceTimer = setTimeout(() => {
+    try { _runOmniboxSearch(q); } catch (err) { console.error('Omnibox search failed:', err); }
+  }, 120);
+};
+
+// ── Replace _omniboxEnterSmart with the merged version ──
+// Pass 1: jump to first result; do nothing if no results.
+// Pass 2: jump to first result; run detected action if no results.
+_omniboxEnterSmart = function _omniboxEnterSmart() {
+  const firstRow = _omniboxResults()?.querySelector('.global-search-row');
+  if (firstRow) {
+    firstRow.click();
+    return;
+  }
+  const state = _OMNIBOX_INTENT.state;
+  if (state && state.primary) {
+    omniboxAction(state.primary);
+    return;
+  }
+  // No results, no intent — silent no-op (Pass 1 behaviour preserved).
+};
+
+// ── Replace omniboxAction with the merged version ──
+// Pass 1: route text through add-flow for the chosen destination.
+// Pass 2: strip keyword prefix from text when intent matches.
+// Plus: this is now the SINGLE definition so no recursion can happen.
+omniboxAction = function omniboxAction(kind) {
+  const inp = _omniboxInput();
+  const rawText = (inp?.value || '').trim();
+
+  // Search always uses raw text — user might literally be searching
+  // for "note:" or similar.
+  if (kind === 'search') {
+    try { inp?.blur(); } catch(_) {}
+    return;
+  }
+
+  // Empty input check — only for non-search actions.
+  if (!rawText) {
+    if (typeof toast === 'function') toast('Type something first');
+    return;
+  }
+
+  // Decide what text to send to the action.
+  // If detected intent matches this action AND there's a stripped
+  // version (keyword was present), use that. Otherwise use raw.
+  let textForAction = rawText;
+  const state = _OMNIBOX_INTENT.state;
+  if (state && state.primary === kind && typeof state.strippedText === 'string') {
+    const stripped = state.strippedText.trim();
+    if (stripped) textForAction = stripped;
+  }
+
+  switch (kind) {
+    case 'stockroom':  return _omniboxAddToStockroom(textForAction);
+    case 'groceries':  return _omniboxAddToGroceries(textForAction);
+    case 'reminders':  return _omniboxAddToReminders(textForAction);
+    case 'notes':      return _omniboxAddToNotes(textForAction);
+    case 'spend':      return _omniboxAddToSpend(textForAction);
+    default:
+      console.warn('Unknown omnibox action:', kind);
+  }
+};
+
+// ── Recompute initial state ──
+// Buttons may have been left in a stale state from the broken Pass 2
+// wrappers (e.g. with `disabled` attribute set). Force a fresh
+// computation now that the fixed handlers are in place.
+(function _omniboxPass2FixInitialState() {
+  setTimeout(() => {
+    try {
+      // Strip any stale `disabled` attributes left over from the
+      // broken Pass 2 wrappers.
+      document.querySelectorAll('#omnibox-actions .omnibox-action[disabled]').forEach(btn => {
+        btn.removeAttribute('disabled');
+      });
+      const inp = _omniboxInput();
+      const intent = _omniboxDetectIntent(inp?.value || '');
+      _applyOmniboxIntent(intent);
+    } catch (_) { /* harmless on init */ }
+  }, 50);
+})();
+// ═══════════════════════════════════════════════════════════════════
+//  OMNIBOX — Pass 3: Inline Spend preview + direct commit
+// ═══════════════════════════════════════════════════════════════════
+// When intent detection picks `spend` as the primary action, this
+// pass renders the parsed transaction chips directly inside the
+// omnibox panel (above the action buttons), and rewires the Spend
+// button to commit them directly without opening the Spend Quick Add
+// modal.
+//
+// Reuses _renderQuickAddChip (for the chip markup), parseQuickAddInput
+// (for parsing) and commitQuickAdd (for actual persistence). All three
+// are already factored cleanly in the existing Spend code path — no
+// changes needed there.
+//
+// Layout when spend is primary:
+//   [results pane]
+//   [omnibox-spend-preview — chips: today, parsed entries]
+//   [omnibox-intent-hint — "Log spend"]
+//   [action buttons]
+
+// ── Inline preview container management ──
+// Lazy-create the preview block inside the omnibox panel. Sits between
+// the results pane and the intent hint. Hidden by default; shown only
+// when intent === spend.
+function _ensureOmniboxSpendPreviewEl() {
+  let el = document.getElementById('omnibox-spend-preview');
+  if (el) return el;
+  const panel = document.getElementById('omnibox-panel');
+  if (!panel) return null;
+  // Insert before the intent hint if it exists, otherwise before actions.
+  const intentHint = document.getElementById('omnibox-intent-hint');
+  const actionsEl  = document.getElementById('omnibox-actions');
+  const anchor     = intentHint || actionsEl;
+  if (!anchor) return null;
+  el = document.createElement('div');
+  el.id = 'omnibox-spend-preview';
+  el.className = 'omnibox-spend-preview';
+  el.style.display = 'none';
+  panel.insertBefore(el, anchor);
+  return el;
+}
+
+// Render the spend preview from current input. Called from the merged
+// onOmniboxInput handler after intent is computed. If intent is not
+// spend, the preview is hidden (and the button reverts to the modal-
+// opening behaviour from Pass 1).
+function _renderOmniboxSpendPreview() {
+  const el = _ensureOmniboxSpendPreviewEl();
+  if (!el) return { validCount: 0, totalCount: 0 };
+
+  const state = _OMNIBOX_INTENT.state;
+  const isSpendIntent = state && state.primary === 'spend';
+  if (!isSpendIntent) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return { validCount: 0, totalCount: 0 };
+  }
+
+  // Use the stripped text if the user typed "spend: …" — strippedText
+  // already trims the keyword. Otherwise raw input.
+  const rawInput  = _omniboxInput()?.value || '';
+  const sourceTxt = (typeof state.strippedText === 'string' && state.strippedText.trim())
+    ? state.strippedText
+    : rawInput;
+
+  // Parser handles newlines by treating them as comma separators (same
+  // behaviour as confirmQuickAdd). parseQuickAddInput exists in the
+  // budget/spend code and is already used by the modal preview.
+  if (typeof parseQuickAddInput !== 'function' || typeof _renderQuickAddChip !== 'function') {
+    // Spend code not loaded yet — bail quietly. Will retry on next keystroke.
+    el.style.display = 'none';
+    return { validCount: 0, totalCount: 0 };
+  }
+  const normalised = sourceTxt.replace(/\n/g, ',');
+  const parsed = parseQuickAddInput(normalised);
+  const validCount = parsed.filter(p => p.ok && p.amount > 0).length;
+  const totalCount = parsed.length;
+
+  if (totalCount === 0) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return { validCount, totalCount };
+  }
+
+  // Today's date (used at commit time). Shown for transparency — users
+  // who want to log spend for a different day should still open the
+  // full Spend modal where the date picker lives.
+  const today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+  // Header + chips + footer summary. The footer count uses validCount
+  // so users see "Add 2 of 3" if one entry is unparseable.
+  const headerHTML = `<div class="omnibox-spend-preview-header">
+    <span class="omnibox-spend-preview-label">Will log on ${_escapeHtml(today)}</span>
+  </div>`;
+  const chipsHTML  = `<div class="omnibox-spend-preview-chips">${parsed.map(_renderQuickAddChip).join('')}</div>`;
+  el.innerHTML = headerHTML + chipsHTML;
+  el.style.display = '';
+  return { validCount, totalCount };
+}
+
+// ── Commit handler: turn parsed entries into transactions, no modal ──
+// Mirrors confirmQuickAdd but reads from the omnibox input and uses
+// today's date implicitly.
+async function _omniboxCommitSpend() {
+  if (typeof parseQuickAddInput !== 'function' || typeof commitQuickAdd !== 'function') {
+    if (typeof toast === 'function') toast('Spend code not loaded');
+    return;
+  }
+  // Bail out if there are no budget categories yet — same gate the
+  // modal-opening flow uses. Drop the user into the setup flow instead.
+  if (typeof getActiveBudgetCategories === 'function' && getActiveBudgetCategories().length === 0) {
+    if (typeof openBudgetSetupModal === 'function') {
+      openBudgetSetupModal();
+    } else if (typeof toast === 'function') {
+      toast('Set up budget categories first');
+    }
+    return;
+  }
+
+  const state = _OMNIBOX_INTENT.state;
+  const rawInput = _omniboxInput()?.value || '';
+  const sourceTxt = (state && state.primary === 'spend' &&
+                    typeof state.strippedText === 'string' && state.strippedText.trim())
+    ? state.strippedText
+    : rawInput;
+  const normalised = sourceTxt.replace(/\n/g, ',');
+  const parsed = parseQuickAddInput(normalised).filter(p => p.ok && p.amount > 0);
+  if (parsed.length === 0) {
+    if (typeof toast === 'function') toast('Nothing to add — needs an amount');
+    return;
+  }
+  try {
+    const created = await commitQuickAdd(parsed, { date: null }); // null → today
+    if (typeof toast === 'function') {
+      toast(`Added ${created.length} transaction${created.length === 1 ? '' : 's'}`);
+    }
+    // Refresh budget views if currently visible — matches what
+    // confirmQuickAdd does at the end of its handler.
+    if (typeof _currentView !== 'undefined' && _currentView === 'budget') {
+      if (typeof _budgetActivePanel !== 'undefined') {
+        if (_budgetActivePanel === 'spend' && typeof renderBudgetSpend === 'function') {
+          renderBudgetSpend();
+        } else if (_budgetActivePanel === 'dashboard' && typeof renderBudgetDashboard === 'function') {
+          renderBudgetDashboard();
+        }
+      }
+    }
+    // Clear and collapse — full handled, no follow-up modal needed.
+    if (typeof clearOmnibox === 'function') clearOmnibox();
+    if (typeof collapseOmnibox === 'function') collapseOmnibox();
+  } catch (err) {
+    console.error('_omniboxCommitSpend failed:', err);
+    if (typeof toast === 'function') toast('Could not add — please try again');
+  }
+}
+
+// ── Override the Spend branch in omniboxAction ──
+// Pass 2-fix already redefined omniboxAction as a single direct function.
+// We redefine it again here to insert inline-commit behaviour for spend,
+// keeping all other branches unchanged. No wrapping pattern this time —
+// just a full reassignment with the spend case substituted.
+omniboxAction = function omniboxAction(kind) {
+  const inp = _omniboxInput();
+  const rawText = (inp?.value || '').trim();
+
+  // Search: blur to dismiss keyboard, leave state alone.
+  if (kind === 'search') {
+    try { inp?.blur(); } catch (_) {}
+    return;
+  }
+
+  // Empty input check for non-search actions.
+  if (!rawText) {
+    if (typeof toast === 'function') toast('Type something first');
+    return;
+  }
+
+  // Keyword-stripped text for the matching action (Pass 2 behaviour).
+  let textForAction = rawText;
+  const state = _OMNIBOX_INTENT.state;
+  if (state && state.primary === kind && typeof state.strippedText === 'string') {
+    const stripped = state.strippedText.trim();
+    if (stripped) textForAction = stripped;
+  }
+
+  switch (kind) {
+    case 'stockroom':  return _omniboxAddToStockroom(textForAction);
+    case 'groceries':  return _omniboxAddToGroceries(textForAction);
+    case 'reminders':  return _omniboxAddToReminders(textForAction);
+    case 'notes':      return _omniboxAddToNotes(textForAction);
+
+    case 'spend': {
+      // Pass 3 change: if intent has been computed and there are valid
+      // parsed entries, commit inline. Otherwise fall back to opening
+      // the modal — handles the case where the user clicked Spend on
+      // input that wasn't detected as spend (e.g. force-clicked the
+      // dimmed Spend button on "milk, eggs" — opening the modal lets
+      // them recover by editing in the full Spend UI).
+      const haveValid = state && state.primary === 'spend';
+      if (haveValid && typeof _omniboxCommitSpend === 'function') {
+        return _omniboxCommitSpend();
+      }
+      // Fallback: pre-fill modal (Pass 1 behaviour for non-spend intent).
+      return _omniboxAddToSpend(textForAction);
+    }
+
+    default:
+      console.warn('Unknown omnibox action:', kind);
+  }
+};
+
+// ── Hook the preview into onOmniboxInput ──
+// Pass 2-fix already wrote onOmniboxInput as a direct assignment. We
+// redefine it here to add the preview render call after intent
+// detection, before the debounced search.
+onOmniboxInput = function onOmniboxInput() {
+  const inp = _omniboxInput();
+  if (!inp) return;
+  _autoGrowOmnibox();
+  _refreshOmniboxClearButton();
+  const q = (inp.value || '').trim();
+  _OMNIBOX.query = q;
+  clearTimeout(_OMNIBOX.debounceTimer);
+
+  // Intent detection — synchronous.
+  try {
+    const intent = _omniboxDetectIntent(inp.value || '');
+    _applyOmniboxIntent(intent);
+  } catch (err) {
+    console.error('Omnibox intent detection failed:', err);
+  }
+
+  // Pass 3 addition: render inline spend preview if intent is spend.
+  // This is cheap (just re-runs the parser + DOM update). Done synchronously
+  // so the preview updates as the user types each digit of an amount.
+  try { _renderOmniboxSpendPreview(); } catch (err) {
+    console.error('Omnibox spend preview failed:', err);
+  }
+
+  // Debounced search.
+  if (!q) { _renderOmniboxEmpty(); return; }
+  _OMNIBOX.debounceTimer = setTimeout(() => {
+    try { _runOmniboxSearch(q); } catch (err) { console.error('Omnibox search failed:', err); }
+  }, 120);
+};
+
+// ── Clear the preview when the omnibox collapses or clears ──
+// The preview is rendered into a static container; if we don't clear
+// it on collapse, the next time the user opens the omnibox they see
+// stale chips from a previous session.
+//
+// We replace clearOmnibox with a merged version (no wrapping —
+// avoids the hoisting/recursion trap that bit Pass 2). The Pass 1
+// behaviour is reproduced inline, then the preview cleanup added.
+clearOmnibox = function clearOmnibox() {
+  const inp = _omniboxInput();
+  if (inp) { inp.value = ''; }
+  _OMNIBOX.query = '';
+  clearTimeout(_OMNIBOX.debounceTimer);
+  _renderOmniboxEmpty();
+  _refreshOmniboxClearButton();
+  _autoGrowOmnibox();
+  // Pass 3 addition: clear stale spend preview chips.
+  const el = document.getElementById('omnibox-spend-preview');
+  if (el) { el.innerHTML = ''; el.style.display = 'none'; }
+  try { inp?.focus(); } catch (_) {}
+};
+
+// ── Initial render so the preview block is set up correctly ──
+// Defer to next tick so the panel DOM is in place.
+(function _omniboxPass3InitialState() {
+  setTimeout(() => {
+    try {
+      _ensureOmniboxSpendPreviewEl();
+      // Recompute preview against current input (likely empty on init).
+      _renderOmniboxSpendPreview();
+    } catch (_) { /* harmless on init */ }
+  }, 60);
+})();
+// ═══════════════════════════════════════════════════════════════════
+//  OMNIBOX — Pass 3 FIX
+// ═══════════════════════════════════════════════════════════════════
+// Bug: clicking the clear-X cleared the input and preview, but left
+// the action buttons in whatever state intent detection had set —
+// so Spend stayed gold-highlighted even though the input was empty.
+//
+// Fix: include a fresh intent detection pass inside clearOmnibox so
+// the button states return to the "empty input = all enabled, no
+// primary" baseline.
+//
+// Replaces clearOmnibox via direct assignment (not function-decl
+// wrapping — the Pass 2 bug taught us why).
+
+clearOmnibox = function clearOmnibox() {
+  const inp = _omniboxInput();
+  if (inp) { inp.value = ''; }
+  _OMNIBOX.query = '';
+  clearTimeout(_OMNIBOX.debounceTimer);
+  _renderOmniboxEmpty();
+  _refreshOmniboxClearButton();
+  _autoGrowOmnibox();
+  // Clear stale spend preview chips (Pass 3 behaviour).
+  const previewEl = document.getElementById('omnibox-spend-preview');
+  if (previewEl) { previewEl.innerHTML = ''; previewEl.style.display = 'none'; }
+  // Pass 3 FIX: re-run intent detection against the empty input so
+  // button states reset to the baseline (all enabled, no primary,
+  // no hint). Without this the buttons keep their last detected
+  // state from before the clear.
+  try {
+    const intent = _omniboxDetectIntent('');
+    _applyOmniboxIntent(intent);
+  } catch (_) { /* harmless */ }
+  try { inp?.focus(); } catch (_) {}
+};
+// ═══════════════════════════════════════════════════════════════════
+//  OMNIBOX — Pass 4: Mobile 3×2 button grid + darkened backdrop
+// ═══════════════════════════════════════════════════════════════════
+// Two related mobile-only enhancements:
+//
+//   1. Action button row becomes a 3×2 grid mirroring the tab bar
+//      (icon above label, equal cells). Source order in HTML stays
+//      put — visual order is controlled by CSS `order` on each button.
+//      Desktop layout (horizontal pill row) is unchanged.
+//
+//   2. When the omnibox is expanded on mobile, a dark backdrop appears
+//      over the content beneath the panel. Tapping the backdrop
+//      collapses the panel but preserves the typed text (so the user
+//      can resume by tapping the input again).
+//
+// All CSS lives in styles.css; this JS handles only:
+//   - Inserting the backdrop element into the DOM on init
+//   - Wiring its tap handler to collapseOmnibox()
+//   - Toggling its visibility from expand/collapse functions
+
+// ── Backdrop element management ──
+// Single backdrop element appended once on init. Hidden by default;
+// shown when omnibox is expanded on mobile (CSS handles the media-query
+// gating so desktop never sees it). z-index sits below the omnibox
+// panel (which is z:95) but above the rest of the app (typical content
+// z is 0–80).
+function _ensureOmniboxBackdrop() {
+  let el = document.getElementById('omnibox-backdrop');
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = 'omnibox-backdrop';
+  el.className = 'omnibox-backdrop';
+  el.setAttribute('aria-hidden', 'true');
+  // Tap collapses but keeps the input text — exactly the "I want to see
+  // the page again but not lose my typing" affordance the user asked
+  // for. collapseOmnibox already preserves input value (it just hides
+  // the panel and blurs the input).
+  el.addEventListener('click', () => {
+    if (typeof collapseOmnibox === 'function') collapseOmnibox();
+  });
+  // Append at body level (NOT inside #omnibox) so it can cover all
+  // page content regardless of stacking context.
+  document.body.appendChild(el);
+  return el;
+}
+
+// Show/hide the backdrop. Called from expand/collapse handlers below.
+// The visible state is driven by a CSS class so we can transition
+// opacity smoothly via the stylesheet.
+function _setOmniboxBackdropVisible(visible) {
+  const el = _ensureOmniboxBackdrop();
+  if (!el) return;
+  if (visible) {
+    el.classList.add('visible');
+  } else {
+    el.classList.remove('visible');
+  }
+}
+
+// ── Reassign expandOmnibox / collapseOmnibox to manage the backdrop ──
+// Same pattern as previous passes: direct reassignment (no wrapping
+// function-declared names) to dodge the hoisting trap from Pass 2.
+// We reproduce the Pass 1 body of each function and add backdrop calls.
+
+expandOmnibox = function expandOmnibox() {
+  const omni = _omniboxEl();
+  if (!omni) return;
+  omni.setAttribute('data-state', 'expanded');
+  _OMNIBOX.active = true;
+  document.body.classList.add('omnibox-expanded');
+  const collapseBtn = document.getElementById('omnibox-collapse-btn');
+  if (collapseBtn) collapseBtn.style.display = '';
+  _refreshOmniboxClearButton();
+  // Pass 4 addition: show the dark backdrop on mobile.
+  _setOmniboxBackdropVisible(true);
+};
+
+collapseOmnibox = function collapseOmnibox() {
+  const omni = _omniboxEl();
+  if (!omni) return;
+  omni.setAttribute('data-state', 'collapsed');
+  _OMNIBOX.active = false;
+  document.body.classList.remove('omnibox-expanded');
+  const collapseBtn = document.getElementById('omnibox-collapse-btn');
+  if (collapseBtn) collapseBtn.style.display = 'none';
+  try { _omniboxInput()?.blur(); } catch (_) {}
+  // Pass 4 addition: hide the dark backdrop.
+  _setOmniboxBackdropVisible(false);
+};
+
+// ── Init: insert backdrop element so it's ready before first expand ──
+// Deferred to next tick to keep init order safe against partial DOM.
+(function _omniboxPass4Init() {
+  setTimeout(() => {
+    try { _ensureOmniboxBackdrop(); } catch (_) {}
+  }, 60);
+})();

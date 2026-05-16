@@ -63,119 +63,6 @@
   .logo { font-family: var(--mono); font-size: 13px; letter-spacing: 3px; color: var(--accent); font-weight: 700; }
   .logo span { color: var(--muted); font-weight: 400; }
 
-  /* ── BRAND LOGO IMAGE ──
-     Used in the app header (mobile), the sidebar (desktop), and the
-     wizard header/footer bars. The width/height attrs on each <img>
-     define its intrinsic size — these rules just handle display +
-     a tiny vertical optical nudge to align with the wordmark. */
-  .brand-logo {
-    display: inline-block;
-    flex-shrink: 0;
-    transform: translateY(-1px);
-  }
-  /* Mobile app header — 24px tall, paired with 13px wordmark */
-  .brand-logo-mobile { /* relies on width=33 height=24 attrs */ }
-  /* Desktop sidebar — 21px tall, paired with 11px wordmark */
-  .brand-logo-sidebar { /* relies on width=29 height=21 attrs */ }
-
-  /* ── WIZARD BARS ──
-     Shown only when body.wizard-active is set. Mirror the landing
-     page header / footer so the wizard doesn't feel like a different
-     app. Header CTA is "Try the demo" (Login / Create-account from
-     the landing page would be circular here — the user IS in login).
-     The footer carries the brand mark, helpful links back to the
-     marketing site, and the year. Both bars are position:fixed at
-     z-index 301, just above the wizard's own 300. Default state is
-     hidden; the body.wizard-active rules below reveal them. */
-  #wizard-header,
-  #wizard-footer {
-    display: none;
-  }
-  body.wizard-active #wizard-header,
-  body.wizard-active #wizard-footer {
-    display: block;
-    position: fixed;
-    left: 0; right: 0;
-    z-index: 301;
-    background: rgba(15,17,23,0.85);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-  }
-  body.wizard-active #wizard-header {
-    top: 0;
-    border-bottom: 1px solid var(--glass-border);
-  }
-  body.wizard-active #wizard-footer {
-    bottom: 0;
-    border-top: 1px solid var(--glass-border);
-  }
-  .wb-inner {
-    max-width: 1200px; margin: 0 auto;
-    padding: 14px 24px;
-    display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  }
-  .wb-inner-footer {
-    padding: 16px 24px;
-    flex-wrap: wrap;
-    font-size: 12px; color: var(--muted);
-  }
-  .wb-brand {
-    display: inline-flex; align-items: center; gap: 10px;
-    font-family: var(--mono); font-weight: 700; font-size: 14px;
-    letter-spacing: 3px; color: var(--accent);
-    text-decoration: none;
-  }
-  .wb-inner-footer .wb-brand { font-size: 12px; }
-  .wb-actions {
-    display: flex; align-items: center; gap: 10px;
-  }
-  .wb-actions .btn {
-    /* Match landing page header button sizing (14px / 10px 18px) rather
-       than the smaller in-app default (13px / 8px 16px) so the bars
-       feel like the landing page, not the app. */
-    font-size: 14px;
-    padding: 10px 18px;
-    border-radius: 8px;
-  }
-  .wb-footer-links {
-    display: flex; gap: 18px;
-  }
-  .wb-footer-links a {
-    color: var(--muted);
-    text-decoration: none;
-    transition: color 0.15s;
-  }
-  .wb-footer-links a:hover { color: var(--text); }
-  .wb-footer-meta {
-    font-family: var(--mono);
-    font-size: 11px;
-    letter-spacing: 1px;
-  }
-  /* Wizard box needs vertical breathing room so neither bar overlaps it.
-     The wizard already has padding: 16px and overflow-y:auto on its box,
-     so we just add scroll-margin-top/bottom equivalents via the wizard
-     wrapper. The bars are ~60px tall (header) and ~52px tall (footer);
-     padding-top/bottom 72px gives a small visual gap above/below. */
-  body.wizard-active #wizard {
-    padding-top: 72px;
-    padding-bottom: 60px;
-  }
-  /* Small screens: tighter padding inside the bars so the brand mark
-     and CTA don't get cramped. Mirror landing.html's 560px breakpoint. */
-  @media (max-width: 560px) {
-    .wb-inner { padding: 12px 14px; gap: 8px; }
-    .wb-actions { gap: 6px; }
-    .wb-actions .btn { padding: 9px 12px; font-size: 13px; }
-    .wb-brand { font-size: 12px; letter-spacing: 2px; }
-    .wb-inner-footer { padding: 14px 14px; gap: 10px; justify-content: center; text-align: center; }
-    .wb-footer-links { gap: 12px; }
-    body.wizard-active #wizard {
-      /* Footer wraps onto two lines on narrow screens — give it more room */
-      padding-top: 60px;
-      padding-bottom: 90px;
-    }
-  }
-
   /* ── BUTTONS ── */
   .btn { font-family: var(--sans); font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all 0.18s cubic-bezier(0.34,1.56,0.64,1); position: relative; }
   .btn:active { transform: scale(0.96); }
@@ -1619,19 +1506,6 @@ body.note-open { overflow: hidden; touch-action: none; }
   margin-left: auto;
 }
 .card-stars-row .card-star { font-size: 11px; line-height: 1; }
-/* Right-side group inside .card-top: holds the status badge and the
-   optional share-indicator (eye icon) as a single unit so they stay
-   together against the right edge of the card header. Without this
-   wrapper, justify-content:space-between on .card-top spreads three
-   children evenly, pushing the status badge into the middle when the
-   share-indicator is present. */
-.card-top-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  margin-left: auto;
-}
 .card-status {
   font-family: var(--mono);
   font-size: 10px;
@@ -2238,47 +2112,13 @@ body.note-open { overflow: hidden; touch-action: none; }
 }
 
 
-/* ── Manage button base styles ───────────────────────────────────────
-   Previously these lived as an inline style="..." on the button in
-   index.html, which always beat @media rules and made it impossible
-   to centre the icon+label on mobile. Lifting them here so the mobile
-   override below can win cleanly. */
-#view-stock #stock-select-btn {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  width: 100%;
-  height: 36px;
-  padding: 5px 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--muted);
-  font-family: var(--sans);
-  font-size: 12px;
-  font-weight: normal;
-  cursor: pointer;
-  outline: none;
-}
-#view-stock #stock-select-btn:hover { color: var(--text); }
-
-/* Mobile: three equal-width buttons on one row in the order
-   Manage > Filters > Sort. Uses flex `order` so DOM stays as-is for
-   desktop (which has its own fixed-width rules above and keeps the
-   original Filters > Sort > Manage layout). */
+/* Mobile: filters + sort split 50/50 on row 1; Select gets row 2 at
+   100% width. Wrapping is handled by flex-wrap on #stock-search-toolbar. */
 @media (max-width: 899px) {
   #view-stock #stock-search-toolbar { flex-wrap: wrap; }
-  #view-stock #stock-toolbar-wrap  { flex: 1 1 calc(33.333% - 7px); max-width: calc(33.333% - 7px); order: 2; }
-  #view-stock #stock-sort-wrap     { flex: 1 1 calc(33.333% - 7px); max-width: calc(33.333% - 7px); order: 3; }
-  #view-stock #stock-select-wrap   { flex: 1 1 calc(33.333% - 7px); max-width: calc(33.333% - 7px); order: 1; }
-  /* Sort dropdown gets tight padding on mobile so "Sort: Status" still fits
-     in a third-width button without truncation. */
-  #view-stock #stock-sort-wrap #sort-select { padding-left: 8px; padding-right: 22px; }
-  /* Manage button on mobile: centre the icon+label as a pair with tight
-     padding so the word "Manage" fits at one-third width. The label
-     stays visible — discoverability matters more than absolute symmetry. */
-  #view-stock #stock-select-btn { justify-content: center; padding: 5px 8px; gap: 6px; }
+  #view-stock #stock-toolbar-wrap  { flex: 1 1 calc(50% - 5px); max-width: calc(50% - 5px); }
+  #view-stock #stock-sort-wrap     { flex: 1 1 calc(50% - 5px); max-width: calc(50% - 5px); }
+  #view-stock #stock-select-wrap   { flex: 1 1 100%; max-width: 100%; }
 }
 
 
@@ -2316,32 +2156,6 @@ body.note-open { overflow: hidden; touch-action: none; }
   align-self: center;
   flex-shrink: 0;
 }
-
-/* Inverted-colour count badge shown inside the Critical / Low / Good
-   buttons in the collapsible filter panel. A small filled circle with
-   the count number rendered in dark text on a coloured background.
-   Replaces the old inline status pills that lived in the tag filter bar
-   — now there's one source of truth for status counts. Each colour is
-   keyed by data-key so the rule cascades cleanly. */
-.status-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  margin-left: 4px;
-  border-radius: 99px;
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 700;
-  color: #0f1117;
-  line-height: 1;
-  vertical-align: middle;
-}
-.status-count[data-key="critical"] { background: var(--danger); }
-.status-count[data-key="warn"]     { background: var(--warn); }
-.status-count[data-key="ok"]       { background: var(--ok); }
 
 /* +Tag chip styling */
 .tag-filter-chip.tag-filter-add {
@@ -4503,8 +4317,6 @@ body.bulk-select-mode-category .budget-cat-row:hover { outline: 2px solid var(--
    so taps go straight to selection toggle. The action bar covers the
    bulk equivalent of these actions. */
 body.bulk-select-mode-category .budget-cat-row .bill-actions { display: none !important; }
-<<<<<<< Updated upstream
-=======
 /* ═══════════════════════════════════════════════════════════════════
    OMNIBOX — Pass 1
    Persistent top-of-app input bar. Collapsed = ~44px single-line
@@ -5034,4 +4846,3 @@ body.note-open .omnibox-backdrop,
 body.global-search-open .omnibox-backdrop {
   display: none !important;
 }
->>>>>>> Stashed changes
