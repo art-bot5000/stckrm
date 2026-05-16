@@ -2284,9 +2284,18 @@ body.note-open { overflow: hidden; touch-action: none; }
   /* Sort dropdown gets tight padding on mobile so "Sort: Status" still fits
      in a third-width button without truncation. */
   #view-stock #stock-sort-wrap #sort-select { padding-left: 8px; padding-right: 22px; }
-  /* Manage button on mobile: hide the text label and centre the remaining
-     icon. With the inline style removed from index.html, these rules
-     simply override the desktop base above — no !important needed. */
+  /* Tighten the Manage button's horizontal padding a touch on mobile so the
+     icon + label combo fits comfortably in a 33%-width column. The icon stays
+     left-aligned, matching how Filters and Sort render their content. */
+  #view-stock #stock-select-btn { padding: 5px 8px; gap: 6px; }
+}
+
+/* Only at genuinely narrow widths (small phones, ~33% column gets too tight)
+   do we collapse the Manage button to an icon-only tile. The cutoff was
+   chosen empirically: at 480px viewport, a 33% column is ~150px including
+   gutters, which is the point where "Manage" + icon starts to crowd the
+   Filters and Sort labels. Above this width the label stays visible. */
+@media (max-width: 480px) {
   #view-stock #stock-select-btn               { justify-content: center; padding: 5px; gap: 0; }
   #view-stock #stock-select-btn .manage-label { display: none; }
 }
