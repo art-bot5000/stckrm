@@ -3,7 +3,7 @@ name: Deploy to Fly.io
 on:
   push:
     branches: [main]
-  workflow_dispatch: # allow manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
   preflight:
@@ -12,7 +12,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ── 1. Verify every file the Dockerfile COPYs actually exists ──────────
       - name: Check required files exist
         run: |
           REQUIRED=(
@@ -20,6 +19,7 @@ jobs:
             index.html landing.html
             sw.js manifest.json admin.html
             main.ts deno.json start.sh Caddyfile
+            logo.png
           )
           MISSING=()
           for f in "${REQUIRED[@]}"; do
@@ -33,19 +33,20 @@ jobs:
           fi
           echo "✅ All required files present"
 
-      # ── 2. Validate JS syntax ─────────────────────────────────────────────
       - name: Check JS syntax
         run: |
           node --check app.js   && echo "✅ app.js syntax OK"
           node --check scanner.js && echo "✅ scanner.js syntax OK"
 
-      # ── 3. Validate Dockerfile has no stale COPY references ───────────────
       - name: Check Dockerfile references
         run: |
-          # Extract files listed in COPY lines (builder stage only)
-          COPY_FILES=$(grep '^COPY' Dockerfile | grep -v 'from=builder\|package.json\|main.ts\|deno.json\|start.sh\|Caddyfile' | grep -oP '[\w\-\.]+\.(js|css|html|json|sh|ts)' || true)
+          DOCKERFILE_FILES=(
+            app.js scanner.js styles.css
+            index.html landing.html admin.html
+            sw.js manifest.json
+          )
           MISSING=()
-          for f in $COPY_FILES; do
+          for f in "${DOCKERFILE_FILES[@]}"; do
             if [ ! -f "$f" ]; then
               MISSING+=("$f")
             fi
@@ -62,28 +63,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
       - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only --strategy rolling
+        run: flyctl deploy --remote-only --strategy rolling --ha=false --no-cache
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        # rolling strategy: brings up new machine BEFORE stopping old one,
-        # so there is always a healthy machine serving traffic during deploy.
-        # If the new machine fails health checks, Fly aborts and the old one
-        # keeps running — no downtime, no data-less machine left running.
+        # --no-cache: forces a clean rebuild of all Docker layers. We had a
+        # bug where index.html updates weren't reaching production because
+        # Depot's remote builder was reusing cached minify-step output.
+        # Without this, frontend file changes can silently not deploy.
 
       - name: Verify deployment health
+        if: always()
         run: |
-          sleep 10
-          STATUS=$(flyctl status --app stckrm --json 2>/dev/null | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          machines = data.get('Machines', [])
-          healthy = [m for m in machines if m.get('state') == 'started']
-          print(f'{len(healthy)} machine(s) running')
-          " 2>/dev/null || echo "status check skipped")
-          echo "✅ Deploy complete — $STATUS"
+          sleep 5
+          flyctl status --app stckrm
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

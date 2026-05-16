@@ -1020,6 +1020,32 @@
 <!-- ═══ COOKIE CONSENT BANNER (fixed overlay — kept for non-wizard contexts) ═══ -->
 <div id="cookie-consent-banner" style="display:none"></div>
 
+<!-- ═══ WIZARD BARS — visible only when body.wizard-active is set ═══
+     Mirrors the landing page header / footer so users mid-signup or
+     mid-login have a visual route back to the marketing page. The
+     header brand mark and footer "Open app" links go to stckrm.com.
+     The header CTA is "Try the demo" (replaces Login + Create
+     account because the user is ALREADY in the login flow).
+     Both bars are position: fixed at z-index 301, sitting above the
+     wizard (z-index 300). On small screens the wizard box has its
+     own max-height + scroll so it doesn't fight the bars at the
+     edges. Both bars are hidden by default; CSS for body.wizard-active
+     turns them on. -->
+<header id="wizard-header" aria-hidden="false">
+  <div class="wb-inner">
+    <a class="wb-brand" href="https://stckrm.com" aria-label="STOCKROOM home">
+      <img src="/logo.png" alt="" class="brand-logo" width="46" height="34">
+      <span>STOCKROOM</span>
+    </a>
+    <div class="wb-actions">
+      <a class="btn btn-primary" href="/?action=demo">
+        Try the demo
+        <svg class="icon" aria-hidden="true" style="width:14px;height:14px"><use href="#i-chevron-right"></use></svg>
+      </a>
+    </div>
+  </div>
+</header>
+
 <!-- ═══ WIZARD ═══ -->
 <div id="wizard">
   <div class="wizard-box">
@@ -1471,6 +1497,27 @@
   </div>
 </div>
 
+<!-- Wizard footer — mirrors landing page footer with brand + "Open app" link
+     (which is a no-op here since they're already in the app, so we route it
+     to the demo as a discoverability nudge). Visible only when wizard-active. -->
+<footer id="wizard-footer" aria-hidden="false">
+  <div class="wb-inner wb-inner-footer">
+    <a class="wb-brand" href="https://stckrm.com" aria-label="STOCKROOM home">
+      <img src="/logo.png" alt="" class="brand-logo" width="46" height="34">
+      <span>STOCKROOM</span>
+    </a>
+    <div class="wb-footer-links">
+      <a href="https://stckrm.com#benefits">Benefits</a>
+      <a href="https://stckrm.com#how">How it works</a>
+      <a href="/?action=demo">Try the demo</a>
+    </div>
+    <div class="wb-footer-meta">
+      © <span id="wf-year"></span> · Built with care
+    </div>
+  </div>
+</footer>
+<script>(function(){var y=document.getElementById('wf-year');if(y)y.textContent=new Date().getFullYear();})();</script>
+
 <!-- PWA Install Banner — Android (shown via beforeinstallprompt) -->
 <div id="install-banner">
   <div class="install-icon" style="display:flex;align-items:center;color:var(--accent)"><svg aria-hidden="true" style="width:32px;height:32px"><use href="#i-package"></use></svg></div>
@@ -1502,7 +1549,8 @@
 <!-- ═══ HEADER ═══ -->
 <div id="app-header">
   <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-    <div style="cursor:pointer;flex-shrink:0" onclick="openProfilePicker()" title="Switch or add household">
+    <div style="cursor:pointer;flex-shrink:0;display:flex;align-items:center;gap:8px" onclick="openProfilePicker()" title="Switch or add household">
+      <img src="/logo.png" alt="" class="brand-logo brand-logo-mobile" width="33" height="24">
       <div class="logo">STOCKROOM <span id="profile-label" class="profile-label-subtitle">/ HOUSEHOLD TRACKER</span></div>
     </div>
     <div id="header-greeting" style="font-size:12px;color:var(--muted);display:none;align-items:center;gap:4px"></div>
@@ -1655,7 +1703,8 @@
 <!-- ═══ APP SIDEBAR (desktop only) ═══ -->
 <nav id="app-nav">
   <div class="app-nav-logo">
-    <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <img src="/logo.png" alt="" class="brand-logo brand-logo-sidebar" width="29" height="21" onclick="openProfilePicker()" style="cursor:pointer">
       <div class="logo" style="font-size:11px;letter-spacing:3px;cursor:pointer;flex-shrink:0" onclick="openProfilePicker()">STOCKROOM</div>
       <span id="app-nav-profile" style="font-size:12px;color:var(--muted);font-family:var(--sans);cursor:pointer;white-space:nowrap" onclick="openProfilePicker()"></span>
     </div>
