@@ -103,6 +103,12 @@
       color: var(--accent);
     }
     .brand-icon svg { width: 16px; height: 16px; }
+    /* Brand logo image — replaces the old SVG-in-styled-box pattern. */
+    .brand-logo {
+      display: inline-block;
+      flex-shrink: 0;
+      transform: translateY(-1px);
+    }
 
     .header-actions {
       display: flex; align-items: center; gap: 10px;
@@ -1168,7 +1174,7 @@
 <header>
   <div class="header-inner">
     <a class="brand" href="/" aria-label="STOCKROOM home">
-      <span class="brand-icon"><svg aria-hidden="true"><use href="#i-package"/></svg></span>
+      <img src="/logo.png" alt="" class="brand-logo" width="46" height="34">
       <span>STOCKROOM</span>
     </a>
     <div class="header-actions">
@@ -1829,7 +1835,7 @@
 <footer>
   <div class="footer-inner">
     <a class="brand" href="/">
-      <span class="brand-icon"><svg aria-hidden="true"><use href="#i-package"/></svg></span>
+      <img src="/logo.png" alt="" class="brand-logo" width="46" height="34">
       <span>STOCKROOM</span>
     </a>
     <div class="footer-links">

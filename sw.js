@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'stockroom-kv-v387';
+const CACHE_VERSION = 'stockroom-kv-v388';
 // Namespace the cache by hostname so staging and production PWAs don't
 // fight over the same cache when both are installed on the same device.
 // Production hostnames (stckrm.com, app.stckrm.com, stckrm.fly.dev) all
@@ -18,6 +18,7 @@ const CACHE_URLS = [
   '/app.js',
   '/styles.css',
   '/manifest.json',
+  '/logo.png',          // brand mark — referenced in landing + app header + wizard bars
 ];
 
 const SYNC_TAG = 'stockroom-sync';
