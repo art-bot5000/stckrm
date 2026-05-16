@@ -1917,9 +1917,8 @@
            Sort for visual consistency in this toolbar row. -->
       <div id="stock-select-wrap">
         <button id="stock-select-btn" onclick="enterStockSelectMode()"
-          title="Manage items — multi-select for share / archive / delete"
-          style="display:flex;align-items:center;justify-content:flex-start;gap:8px;width:100%;height:36px;padding:5px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-family:var(--sans);font-size:12px;font-weight:normal;cursor:pointer;outline:none">
-          <svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Manage
+          title="Manage items — multi-select for share / archive / delete">
+          <svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> <span class="manage-label">Manage</span>
         </button>
       </div>
     </div>
@@ -1927,10 +1926,10 @@
       <div id="filter-panel" style="display:none;flex-direction:column;gap:8px;margin-bottom:10px;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:10px">
         <div id="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Status:</span>
-          <button class="filter-chip active" onclick="setFilter('status','all',this)">All</button>
-          <button class="filter-chip" onclick="setFilter('status','critical',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Critical</button>
-          <button class="filter-chip" onclick="setFilter('status','warn',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Low</button>
-          <button class="filter-chip" onclick="setFilter('status','ok',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Good</button>
+          <button id="status-chip-all" class="filter-chip active" onclick="setFilter('status','all',this)">All <span id="status-count-all" class="chip-count"></span></button>
+          <button id="status-chip-critical" class="filter-chip" onclick="setFilter('status','critical',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Critical <span id="status-count-critical" class="chip-count"></span></button>
+          <button id="status-chip-warn" class="filter-chip" onclick="setFilter('status','warn',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Low <span id="status-count-warn" class="chip-count"></span></button>
+          <button id="status-chip-ok" class="filter-chip" onclick="setFilter('status','ok',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Good <span id="status-count-ok" class="chip-count"></span></button>
           <button class="filter-chip" onclick="setFilter('cadence','monthly',this)"><svg class="icon" aria-hidden="true"><use href="#i-calendar-days"></use></svg> Monthly</button>
           <button class="filter-chip" onclick="setFilter('cadence','bulk',this)"><svg class="icon" aria-hidden="true"><use href="#i-package"></use></svg> Bulk</button>
           <button class="filter-chip" onclick="setFilter('status','archived',this)" style="opacity:0.7"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg> Archived</button>

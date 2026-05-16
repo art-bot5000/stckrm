@@ -2247,14 +2247,65 @@ body.note-open { overflow: hidden; touch-action: none; }
 }
 
 
-/* Mobile: filters + sort split 50/50 on row 1; Select gets row 2 at
-   100% width. Wrapping is handled by flex-wrap on #stock-search-toolbar. */
+/* Manage button — base styles for both desktop and mobile. Previously
+   these lived as an inline style="..." on the button element in
+   index.html, but inline styles always win over @media rules, which
+   made it impossible to centre the icon on mobile. Moving the rules
+   here so the @media block below can override them cleanly. */
+#view-stock #stock-select-btn {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  height: 36px;
+  padding: 5px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: normal;
+  cursor: pointer;
+  outline: none;
+}
+#view-stock #stock-select-btn:hover { color: var(--text); }
+
+/* Mobile: three equal-width buttons on one row in the order
+   Manage > Filters > Sort. Uses flex `order` so DOM stays as-is for
+   desktop (which has its own fixed-width rules above and keeps the
+   original Filters > Sort > Manage layout). */
 @media (max-width: 899px) {
   #view-stock #stock-search-toolbar { flex-wrap: wrap; }
-  #view-stock #stock-toolbar-wrap  { flex: 1 1 calc(50% - 5px); max-width: calc(50% - 5px); }
-  #view-stock #stock-sort-wrap     { flex: 1 1 calc(50% - 5px); max-width: calc(50% - 5px); }
-  #view-stock #stock-select-wrap   { flex: 1 1 100%; max-width: 100%; }
+  #view-stock #stock-toolbar-wrap  { flex: 1 1 calc(33.333% - 7px); max-width: calc(33.333% - 7px); order: 2; }
+  #view-stock #stock-sort-wrap     { flex: 1 1 calc(33.333% - 7px); max-width: calc(33.333% - 7px); order: 3; }
+  #view-stock #stock-select-wrap   { flex: 1 1 calc(33.333% - 7px); max-width: calc(33.333% - 7px); order: 1; }
+  /* Sort dropdown gets tight padding on mobile so "Sort: Status" still fits
+     in a third-width button without truncation. */
+  #view-stock #stock-sort-wrap #sort-select { padding-left: 8px; padding-right: 22px; }
+  /* Manage button on mobile: hide the text label and centre the remaining
+     icon. With the inline style removed from index.html, these rules
+     simply override the desktop base above — no !important needed. */
+  #view-stock #stock-select-btn               { justify-content: center; padding: 5px; gap: 0; }
+  #view-stock #stock-select-btn .manage-label { display: none; }
 }
+
+/* Status filter chips inside the collapsible Filters panel show a small
+   count badge (e.g. "Critical 9"). The span is empty when the count is
+   zero — the :empty selector keeps the chip clean rather than showing
+   a phantom badge. */
+#filter-bar .filter-chip .chip-count {
+  display: inline-block;
+  margin-left: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 0;
+}
+#filter-bar .filter-chip .chip-count:empty { display: none; }
+#filter-bar .filter-chip.active .chip-count { color: inherit; }
 
 
 /* Health dashboard merged into the unified Filters bar — hide the old container */
