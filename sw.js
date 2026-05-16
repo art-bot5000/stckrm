@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'stockroom-kv-v389';
+const CACHE_VERSION = 'stockroom-kv-v390';
 // Namespace the cache by hostname so staging and production PWAs don't
 // fight over the same cache when both are installed on the same device.
 // Production hostnames (stckrm.com, app.stckrm.com, stckrm.fly.dev) all
@@ -169,11 +169,16 @@ self.addEventListener('notificationclick', event => {
 // this device, e.g. user hasn't trusted it), we show the fallbackTitle
 // with no body — generic enough that we never leak content.
 
-// IDB names — must match constants in app.js (DEVICE_DB_NAME, etc.)
+// IDB names — must match constants in app.js (DEVICE_DB_NAME, _DEVICE_INFO_DB, etc.)
+// Per-user IDB rewrite: the push device id/secret used to live in the shared
+// `stockroom` IDB's `settings` store. They now live in a small device-scoped
+// DB (`stockroom-device-info`) that's shared across all users on this
+// browser. The SW reads from there so it doesn't need to know — and can't
+// guess — which per-user DB to open at push time.
 const PUSH_DEVICE_DB_NAME    = 'stockroom-kv-device';
 const PUSH_DEVICE_STORE_NAME = 'keys';
-const PUSH_MAIN_DB_NAME      = 'stockroom';
-const PUSH_SETTINGS_STORE    = 'settings';
+const PUSH_MAIN_DB_NAME      = 'stockroom-device-info';
+const PUSH_SETTINGS_STORE    = 'kv';
 
 function _pushOpenDb(name) {
   return new Promise((resolve, reject) => {

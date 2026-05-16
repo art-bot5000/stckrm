@@ -113,31 +113,134 @@ function getStores(code) { return STORES_BY_COUNTRY[code] || STORES_BY_COUNTRY.O
 //  UI state (wizard, compact, notif flags) stays in localStorage.
 // ═══════════════════════════════════════════
 
-const DB_NAME    = 'stockroom';
+// ── Per-user IDB ──────────────────────────────────────────────────────
+// Each signed-in user gets their own IndexedDB database, named
+// `stockroom_u_<first16chars_of_emailHash>`. The unauth bootstrap state
+// (before any user is loaded) lives in `stockroom_unauth`. Demo sessions
+// use `stockroom_demo`, which is wiped on every entry.
+//
+// Device-scoped bootstrap data (device id, kv_session mirror, push device
+// secret) lives in a single `stockroom-device-info` DB that's shared by
+// all users on this browser — the service worker reads from it without
+// needing to know which user is currently signed in.
+//
+// _activeDbName is mutable: helpers below flip it before any dbGet/dbPut
+// call resolves a database handle. openDB() reads _activeDbName each call.
 const DB_VERSION = 6;
 const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists','reminderDeletedIds','bills','billInstances','budgetSettings','budgetCategories','transactions','budgetCategoryDeletedIds','budgetTransactionDeletedIds','budgetAccounts','incomeTemplates','incomeEntries','budgetAccountDeletedIds','incomeTemplateDeletedIds','incomeEntryDeletedIds','billsDeletedIds','notifications'];
 
+let _activeDbName = 'stockroom_unauth';
 let _db = null;
 
-// ── DEMO MODE storage shim ─────────────────────────────────────────────
-// When window._demoMode is true, the three IDB primitives below route to
-// per-store in-memory Maps instead of opening the real IndexedDB. This
-// effectively gives the entire app an in-memory backend with zero changes
-// to any caller — every load/save path eventually goes through these three
-// functions. Demo data lives only for the lifetime of the tab.
-const _demoStorage = Object.fromEntries(DB_STORES.map(s => [s, new Map()]));
-function _demoStoreFor(name) {
-  if (!_demoStorage[name]) _demoStorage[name] = new Map();
-  return _demoStorage[name];
+function _resetDbHandle() {
+  if (_db) { try { _db.close(); } catch(e) {} }
+  _db = null;
 }
-function _demoClear() {
-  for (const k of Object.keys(_demoStorage)) _demoStorage[k] = new Map();
+
+function _setActiveDbForUser(emailHash) {
+  if (!emailHash || typeof emailHash !== 'string') return;
+  const slug = emailHash.slice(0, 16);
+  const next = `stockroom_u_${slug}`;
+  if (_activeDbName === next) return;
+  _activeDbName = next;
+  _resetDbHandle();
+}
+
+function _setActiveDbForDemo() {
+  _resetDbHandle();
+  // Wipe any previous demo DB so each demo session starts fresh.
+  try { indexedDB.deleteDatabase('stockroom_demo'); } catch(e) {}
+  _activeDbName = 'stockroom_demo';
+}
+
+function _setActiveDbForSignedOut() {
+  if (_activeDbName === 'stockroom_unauth') return;
+  _activeDbName = 'stockroom_unauth';
+  _resetDbHandle();
+}
+
+// ── Device-info DB: shared across users, readable by service worker ──
+// Holds three things:
+//   1. stockroom_device_id      — recovery mirror for localStorage clears
+//   2. stockroom_kv_session     — recovery mirror for localStorage clears
+//   3. _pushDeviceId + _pushDeviceSecret — read by sw.js to decrypt push
+// Use _deviceInfoGet/_deviceInfoSet rather than dbGet/dbPut, which route
+// through whichever per-user DB is currently active.
+const _DEVICE_INFO_DB    = 'stockroom-device-info';
+const _DEVICE_INFO_STORE = 'kv';
+let _deviceInfoDbHandle = null;
+
+function _deviceInfoOpenDb() {
+  if (_deviceInfoDbHandle) return Promise.resolve(_deviceInfoDbHandle);
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(_DEVICE_INFO_DB, 1);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(_DEVICE_INFO_STORE)) db.createObjectStore(_DEVICE_INFO_STORE);
+    };
+    req.onsuccess = e => {
+      _deviceInfoDbHandle = e.target.result;
+      _deviceInfoDbHandle.onversionchange = () => { try { _deviceInfoDbHandle.close(); } catch(e) {} _deviceInfoDbHandle = null; };
+      resolve(_deviceInfoDbHandle);
+    };
+    req.onerror = e => reject(e.target.error);
+  });
+}
+
+async function _deviceInfoGet(key) {
+  try {
+    const db = await _deviceInfoOpenDb();
+    return await new Promise((resolve, reject) => {
+      const tx  = db.transaction(_DEVICE_INFO_STORE, 'readonly');
+      const req = tx.objectStore(_DEVICE_INFO_STORE).get(key);
+      req.onsuccess = e => resolve(e.target.result ?? null);
+      req.onerror   = e => reject(e.target.error);
+    });
+  } catch (e) { return null; }
+}
+
+async function _deviceInfoSet(key, value) {
+  try {
+    const db = await _deviceInfoOpenDb();
+    return await new Promise((resolve, reject) => {
+      const tx  = db.transaction(_DEVICE_INFO_STORE, 'readwrite');
+      const req = tx.objectStore(_DEVICE_INFO_STORE).put(value, key);
+      req.onsuccess = () => resolve();
+      req.onerror   = e => reject(e.target.error);
+    });
+  } catch (e) { /* non-fatal */ }
+}
+
+// ── In-memory user-state reset ────────────────────────────────────────
+// Called when switching active user (sign-in / sign-out / session
+// restore for a different account). Previously the per-store IDB wipe
+// in _wipeStaleUserDataForSwitch was the entire mechanism; now that each
+// user has their own DB, the IDB side is just a name flip — but the
+// in-memory variables backing the UI still hold the previous user's
+// state and must be reset before any render runs.
+function _resetInMemoryUserState() {
+  items            = [];
+  notes            = [];
+  reminders        = [];
+  groceryItems     = [];
+  groceryDepts     = [];
+  groceryLists     = [];
+  bills            = [];
+  billInstances    = {};
+  budgetSettings   = {};
+  budgetCategories = [];
+  transactions     = {};
+  budgetAccounts   = [];
+  incomeTemplates  = [];
+  incomeEntries    = {};
+  settings = { threshold:20, country:'GB', email:'', emailInterval:7, emailStartDate:null, emailStartTime:'09:00', displayName:'', mfa:{ enabled:false, method:'email', totpSecret:null }, customTags:[], lastSynced:'' };
 }
 
 // ── DEMO MODE seed ──────────────────────────────────────────────────────
 // Populates every visible tab with realistic example data so the demo lands
-// on something useful. All in-memory only — written via dbPut into the
-// _demoStorage Maps, so a tab refresh wipes it cleanly.
+// on something useful. Data is written via dbPut into the `stockroom_demo`
+// IDB (set up by _setActiveDbForDemo), which is wiped on every demo entry
+// so a fresh tab always starts clean.
 //
 // Dispatcher: takes a persona ('couple' | 'family') and calls the matching
 // builder, then runs persistence + materialisation + profile setup once.
@@ -221,10 +324,11 @@ async function _seedDemoData(personaArg) {
 async function _switchDemoPersona(persona) {
   if (!window._demoMode) return;
   if (persona === window._demoPersona) return;
-  // Wipe all in-memory demo state so leftovers don't bleed through. Each
-  // store gets a fresh empty Map. Local-storage flags written by some
-  // tabs (like grocery active list) are also reset to defaults.
-  if (typeof _demoClear === 'function') _demoClear();
+  // Wipe all demo IDB state so leftovers don't bleed through. The demo
+  // DB is deleted and re-opened so the new persona seeds into a fresh
+  // store. Local-storage flags written by some tabs (like grocery active
+  // list) are also reset to defaults.
+  _setActiveDbForDemo();
   try { localStorage.removeItem('stockroom_active_grocery_list'); } catch(e) {}
   // Re-seed with the new persona
   await _seedDemoData(persona);
@@ -1293,8 +1397,10 @@ function _hideDemoBanner() {
 
 function _exitDemo() {
   if (!confirm('Exit demo? Any changes you made here will be lost.')) return;
-  // Wipe in-memory state and bounce back to landing
-  _demoClear();
+  // Wipe demo IDB and flip back to unauth so the next dbGet doesn't open
+  // stockroom_demo
+  try { indexedDB.deleteDatabase('stockroom_demo'); } catch(e) {}
+  _setActiveDbForSignedOut();
   window._demoMode = false;
   _hideDemoBanner();
   location.href = '/';
@@ -1499,10 +1605,12 @@ async function _demoCompleteConversion() {
   if (!_demoConvertSeed) return;
   const seed = _demoConvertSeed;
   _demoConvertSeed = null;
-  // Flip the storage shim BEFORE we persist — every dbPut from here on
-  // hits real IDB.
+  // Flip the demo flag BEFORE we persist — sync paths, banner logic, and
+  // other _demoMode gates immediately stop. The active DB was already
+  // switched to the per-user DB by kvStoreSession; the demo DB is now
+  // orphaned, so delete it to reclaim the space.
   window._demoMode = false;
-  _demoClear();
+  try { indexedDB.deleteDatabase('stockroom_demo'); } catch(e) {}
 
   // Restore the in-memory state from the snapshot. We merge user settings
   // (email, MFA config) on top of the demo settings — registration just
@@ -1563,16 +1671,30 @@ async function _demoCompleteConversion() {
 
 function openDB() {
   if (_db) return Promise.resolve(_db);
+  // Capture the name at call-start so we can detect a flip mid-open.
+  // If _setActiveDbForUser fires while an open is in flight, the resolved
+  // handle would be for the old name — we close it and re-enter openDB
+  // so the caller transparently lands on the new database.
+  const requestedName = _activeDbName;
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    const req = indexedDB.open(requestedName, DB_VERSION);
     req.onupgradeneeded = e => {
       const db = e.target.result;
       DB_STORES.forEach(s => { if (!db.objectStoreNames.contains(s)) db.createObjectStore(s); });
     };
     req.onsuccess = e => {
-      _db = e.target.result;
+      const opened = e.target.result;
+      // Race guard — the active DB name changed while we were opening.
+      // Discard this handle and re-open under the new name.
+      if (_activeDbName !== requestedName) {
+        try { opened.close(); } catch(err) {}
+        _db = null;
+        resolve(openDB());
+        return;
+      }
+      _db = opened;
       // If another tab upgrades the DB, reset our handle so we re-open with new schema
-      _db.onversionchange = () => { _db.close(); _db = null; };
+      _db.onversionchange = () => { try { _db.close(); } catch(err) {} _db = null; };
       resolve(_db);
     };
     req.onerror   = e => reject(e.target.error);
@@ -1580,10 +1702,6 @@ function openDB() {
 }
 
 async function dbGet(store, key) {
-  if (window._demoMode) {
-    const v = _demoStoreFor(store).get(key);
-    return v === undefined ? null : v;
-  }
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx  = db.transaction(store, 'readonly');
@@ -1594,13 +1712,6 @@ async function dbGet(store, key) {
 }
 
 async function dbPut(store, key, value) {
-  if (window._demoMode) {
-    // Deep-clone on write so callers mutating the value later don't corrupt
-    // the "stored" state — IDB does this naturally via structured clone.
-    try { _demoStoreFor(store).set(key, JSON.parse(JSON.stringify(value))); }
-    catch (e) { _demoStoreFor(store).set(key, value); }
-    return;
-  }
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx  = db.transaction(store, 'readwrite');
@@ -1611,10 +1722,6 @@ async function dbPut(store, key, value) {
 }
 
 async function dbDelete(store, key) {
-  if (window._demoMode) {
-    _demoStoreFor(store).delete(key);
-    return;
-  }
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx  = db.transaction(store, 'readwrite');
@@ -2402,80 +2509,14 @@ const STATUS_LABEL = { critical:`<span class='status-dot status-critical'></span
 // ═══════════════════════════════════════════
 //  PERSISTENCE — IndexedDB backed
 // ═══════════════════════════════════════════
-// ── User-switch wipe ──────────────────────────────────────────────────────
-// Clears every data-bearing IDB store and resets every in-memory variable
-// that backs one. Called when we detect that the active user has changed
-// — either at page load (loadData) or live during a sign-in (kvStoreSession).
-//
-// This is critical for shared-device scenarios: previous-user data (notes,
-// groceries, reminders, bills, budget) must not render in the new user's
-// session before the cloud sync overwrites it.
-//
-// We clear EVERY data-bearing store. Per-user setup flags (device_setup_<id>_*)
-// are preserved as they're already keyed by deviceId, not user.
-async function _wipeStaleUserDataForSwitch(newEmailHash) {
-  console.log('[user-switch] Wiping stale data for switch to', newEmailHash);
-  // Core data stores
-  await dbPut('items',            'items',            []);
-  await dbPut('items',            'notes',            []);    // notes share the items store under key 'notes'
-  await dbPut('settings',         'settings',         {});
-  await dbPut('reminders',        'reminders',        []);
-  await dbPut('groceries',        'items',            []);
-  await dbPut('departments',      'departments',      []);
-  await dbPut('groceryLists',     'groceryLists',     []);
-  await dbPut('profiles',         'profiles',         {});
-  // Budget data (financial — particularly important to wipe)
-  await dbPut('bills',            'bills',            []);
-  await dbPut('billInstances',    'billInstances',    {});
-  await dbPut('budgetSettings',   'budgetSettings',   {});
-  await dbPut('budgetCategories', 'budgetCategories', []);
-  await dbPut('transactions',     'transactions',     {});
-  await dbPut('budgetAccounts',   'budgetAccounts',   []);
-  await dbPut('incomeTemplates',  'incomeTemplates',  []);
-  await dbPut('incomeEntries',    'incomeEntries',    {});
-  // Tombstone stores — wipe so previous user's deletes don't haunt new user
-  await dbPut('deletedIds',                  'deletedIds',                  []);
-  await dbPut('groceryDeletedIds',           'groceryDeletedIds',           []);
-  await dbPut('groceryListDeletedIds',       'groceryListDeletedIds',       []);
-  await dbPut('groceryLists',                '_deletedIds',                 []);
-  await dbPut('reminderDeletedIds',          'reminderDeletedIds',          []);
-  await dbPut('budgetCategoryDeletedIds',    'budgetCategoryDeletedIds',    []);
-  await dbPut('budgetTransactionDeletedIds', 'budgetTransactionDeletedIds', []);
-  await dbPut('budgetAccountDeletedIds',     'budgetAccountDeletedIds',     []);
-  await dbPut('incomeTemplateDeletedIds',    'incomeTemplateDeletedIds',    []);
-  await dbPut('incomeEntryDeletedIds',       'incomeEntryDeletedIds',       []);
-  await dbPut('billsDeletedIds',             'billsDeletedIds',             []);
-  // Stamp the new owner so subsequent loads on the same device skip the wipe
-  if (newEmailHash) await dbPut('settings', '_activeUserHash', newEmailHash);
-  // Reset every in-memory variable that backs a wiped store
-  items            = [];
-  notes            = [];
-  reminders        = [];
-  groceryItems     = [];
-  groceryDepts     = [];
-  groceryLists     = [];
-  bills            = [];
-  billInstances    = {};
-  budgetSettings   = {};
-  budgetCategories = [];
-  transactions     = {};
-  budgetAccounts   = [];
-  incomeTemplates  = [];
-  incomeEntries    = {};
-  settings = { threshold:20, country:'GB', email:'', emailInterval:7, emailStartDate:null, emailStartTime:'09:00', displayName:'', mfa:{ enabled:false, method:'email', totpSecret:null }, customTags:[], lastSynced:'' };
-}
+// Per-user IDB note: each signed-in user has their own IndexedDB
+// database (see _setActiveDbForUser). The old user-switch wipe is no
+// longer needed — switching users is a name flip, and the in-memory
+// state is reset via _resetInMemoryUserState() at the call sites in
+// kvStoreSession / kvRestoreSession / kvStorePasskeySession /
+// kvRestorePasskeySession / kvSignOut.
 
 async function loadData() {
-  // Detect user switch — if emailHash changed, wipe stale local data before sync.
-  // See _wipeStaleUserDataForSwitch above for the full rationale.
-  const storedHash = await dbGet('settings', '_activeUserHash');
-  const currentHash = _kvEmailHash || null;
-  if (currentHash && storedHash && storedHash !== currentHash) {
-    await _wipeStaleUserDataForSwitch(currentHash);
-    return;
-  }
-  if (currentHash) await dbPut('settings', '_activeUserHash', currentHash);
-
   // Try IndexedDB first
   let loadedItems    = await dbGet('items',    'items');
   let loadedSettings = await dbGet('settings', 'settings');
@@ -4063,8 +4104,12 @@ async function _saveDeviceSecretToIdb() {
     const id = getOrCreateDeviceId();
     const secret = localStorage.getItem('stockroom_device_secret');
     if (!id || !secret) return;
-    await dbPut('settings', '_pushDeviceId', id);
-    await dbPut('settings', '_pushDeviceSecret', secret);
+    // Write into the device-info DB — sw.js reads from there, independent
+    // of which user is currently signed in. Previously these lived in the
+    // shared `stockroom` IDB which meant either user's writes could clobber
+    // the other's (the cross-account leak that prompted per-user DBs).
+    await _deviceInfoSet('_pushDeviceId', id);
+    await _deviceInfoSet('_pushDeviceSecret', secret);
   } catch (err) {
     console.warn('[push] mirror device secret to IDB failed:', err && err.message);
   }
@@ -4073,8 +4118,8 @@ async function _saveDeviceSecretToIdb() {
 // Called on sign-out / wipe to remove the mirrored values
 async function _clearDeviceSecretFromIdb() {
   try {
-    await dbPut('settings', '_pushDeviceId', null);
-    await dbPut('settings', '_pushDeviceSecret', null);
+    await _deviceInfoSet('_pushDeviceId', null);
+    await _deviceInfoSet('_pushDeviceSecret', null);
   } catch (err) { /* non-fatal */ }
 }
 
@@ -8068,10 +8113,23 @@ const _bc = ('BroadcastChannel' in window) ? new BroadcastChannel('stockroom') :
 //   { type: 'REMINDER_REPLACED', reminderId, date } — reminder marked done in another tab
 //   { type: 'GROCERY_CHANGED' }      — grocery list changed
 //   { type: 'SETTINGS_CHANGED' }     — settings updated
+//   { type: 'USER_CHANGED', emailHash } — sign-in / sign-out / user switch — other tabs reload
 
 if (_bc) {
   _bc.onmessage = async event => {
     const { type } = event.data;
+
+    if (type === 'USER_CHANGED') {
+      // Another tab signed in, signed out, or switched accounts. This tab
+      // still holds the previous user's credentials in memory and is
+      // pointing _activeDbName at the previous user's DB — any further
+      // writes would go to the wrong place. Reload to pick up the new
+      // state cleanly. We do this BEFORE the other handlers so we don't
+      // race against e.g. a DATA_CHANGED firing for the new user's data.
+      console.log('[bc] USER_CHANGED — reloading to resync auth state');
+      location.reload();
+      return;
+    }
 
     if (type === 'DATA_CHANGED') {
       // Another tab saved items — reload from IndexedDB and re-render
@@ -14678,12 +14736,11 @@ async function _doClearAll() {
   }
 
   // ── Wipe every data area ─────────────────────────────────────────────
-  // We mirror the structure of the user-switch wipe (_wipeStaleUserDataForSwitch)
-  // but keep this implementation independent — that helper is for the live
-  // login user-switch path; this is for explicit user-initiated clears, and
-  // we want each to evolve on its own (e.g. clear-all may eventually offer
-  // selective "clear only X" choices). They happen to clear the same stores
-  // today.
+  // This is the explicit user-initiated "clear all my data" path — distinct
+  // from the user-switch flow (which is now just a DB-name flip via
+  // _setActiveDbForUser; no in-place wipe needed). We may eventually offer
+  // selective "clear only X" choices, so each store is wiped individually
+  // below rather than via a generic helper.
 
   // Core stockroom (including the recently-deleted bin, since those items
   // sit inside the items array with _deletedAt set).
@@ -16336,7 +16393,7 @@ async function _completePendingUnverifiedRestore() {
   try { localStorage.removeItem('stockroom_kv_session'); } catch(e) {}
   try { localStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
   try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
-  try { await dbPut('settings', 'stockroom_kv_session', null); } catch(e) {}
+  try { await _deviceInfoSet('stockroom_kv_session', null); } catch(e) {}
   toast('Email verified — please sign in to continue');
   showKvLogin();
 }
@@ -16372,7 +16429,7 @@ async function cancelUnverifiedAccount() {
   try { localStorage.removeItem('stockroom_kv_key_fallback'); } catch(e) {}
   try { localStorage.removeItem('stockroom_device_secret'); } catch(e) {}
   try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
-  try { await dbPut('settings', 'stockroom_kv_session', null); } catch(e) {}
+  try { await _deviceInfoSet('stockroom_kv_session', null); } catch(e) {}
   try { await removeWrappedKey(getOrCreateDeviceId()); } catch(e) {}
   // Reset in-memory session
   kvConnected  = false;
@@ -17658,17 +17715,16 @@ async function _getKeyViaPassphrase(emailHash, sessionToken, credentialId, errEl
 }
 
 async function kvStorePasskeySession(email, emailHash, sessionToken, dataKey) {
-  // ── User-switch detection ─────────────────────────────────────────────
-  // Same logic as kvStoreSession — wipe stale local data if a different
-  // user is signing in than the one whose data is currently in IDB.
-  try {
-    const prevHash = await dbGet('settings', '_activeUserHash');
-    if (prevHash && prevHash !== emailHash) {
-      await _wipeStaleUserDataForSwitch(emailHash);
-    } else if (!prevHash) {
-      await dbPut('settings', '_activeUserHash', emailHash);
-    }
-  } catch(e) { console.warn('[kvStorePasskeySession] user-switch wipe failed (non-fatal):', e.message); }
+  // ── Per-user IDB switch ───────────────────────────────────────────────
+  // Same logic as kvStoreSession — name-flip the active DB so all future
+  // dbGet/dbPut calls hit this user's database. Reset in-memory state if
+  // a different user was previously rendered.
+  const prevHash = _kvEmailHash || null;
+  if (prevHash && prevHash !== emailHash) {
+    _resetInMemoryUserState();
+  }
+  _setActiveDbForUser(emailHash);
+  bcPost({ type: 'USER_CHANGED', emailHash });
 
   _kvEmail        = email;
   _kvEmailHash    = emailHash;
@@ -17682,8 +17738,8 @@ async function kvStorePasskeySession(email, emailHash, sessionToken, dataKey) {
   try {
     const sessionJson = JSON.stringify({ email, emailHash, sessionToken, authMethod: 'passkey' });
     localStorage.setItem('stockroom_kv_session', sessionJson);
-    // Also persist to IDB so session survives localStorage/cookie clears
-    dbPut('settings', 'stockroom_kv_session', sessionJson).catch(() => {});
+    // Also persist to device-info IDB so session survives localStorage clears
+    _deviceInfoSet('stockroom_kv_session', sessionJson).catch(() => {});
     // Cache key for 24h
     const exported = await crypto.subtle.exportKey('raw', _kvKey);
     const keyData  = btoa(String.fromCharCode(...new Uint8Array(exported)));
@@ -17709,21 +17765,17 @@ async function kvRestorePasskeySession(session) {
   } catch(e) {
     // Network error — try to restore from cached key
   }
-  // ── User-switch detection ─────────────────────────────────────────────
-  // If the IDB-stamped owner differs from the session being restored, wipe
-  // stale local data BEFORE setting credentials. Without this, page reload
-  // (or app return) after switching accounts can leave the previous user's
-  // items, notes, and trash entries in memory + IDB — they then re-merge
-  // back via sync as if they belonged to the new account. See kvStoreSession
-  // for the equivalent logic on fresh sign-in.
-  try {
-    const prevHash = await dbGet('settings', '_activeUserHash');
-    if (prevHash && prevHash !== emailHash) {
-      await _wipeStaleUserDataForSwitch(emailHash);
-    } else if (!prevHash) {
-      await dbPut('settings', '_activeUserHash', emailHash);
-    }
-  } catch(e) { console.warn('[kvRestorePasskeySession] user-switch wipe failed (non-fatal):', e.message); }
+  // ── Per-user IDB switch ───────────────────────────────────────────────
+  // Same logic as kvStoreSession — name-flip the active DB to this user's
+  // database before any further dbGet/dbPut. The legacy cross-account
+  // leak that prompted this rewrite came from kvRestoreSession bypassing
+  // kvStoreSession entirely, so callers didn't go through the switch.
+  const prevHash = _kvEmailHash || null;
+  if (prevHash && prevHash !== emailHash) {
+    _resetInMemoryUserState();
+  }
+  _setActiveDbForUser(emailHash);
+  bcPost({ type: 'USER_CHANGED', emailHash });
 
   _kvEmail        = email;
   _kvEmailHash    = emailHash;
@@ -18264,16 +18316,18 @@ function getOrCreateDeviceId() {
   return id;
 }
 
-// On startup, also persist device ID into IDB (fire-and-forget)
-// so it can be recovered if localStorage is cleared
+// On startup, also persist device ID into the device-info IDB (fire-and-forget)
+// so it can be recovered if localStorage is cleared. This sits in a DB that's
+// shared across all users on this browser — using the per-user DB would mean
+// re-deriving it would only work after the user is known.
 ;(function _persistDeviceId() {
   try {
     const id = getOrCreateDeviceId();
-    dbPut('settings', 'stockroom_device_id', id).catch(() => {});
+    _deviceInfoSet('stockroom_device_id', id).catch(() => {});
     // Also try to restore from IDB if LS is empty
     const lsId = localStorage.getItem('stockroom_device_id');
     if (!lsId) {
-      dbGet('settings', 'stockroom_device_id').then(val => {
+      _deviceInfoGet('stockroom_device_id').then(val => {
         if (val) {
           localStorage.setItem('stockroom_device_id', val);
           sessionStorage.setItem('stockroom_device_id_session', val);
@@ -18548,22 +18602,20 @@ async function clearAllTrustedDevices() {
 }
 
 async function kvStoreSession(email, emailHash, verifier, key) {
-  // ── User-switch detection ─────────────────────────────────────────────
-  // If a different user is signing in than the one whose data is currently
-  // sitting in IDB (e.g. after a sign-out, or registration of a new account
-  // on a device that previously held another), wipe stale local data BEFORE
-  // we set the new session credentials. Without this, the previous user's
-  // notes/groceries/budget would render in the new account on the first
+  // ── Per-user IDB switch ───────────────────────────────────────────────
+  // Each user has their own IDB database — switching here is a name flip
+  // that takes effect on the next openDB() call. If we're entering with a
+  // different emailHash than the one currently rendered, reset the
+  // in-memory state so previous-user data doesn't render on the first
   // tab that lands on the app before kvSyncNow finishes.
-  try {
-    const prevHash = await dbGet('settings', '_activeUserHash');
-    if (prevHash && prevHash !== emailHash) {
-      await _wipeStaleUserDataForSwitch(emailHash);
-    } else if (!prevHash) {
-      // First sign-in on this device — just stamp ownership
-      await dbPut('settings', '_activeUserHash', emailHash);
-    }
-  } catch(e) { console.warn('[kvStoreSession] user-switch wipe failed (non-fatal):', e.message); }
+  const prevHash = _kvEmailHash || null;
+  if (prevHash && prevHash !== emailHash) {
+    _resetInMemoryUserState();
+  }
+  _setActiveDbForUser(emailHash);
+  // Notify other tabs so they reload — they may still hold the previous
+  // user's credentials and would otherwise keep writing to the wrong DB.
+  bcPost({ type: 'USER_CHANGED', emailHash });
 
   _kvEmail     = email;
   _kvEmailHash = emailHash;
@@ -18575,8 +18627,10 @@ async function kvStoreSession(email, emailHash, verifier, key) {
   try {
     const sessionJson = JSON.stringify({ email, emailHash, verifier });
     localStorage.setItem('stockroom_kv_session', sessionJson);
-    // Also persist to IDB so session survives localStorage/cookie clears
-    dbPut('settings', 'stockroom_kv_session', sessionJson).catch(() => {});
+    // Also persist to device-info IDB so the session survives localStorage
+    // clears. This DB is shared across users and is the one init() peeks
+    // at BEFORE it knows which user is signed in.
+    _deviceInfoSet('stockroom_kv_session', sessionJson).catch(() => {});
   } catch(e) {}
   // Cache key — 4 hours normally, 30 days if user asked to stay signed in
   if (key) {
@@ -18621,21 +18675,19 @@ async function kvRestoreSession() {
 
     if (!verifier) return false;
 
-    // ── User-switch detection ───────────────────────────────────────────
-    // Same rationale as in kvStoreSession / kvRestorePasskeySession. If the
-    // IDB-stamped owner differs from the session we're restoring, wipe
-    // stale data BEFORE any path returns success. Without this, the May
-    // 2026 cross-account leak: previous user's items, notes, and trash
-    // entries persisted in IDB across sign-out + sign-in via session
-    // restore, because kvRestoreSession bypassed kvStoreSession entirely.
-    try {
-      const prevHash = await dbGet('settings', '_activeUserHash');
-      if (prevHash && prevHash !== emailHash) {
-        await _wipeStaleUserDataForSwitch(emailHash);
-      } else if (!prevHash) {
-        await dbPut('settings', '_activeUserHash', emailHash);
-      }
-    } catch(e) { console.warn('[kvRestoreSession] user-switch wipe failed (non-fatal):', e.message); }
+    // ── Per-user IDB switch ───────────────────────────────────────────
+    // Same logic as kvStoreSession / kvRestorePasskeySession — name-flip
+    // the active DB to this user's database. This is the path the May
+    // 2026 cross-account leak ran through: session restore bypassed
+    // kvStoreSession, leaving the previous user's data exposed via the
+    // shared `stockroom` IDB. With per-user DBs the switch is just a
+    // name change; the previous user's data stays sealed in its own DB.
+    const prevHash = _kvEmailHash || null;
+    if (prevHash && prevHash !== emailHash) {
+      _resetInMemoryUserState();
+    }
+    _setActiveDbForUser(emailHash);
+    bcPost({ type: 'USER_CHANGED', emailHash });
 
     // Helper to fully restore session once key is found
     const restoreWith = async (key, source) => {
@@ -19506,8 +19558,8 @@ async function _doDeleteAccount() {
     localStorage.removeItem('stockroom_country_set');
     localStorage.removeItem('stockroom_protect_seen');
     try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
-    // Also clear IDB session copy
-    dbPut('settings', 'stockroom_kv_session', null).catch(() => {});
+    // Also clear device-info IDB session copy
+    _deviceInfoSet('stockroom_kv_session', null).catch(() => {});
     kvConnected  = false;
     _kvEmail     = '';
     _kvEmailHash = '';
@@ -19526,11 +19578,11 @@ async function _doDeleteAccount() {
 async function kvSignOut() {
   if (!confirm('Sign out?\n\nYour encrypted data stays safely on the server. Sign back in with your email and passphrase to access it.')) return;
   // Schedule the reload FIRST, before any awaits that could throw. The async
-  // cleanup work below (removeWrappedKey, _wipeStaleUserDataForSwitch, dbPut)
-  // can occasionally reject — if it does, a reload scheduled AFTER the awaits
-  // never runs and the page appears still-signed-in until the user manually
-  // refreshes. By scheduling here first, the reload always fires regardless
-  // of whether the cleanup succeeds.
+  // cleanup work below (removeWrappedKey, dbPut) can occasionally reject —
+  // if it does, a reload scheduled AFTER the awaits never runs and the page
+  // appears still-signed-in until the user manually refreshes. By scheduling
+  // here first, the reload always fires regardless of whether the cleanup
+  // succeeds.
   setTimeout(() => location.reload(), 1500);
   // If MFA was active, record it so _mfaGate enforces it even offline on next login
   if (_mfaEnabled()) {
@@ -19555,25 +19607,21 @@ async function kvSignOut() {
   try { sessionStorage.removeItem('stockroom_kv_session_key'); } catch(e) {}
   // Clear session credentials (but keep permanent setup flags)
   localStorage.removeItem('stockroom_kv_session');
-  // Also clear IDB session copy so the user is fully signed out
-  dbPut('settings', 'stockroom_kv_session', null).catch(() => {});
+  // Also clear the device-info IDB session mirror so the user is fully signed out
+  _deviceInfoSet('stockroom_kv_session', null).catch(() => {});
   localStorage.removeItem('stockroom_seen');
   // Note: keep stockroom_protect_seen and stockroom_country_set — they are permanent
   // one-time setup flags, not session data. Removing them causes the protect/country
   // screens to re-appear on every login, which is wrong.
-  // ── Wipe ALL local user data ─────────────────────────────────────────
-  // Delegate to the shared wipe so sign-out covers exactly the same stores
-  // as the user-switch wipe. Without this, signing out left notes, budget
-  // data, profiles, and tombstone stores in IDB — a cross-account data
-  // leak surfaced as "recently deleted items follow you to a new account"
-  // in May 2026. Pass null so _activeUserHash is NOT re-stamped — we also
-  // clear it explicitly below so the next sign-in stamps fresh.
-  try { await _wipeStaleUserDataForSwitch(null); } catch(e) {}
-  // Clear the active-user stamp so the next sign-in is treated as a fresh
-  // start rather than a "switch from the previous user" (the wipe above
-  // already happened, so we don't need the switch path to wipe again).
-  try { await dbPut('settings', '_activeUserHash', null); } catch(e) {}
-  // Reset in-memory auth state (data state was already reset by the wipe)
+  // ── Flip back to unauth DB + reset in-memory state ───────────────────
+  // Per-user IDB rewrite: this user's data stays in its own DB file, but
+  // we don't want any subsequent dbGet/dbPut to land there. Flip the
+  // active name back to `stockroom_unauth` and reset the in-memory
+  // variables so the UI shows a clean state until the next sign-in.
+  _setActiveDbForSignedOut();
+  _resetInMemoryUserState();
+  bcPost({ type: 'USER_CHANGED', emailHash: null });
+  // Reset in-memory auth state
   kvConnected     = false;
   _kvEmail        = '';
   _kvEmailHash    = '';
@@ -32431,15 +32479,17 @@ function getShoppingPresenceBar() {
 }
 
 async function init() {
-  // ── Restore device ID from IDB before anything else ──────────────────────
+  // ── Restore device ID from device-info IDB before anything else ─────────
   // getOrCreateDeviceId() is synchronous, so the async IDB restore in the IIFE
   // below may not have completed yet. If localStorage was cleared, a new random
   // device ID would be generated, making all IDB setup-flag lookups miss.
   // We await the IDB restore here so the correct device ID is in localStorage
-  // before any setup-flag checks run.
+  // before any setup-flag checks run. Note: this reads from the device-info
+  // DB, which is shared across all users on this browser — the active per-
+  // user DB hasn't been chosen yet at this point.
   if (!localStorage.getItem('stockroom_device_id')) {
     try {
-      const savedId = await dbGet('settings', 'stockroom_device_id');
+      const savedId = await _deviceInfoGet('stockroom_device_id');
       if (savedId) {
         localStorage.setItem('stockroom_device_id', savedId);
         sessionStorage.setItem('stockroom_device_id_session', savedId);
@@ -32447,16 +32497,55 @@ async function init() {
     } catch(e) {}
   }
 
-  // ── Restore kv_session from IDB if localStorage was cleared ──────────────
-  // stockroom_kv_session is the gating key for kvRestoreSession(). We also
-  // persist it to IDB so a cookie/localStorage clear doesn't force a re-login.
+  // ── Restore kv_session from device-info IDB if localStorage was cleared ─
+  // stockroom_kv_session is the gating key for kvRestoreSession() AND the
+  // source for the emailHash peek below. We persist it in the device-info
+  // DB so a cookie/localStorage clear doesn't force a re-login.
   if (!localStorage.getItem('stockroom_kv_session')) {
     try {
-      const savedSession = await dbGet('settings', 'stockroom_kv_session');
+      const savedSession = await _deviceInfoGet('stockroom_kv_session');
       if (savedSession) {
         localStorage.setItem('stockroom_kv_session', savedSession);
       }
     } catch(e) {}
+  }
+
+  // ── CRITICAL: set active per-user DB BEFORE loadData ─────────────────────
+  // Each signed-in user has their own IDB database. If we call loadData()
+  // while _activeDbName is still 'stockroom_unauth', the first read goes to
+  // the wrong database — at best it returns empty data and the UI flashes
+  // an empty state; at worst it would write fresh empties back over the
+  // unauth DB on a sync race. Peek the kv_session here, extract emailHash,
+  // and flip the active DB name now so every subsequent dbGet/dbPut lands
+  // in the right place. Demo mode (set by handleURLAction before init) is
+  // routed to its own DB and wiped on entry.
+  if (window._demoMode) {
+    _setActiveDbForDemo();
+  } else {
+    try {
+      const raw = localStorage.getItem('stockroom_kv_session');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.emailHash) {
+          _setActiveDbForUser(parsed.emailHash);
+        }
+      }
+    } catch(e) { console.warn('[init] kv_session peek failed:', e && e.message); }
+  }
+
+  // ── One-time legacy `stockroom` DB cleanup ───────────────────────────────
+  // Pre-per-user-IDB versions of the app wrote everything into a single
+  // shared IDB named `stockroom`. That DB now holds stale data for whichever
+  // user last touched it before the migration. Delete it once, gated by a
+  // localStorage flag so it only runs on the first post-deploy load. We
+  // don't migrate — Pete has backups and is the only real user; sync from
+  // the server repopulates the per-user DB on first authed load.
+  if (!localStorage.getItem('stockroom_legacy_db_deleted_v1')) {
+    try {
+      indexedDB.deleteDatabase('stockroom');
+      localStorage.setItem('stockroom_legacy_db_deleted_v1', '1');
+      console.log('[init] Deleted legacy `stockroom` IDB (one-time migration)');
+    } catch(e) { console.warn('[init] legacy DB delete failed (non-fatal):', e && e.message); }
   }
 
   // Load all data from IndexedDB (migrates from localStorage on first run)
