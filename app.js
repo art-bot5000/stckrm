@@ -16819,6 +16819,13 @@ async function _enterStockroom() {
   const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
   if (stockTab) showView('stock', stockTab);
   scheduleRender(...RENDER_REGIONS);
+  // Cross-device share continuity: on a brand-new device the boot-time
+  // loadShareState() ran before _kvEmailHash was set, so no server check
+  // happened. Now that auth is in place, ask the server whether this
+  // user is a member of any share. Non-blocking with respect to the
+  // sync below — if a membership exists, kvSyncNow will pick up the
+  // resulting _shareState and pull shared data.
+  try { await hydrateMembershipsFromServer(); } catch(e) { console.warn('[share] membership hydration in _enterStockroom failed:', e.message); }
   try { await kvSyncNow(true); } finally { hideDataLoadingOverlay(); }
   // Show install banner only after server sync — settings._installDismissed is
   // now authoritative regardless of whether IDB/cookies were cleared.
@@ -30468,7 +30475,14 @@ function showLockBanner(section) {
 async function loadShareState() {
   try {
     const raw = localStorage.getItem('stockroom_share_state');
-    if (!raw) return;
+    if (!raw) {
+      // No local cache — on a fresh device the user might still be a
+      // member of a share on the server side. Ask the server before
+      // giving up. Bails fast if auth isn't ready yet (in which case
+      // _enterStockroom will retry post-login).
+      await hydrateMembershipsFromServer();
+      return;
+    }
     const stored = JSON.parse(raw);
     // Don't load share state if this user is the owner of this share
     if (stored.ownerEmailHash && _kvEmailHash && stored.ownerEmailHash === _kvEmailHash) {
@@ -30497,6 +30511,160 @@ function saveShareState() {
       localStorage.removeItem('stockroom_share_state');
     }
   } catch(e) {}
+}
+
+// Ask the server which shares this user is a MEMBER of (guest-side) and
+// restore _shareState if a membership exists. This is the cross-device
+// continuity path: a guest who joined a share on device A logs into
+// device B with no localStorage cache — without this call, their share
+// would appear lost. The /share/memberships endpoint exists on the
+// backend specifically for this and is keyed on emailHash, which is
+// stable across devices.
+//
+// Safe to call multiple times: bails immediately when (a) no auth is
+// present, (b) the user already has a share state hydrated, or (c) the
+// server returns no memberships.
+//
+// Key recovery is non-blocking: we try (1) local cache, then (2) a
+// single server fetch of the wrapped key, then (3) we file a rewrap
+// request and return. We do NOT block on polling for up to 30s the way
+// the invite-link join flow does — that would hang every fresh-device
+// login. If the wrapped key isn't immediately available, _shareState
+// is still set; the next kvSyncNow will see the share, log a warning
+// about the missing key, and the rewrap request stays queued for the
+// owner's next sync to fulfil. The user can then re-sync (or just
+// reload the app) and the key arrives.
+async function hydrateMembershipsFromServer() {
+  if (!WORKER_URL || !_kvEmailHash) return false;
+  if (!_kvVerifier && !_kvSessionToken) return false;
+  if (_shareState) return false; // already restored from localStorage or invite
+  try {
+    const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+    const res = await postKV(`${WORKER_URL}/share/memberships`, { emailHash: _kvEmailHash, ...authFields });
+    if (!res.ok) {
+      console.warn('[share] /share/memberships returned', res.status);
+      return false;
+    }
+    const data = (await _readJsonSafe(res)) || {};
+    const memberships = Array.isArray(data.memberships) ? data.memberships : [];
+    if (!memberships.length) return false;
+
+    // Pick the most-recently joined membership when there are several.
+    // Current client model is single-active-share; multi-membership UX
+    // is a future iteration.
+    memberships.sort((a, b) => {
+      const ja = a.joinedAt ? Date.parse(a.joinedAt) : 0;
+      const jb = b.joinedAt ? Date.parse(b.joinedAt) : 0;
+      return jb - ja;
+    });
+    if (memberships.length > 1) {
+      console.log('[share] multiple memberships found; using most recent:', memberships.map(m => m.code).join(', '));
+    }
+    const pick = memberships[0];
+
+    // Build _shareState from the membership shape. The server strips
+    // the members list for privacy; everything else matches /share/join.
+    _shareState = { ...pick };
+    saveShareState();
+
+    // Step 1 — local cache. Populated on cases where localStorage was
+    // only partially cleared (share_state evicted but share_keys survived).
+    try {
+      const localKeys = await _getShareKeys();
+      const keyB64 = localKeys[pick.code];
+      if (keyB64) {
+        const keyBytes = Uint8Array.from(atob(keyB64), c => c.charCodeAt(0));
+        _shareKey = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+        console.log('[share] hydrated membership', pick.code, '— key restored from local cache');
+        return true;
+      }
+    } catch(e) { console.warn('[share] local key cache check failed:', e.message); }
+
+    // Step 2 — single server attempt. The owner may have already wrapped
+    // the share key for this guest's emailHash on a previous occasion
+    // (e.g. guest used this email on another device that's since been
+    // wiped). One fetch, no polling.
+    try {
+      const guestPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
+      if (guestPrivKey) {
+        const ecdhRes = await postKV(`${WORKER_URL}/share/ecdh-key/get`, {
+          guestEmailHash: _kvEmailHash, ...authFields, code: pick.code,
+        });
+        if (ecdhRes.ok) {
+          const { wrappedKey, ownerPublicKeyJwk } = (await _readJsonSafe(ecdhRes)) || {};
+          if (wrappedKey && ownerPublicKeyJwk) {
+            try {
+              const shareKey = await ecdhUnwrapShareKey(guestPrivKey, ownerPublicKeyJwk, wrappedKey);
+              _shareKey = shareKey;
+              const shareKeyB64 = await exportShareKey(shareKey);
+              try {
+                const stored = await _getShareKeys();
+                stored[pick.code] = shareKeyB64;
+                await _setShareKeys(stored);
+              } catch(e) {}
+              console.log('[share] hydrated membership', pick.code, '— key recovered from server');
+              toast(`Restored access to ${pick.ownerName || 'shared'} household ✓`);
+              return true;
+            } catch(unwrapErr) {
+              // Stale wrap (wrapped against a different pubkey we don't have anymore).
+              // Falls through to step 3.
+              console.warn('[share] unwrap failed on hydration, requesting rewrap:', unwrapErr?.name || unwrapErr?.message);
+            }
+          }
+        }
+      }
+    } catch(e) { console.warn('[share] server key fetch during hydration failed:', e.message); }
+
+    // Step 3 — fire-and-forget rewrap request, then return. The owner's
+    // next sync (cron or interactive) fulfils it; the next time this
+    // guest's app syncs, step 2 will succeed.
+    try {
+      await postKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, {
+        guestEmailHash: _kvEmailHash, ...authFields, code: pick.code,
+      });
+      console.log('[share] queued rewrap request for', pick.code, '— share will activate when owner is next online');
+    } catch(e) { console.warn('[share] could not queue rewrap request:', e.message); }
+    toast(`Restoring shared household — waiting for ${pick.ownerName || 'owner'} to be online…`);
+
+    // Schedule a single deferred retry. If the owner is actively using
+    // STOCKROOM their app fulfils the rewrap within a few seconds; this
+    // retry then picks up the wrapped key and finishes the hand-off
+    // without making the user reload. If the owner is offline the retry
+    // is harmless — it just times out the same way the initial fetch
+    // did, and the share stays in waiting state for the next reload.
+    setTimeout(async () => {
+      if (_shareKey) return; // already recovered by some other path
+      if (!_shareState || _shareState.code !== pick.code) return; // user moved on
+      try {
+        const guestPrivKey2 = await loadEcdhPrivateKey(_kvEmailHash);
+        if (!guestPrivKey2) return;
+        const ecdhRes2 = await postKV(`${WORKER_URL}/share/ecdh-key/get`, {
+          guestEmailHash: _kvEmailHash, ...authFields, code: pick.code,
+        });
+        if (!ecdhRes2.ok) return;
+        const { wrappedKey, ownerPublicKeyJwk } = (await _readJsonSafe(ecdhRes2)) || {};
+        if (!wrappedKey || !ownerPublicKeyJwk) return;
+        const shareKey = await ecdhUnwrapShareKey(guestPrivKey2, ownerPublicKeyJwk, wrappedKey);
+        _shareKey = shareKey;
+        const shareKeyB64 = await exportShareKey(shareKey);
+        try {
+          const stored = await _getShareKeys();
+          stored[pick.code] = shareKeyB64;
+          await _setShareKeys(stored);
+        } catch(e) {}
+        console.log('[share] deferred retry succeeded — share', pick.code, 'activated');
+        toast(`Restored access to ${pick.ownerName || 'shared'} household ✓`);
+        // Pull shared data now that we have the key
+        try { await kvSyncNow(true); } catch(_) {}
+        try { scheduleRender(...RENDER_REGIONS); } catch(_) {}
+      } catch(_) { /* harmless — user can reload to retry */ }
+    }, 10000);
+
+    return true;
+  } catch(e) {
+    console.warn('[share] hydrateMembershipsFromServer failed:', e.message);
+    return false;
+  }
 }
 
 // Generate a new AES-GCM share key — used when creating a share link
