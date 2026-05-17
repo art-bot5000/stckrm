@@ -5805,6 +5805,10 @@ async function toggleNotificationPin(id) {
   }
   n.pinned = !n.pinned;
   await saveNotificationsLocal();
+  // The merge ORs pinned flags across devices, so a local unpin can't
+  // override a remote pin — but a local pin will reach other devices.
+  // Worth syncing in any case so pin state is at least consistent post-pull.
+  _syncQueue.enqueue('Syncing notifications…');
   _renderNotificationPanel();
 }
 
@@ -5818,6 +5822,10 @@ async function dismissNotification(id) {
   // If unread, mark read too — dismiss is a stronger acknowledgement
   if (!n.readAt) n.readAt = n.dismissedAt;
   await saveNotificationsLocal();
+  // Push the dismissal up so other devices stop showing this notification.
+  // The remote merge carries dismissedAt with earliest-wins semantics
+  // (see kvSyncNow notifications branch), so the dismissal is sticky.
+  _syncQueue.enqueue('Syncing notifications…');
   _renderNotificationBellBadge();
   _renderNotificationPanel();
 }
@@ -5828,6 +5836,7 @@ async function markAllNotificationsRead() {
   notifications.forEach(n => { if (!n.readAt) { n.readAt = now; changed = true; } });
   if (changed) {
     await saveNotificationsLocal();
+    _syncQueue.enqueue('Syncing notifications…');
     _renderNotificationBellBadge();
     _renderNotificationPanel();
   }
@@ -5839,6 +5848,7 @@ async function clearNotificationHistory() {
   notifications = notifications.filter(n => n.pinned);
   if (notifications.length !== before) {
     await saveNotificationsLocal();
+    _syncQueue.enqueue('Syncing notifications…');
     _renderNotificationBellBadge();
     _renderNotificationPanel();
     toast(`Cleared ${before - notifications.length} notification${before - notifications.length !== 1 ? 's' : ''}`);
@@ -14110,6 +14120,24 @@ function enterStockSelectMode() { enterBulkSelectMode('stock'); }
 // Old name kept for the onCardClick interceptor — see comment there.
 function exitStockSelectMode()  { exitBulkSelectMode(); }
 
+// Tap-to-toggle wrapper used by every section's Manage button. First tap
+// puts the section into bulk-select mode; a second tap on the same button
+// exits it. Without this users had no obvious way to back out short of
+// hitting Cancel in the floating action bar — and several reported that
+// the Manage button "didn't seem to do anything" when they tapped it a
+// second time. Defers to the existing enter/exit helpers so per-section
+// rerender logic and permission gating stay in one place.
+function toggleBulkSelectMode(sectionKey) {
+  if (isBulkSelectMode(sectionKey)) {
+    exitBulkSelectMode();
+  } else {
+    enterBulkSelectMode(sectionKey);
+  }
+}
+
+// Stockroom variant — mirrors enterStockSelectMode for the toolbar button.
+function toggleStockSelectMode() { toggleBulkSelectMode('stock'); }
+
 
 
 async function archiveItem(id) {
@@ -19389,10 +19417,11 @@ async function kvSyncNow(silent = false) {
         }
       }
       // ── Notifications merge ──
-      // Union by id, preferring earliest readAt (read is sticky) and OR'd
-      // pinned flag. Cap enforcement after merge keeps total ≤50 and pins
-      // ≤3, demoting oldest pins if a merge from another device would
-      // otherwise exceed the limit.
+      // Union by id, preferring earliest readAt (read is sticky), earliest
+      // dismissedAt (dismissal is sticky too — so dismissing on one device
+      // propagates to others), and OR'd pinned flag. Cap enforcement after
+      // merge keeps total ≤50 and pins ≤3, demoting oldest pins if a merge
+      // from another device would otherwise exceed the limit.
       // Only own-account pulls carry notifications — share blobs never do,
       // so this branch only runs for the owner pulling their own data.
       if (Array.isArray(remote.notifications)) {
@@ -19405,6 +19434,13 @@ async function kvSyncNow(silent = false) {
           const merged = { ...ln };
           if (rn.readAt && (!ln.readAt || new Date(rn.readAt) < new Date(ln.readAt))) {
             merged.readAt = rn.readAt;
+          }
+          // dismissedAt: earliest wins, same sticky semantics as readAt.
+          // Once a notification is dismissed on any device, every device
+          // converges on the earliest dismissal timestamp and the entry
+          // disappears from the active panel everywhere.
+          if (rn.dismissedAt && (!ln.dismissedAt || new Date(rn.dismissedAt) < new Date(ln.dismissedAt))) {
+            merged.dismissedAt = rn.dismissedAt;
           }
           merged.pinned = !!(ln.pinned || rn.pinned);
           byId.set(rn.id, merged);

@@ -603,7 +603,7 @@
     <div style="display:flex;justify-content:space-between;gap:10px;margin-top:6px;flex-wrap:wrap">
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" onclick="openBudgetCategoryEditor()"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Category</button>
-        <button class="btn btn-ghost btn-sm" onclick="enterBulkSelectMode('category')" title="Manage categories — multi-select for share / archive"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Manage</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleBulkSelectMode('category')" title="Manage categories — multi-select for share / archive"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Manage</button>
       </div>
       <button class="btn btn-ghost" onclick="closeModal('budget-cat-modal')">Done</button>
     </div>
@@ -1030,9 +1030,9 @@
      position: fixed at z-index 301, sitting above the wizard (z-index 300). -->
 <header id="wizard-header" aria-hidden="false">
   <div class="wb-inner">
-    <a class="wb-brand" href="https://stckrm.com" aria-label="STOCKROOM home">
+    <a class="wb-brand" href="https://stckrm.com" aria-label="STCKRM home">
       <img src="/logo.png" alt="" class="brand-logo" width="46" height="34">
-      <span>STOCKROOM</span>
+      <span>STCKRM</span>
     </a>
     <div class="wb-actions">
       <a class="btn btn-primary" href="/?action=demo">
@@ -1542,7 +1542,7 @@
   <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
     <div style="cursor:pointer;flex-shrink:0;display:flex;align-items:center;gap:8px" onclick="openProfilePicker()" title="Switch or add household">
       <img src="/logo.png" alt="" class="brand-logo brand-logo-mobile" width="33" height="24">
-      <div class="logo">STOCKROOM <span id="profile-label" class="profile-label-subtitle">/ HOUSEHOLD TRACKER</span></div>
+      <div class="logo">STCKRM <span id="profile-label" class="profile-label-subtitle">/ HOUSEHOLD TRACKER</span></div>
     </div>
     <div id="header-greeting" style="font-size:12px;color:var(--muted);display:none;align-items:center;gap:4px"></div>
   </div>
@@ -1684,7 +1684,7 @@
   <div class="app-nav-logo">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <img src="/logo.png" alt="" class="brand-logo brand-logo-sidebar" width="29" height="21" onclick="openProfilePicker()" style="cursor:pointer">
-      <div class="logo" style="font-size:11px;letter-spacing:3px;cursor:pointer;flex-shrink:0" onclick="openProfilePicker()">STOCKROOM</div>
+      <div class="logo" style="font-size:14px;letter-spacing:3px;cursor:pointer;flex-shrink:0" onclick="openProfilePicker()">STCKRM</div>
       <span id="app-nav-profile" style="font-size:12px;color:var(--muted);font-family:var(--sans);cursor:pointer;white-space:nowrap" onclick="openProfilePicker()"></span>
     </div>
   </div>
@@ -1912,7 +1912,7 @@
            Archive / Share / Cancel. Styled identically to Filters and
            Sort for visual consistency in this toolbar row. -->
       <div id="stock-select-wrap">
-        <button id="stock-select-btn" onclick="enterStockSelectMode()"
+        <button id="stock-select-btn" onclick="toggleStockSelectMode()"
           title="Manage items — multi-select for share / archive / delete">
           <svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> <span class="manage-label">Manage</span>
         </button>
@@ -1976,7 +1976,7 @@
         <p style="font-size:12px;color:var(--muted);margin-top:3px">Set reminders for Stockroom items or anything else</p>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn btn-ghost btn-sm" onclick="enterBulkSelectMode('reminder')" title="Manage reminders — multi-select for share / delete"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Manage</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleBulkSelectMode('reminder')" title="Manage reminders — multi-select for share / delete"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Manage</button>
         <button class="btn btn-primary btn-sm" onclick="openAddReminderModal()"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Reminder</button>
       </div>
     </div>
@@ -2269,7 +2269,7 @@
            the section. Selecting categories from here is the same as
            selecting from the Manage Categories screen — same set. -->
       <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
-        <button class="btn btn-ghost btn-sm" onclick="enterBulkSelectMode('category')" title="Manage categories — multi-select for share / archive"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Manage</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleBulkSelectMode('category')" title="Manage categories — multi-select for share / archive"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Manage</button>
       </div>
 
       <!-- Tile row -->
@@ -3069,7 +3069,7 @@
       <!-- Bulk-select entry (Pass 2b) — only visible in the picker view
            when there are 2+ lists. renderGrocery toggles its display. -->
       <span id="grocery-select-slot" style="display:none;align-items:center;gap:8px">
-        <button class="btn btn-ghost btn-sm" onclick="enterBulkSelectMode('grocery')" title="Manage lists — multi-select for share / delete" style="flex-shrink:0"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Manage</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleBulkSelectMode('grocery')" title="Manage lists — multi-select for share / delete" style="flex-shrink:0"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Manage</button>
       </span>
       <button class="btn btn-ghost btn-sm" onclick="openQuickList()" title="Quick add items"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg> Quick List</button>
       <button class="btn btn-ghost btn-sm" onclick="openAddGroceryList()" title="Add new shopping list"><svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> Add List</button>

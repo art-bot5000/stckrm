@@ -97,7 +97,7 @@
     justify-content: space-between; position: sticky; top: 0; z-index: 100;
     box-shadow: 0 1px 0 rgba(255,255,255,0.04), 0 4px 20px rgba(0,0,0,0.3);
   }
-  .logo { font-family: var(--mono); font-size: 13px; letter-spacing: 3px; color: var(--accent); font-weight: 700; }
+  .logo { font-family: var(--mono); font-size: 16px; letter-spacing: 3px; color: var(--accent); font-weight: 700; }
   .logo span { color: var(--muted); font-weight: 400; }
 
   /* ── BRAND LOGO IMAGE ──
@@ -151,11 +151,11 @@
   }
   .wb-brand {
     display: inline-flex; align-items: center; gap: 10px;
-    font-family: var(--mono); font-weight: 700; font-size: 14px;
+    font-family: var(--mono); font-weight: 700; font-size: 17px;
     letter-spacing: 3px; color: var(--accent);
     text-decoration: none;
   }
-  .wb-inner-footer .wb-brand { font-size: 12px; }
+  .wb-inner-footer .wb-brand { font-size: 14px; }
   .wb-actions {
     display: flex; align-items: center; gap: 10px;
   }
@@ -186,7 +186,7 @@
     .wb-inner { padding: 12px 14px; gap: 8px; }
     .wb-actions { gap: 6px; }
     .wb-actions .btn { padding: 9px 12px; font-size: 13px; }
-    .wb-brand { font-size: 12px; letter-spacing: 2px; }
+    .wb-brand { font-size: 14px; letter-spacing: 2px; }
     .wb-inner-footer { padding: 14px 14px; gap: 10px; justify-content: center; text-align: center; }
     .wb-footer-links { gap: 12px; }
     body.wizard-active #wizard {
@@ -625,7 +625,7 @@
 
     /* ── HEADER ── */
     #app-header { padding: 0 12px; gap: 8px; }
-    .logo { font-size: 12px; letter-spacing: 2px; }
+    .logo { font-size: 14px; letter-spacing: 2px; }
     .logo span { display: none; } /* hide "/ HOUSEHOLD TRACKER" on small screens */
     #sync-label { display: none; } /* keep dot, hide text label */
     .sync-pill { padding: 5px 7px; margin-left: 2px; }
@@ -4427,10 +4427,10 @@ body.bulk-select-mode-stock #view-stock #stock-select-btn {
    the Budget Spend section's Manage Categories button. Targeting the
    onclick attribute lets us light up only the specific Manage entry-point
    button, not every ghost button in the section. */
-body.bulk-select-mode-grocery #view-grocery .btn.btn-ghost[onclick*="enterBulkSelectMode('grocery')"],
-body.bulk-select-mode-reminder #view-reminders .btn.btn-ghost[onclick*="enterBulkSelectMode('reminder')"],
-body.bulk-select-mode-category #view-budget .btn.btn-ghost[onclick*="enterBulkSelectMode('category')"],
-body.bulk-select-mode-category #budget-cat-modal .btn.btn-ghost[onclick*="enterBulkSelectMode('category')"] {
+body.bulk-select-mode-grocery #view-grocery .btn.btn-ghost[onclick*="toggleBulkSelectMode('grocery')"],
+body.bulk-select-mode-reminder #view-reminders .btn.btn-ghost[onclick*="toggleBulkSelectMode('reminder')"],
+body.bulk-select-mode-category #view-budget .btn.btn-ghost[onclick*="toggleBulkSelectMode('category')"],
+body.bulk-select-mode-category #budget-cat-modal .btn.btn-ghost[onclick*="toggleBulkSelectMode('category')"] {
   border-color: var(--accent) !important;
   color: var(--accent) !important;
   background: rgba(232,168,56,0.08) !important;
