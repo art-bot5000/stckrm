@@ -4396,13 +4396,47 @@ body.bulk-select-mode #fab-btn { display: none !important; }
   gap: 6px;
   padding: 8px 12px;
   background: var(--surface);
-  border: 1px solid var(--border);
+  /* Accent (amber/orange) outline + glow so it's immediately obvious that
+     manage / multi-select mode is active. Matches the same accent applied
+     to the section's Manage button below. */
+  border: 2px solid var(--accent);
   border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 4px rgba(232,168,56,0.12);
   backdrop-filter: blur(6px);
   flex-wrap: wrap;
   justify-content: center;
 }
+/* Manage-button "active" highlight — the trigger button that put us into
+   bulk-select mode should match the orange outline of the action bar so
+   the user can see at a glance that the mode is engaged. We can't easily
+   re-target the exact button that was clicked, so instead we light up the
+   Manage button(s) inside whichever section is currently in select mode.
+   Each section has a clear scoping selector (the `.bulk-select-mode-<key>`
+   body class together with the section's view container or a button id). */
+
+/* Stockroom: dedicated #stock-select-btn lives inside #view-stock. */
+body.bulk-select-mode-stock #view-stock #stock-select-btn {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(232,168,56,0.08);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Generic .btn.btn-ghost.btn-sm Manage buttons inside the relevant view
+   containers — covers Groceries (manage / share), Reminders (manage), and
+   the Budget Spend section's Manage Categories button. Targeting the
+   onclick attribute lets us light up only the specific Manage entry-point
+   button, not every ghost button in the section. */
+body.bulk-select-mode-grocery #view-grocery .btn.btn-ghost[onclick*="enterBulkSelectMode('grocery')"],
+body.bulk-select-mode-reminder #view-reminders .btn.btn-ghost[onclick*="enterBulkSelectMode('reminder')"],
+body.bulk-select-mode-category #view-budget .btn.btn-ghost[onclick*="enterBulkSelectMode('category')"],
+body.bulk-select-mode-category #budget-cat-modal .btn.btn-ghost[onclick*="enterBulkSelectMode('category')"] {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+  background: rgba(232,168,56,0.08) !important;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
 .bulk-select-bar-count {
   font-size: 12px;
   font-family: var(--mono);

@@ -27139,8 +27139,18 @@ let groceryDepts    = [];
 let grocerySort     = 'dept'; // 'dept' | 'alpha'
 let groceryEditMode    = false;  // unlock/lock toggle
 let groceryHideChecked = false;  // hide ticked items toggle
+// In stockcheck-shop phase, items that weren't marked as needed render as
+// `unneeded-suppressed`. By default we hide them entirely during shopping —
+// the user has already done their stock check, so everything off the buy
+// list is noise. A toggle in the phase bar lets them unhide if they want
+// to grab something on the fly.
+let groceryHideUnneeded = true;
 let groceryLists    = [];    // [{ id, name, store, createdAt, updatedAt }]
 try { groceryHideChecked = localStorage.getItem('stockroom_hide_checked') === '1'; } catch(e) {}
+try {
+  const _stored = localStorage.getItem('stockroom_hide_unneeded');
+  if (_stored !== null) groceryHideUnneeded = _stored === '1';
+} catch(e) {}
 let activeGroceryListId = 'default'; // currently viewed list
 let grocerySelected   = new Set(); // IDs selected in edit mode multi-select
 
@@ -27351,6 +27361,16 @@ async function backToStockCheck() {
   renderGrocery();
 }
 
+// Toggle whether items NOT on the buy list are hidden while shopping. Only
+// meaningful in stockcheck-shop phase, but safe to call any time — the
+// render simply ignores the flag outside that phase. Persisted so the
+// user's preference sticks across page reloads.
+function toggleHideUnneeded() {
+  groceryHideUnneeded = !groceryHideUnneeded;
+  try { localStorage.setItem('stockroom_hide_unneeded', groceryHideUnneeded ? '1' : '0'); } catch(e) {}
+  renderGrocery();
+}
+
 async function finishGroceryShopping() {
   const list = _activeGroceryList();
   if (!list || list.mode !== 'stockcheck') return;
@@ -27421,12 +27441,19 @@ function _buildGroceryPhaseBarHTML(phase, listItems) {
   const needed = listItems.filter(_itemIsNeeded);
   const remaining = needed.filter(i => !i.checked).length;
   const total     = needed.length;
+  const _unneededCount = listItems.filter(i => !_itemIsNeeded(i) && !i.checked).length;
+  // Hide/show-unneeded toggle — only render the button when there's actually
+  // something to hide (otherwise it's just clutter).
+  const _toggleBtn = _unneededCount > 0
+    ? `<button class="btn btn-ghost btn-sm" onclick="toggleHideUnneeded()" title="${groceryHideUnneeded ? `Show ${_unneededCount} unneeded item${_unneededCount===1?'':'s'}` : 'Hide items not on the buy list'}" style="${groceryHideUnneeded ? '' : 'color:var(--accent);border-color:rgba(232,168,56,0.4);background:rgba(232,168,56,0.08)'}"><svg class="icon" aria-hidden="true"><use href="#${groceryHideUnneeded ? 'i-eye' : 'i-eye-off'}"></use></svg></button>`
+    : '';
   return `
     <div class="grocery-phase-info">
       <div class="grocery-phase-title" style="color:var(--ok)"><svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Shopping</div>
       <div class="grocery-phase-meta">${total - remaining} of ${total} ticked off${remaining ? ` · ${remaining} to go` : ''}</div>
     </div>
     <div style="display:flex;gap:6px;flex-shrink:0">
+      ${_toggleBtn}
       <button class="btn btn-ghost btn-sm" onclick="backToStockCheck()" title="Back to stock check"><svg class="icon" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button>
       <button class="btn btn-primary btn-sm" onclick="finishGroceryShopping()">Done</button>
     </div>`;
@@ -28647,6 +28674,14 @@ function renderGrocery() {
   }
 
   let filtered = listItems.filter(i => !query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query));
+  // In stockcheck-shop phase, by default drop items that weren't marked as
+  // needed during stock check — the user has already decided what they're
+  // buying; the rest is noise. A phase-bar toggle (groceryHideUnneeded)
+  // lets them unhide if they want to grab something on the fly.
+  const _inShopPhaseForFilter = _mode === 'stockcheck' && _phase === 'shop';
+  if (_inShopPhaseForFilter && groceryHideUnneeded && !groceryEditMode) {
+    filtered = filtered.filter(i => _itemIsNeeded(i));
+  }
   const unchecked = filtered.filter(i => !i.checked);
   // If hideChecked: hide checked items from main render (they can still be cleared)
   const checked   = groceryHideChecked ? [] : filtered.filter(i => i.checked);
@@ -28746,7 +28781,13 @@ function renderGrocery() {
   if (grocerySort === 'dept') {
     // Use manual order within each department group
     const ordered = getGroceryItemsInOrder();
-    const filteredOrdered = ordered.filter(i => !query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query));
+    let filteredOrdered = ordered.filter(i => !query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query));
+    // Mirror the shop-phase unneeded filter applied above to `filtered`.
+    // The dept view doesn't read from `filtered` because it needs to keep
+    // checked items per-dept rather than partition them.
+    if (_inShopPhaseForFilter && groceryHideUnneeded && !groceryEditMode) {
+      filteredOrdered = filteredOrdered.filter(i => _itemIsNeeded(i));
+    }
 
     // Build dept map including both checked and unchecked
     const deptMap = {};
@@ -28802,7 +28843,11 @@ function renderGrocery() {
     });
   } else {
     // Alpha view — sort alphabetically but preserve manual sub-order within same letter
-    const ordered = getGroceryItemsInOrder().filter(i => !i.checked && (!query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query)));
+    let ordered = getGroceryItemsInOrder().filter(i => !i.checked && (!query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query)));
+    // Mirror the shop-phase unneeded filter from the dept view above.
+    if (_inShopPhaseForFilter && groceryHideUnneeded && !groceryEditMode) {
+      ordered = ordered.filter(i => _itemIsNeeded(i));
+    }
     const sorted  = [...ordered].sort((a,b) => a.name.localeCompare(b.name));
     html += sorted.map(item => groceryItemHTML(item)).join('');
   }
@@ -29927,7 +29972,12 @@ function groceryItemHTML(item) {
     role="button" tabindex="0"
     onclick="tapGroceryItem('${item.id}')"
     onkeydown="if(event.key==='Enter'||event.key===' ')tapGroceryItem('${item.id}')"
-    style="cursor:pointer;user-select:none">
+    ontouchstart="onGroceryRowTouchStart(event,'${item.id}')"
+    ontouchmove="onGroceryRowTouchMove(event,'${item.id}')"
+    ontouchend="onGroceryRowTouchEnd(event,'${item.id}')"
+    ontouchcancel="onGroceryRowTouchEnd(event,'${item.id}')"
+    oncontextmenu="onGroceryRowContextMenu(event,'${item.id}')"
+    style="cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none">
     <div class="grocery-item-info">
       <div class="grocery-item-name">${esc(item.name)}</div>
       ${meta ? `<div class="grocery-item-meta">${esc(meta)}</div>` : ''}
@@ -29955,7 +30005,86 @@ function groceryQtyStepperHTML(item) {
   </div>`;
 }
 
+// ── Grocery row long-press → open editor ─────────────────────────
+// State keyed by item id. Independent of the stockroom card long-press
+// state (_cardActionState) so the two systems can't collide. Stores the
+// long-press timer, the start coords for tolerance checking, whether
+// the long-press has already fired, and a "suppressClick" flag so the
+// synthetic onclick that follows a touchend doesn't also fire
+// tapGroceryItem.
+const _groceryRowState = { by: {} };
+const GROCERY_LONG_PRESS_MS        = 500;
+const GROCERY_LONG_PRESS_TOLERANCE = 8; // px
+
+function onGroceryRowTouchStart(event, id) {
+  // Don't engage long-press inside edit mode — that view has its own
+  // inline editors and the long-press behaviour would conflict.
+  if (groceryEditMode) return;
+  const st = _groceryRowState.by[id] || (_groceryRowState.by[id] = {});
+  st.longPressFired = false;
+  const t = event.touches && event.touches[0];
+  if (!t) return;
+  st.startX = t.clientX;
+  st.startY = t.clientY;
+  clearTimeout(st.longPressTimer);
+  st.longPressTimer = setTimeout(() => {
+    st.longPressFired = true;
+    st.suppressClick  = true;
+    // Blur whatever has focus so the on-screen keyboard dismisses
+    // before the editor modal opens. Without this, a stale focus on
+    // search input / sort dropdown can leave the keyboard up,
+    // covering the bottom of the modal on mobile.
+    if (document.activeElement && typeof document.activeElement.blur === 'function') {
+      try { document.activeElement.blur(); } catch(_) {}
+    }
+    if (navigator.vibrate) { try { navigator.vibrate(20); } catch(_) {} }
+    openEditGroceryItem(id);
+  }, GROCERY_LONG_PRESS_MS);
+}
+
+function onGroceryRowTouchMove(event, id) {
+  const st = _groceryRowState.by[id];
+  if (!st || !st.longPressTimer) return;
+  const t = event.touches && event.touches[0];
+  if (!t) return;
+  const dx = Math.abs(t.clientX - (st.startX || 0));
+  const dy = Math.abs(t.clientY - (st.startY || 0));
+  if (dx > GROCERY_LONG_PRESS_TOLERANCE || dy > GROCERY_LONG_PRESS_TOLERANCE) {
+    clearTimeout(st.longPressTimer);
+    st.longPressTimer = null;
+  }
+}
+
+function onGroceryRowTouchEnd(event, id) {
+  const st = _groceryRowState.by[id];
+  if (!st) return;
+  clearTimeout(st.longPressTimer);
+  st.longPressTimer = null;
+  // If the long-press fired, swallow the click that follows touchend so
+  // tapGroceryItem doesn't also run. Reset the flag a moment later so
+  // future taps work normally.
+  if (st.longPressFired) {
+    try { event.preventDefault(); } catch(_) {}
+    setTimeout(() => { st.suppressClick = false; }, 50);
+  }
+}
+
+// Desktop / mouse: right-click opens the editor. Cleaner than the old
+// context menu (which only offered "Edit item" → editor as one of three
+// choices). Touch users get the same destination via long-press above.
+function onGroceryRowContextMenu(event, id) {
+  if (groceryEditMode) return;
+  try { event.preventDefault(); } catch(_) {}
+  if (document.activeElement && typeof document.activeElement.blur === 'function') {
+    try { document.activeElement.blur(); } catch(_) {}
+  }
+  openEditGroceryItem(id);
+}
+
 async function tapGroceryItem(id) {
+  // Swallow the click if a long-press just opened the editor on this row.
+  const _st = _groceryRowState.by[id];
+  if (_st && _st.suppressClick) { _st.suppressClick = false; return; }
   const item = groceryItems.find(i => i.id === id);
   if (!item) return;
 
