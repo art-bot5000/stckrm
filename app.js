@@ -9498,7 +9498,11 @@ function buildTagFilterBar() {
   const defined = tags.map((t,i) => ({t,i})).filter(({t}) => t && t.trim());
   const hasRoom = defined.length < 5;
 
-  const label = `<span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Filters:</span>`;
+  // The "Filters:" label that used to lead this row was removed at Pete's
+  // request — the chips themselves are obviously filters, and the label
+  // was visually cluttering both desktop and mobile widths. The empty
+  // string kept here so the concat below is structurally unchanged.
+  const label = '';
   // "All" chip only makes sense when there is at least one tag chip to clear,
   // or a non-default status filter is active. Without tags AND with status
   // already on 'all', the chip is a no-op.
