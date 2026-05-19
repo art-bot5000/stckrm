@@ -4462,6 +4462,277 @@ body.has-demo-banner #view-notes #notes-header {
   position: static;
 }
 
+/* ── Omnibox workflow panels (Order / Delivered) ──
+   Typed shortcuts (`order`, `delivered`) hijack the results panel for
+   stockroom bulk flows. Header + chooser pills (Order only) + list of
+   rows + footer with action buttons. Designed to drop into both the
+   legacy global-search modal AND the omnibox results container. */
+.omnibox-workflow-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 100%;
+}
+.omnibox-workflow-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.omnibox-workflow-header > svg { color: var(--accent); flex-shrink: 0; margin-top: 2px; }
+.omnibox-workflow-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+.omnibox-workflow-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+.omnibox-workflow-back {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+.omnibox-workflow-back:hover { background: var(--surface2); border-color: var(--accent); }
+.omnibox-workflow-back svg { width: 14px; height: 14px; }
+
+/* Chooser pills — 4 large buttons for the Order workflow stage 1 */
+.omnibox-workflow-chooser {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 12px 16px;
+}
+.omnibox-workflow-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text);
+  text-align: left;
+  transition: background 0.1s, border-color 0.1s, transform 0.08s;
+}
+.omnibox-workflow-pill:not(:disabled):hover {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+.omnibox-workflow-pill:not(:disabled):active { transform: scale(0.98); }
+.omnibox-workflow-pill:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.omnibox-workflow-pill svg {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.omnibox-workflow-pill-label {
+  font-size: 13px;
+  font-weight: 700;
+}
+.omnibox-workflow-pill-count {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--muted);
+}
+
+/* List of items in stage 2 (Order) or the only stage (Delivery) */
+.omnibox-workflow-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 4px 0;
+}
+.omnibox-workflow-section-label {
+  padding: 8px 16px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.omnibox-workflow-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.omnibox-workflow-row:last-child { border-bottom: none; }
+.omnibox-workflow-row.is-selected { background: rgba(232,168,56,0.05); }
+.omnibox-workflow-row-check {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.omnibox-workflow-row-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+.omnibox-workflow-row-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.omnibox-workflow-row-icon svg { width: 16px; height: 16px; }
+.omnibox-workflow-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.omnibox-workflow-row-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.omnibox-workflow-row-sub {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.omnibox-workflow-row-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+.omnibox-workflow-row-badge.state-critical {
+  background: rgba(220,80,80,0.15);
+  color: #c45757;
+  border: 1px solid rgba(220,80,80,0.30);
+}
+.omnibox-workflow-row-badge.state-low {
+  background: rgba(232,168,56,0.18);
+  color: #c47a1f;
+  border: 1px solid rgba(232,168,56,0.30);
+}
+
+/* Qty input on Order rows */
+.omnibox-workflow-row-qty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.omnibox-workflow-row-qty label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 700;
+}
+.omnibox-workflow-row-qty input {
+  width: 56px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--mono);
+  text-align: center;
+}
+.omnibox-workflow-row-qty input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Action button on Delivery rows */
+.omnibox-workflow-row-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+.omnibox-workflow-row-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #111;
+}
+.omnibox-workflow-row-btn svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+.omnibox-workflow-row-btn.btn-start-using {
+  background: rgba(76,187,138,0.15);
+  border-color: rgba(76,187,138,0.40);
+  color: var(--ok);
+}
+.omnibox-workflow-row-btn.btn-start-using:hover {
+  background: var(--ok);
+  color: #fff;
+  border-color: var(--ok);
+}
+
+/* Footer with action buttons */
+.omnibox-workflow-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+/* Narrow viewports: chooser stacks single column */
+@media (max-width: 520px) {
+  .omnibox-workflow-chooser { grid-template-columns: 1fr; }
+}
+
 /* ── Search chips — rich inline cards for direct-hit Budget entities ──
    Account chips show balance + Update/Edit; category chips show last 3
    transactions + Add/View all/Edit. Sized to fit naturally between plain

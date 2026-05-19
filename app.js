@@ -5304,6 +5304,22 @@ const _GLOBAL_SEARCH = {
 };
 const _SEARCH_RESULTS_PER_SECTION = 8;
 
+// ── Omnibox stockroom-workflow triggers ────────────────────────────────────
+// Exact-match (case-insensitive, trimmed, optional trailing colon) query
+// strings that hijack the results panel for stockroom bulk flows.
+// Plural forms tolerated. Detection is in runGlobalSearch.
+const _OMNIBOX_ORDER_TRIGGERS    = new Set(['order', 'orders', 'ordered']);
+const _OMNIBOX_DELIVERY_TRIGGERS = new Set(['deliver', 'delivers', 'delivered', 'delivery', 'deliveries']);
+
+// Ephemeral state for the order panel — which filter is active and the
+// per-row selection / qty edits. Survives re-renders within a single
+// open of the panel; cleared on dismiss or on omnibox collapse.
+const _OMNIBOX_ORDER = {
+  filter: null,            // '7' | '30' | 'critical' | 'low' | null
+  // Map<itemId, { selected: bool, qty: number }> — per-row state
+  rows: new Map(),
+};
+
 function openGlobalSearch() {
   const modal = document.getElementById('global-search-modal');
   const input = document.getElementById('global-search-input');
@@ -5324,6 +5340,12 @@ function openGlobalSearch() {
   // hidden by default; the user explicitly opts in per session.
   _GLOBAL_SEARCH.includeArchived = false;
   _GLOBAL_SEARCH.includeDeleted  = false;
+  // Reset workflow panel state so a fresh open of the legacy modal starts
+  // at the chooser stage if the user types "order".
+  if (typeof _OMNIBOX_ORDER !== 'undefined' && _OMNIBOX_ORDER) {
+    _OMNIBOX_ORDER.filter = null;
+    if (_OMNIBOX_ORDER.rows) _OMNIBOX_ORDER.rows.clear();
+  }
   _renderGlobalSearchEmpty();
   // setTimeout so the focus call lands after the modal is visible — focusing
   // a display:none input is a no-op on some browsers.
@@ -5410,6 +5432,24 @@ function runGlobalSearch(query) {
   if (!container) return;
   const q = (query || '').toLowerCase();
   if (!q) { _renderGlobalSearchEmpty(); return; }
+
+  // ── Stockroom workflow shortcuts ────────────────────────────────────────
+  // Typing "order"/"orders"/"ordered" opens a chooser → bulk-order list.
+  // Typing "delivered"/"deliver"/"delivery" opens the pending-delivery list.
+  // Both are render-only intercepts — they hijack the results panel and
+  // leave the input alone, so the user can clear the input to dismiss.
+  // The trigger is exact-match against the trimmed (lowercased) query,
+  // optionally followed by a colon (`order:`) so typing flows naturally.
+  // We also strip any trailing whitespace already in q via the trim.
+  const qTrim = q.trim().replace(/[:\s]+$/, '');
+  if (_OMNIBOX_ORDER_TRIGGERS.has(qTrim)) {
+    _renderOmniboxOrderPanel(container);
+    return;
+  }
+  if (_OMNIBOX_DELIVERY_TRIGGERS.has(qTrim)) {
+    _renderOmniboxDeliveryPanel(container);
+    return;
+  }
 
   // Filter options come from _GLOBAL_SEARCH state, toggled by the user
   // via the bottom filter bar. Each searcher returns a { results, hasMore,
@@ -5683,7 +5723,7 @@ function _renderSearchAccountChip(r, query) {
   const titleHTML = _highlightMatch(acc.name || '', query);
   const balanceStr = _money(acc.balance);
   const asOf = acc.balanceAsOf ? `as of ${esc(acc.balanceAsOf)}` : 'no update recorded';
-  const idJson = JSON.stringify(acc.id);
+  const idJson = JSON.stringify(acc.id).replace(/"/g, '&quot;');
   return `<div class="search-chip search-chip-account">
     <div class="search-chip-head" onclick="_navigateToSearchResult(${JSON.stringify({s:'budget', v:'budget', t:acc.id}).replace(/"/g,'&quot;')})">
       <svg class="search-chip-icon" aria-hidden="true"><use href="#i-credit-card"></use></svg>
@@ -5713,7 +5753,7 @@ function _renderSearchCategoryChip(r, query) {
     return _renderSearchRow({ ...r, chip: null }, 'budget', query);
   }
   const titleHTML = _highlightMatch(cat.name || '', query);
-  const idJson = JSON.stringify(cat.id);
+  const idJson = JSON.stringify(cat.id).replace(/"/g, '&quot;');
 
   // Pull the 3 most recent transactions for this category across all months.
   // transactions is {yyyymm: {txId: tx}}. We flatten, filter, sort, slice.
@@ -5737,7 +5777,7 @@ function _renderSearchCategoryChip(r, query) {
   }
 
   const txRows = recent.length ? recent.map(tx => {
-    const txIdJson = JSON.stringify(tx.id);
+    const txIdJson = JSON.stringify(tx.id).replace(/"/g, '&quot;');
     const dateStr = (typeof _shortDate === 'function') ? _shortDate(tx.date) : esc(tx.date || '');
     const whereStr = esc(tx.where || '—');
     const amtStr = _money(tx.amount);
@@ -5835,6 +5875,508 @@ function _searchChipViewAllSpend(catId) {
   } catch (_) { /* names may not exist if budget.js failed to load */ }
   try { navTo('budget'); } catch (_) {}
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  OMNIBOX — Stockroom workflow panels (Order / Delivered)
+//
+//  Typing `order` (or order/ordered/orders) → chooser pills (7 days, 30
+//  days, Critical, Low) → list of qualifying items with per-row checkbox
+//  + editable qty + bottom-right confirm button that bulk-logs orders.
+//
+//  Typing `delivered` → items currently in pending-delivery state, with
+//  per-row instant Delivered button. Each row mutates after the action:
+//  pending → Start using → done (row disappears). Each action triggers a
+//  data save + sync immediately, matching the card-button behaviour.
+//
+//  Both panels render directly into the results container (whichever the
+//  active UI is — the id-swap dance done by _runOmniboxSearch means the
+//  same #global-search-results selector works for both).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+// Items eligible for ordering, classified for the four chooser pills.
+// Excludes: deleted, archived, already-ordered (has any pendingDelivery
+// log), and items lacking enough data to compute stock.
+function _omniboxOrderClassify() {
+  const out = { critical: [], low: [], in7: [], in30: [], counts: { critical: 0, low: 0, in7: 0, in30: 0 } };
+  if (typeof items === 'undefined' || !Array.isArray(items)) return out;
+  for (const item of items) {
+    if (item._deletedAt || item._archived) continue;
+    // Skip items already in the order pipeline — bulk-ordering them again
+    // would create duplicate pending logs.
+    const hasPending = (item.logs || []).some(l => l.pendingDelivery);
+    if (hasPending) continue;
+    const stock = (typeof calcStock === 'function') ? calcStock(item) : null;
+    if (!stock) continue; // no logs yet → no estimate, skip
+    const status = (typeof getStatus === 'function') ? getStatus(stock.pct, null, item) : null;
+    if (status === 'critical') { out.critical.push({ item, stock, status }); out.counts.critical++; }
+    if (status === 'warn')     { out.low.push({ item, stock, status });      out.counts.low++; }
+    if (stock.daysLeft != null && stock.daysLeft <= 7)  { out.in7.push({ item, stock, status });  out.counts.in7++; }
+    if (stock.daysLeft != null && stock.daysLeft <= 30) { out.in30.push({ item, stock, status }); out.counts.in30++; }
+  }
+  // Sort within each bucket: lowest daysLeft first (most urgent surfaced).
+  const byUrgency = (a, b) => (a.stock.daysLeft ?? 0) - (b.stock.daysLeft ?? 0);
+  out.critical.sort(byUrgency);
+  out.low.sort(byUrgency);
+  out.in7.sort(byUrgency);
+  out.in30.sort(byUrgency);
+  return out;
+}
+
+// Items with a pending delivery log (ordered, awaiting arrival), and
+// items delivered but not yet started using (need a Start-using decision).
+// Both surface in the delivery panel — the row's button reflects which
+// stage it's in.
+function _omniboxDeliveryClassify() {
+  const out = { pending: [], readyToStart: [] };
+  if (typeof items === 'undefined' || !Array.isArray(items)) return out;
+  for (const item of items) {
+    if (item._deletedAt || item._archived) continue;
+    const logs = item.logs || [];
+    const hasPending = logs.some(l => l.pendingDelivery);
+    if (hasPending) {
+      // Find the most recent pending log for the displayed "ordered" date
+      const pendingLog = [...logs].reverse().find(l => l.pendingDelivery);
+      out.pending.push({ item, pendingLog });
+      continue;
+    }
+    // Delivered but no start date → ready to start using
+    const lastDelivered = [...logs].reverse().find(l => !l.pendingDelivery && l.deliveredDate);
+    if (lastDelivered && !item.startedUsing) {
+      out.readyToStart.push({ item, lastDelivered });
+    }
+  }
+  // Sort by ordered/delivered date (oldest first — they've been waiting longest)
+  out.pending.sort((a, b) => {
+    const ad = a.pendingLog?.date || ''; const bd = b.pendingLog?.date || '';
+    return ad < bd ? -1 : ad > bd ? 1 : 0;
+  });
+  out.readyToStart.sort((a, b) => {
+    const ad = a.lastDelivered?.deliveredDate || ''; const bd = b.lastDelivered?.deliveredDate || '';
+    return ad < bd ? -1 : ad > bd ? 1 : 0;
+  });
+  return out;
+}
+
+// Format a days-left number using the same conventions as the cards.
+function _omniboxDaysLeftLabel(daysLeft) {
+  if (daysLeft == null || isNaN(daysLeft)) return '';
+  if (daysLeft === 0) return 'today';
+  if (daysLeft === 1) return '1 day';
+  if (daysLeft < 30) return `${daysLeft} days`;
+  const months = Math.round(daysLeft / 30);
+  return `${months} month${months === 1 ? '' : 's'}`;
+}
+
+// ── ORDER PANEL ────────────────────────────────────────────────────────────
+
+function _renderOmniboxOrderPanel(container) {
+  const classified = _omniboxOrderClassify();
+  const filter = _OMNIBOX_ORDER.filter;
+  const totals = classified.counts;
+
+  // Empty-state: no items qualify in any bucket
+  const totalEligible = totals.critical + totals.low + totals.in7 + totals.in30;
+  if (totalEligible === 0) {
+    container.innerHTML = `
+      <div class="omnibox-workflow-panel">
+        <div class="omnibox-workflow-header">
+          <svg class="icon icon-md" aria-hidden="true"><use href="#i-shopping-cart"></use></svg>
+          <div>
+            <div class="omnibox-workflow-title">Order items</div>
+            <div class="omnibox-workflow-sub">Nothing needs ordering right now — everything is well-stocked.</div>
+          </div>
+        </div>
+        <div class="omnibox-workflow-footer">
+          <button class="btn btn-ghost" onclick="_omniboxOrderDismiss()">Done</button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  // Chooser stage — no filter picked yet
+  if (!filter) {
+    const pill = (key, label, n, icon) => {
+      const disabled = n === 0 ? 'disabled' : '';
+      return `<button class="omnibox-workflow-pill" ${disabled} onclick="_omniboxOrderPickFilter('${key}')">
+        <svg class="icon" aria-hidden="true"><use href="#${icon}"></use></svg>
+        <span class="omnibox-workflow-pill-label">${label}</span>
+        <span class="omnibox-workflow-pill-count">${n}</span>
+      </button>`;
+    };
+    container.innerHTML = `
+      <div class="omnibox-workflow-panel">
+        <div class="omnibox-workflow-header">
+          <svg class="icon icon-md" aria-hidden="true"><use href="#i-shopping-cart"></use></svg>
+          <div>
+            <div class="omnibox-workflow-title">Order items</div>
+            <div class="omnibox-workflow-sub">Pick what to surface. Bulk-ordering uses default qty &amp; no price — for accurate price history, use Stockroom cards.</div>
+          </div>
+        </div>
+        <div class="omnibox-workflow-chooser">
+          ${pill('critical', 'Critical', totals.critical, 'i-alert-triangle')}
+          ${pill('low',      'Low stock', totals.low, 'i-alert-triangle')}
+          ${pill('in7',      'Next 7 days',  totals.in7, 'i-clock')}
+          ${pill('in30',     'Next 30 days', totals.in30, 'i-calendar-days')}
+        </div>
+        <div class="omnibox-workflow-footer">
+          <button class="btn btn-ghost" onclick="_omniboxOrderDismiss()">Cancel</button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  // List stage — show items in the chosen bucket
+  const bucket = filter === 'critical' ? classified.critical
+              : filter === 'low'       ? classified.low
+              : filter === 'in7'       ? classified.in7
+              : filter === 'in30'      ? classified.in30
+              : [];
+  const filterLabel = filter === 'critical' ? 'Critical'
+                   : filter === 'low'       ? 'Low stock'
+                   : filter === 'in7'       ? 'Next 7 days'
+                   : filter === 'in30'      ? 'Next 30 days'
+                   : '';
+
+  // Initialise row state for any items not yet tracked (first render or
+  // newly-appearing items after a re-render). Default: selected, qty = default.
+  for (const { item } of bucket) {
+    if (!_OMNIBOX_ORDER.rows.has(item.id)) {
+      _OMNIBOX_ORDER.rows.set(item.id, {
+        selected: true,
+        qty: (item.qty && item.qty > 0) ? item.qty : 1,
+      });
+    }
+  }
+
+  const rows = bucket.map(({ item, stock, status }) => {
+    const row = _OMNIBOX_ORDER.rows.get(item.id);
+    const isSel = row.selected;
+    const qty = row.qty;
+    const daysLabel = _omniboxDaysLeftLabel(stock.daysLeft);
+    const storeLabel = item.store || (typeof urlToStoreName === 'function' ? urlToStoreName(item.url || '') : '') || '';
+    const statusBadge = status === 'critical'
+      ? '<span class="omnibox-workflow-row-badge state-critical">critical</span>'
+      : status === 'warn'
+        ? '<span class="omnibox-workflow-row-badge state-low">low</span>'
+        : '';
+    const idJson = JSON.stringify(item.id).replace(/"/g, '&quot;');
+    return `<div class="omnibox-workflow-row ${isSel ? 'is-selected' : ''}">
+      <label class="omnibox-workflow-row-check">
+        <input type="checkbox" ${isSel ? 'checked' : ''} onchange="_omniboxOrderToggleRow(${idJson}, this.checked)">
+      </label>
+      <div class="omnibox-workflow-row-body">
+        <div class="omnibox-workflow-row-title">${esc(item.name || '(untitled)')} ${statusBadge}</div>
+        <div class="omnibox-workflow-row-sub">${daysLabel ? esc(daysLabel) + ' left' : 'low stock'}${storeLabel ? ' · ' + esc(storeLabel) : ''}</div>
+      </div>
+      <div class="omnibox-workflow-row-qty">
+        <label>Qty</label>
+        <input type="number" min="0.1" step="0.1" value="${qty}" onchange="_omniboxOrderSetQty(${idJson}, this.value)" onclick="event.stopPropagation()">
+      </div>
+    </div>`;
+  }).join('');
+
+  // Selected count for the confirm button
+  let selectedCount = 0;
+  for (const { item } of bucket) {
+    if (_OMNIBOX_ORDER.rows.get(item.id)?.selected) selectedCount++;
+  }
+  const confirmDisabled = selectedCount === 0 ? 'disabled' : '';
+
+  container.innerHTML = `
+    <div class="omnibox-workflow-panel">
+      <div class="omnibox-workflow-header">
+        <button class="omnibox-workflow-back" onclick="_omniboxOrderBack()" aria-label="Back">
+          <svg aria-hidden="true"><use href="#i-arrow-left"></use></svg>
+        </button>
+        <div>
+          <div class="omnibox-workflow-title">Order — ${filterLabel}</div>
+          <div class="omnibox-workflow-sub">${bucket.length} item${bucket.length === 1 ? '' : 's'} · adjust qty if needed, untick to skip</div>
+        </div>
+      </div>
+      <div class="omnibox-workflow-list">${rows}</div>
+      <div class="omnibox-workflow-footer">
+        <button class="btn btn-ghost" onclick="_omniboxOrderDismiss()">Cancel</button>
+        <button class="btn btn-primary" id="omnibox-order-confirm-btn" ${confirmDisabled} onclick="_omniboxOrderConfirm('${filter}')">
+          Order ${selectedCount} item${selectedCount === 1 ? '' : 's'}
+        </button>
+      </div>
+    </div>`;
+}
+
+// Pick a chooser pill — switch to list stage.
+function _omniboxOrderPickFilter(filter) {
+  _OMNIBOX_ORDER.filter = filter;
+  // Reset per-row state when entering a new bucket so previous selections
+  // from a different filter don't carry over.
+  _OMNIBOX_ORDER.rows.clear();
+  const c = _omniboxResultsContainer();
+  if (c) _renderOmniboxOrderPanel(c);
+}
+
+// Back from list stage → chooser.
+function _omniboxOrderBack() {
+  _OMNIBOX_ORDER.filter = null;
+  _OMNIBOX_ORDER.rows.clear();
+  const c = _omniboxResultsContainer();
+  if (c) _renderOmniboxOrderPanel(c);
+}
+
+// Toggle a row's selected state.
+function _omniboxOrderToggleRow(itemId, checked) {
+  const row = _OMNIBOX_ORDER.rows.get(itemId);
+  if (row) {
+    row.selected = !!checked;
+    // Re-render to refresh the bottom count + button label
+    const c = _omniboxResultsContainer();
+    if (c) _renderOmniboxOrderPanel(c);
+  }
+}
+
+// Edit a row's qty.
+function _omniboxOrderSetQty(itemId, val) {
+  const row = _OMNIBOX_ORDER.rows.get(itemId);
+  if (!row) return;
+  const n = parseFloat(val);
+  if (!isNaN(n) && n > 0) row.qty = n;
+  // No re-render needed — qty doesn't affect any UI elsewhere in the panel
+}
+
+// Confirm — bulk-log purchases for all selected rows. Each logged purchase
+// gets today's date, the user-edited qty, no price, and the item's default
+// store. Matches ofSave('purchase') shape so sync/calc paths are identical.
+async function _omniboxOrderConfirm(filter) {
+  if (typeof canWrite === 'function' && !canWrite('stockroom')) {
+    if (typeof showLockBanner === 'function') showLockBanner('stockroom');
+    return;
+  }
+  // Re-classify to pick up any items that changed since render (paranoid)
+  const classified = _omniboxOrderClassify();
+  const bucket = filter === 'critical' ? classified.critical
+              : filter === 'low'       ? classified.low
+              : filter === 'in7'       ? classified.in7
+              : filter === 'in30'      ? classified.in30
+              : [];
+
+  let ordered = 0;
+  const dateToday = (typeof today === 'function') ? today() : new Date().toISOString().slice(0, 10);
+  for (const { item } of bucket) {
+    const row = _OMNIBOX_ORDER.rows.get(item.id);
+    if (!row || !row.selected) continue;
+    const qty = (row.qty && row.qty > 0) ? row.qty : 1;
+    const storeVal = item.store || (typeof urlToStoreName === 'function' ? urlToStoreName(item.url || '') : '') || '';
+    if (!item.logs) item.logs = [];
+    item.logs.push({
+      id:              (typeof uid === 'function' ? uid() : Date.now().toString(36) + Math.random().toString(36).slice(2, 7)),
+      date:            dateToday,
+      qty,
+      price:           '', // bulk: no price (the trade-off Pete's been told about in the header copy)
+      store:           storeVal,
+      pendingDelivery: true,
+    });
+    item.logs.sort((a, b) => new Date(a.date) - new Date(b.date));
+    item.ordered   = true;
+    item.orderedAt = new Date().toISOString();
+    if (typeof touchField === 'function') touchField(item, 'logs', 'ordered', 'orderedAt');
+    ordered++;
+  }
+  if (ordered === 0) {
+    if (typeof toast === 'function') toast('Nothing selected to order');
+    return;
+  }
+  if (typeof saveData === 'function') await saveData();
+  if (typeof scheduleRender === 'function') scheduleRender('grid', 'dashboard', 'shopping');
+  if (typeof syncAll === 'function') setTimeout(syncAll, 400);
+  if (typeof toast === 'function') {
+    toast(`Logged ${ordered} order${ordered === 1 ? '' : 's'} — tap Delivered when they arrive`);
+  }
+  // Reset state and dismiss
+  _OMNIBOX_ORDER.filter = null;
+  _OMNIBOX_ORDER.rows.clear();
+  _omniboxOrderDismiss();
+}
+
+// Dismiss the workflow panel and the omnibox.
+function _omniboxOrderDismiss() {
+  _OMNIBOX_ORDER.filter = null;
+  _OMNIBOX_ORDER.rows.clear();
+  // Clear inputs so a re-open starts clean
+  const inp1 = document.getElementById('omnibox-input');
+  if (inp1) inp1.value = '';
+  const inp2 = document.getElementById('global-search-input');
+  if (inp2) inp2.value = '';
+  try { closeGlobalSearch(); } catch (_) {}
+  if (typeof collapseOmnibox === 'function') {
+    try { collapseOmnibox(); } catch (_) {}
+  }
+}
+
+// ── DELIVERY PANEL ─────────────────────────────────────────────────────────
+
+function _renderOmniboxDeliveryPanel(container) {
+  const c = _omniboxDeliveryClassify();
+  const totalRows = c.pending.length + c.readyToStart.length;
+
+  if (totalRows === 0) {
+    container.innerHTML = `
+      <div class="omnibox-workflow-panel">
+        <div class="omnibox-workflow-header">
+          <svg class="icon icon-md" aria-hidden="true"><use href="#i-package-check"></use></svg>
+          <div>
+            <div class="omnibox-workflow-title">Deliveries</div>
+            <div class="omnibox-workflow-sub">Nothing waiting to be delivered or started.</div>
+          </div>
+        </div>
+        <div class="omnibox-workflow-footer">
+          <button class="btn btn-ghost" onclick="_omniboxOrderDismiss()">Done</button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  const rowsPending = c.pending.map(({ item, pendingLog }) => {
+    const idJson = JSON.stringify(item.id).replace(/"/g, '&quot;');
+    const ordDate = pendingLog?.date ? (typeof _shortDate === 'function' ? _shortDate(pendingLog.date) : esc(pendingLog.date)) : '';
+    const storeLabel = pendingLog?.store || item.store || '';
+    return `<div class="omnibox-workflow-row is-delivery-pending">
+      <div class="omnibox-workflow-row-icon">
+        <svg aria-hidden="true"><use href="#i-truck"></use></svg>
+      </div>
+      <div class="omnibox-workflow-row-body">
+        <div class="omnibox-workflow-row-title">${esc(item.name || '(untitled)')}</div>
+        <div class="omnibox-workflow-row-sub">Ordered ${ordDate}${storeLabel ? ' · ' + esc(storeLabel) : ''}</div>
+      </div>
+      <button class="omnibox-workflow-row-btn" onclick="_omniboxMarkDelivered(${idJson})">
+        <svg aria-hidden="true"><use href="#i-package-check"></use></svg>
+        Delivered
+      </button>
+    </div>`;
+  }).join('');
+
+  const rowsReady = c.readyToStart.map(({ item, lastDelivered }) => {
+    const idJson = JSON.stringify(item.id).replace(/"/g, '&quot;');
+    const delDate = lastDelivered?.deliveredDate ? (typeof _shortDate === 'function' ? _shortDate(lastDelivered.deliveredDate) : esc(lastDelivered.deliveredDate)) : '';
+    return `<div class="omnibox-workflow-row is-delivery-ready">
+      <div class="omnibox-workflow-row-icon">
+        <svg aria-hidden="true"><use href="#i-package-check"></use></svg>
+      </div>
+      <div class="omnibox-workflow-row-body">
+        <div class="omnibox-workflow-row-title">${esc(item.name || '(untitled)')}</div>
+        <div class="omnibox-workflow-row-sub">Delivered ${delDate} · not yet in use</div>
+      </div>
+      <button class="omnibox-workflow-row-btn btn-start-using" onclick="_omniboxStartUsing(${idJson})">
+        <svg aria-hidden="true"><use href="#i-play"></use></svg>
+        Start using
+      </button>
+    </div>`;
+  }).join('');
+
+  // Section labels — only show if both groups have items, for clarity
+  const showLabels = c.pending.length > 0 && c.readyToStart.length > 0;
+  const pendingBlock = c.pending.length > 0
+    ? `${showLabels ? '<div class="omnibox-workflow-section-label">Awaiting delivery</div>' : ''}${rowsPending}`
+    : '';
+  const readyBlock = c.readyToStart.length > 0
+    ? `${showLabels ? '<div class="omnibox-workflow-section-label">Delivered — not in use</div>' : ''}${rowsReady}`
+    : '';
+
+  container.innerHTML = `
+    <div class="omnibox-workflow-panel">
+      <div class="omnibox-workflow-header">
+        <svg class="icon icon-md" aria-hidden="true"><use href="#i-package-check"></use></svg>
+        <div>
+          <div class="omnibox-workflow-title">Deliveries</div>
+          <div class="omnibox-workflow-sub">${totalRows} item${totalRows === 1 ? '' : 's'} · tap to mark</div>
+        </div>
+      </div>
+      <div class="omnibox-workflow-list">${pendingBlock}${readyBlock}</div>
+      <div class="omnibox-workflow-footer">
+        <button class="btn btn-ghost" onclick="_omniboxOrderDismiss()">Done</button>
+      </div>
+    </div>`;
+}
+
+// Mark an item as delivered from the panel. Replicates ofSave('delivered')
+// with default qty and today's date, no "started now" flag — keeps the
+// row alive in the ready-to-start group afterwards so the user can decide
+// whether to start using it.
+async function _omniboxMarkDelivered(itemId) {
+  if (typeof canWrite === 'function' && !canWrite('stockroom')) {
+    if (typeof showLockBanner === 'function') showLockBanner('stockroom');
+    return;
+  }
+  const item = items.find(i => i.id === itemId);
+  if (!item) return;
+  if (!item.logs) item.logs = [];
+  const deliveryDate = (typeof today === 'function') ? today() : new Date().toISOString().slice(0, 10);
+  const pendingIdx = [...item.logs].map((l, i) => ({ l, i })).reverse().find(({ l }) => l.pendingDelivery)?.i;
+  if (pendingIdx !== undefined) {
+    const qty = item.logs[pendingIdx].qty || item.qty || 1;
+    item.logs[pendingIdx].pendingDelivery = false;
+    item.logs[pendingIdx].deliveredDate   = deliveryDate;
+    // qty stays as the user-set value from the order step
+  } else {
+    // Defensive — shouldn't happen since we filtered by hasPending, but
+    // if it does, push a fresh delivered log
+    item.logs.push({
+      id: (typeof uid === 'function' ? uid() : Date.now().toString(36)),
+      date: deliveryDate, qty: item.qty || 1, pendingDelivery: false, deliveredDate: deliveryDate,
+    });
+    item.logs.sort((a, b) => new Date(a.date) - new Date(b.date));
+  }
+  item.ordered = false;
+  item.orderedAt = null;
+  // Auto-update stock count like ofSave does
+  const lastLog = [...item.logs].reverse().find(l => !l.pendingDelivery);
+  const dQty = lastLog?.qty || item.qty || 1;
+  if (typeof getProjectedUnitsLeft === 'function') {
+    const existing = getProjectedUnitsLeft(item);
+    item.stockCount = (existing != null && existing > 0)
+      ? Math.round((existing + dQty) * 100) / 100
+      : dQty;
+  } else {
+    item.stockCount = dQty;
+  }
+  item.stockCountDate = deliveryDate;
+  if (typeof touchItem === 'function') touchItem(item);
+  if (typeof saveData === 'function') await saveData();
+  if (typeof scheduleRender === 'function') scheduleRender('grid', 'dashboard', 'shopping');
+  if (typeof syncAll === 'function') setTimeout(syncAll, 400);
+  if (typeof toast === 'function') toast('Delivery confirmed ✓');
+  // Re-render the panel — the row will now appear under Start-using
+  const cont = _omniboxResultsContainer();
+  if (cont) _renderOmniboxDeliveryPanel(cont);
+}
+
+// Mark an item as in use (sets startedUsing). Row leaves the panel.
+async function _omniboxStartUsing(itemId) {
+  if (typeof canWrite === 'function' && !canWrite('stockroom')) {
+    if (typeof showLockBanner === 'function') showLockBanner('stockroom');
+    return;
+  }
+  const item = items.find(i => i.id === itemId);
+  if (!item) return;
+  const date = (typeof today === 'function') ? today() : new Date().toISOString().slice(0, 10);
+  item.startedUsing = date;
+  if (typeof touchField === 'function') touchField(item, 'startedUsing');
+  if (typeof saveData === 'function') await saveData();
+  if (typeof scheduleRender === 'function') scheduleRender('grid', 'dashboard');
+  if (typeof syncAll === 'function') setTimeout(syncAll, 400);
+  if (typeof toast === 'function') toast('Start date saved ✓');
+  // Re-render — row should disappear from the readyToStart group
+  const cont = _omniboxResultsContainer();
+  if (cont) _renderOmniboxDeliveryPanel(cont);
+}
+
+// Helper: get the active results container. The id-swap dance done by
+// _runOmniboxSearch means whichever container is currently in scope
+// answers to #global-search-results. If neither is found we bail.
+function _omniboxResultsContainer() {
+  return document.getElementById('global-search-results')
+      || document.getElementById('omnibox-results');
+}
+
 
 // Wrap query matches in <mark> for visual emphasis. Case-insensitive, plain
 // substring — same matcher the searchers use. Pre-escapes the text so any
@@ -31704,6 +32246,12 @@ collapseOmnibox = function collapseOmnibox() {
   if (typeof _GLOBAL_SEARCH !== 'undefined' && _GLOBAL_SEARCH) {
     _GLOBAL_SEARCH.includeArchived = false;
     _GLOBAL_SEARCH.includeDeleted  = false;
+  }
+  // Reset the order-workflow panel state so the next "order" type-in
+  // starts fresh at the chooser stage.
+  if (typeof _OMNIBOX_ORDER !== 'undefined' && _OMNIBOX_ORDER) {
+    _OMNIBOX_ORDER.filter = null;
+    if (_OMNIBOX_ORDER.rows) _OMNIBOX_ORDER.rows.clear();
   }
 };
 
