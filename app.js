@@ -5498,6 +5498,13 @@ function _navigateToSearchResult(payload) {
   if (!payload) return;
   const { s: section, v: view, t: target } = payload;
   closeGlobalSearch();
+  // Also collapse the omnibox (removes body.omnibox-expanded and the
+  // backdrop blur). closeGlobalSearch only handles the legacy modal's
+  // own class; the omnibox needs its own cleanup. Both functions are
+  // idempotent and harmless if the corresponding UI isn't active.
+  if (typeof collapseOmnibox === 'function') {
+    try { collapseOmnibox(); } catch (_) {}
+  }
   // navTo handles the view switch — for sub-views like 'shopping' the search
   // result carries the explicit view name in v.
   try { navTo(view || section); } catch(_) {}
