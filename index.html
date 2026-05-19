@@ -1729,6 +1729,12 @@
      The internal search engine (runGlobalSearch, _searchStockroom etc.)
      is reused as-is; only the UI shell is new. See OMNIBOX section in
      app.js for the wiring. -->
+<!-- Blur scrim — JS toggles body.omnibox-expanded which fades this in
+     and blurs whatever's visible behind it. Tap to dismiss. Static
+     element in the DOM (no JS-driven creation) so the blur paints
+     immediately on expand without a layout-thrash insertion. -->
+<div id="omnibox-scrim" onclick="collapseOmnibox()" aria-hidden="true"></div>
+
 <div id="omnibox" class="omnibox" data-state="collapsed">
   <!-- Collapsed/input row — always visible -->
   <div class="omnibox-input-row">
@@ -1754,8 +1760,13 @@
     <div class="omnibox-results" id="omnibox-results">
       <div class="omnibox-empty">Type to search or use the buttons below to add.</div>
     </div>
-    <!-- Action buttons -->
-    <div class="omnibox-actions" id="omnibox-actions">
+    <!-- Action buttons. The data-layout attribute selects between three
+         button placements: "chips" (current wrapping row), "grid" (3×2
+         large buttons, the screenshot layout updated to icon-left), and
+         "list" (Spotlight-style command rows). All three live in CSS so
+         we can swap by changing one attribute — Pete to pick one and the
+         other two get removed in a follow-up. -->
+    <div class="omnibox-actions" id="omnibox-actions" data-layout="chips">
       <button class="omnibox-action" data-action="search" onclick="omniboxAction('search')">
         <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg> Search
       </button>

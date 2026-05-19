@@ -4568,17 +4568,57 @@ body.bulk-select-mode-category .budget-cat-row .bill-actions { display: none !im
   /* Sticky so it stays at the top of the viewport as the user scrolls.
      On mobile it sits below the 56px #app-header (which is also sticky
      at top:0, z-index 100). We sit at top:56px to land just under it.
-     On desktop the header is hidden — see media query below. */
+     On desktop the header is hidden — see media query below.
+     When expanded, the .omnibox itself flips to position:fixed so the
+     panel overlays the app instead of pushing content down — see the
+     [data-state="expanded"] block. */
   position: sticky;
   top: 56px;
   z-index: 95;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
-  /* When expanded, allow children to escape (so the panel can sit on
-     top of subsequent content). */
 }
 .omnibox[data-state="expanded"] {
+  /* Overlay mode: float on top of the page so nothing below shifts when
+     the panel opens. left/right take the same horizontal extents as the
+     sticky position would. The blur overlay (#omnibox-scrim) sits behind
+     the omnibox and renders the blurred view of the app underneath. */
+  position: fixed;
+  left: 0;
+  right: 0;
+  /* top stays at 56px on mobile (under the app header) and 0 on desktop
+     (handled in the media query). The desktop media query also restores
+     left:220px so the sidebar isn't covered. */
   border-bottom-color: transparent;
+}
+
+/* Blur scrim — rendered as a sibling element via JS when the omnibox
+   expands. backdrop-filter blurs whatever's visible behind it, giving
+   the "rest of app is blurred not darkened" effect Pete asked for.
+   The scrim is its own element so it can absorb taps to dismiss the
+   panel without interfering with the omnibox's own pointer events. */
+#omnibox-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 94; /* one less than .omnibox */
+  background: rgba(15,17,23,0.18);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease-out;
+}
+body.omnibox-expanded #omnibox-scrim {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Body scroll-lock while expanded — keeps the app underneath frozen so
+   only the omnibox results scroll. Applied to <html> too because some
+   mobile browsers (iOS Safari) scroll the html element rather than body. */
+html.omnibox-locked,
+body.omnibox-expanded {
+  overflow: hidden;
 }
 
 /* ── Input row (always visible) ── */
@@ -4664,31 +4704,45 @@ body.bulk-select-mode-category .budget-cat-row .bill-actions { display: none !im
 .omnibox-results .global-search-section-title { padding: 8px 14px 4px; }
 .omnibox-results .global-search-row { padding: 8px 14px; }
 
-/* ── Action button row ── */
+/* ── Action buttons ─────────────────────────────────────────────────
+   The action row can adopt one of three layouts via data-layout on the
+   .omnibox-actions container. This lets us prototype placement without
+   touching markup or JS. Defaults to "chips" (matches the historical
+   wrapping-row design). Pete to choose one; we drop the others later.
+
+   Common rules below apply regardless of layout. Layout-specific blocks
+   follow further down. */
 .omnibox-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 10px 14px;
   background: var(--bg);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
 .omnibox-action {
+  /* Icon-LEFT-of-text in every layout — the source order in index.html is
+     <svg> then text, and `inline-flex; align-items:center` gives us the
+     horizontal arrangement automatically. Explicit `flex-direction:row`
+     here so a stray override from any future layout block can't accidentally
+     stack icon-above-text. */
   display: inline-flex;
+  flex-direction: row;
   align-items: center;
-  gap: 6px;
+  justify-content: flex-start;
+  gap: 8px;
   padding: 8px 12px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--surface2);
   color: var(--text);
   font-family: var(--sans);
+  /* Match the desktop tab button font-size exactly (.tab is 13px / 700 on
+     desktop, 11px on mobile — see the @media (max-width: 899px) block for
+     the mobile bump-down). */
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.12s;
   white-space: nowrap;
+  text-align: left;
 }
 .omnibox-action:hover {
   background: var(--surface);
@@ -4698,20 +4752,22 @@ body.bulk-select-mode-category .budget-cat-row .bill-actions { display: none !im
   transform: scale(0.97);
 }
 .omnibox-action .icon {
-  width: 14px;
-  height: 14px;
+  /* Icon size matches .icon-tab in tabs (22px desktop, 18px mobile) but
+     scaled down slightly so a 13px text label doesn't get dominated.
+     Tweak together if Pete wants smaller. */
+  width: 16px;
+  height: 16px;
   color: var(--accent);
   flex-shrink: 0;
 }
-/* Disabled state — used in Pass 2 by intent detection. Kept here so
-   Pass 2 just flips the disabled attribute and the styling is ready. */
+/* Disabled state — used by intent detection. */
 .omnibox-action:disabled,
 .omnibox-action[data-disabled="true"] {
   opacity: 0.35;
   cursor: not-allowed;
   pointer-events: none;
 }
-/* Detected primary action — Pass 2 hook. */
+/* Detected primary action — highlighted with accent fill. */
 .omnibox-action[data-primary="true"] {
   background: var(--accent);
   color: #111;
@@ -4720,21 +4776,86 @@ body.bulk-select-mode-category .budget-cat-row .bill-actions { display: none !im
 }
 .omnibox-action[data-primary="true"] .icon { color: #111; }
 
+/* ── Layout A: wrapping chip row (default; current/historical) ──
+   Compact pills that wrap to a second row at narrow widths. Familiar
+   from search overlays in Notion / Linear. Best when the actions are
+   secondary to the live results above. */
+.omnibox-actions,
+.omnibox-actions[data-layout="chips"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px;
+}
+
+/* ── Layout B: 3-column grid (the "previous design" from the screenshot,
+   updated for icon-left + tab-size text). Each cell stretches to fill its
+   column and tap targets are uniformly large — easy to hit on mobile. */
+.omnibox-actions[data-layout="grid"] {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 12px 14px;
+}
+.omnibox-actions[data-layout="grid"] .omnibox-action {
+  justify-content: center;   /* centre icon+label inside the grid cell */
+  padding: 14px 10px;
+}
+
+/* ── Layout C: vertical command list (Spotlight / Raycast style). Each
+   action a full-width row with icon on the left and any data-hint pinned
+   to the right. Reads as commands; works well with the hint system. */
+.omnibox-actions[data-layout="list"] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+}
+.omnibox-actions[data-layout="list"] .omnibox-action {
+  width: 100%;
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  border-bottom-color: transparent;
+  background: transparent;
+  padding: 12px 18px;
+  /* Hints (when present via the data-hint attribute) shift right via
+     margin-left:auto on the ::after pseudo, see Pass-2 styling below. */
+}
+.omnibox-actions[data-layout="list"] .omnibox-action:hover {
+  background: var(--surface);
+  border-bottom-color: var(--border);
+}
+.omnibox-actions[data-layout="list"] .omnibox-action[data-primary="true"] {
+  background: rgba(232,168,56,0.12);
+  color: var(--text);
+  box-shadow: none;
+}
+.omnibox-actions[data-layout="list"] .omnibox-action[data-primary="true"] .icon {
+  color: var(--accent);
+}
+
 /* ── Mobile (<900px) ── */
 @media (max-width: 899px) {
   /* On mobile the omnibox sits below the 56px header. When expanded,
-     limit its overall height so the user can still see the underlying
-     tabs/content peeking out — feels like a panel that dropped, not a
-     full-screen takeover. */
+     limit results height so the input + actions stay visible and we
+     don't blow past the keyboard's safe area. */
   .omnibox[data-state="expanded"] .omnibox-results {
     max-height: 40vh;
   }
-  /* Tab grid is currently 24px below — give it a little less since
-     the omnibox already pushes everything down. */
   .omnibox-input-row { padding: 7px 12px; }
-  .omnibox-actions { padding: 8px 10px; gap: 5px; }
-  .omnibox-action { padding: 7px 10px; font-size: 12px; }
-  .omnibox-action .icon { width: 13px; height: 13px; }
+  /* Action button text drops to 11px to match the mobile tab buttons
+     (see .tab block at line ~647). Icons scale slightly down too so
+     they don't dominate the smaller label. */
+  .omnibox-action { font-size: 11px; font-weight: 700; }
+  .omnibox-action .icon { width: 14px; height: 14px; }
+  /* Layout-specific mobile paddings */
+  .omnibox-actions[data-layout="chips"] { padding: 8px 10px; gap: 5px; }
+  .omnibox-actions[data-layout="chips"] .omnibox-action { padding: 7px 10px; }
+  .omnibox-actions[data-layout="grid"] { padding: 10px 10px; gap: 6px; }
+  .omnibox-actions[data-layout="grid"] .omnibox-action { padding: 12px 6px; }
+  .omnibox-actions[data-layout="list"] .omnibox-action { padding: 11px 14px; }
 }
 
 /* ── Desktop (≥900px) ── */
@@ -4748,8 +4869,26 @@ body.bulk-select-mode-category .budget-cat-row .bill-actions { display: none !im
     top: 0;
     margin-left: 220px;
   }
+  /* When expanded (position:fixed), margin-left no longer applies the
+     way it does on a sticky element — left/right are the explicit
+     positioning anchors. Set left to 220px so the sidebar stays
+     uncovered, and clear the margin. */
+  .omnibox[data-state="expanded"] {
+    margin-left: 0;
+    left: 220px;
+    right: 0;
+    top: 0;
+  }
+  /* The blur scrim also needs to clear the sidebar on desktop so the
+     sidebar nav stays usable while the omnibox is open. */
+  #omnibox-scrim {
+    left: 220px;
+  }
   .omnibox-input-row { padding: 10px 36px; }
-  .omnibox-actions { padding: 12px 36px; }
+  .omnibox-actions[data-layout="chips"] { padding: 12px 36px; }
+  .omnibox-actions[data-layout="grid"]  { padding: 14px 36px; }
+  .omnibox-actions[data-layout="list"]  { padding: 8px 0; }
+  .omnibox-actions[data-layout="list"] .omnibox-action { padding-left: 36px; padding-right: 36px; }
   .omnibox-results .global-search-section-title { padding-left: 36px; padding-right: 36px; }
   .omnibox-results .global-search-row { padding-left: 36px; padding-right: 36px; }
   .omnibox-empty { padding: 28px 36px; }

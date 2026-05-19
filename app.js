@@ -38141,6 +38141,10 @@ function expandOmnibox() {
   omni.setAttribute('data-state', 'expanded');
   _OMNIBOX.active = true;
   document.body.classList.add('omnibox-expanded');
+  // Scroll-lock both html and body — iOS Safari scrolls the html element
+  // while everywhere else scrolls body, and we need to freeze whichever
+  // is doing the scrolling while the omnibox overlay is open.
+  document.documentElement.classList.add('omnibox-locked');
   // Show the collapse chevron (mobile users need a way to dismiss the
   // panel without losing what they typed). Clear-X visibility is
   // managed separately based on input value.
@@ -38157,11 +38161,49 @@ function collapseOmnibox() {
   omni.setAttribute('data-state', 'collapsed');
   _OMNIBOX.active = false;
   document.body.classList.remove('omnibox-expanded');
+  document.documentElement.classList.remove('omnibox-locked');
   const collapseBtn = document.getElementById('omnibox-collapse-btn');
   if (collapseBtn) collapseBtn.style.display = 'none';
   // Blur the input so the keyboard dismisses on mobile.
   try { _omniboxInput()?.blur(); } catch(_) {}
 }
+
+// Switch the action-button layout at runtime. `key` is one of
+// 'chips' | 'grid' | 'list' — see styles.css for the visual treatment of
+// each. Persists across reloads via localStorage so Pete can try a layout,
+// keep using the app for a while, and not have to re-set it each session.
+//
+// From the browser console:
+//   setOmniboxLayout('grid')
+//   setOmniboxLayout('list')
+//   setOmniboxLayout('chips')
+//
+// Once Pete picks one, we delete the other two CSS blocks and remove the
+// data-layout attribute from the HTML.
+function setOmniboxLayout(key) {
+  if (!['chips', 'grid', 'list'].includes(key)) {
+    console.warn('Unknown omnibox layout:', key, '— expected chips/grid/list');
+    return;
+  }
+  const el = document.getElementById('omnibox-actions');
+  if (!el) return;
+  el.setAttribute('data-layout', key);
+  try { localStorage.setItem('stockroom_omnibox_layout', key); } catch(_) {}
+  console.log('[omnibox] layout set to', key);
+}
+// Restore last-chosen layout on load (no-op if nothing saved).
+try {
+  const _stored = localStorage.getItem('stockroom_omnibox_layout');
+  if (_stored && ['chips','grid','list'].includes(_stored)) {
+    // Defer until DOM is ready; the omnibox element may not exist yet
+    // when this script is parsed.
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => setOmniboxLayout(_stored));
+    } else {
+      setOmniboxLayout(_stored);
+    }
+  }
+} catch(_) {}
 
 // Clear input + results, keep panel expanded with focus.
 function clearOmnibox() {
