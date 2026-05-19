@@ -6372,7 +6372,20 @@ async function _omniboxStartUsing(itemId) {
 // Helper: get the active results container. The id-swap dance done by
 // _runOmniboxSearch means whichever container is currently in scope
 // answers to #global-search-results. If neither is found we bail.
+// Helper: get the active results container. Both UIs exist in the DOM at
+// the same time (#global-search-results is the legacy modal panel,
+// #omnibox-results is the inline omnibox panel). _runOmniboxSearch
+// temporarily renames the omnibox container to 'global-search-results'
+// for the duration of runGlobalSearch — but by the time a workflow-
+// panel button is clicked, the id has been restored. So we route based
+// on _OMNIBOX.active: omnibox UI → omnibox-results; otherwise the
+// legacy modal. Falls back to either if only one is present.
 function _omniboxResultsContainer() {
+  const omniboxActive = (typeof _OMNIBOX !== 'undefined') && _OMNIBOX && _OMNIBOX.active;
+  if (omniboxActive) {
+    return document.getElementById('omnibox-results')
+        || document.getElementById('global-search-results');
+  }
   return document.getElementById('global-search-results')
       || document.getElementById('omnibox-results');
 }
