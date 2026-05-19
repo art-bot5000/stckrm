@@ -5294,6 +5294,13 @@ const _GLOBAL_SEARCH = {
     'account-security':{ label: 'Account & Security', icon: 'i-shield',         view: 'account-security' },
     settings:          { label: 'Settings',           icon: 'i-settings',       view: 'settings' },
   },
+  // Filter toggles. Reset on each modal/omnibox open so a query that
+  // previously surfaced an archived match doesn't accidentally leak into
+  // an unrelated session. Searchers respect these flags; if either is
+  // false (the default) they filter the corresponding records out, but
+  // still count them so the filter bar can show "(N hidden)".
+  includeArchived: false,
+  includeDeleted:  false,
 };
 const _SEARCH_RESULTS_PER_SECTION = 8;
 
@@ -5313,6 +5320,10 @@ function openGlobalSearch() {
   // when the underlying data may have changed since last open.
   input.value = '';
   _GLOBAL_SEARCH.query = '';
+  // Reset filter flags too — fresh open should start with archived/deleted
+  // hidden by default; the user explicitly opts in per session.
+  _GLOBAL_SEARCH.includeArchived = false;
+  _GLOBAL_SEARCH.includeDeleted  = false;
   _renderGlobalSearchEmpty();
   // setTimeout so the focus call lands after the modal is visible — focusing
   // a display:none input is a no-op on some browsers.
@@ -5400,15 +5411,24 @@ function runGlobalSearch(query) {
   const q = (query || '').toLowerCase();
   if (!q) { _renderGlobalSearchEmpty(); return; }
 
+  // Filter options come from _GLOBAL_SEARCH state, toggled by the user
+  // via the bottom filter bar. Each searcher returns a { results, hasMore,
+  // deletedCount, archivedCount } envelope; the counts let us show the
+  // filter bar only when there's something to reveal.
+  const opts = {
+    includeArchived: _GLOBAL_SEARCH.includeArchived,
+    includeDeleted:  _GLOBAL_SEARCH.includeDeleted,
+  };
+
   // Run each section searcher. Each returns { results, hasMore } where
   // `results` is already capped at _SEARCH_RESULTS_PER_SECTION.
   const byKey = {
-    stock:             _searchStockroom(q),
-    grocery:           _searchGroceries(q),
-    notes:             _searchNotes(q),
-    reminders:         _searchReminders(q),
-    budget:            _searchBudget(q),
-    savings:           _searchSavings(q),
+    stock:             _searchStockroom(q, opts),
+    grocery:           _searchGroceries(q, opts),
+    notes:             _searchNotes(q, opts),
+    reminders:         _searchReminders(q, opts),
+    budget:            _searchBudget(q, opts),
+    savings:           _searchSavings(q, opts),
     report:            _searchStaticView(q, 'report'),
     billing:           _searchStaticView(q, 'billing'),
     'account-security':_searchStaticView(q, 'account-security'),
@@ -5421,6 +5441,17 @@ function runGlobalSearch(query) {
   const currentSectionKey = _searchSectionForView(_currentView || 'stock');
   const order = [currentSectionKey, ..._GLOBAL_SEARCH.sectionOrder.filter(k => k !== currentSectionKey)];
 
+  // Aggregate hidden counts across all sections so the filter bar can
+  // show a single "Include archived (3) · Include deleted (1)" summary.
+  let totalArchived = 0;
+  let totalDeleted = 0;
+  for (const key of order) {
+    const s = byKey[key];
+    if (!s) continue;
+    totalArchived += s.archivedCount || 0;
+    totalDeleted  += s.deletedCount  || 0;
+  }
+
   const blocks = [];
   for (const key of order) {
     const section = byKey[key];
@@ -5428,11 +5459,92 @@ function runGlobalSearch(query) {
     blocks.push(_renderSearchSection(key, section, key === currentSectionKey, q));
   }
 
+  const filterBar = _renderSearchFilterBar(totalArchived, totalDeleted);
+
   if (!blocks.length) {
-    container.innerHTML = `<div class="global-search-empty">No matches for <strong>${esc(query)}</strong>.</div>`;
+    // No matches in the current filter set. If unfiltered counts exist,
+    // tell the user explicitly so they don't think the app is broken.
+    const hiddenHint = (totalArchived || totalDeleted)
+      ? ` · ${totalArchived ? `${totalArchived} archived` : ''}${(totalArchived && totalDeleted) ? ', ' : ''}${totalDeleted ? `${totalDeleted} deleted` : ''} hidden`
+      : '';
+    container.innerHTML =
+      `<div class="global-search-empty">No matches for <strong>${esc(query)}</strong>${hiddenHint}.</div>` +
+      filterBar;
     return;
   }
-  container.innerHTML = blocks.join('');
+  container.innerHTML = blocks.join('') + filterBar;
+}
+
+// Render the bottom filter bar showing toggle checkboxes for archived /
+// deleted results. Hidden entirely when both counts are zero AND neither
+// flag is currently on. When a flag IS on, its checkbox stays visible
+// (even if count is 0 because nothing's being hidden right now) so the
+// user can untick to re-hide. Each box re-runs the search via
+// _toggleSearchFilter so the panel updates in place without losing
+// scroll or query state.
+function _renderSearchFilterBar(archivedCount, deletedCount) {
+  const showArchived = archivedCount > 0 || !!_GLOBAL_SEARCH.includeArchived;
+  const showDeleted  = deletedCount  > 0 || !!_GLOBAL_SEARCH.includeDeleted;
+  if (!showArchived && !showDeleted) return '';
+  const aChecked = _GLOBAL_SEARCH.includeArchived ? 'checked' : '';
+  const dChecked = _GLOBAL_SEARCH.includeDeleted  ? 'checked' : '';
+  // Show "(N hidden)" only when there are actual matches we're filtering.
+  // When the flag is on the count is naturally 0, in which case we drop
+  // the count entirely.
+  const aCount = archivedCount > 0 ? ` <em>(${archivedCount})</em>` : '';
+  const dCount = deletedCount  > 0 ? ` <em>(${deletedCount})</em>`  : '';
+  const aBox = showArchived ? `
+    <label class="global-search-filter-box">
+      <input type="checkbox" ${aChecked} onchange="_toggleSearchFilter('archived', this.checked)">
+      <span>Include archived${aCount}</span>
+    </label>` : '';
+  const dBox = showDeleted ? `
+    <label class="global-search-filter-box">
+      <input type="checkbox" ${dChecked} onchange="_toggleSearchFilter('deleted', this.checked)">
+      <span>Include deleted${dCount}</span>
+    </label>` : '';
+  return `<div class="global-search-filter-bar">
+    <div class="global-search-filter-label">Filters</div>
+    ${aBox}${dBox}
+  </div>`;
+}
+
+// Flip a filter flag and re-run the current search. Triggered by the
+// checkbox onchange inside the filter bar. Preserves scroll position
+// of the results container so toggling doesn't jump the user away from
+// where they were reading. Routes through _runOmniboxSearch when the
+// omnibox is the active UI (handles the ID swap so the rerender lands
+// in the right container).
+function _toggleSearchFilter(kind, checked) {
+  if (kind === 'archived')  _GLOBAL_SEARCH.includeArchived = !!checked;
+  else if (kind === 'deleted') _GLOBAL_SEARCH.includeDeleted = !!checked;
+
+  // Determine which UI is active. The omnibox owns _OMNIBOX.active when
+  // expanded; that's the signal to route via _runOmniboxSearch which
+  // handles the id-swap dance. Otherwise we hit runGlobalSearch direct.
+  const useOmnibox = (typeof _OMNIBOX !== 'undefined') && _OMNIBOX && _OMNIBOX.active;
+  let q = '';
+  if (useOmnibox) {
+    const omniboxInput = document.getElementById('omnibox-input');
+    q = (omniboxInput && omniboxInput.value) || '';
+  } else {
+    const modalInput = document.getElementById('global-search-input');
+    q = (modalInput && modalInput.value) || '';
+  }
+  if (!q) return;
+
+  // Preserve scroll across the re-render.
+  const container = useOmnibox
+    ? document.getElementById('omnibox-results')
+    : document.getElementById('global-search-results');
+  const prevScroll = container ? container.scrollTop : 0;
+
+  if (useOmnibox && typeof _runOmniboxSearch === 'function') {
+    _runOmniboxSearch(q);
+  } else {
+    runGlobalSearch(q);
+  }
+  if (container) container.scrollTop = prevScroll;
 }
 
 // Map a view name (which may be a sub-view like 'shopping') back to the
@@ -5469,15 +5581,83 @@ function _renderSearchRow(r, sectionKey, query) {
   if (r.chip === 'category') return _renderSearchCategoryChip(r, query);
   const titleHTML = _highlightMatch(r.title || '', query);
   const subHTML   = r.sub ? _highlightMatch(r.sub, query) : '';
+  // State badge for archived / deleted matches — surfaced because the
+  // filter bar at the bottom of the panel made them visible. Helps the
+  // user see WHY a result looks unfamiliar before tapping it.
+  let stateBadge = '';
+  let stateCls   = '';
+  if (r.state === 'archived') {
+    stateBadge = '<span class="search-row-state-badge state-archived" title="Archived">archived</span>';
+    stateCls   = ' is-state-archived';
+  } else if (r.state === 'deleted') {
+    stateBadge = '<span class="search-row-state-badge state-deleted" title="Deleted">deleted</span>';
+    stateCls   = ' is-state-deleted';
+  }
+  // Grocery aggregation: when an item appeared in multiple lists, the
+  // searcher merges them and includes `otherLists`. Render an expandable
+  // pill below the sub-line. Aggregation only fires for grocery section.
+  let aggregateBlock = '';
+  if (sectionKey === 'grocery' && r.otherLists && r.otherLists.length) {
+    const n = r.otherLists.length;
+    // Stash the other-lists payload on a data attribute for the toggle
+    // handler. JSON-escaping a small {id,name,deleted} array. Names can
+    // contain quotes/apostrophes so we escape via JSON then HTML.
+    const payloadJson = JSON.stringify(r.otherLists).replace(/"/g, '&quot;');
+    aggregateBlock = `
+      <button class="search-row-more-lists" data-other-lists="${payloadJson}"
+              onclick="event.stopPropagation();_toggleSearchRowMoreLists(this);">
+        <svg aria-hidden="true"><use href="#i-chevron-down"></use></svg>
+        Also in ${n} other ${n === 1 ? 'list' : 'lists'}
+      </button>`;
+  }
   // Inline onclick keeps things simple — no event delegation needed because
   // result rows are re-rendered on every keystroke after debounce.
-  return `<div class="global-search-row" onclick="_navigateToSearchResult(${JSON.stringify({s:sectionKey, v:r.view, t:r.target}).replace(/"/g,'&quot;')})">
+  return `<div class="global-search-row${stateCls}" onclick="_navigateToSearchResult(${JSON.stringify({s:sectionKey, v:r.view, t:r.target}).replace(/"/g,'&quot;')})">
     <svg class="global-search-row-icon" aria-hidden="true"><use href="#${esc(r.icon || _GLOBAL_SEARCH.sectionMeta[sectionKey].icon)}"></use></svg>
     <div class="global-search-row-body">
-      <div class="global-search-row-title">${titleHTML}</div>
+      <div class="global-search-row-title">${titleHTML}${stateBadge}</div>
       ${subHTML ? `<div class="global-search-row-sub">${subHTML}</div>` : ''}
+      ${aggregateBlock}
     </div>
   </div>`;
+}
+
+// Toggle the expanded "other lists" panel below an aggregated grocery row.
+// Reads the payload from the button's data attribute, builds the panel
+// once on first expand, then just toggles its display on subsequent taps.
+// Each list name is tappable to navigate directly to that list.
+function _toggleSearchRowMoreLists(btn) {
+  if (!btn) return;
+  const row = btn.closest('.global-search-row');
+  if (!row) return;
+  let panel = row.querySelector('.search-row-other-lists');
+  if (panel) {
+    const isOpen = panel.style.display !== 'none';
+    panel.style.display = isOpen ? 'none' : '';
+    btn.classList.toggle('expanded', !isOpen);
+    return;
+  }
+  // Build panel
+  let other;
+  try { other = JSON.parse(btn.getAttribute('data-other-lists') || '[]'); } catch (_) { other = []; }
+  if (!other.length) return;
+  const items = other.map(o => {
+    const cls = o.deleted ? ' is-state-deleted' : '';
+    // Navigate to the list — the grocery view supports a target id for the
+    // list itself. _navigateToSearchResult routes view='grocery', target=listId.
+    const navPayload = JSON.stringify({ s: 'grocery', v: 'grocery', t: o.id }).replace(/"/g, '&quot;');
+    return `<div class="search-row-other-list-item${cls}" onclick="event.stopPropagation();_navigateToSearchResult(${navPayload})">
+      <svg aria-hidden="true"><use href="#i-shopping-cart"></use></svg>
+      <span>${esc(o.name || '(unnamed list)')}</span>
+      ${o.deleted ? '<span class="search-row-state-badge state-deleted">deleted</span>' : ''}
+    </div>`;
+  }).join('');
+  panel = document.createElement('div');
+  panel.className = 'search-row-other-lists';
+  panel.innerHTML = items;
+  // Insert after the button
+  btn.parentNode.insertBefore(panel, btn.nextSibling);
+  btn.classList.add('expanded');
 }
 
 // ── Search chips: rich inline cards for direct-hit Budget entities ─────────
@@ -5738,126 +5918,290 @@ function _findSearchResultElement(section, target) {
 // _SEARCH_RESULTS_PER_SECTION. Records have:
 //   { title, sub, view, target, icon? }
 
-function _searchStockroom(q) {
+function _searchStockroom(q, opts = {}) {
+  const includeArchived = !!opts.includeArchived;
+  const includeDeleted  = !!opts.includeDeleted;
   const out = [];
+  let archivedCount = 0;
+  let deletedCount  = 0;
   for (const item of (items || [])) {
-    if (item._deletedAt || item._archived) continue;
     const hay = [item.name, item.category, item.store, item.notes, (item.tags || []).join(' ')].filter(Boolean).join(' ').toLowerCase();
-    if (hay.includes(q)) {
-      out.push({
-        title: item.name || '(untitled)',
-        sub:   [item.category, item.store].filter(Boolean).join(' · '),
-        view:  'stock',
-        target: item.id,
-      });
-      if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
-    }
+    if (!hay.includes(q)) continue;
+
+    const isDeleted  = !!item._deletedAt;
+    const isArchived = !isDeleted && !!item._archived;
+
+    // Count hidden matches before filtering so the filter bar can show them
+    if (isDeleted  && !includeDeleted)  { deletedCount++;  continue; }
+    if (isArchived && !includeArchived) { archivedCount++; continue; }
+
+    out.push({
+      title: item.name || '(untitled)',
+      sub:   [item.category, item.store].filter(Boolean).join(' · '),
+      view:  'stock',
+      target: item.id,
+      state: isDeleted ? 'deleted' : (isArchived ? 'archived' : null),
+    });
+    if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
   }
-  return { results: out.slice(0, _SEARCH_RESULTS_PER_SECTION), hasMore: out.length > _SEARCH_RESULTS_PER_SECTION };
+  return {
+    results: out.slice(0, _SEARCH_RESULTS_PER_SECTION),
+    hasMore: out.length > _SEARCH_RESULTS_PER_SECTION,
+    archivedCount, deletedCount,
+  };
 }
 
-function _searchGroceries(q) {
+function _searchGroceries(q, opts = {}) {
+  const includeArchived = !!opts.includeArchived; // groceries don't have an archived state today, kept for symmetry
+  const includeDeleted  = !!opts.includeDeleted;
   const out = [];
-  // Lists first (so "Tesco" matches the Tesco list before its items)
+  let archivedCount = 0;
+  let deletedCount  = 0;
+
+  // ── Lists first ─────────────────────────────────────────────────────────
+  // (so "Tesco" matches the Tesco list before its items)
   for (const list of (groceryLists || [])) {
-    if (list._deletedAt) continue;
     const hay = [list.name, list.store].filter(Boolean).join(' ').toLowerCase();
-    if (hay.includes(q)) {
-      out.push({
-        title: list.name || '(unnamed list)',
-        sub:   list.store ? `List · ${list.store}` : 'Shopping list',
-        view:  'grocery',
-        target: list.id,
-        icon:  'i-shopping-cart',
-      });
-      if (out.length >= _SEARCH_RESULTS_PER_SECTION + 1) break;
-    }
+    if (!hay.includes(q)) continue;
+
+    const isDeleted = !!list._deletedAt;
+    if (isDeleted && !includeDeleted) { deletedCount++; continue; }
+
+    out.push({
+      title: list.name || '(unnamed list)',
+      sub:   list.store ? `List · ${list.store}` : 'Shopping list',
+      view:  'grocery',
+      target: list.id,
+      icon:  'i-shopping-cart',
+      state: isDeleted ? 'deleted' : null,
+    });
+    if (out.length >= _SEARCH_RESULTS_PER_SECTION + 1) break;
   }
-  // Then items
+
+  // ── Items with aggregation ──────────────────────────────────────────────
+  // The same item name can live across many lists (a "bread" entry in
+  // Tesco, Co-op, Aldi, etc.). We group those into a single result so
+  // typing "bread" doesn't produce six rows of the same name. Group key
+  // is the case-insensitive trimmed name. Within a group we pick a
+  // "primary" list using these rules in order:
+  //   1. The currently active list (activeGroceryListId)
+  //   2. The oldest list by createdAt (proxy for "main / original")
+  //   3. Any list (fallback)
+  // Other lists in the group are exposed via a "+N more lists" pill that
+  // expands inline. Substring-only matches that don't share a canonical
+  // name with anything else just render as a single result like before.
+  //
+  // For matching: we case-insensitively check the item name AND its dept
+  // and notes; only the name participates in the aggregation key (an item
+  // with "bread" in a note and one literally named Bread shouldn't merge).
+  const itemGroups = new Map(); // key (lowercased name) → { items: [], canonicalName }
+
   for (const item of (groceryItems || [])) {
-    if (item._deletedAt) continue;
-    const hay = [item.name, item.dept, item.notes].filter(Boolean).join(' ').toLowerCase();
-    if (hay.includes(q)) {
-      out.push({
-        title: item.name || '(unnamed item)',
-        sub:   item.dept ? `Item · ${item.dept}` : 'Grocery item',
-        view:  'grocery',
-        target: item.id,
-      });
-      if (out.length >= _SEARCH_RESULTS_PER_SECTION + 1) break;
+    // Field is `department` in the schema; older code referred to `dept`
+    // which was always undefined. Check both for forward-compat.
+    const dept = item.department || item.dept || '';
+    const hay  = [item.name, dept, item.notes].filter(Boolean).join(' ').toLowerCase();
+    if (!hay.includes(q)) continue;
+
+    const isDeleted = !!item._deletedAt;
+    if (isDeleted && !includeDeleted) { deletedCount++; continue; }
+
+    // Aggregation key — only groups items that match by NAME exactly
+    // (case-insensitive). If the match was solely via dept/notes, key
+    // by id so it doesn't get folded into a name-based group.
+    const lowerName = (item.name || '').trim().toLowerCase();
+    const nameMatches = lowerName.includes(q);
+    const key = nameMatches ? lowerName : ('id:' + item.id);
+
+    if (!itemGroups.has(key)) {
+      itemGroups.set(key, { items: [], canonicalName: item.name || '(unnamed item)', isDeletedSome: false });
     }
+    const g = itemGroups.get(key);
+    g.items.push(item);
+    if (isDeleted) g.isDeletedSome = true;
   }
-  return { results: out.slice(0, _SEARCH_RESULTS_PER_SECTION), hasMore: out.length > _SEARCH_RESULTS_PER_SECTION };
+
+  // For each group, build a single result. Aggregate state: if every item
+  // in the group is deleted, mark the result as deleted; if mixed, prefer
+  // a non-deleted primary entry.
+  const _byActiveOrOldest = (a, b) => {
+    const activeId = (typeof activeGroceryListId !== 'undefined') ? activeGroceryListId : null;
+    if (activeId) {
+      const aActive = a.listId === activeId ? -1 : 0;
+      const bActive = b.listId === activeId ? -1 : 0;
+      if (aActive !== bActive) return aActive - bActive;
+    }
+    // Resolve list createdAt
+    const listsById = (typeof groceryLists !== 'undefined' && Array.isArray(groceryLists))
+      ? Object.fromEntries(groceryLists.map(l => [l.id, l]))
+      : {};
+    const ac = (listsById[a.listId]?.createdAt) || '';
+    const bc = (listsById[b.listId]?.createdAt) || '';
+    if (ac && bc) return ac < bc ? -1 : 1;
+    if (ac) return -1;
+    if (bc) return 1;
+    return 0;
+  };
+
+  for (const [, g] of itemGroups) {
+    // Pick the primary item. Prefer non-deleted items; among those, the
+    // one whose list is active / oldest.
+    const liveItems   = g.items.filter(i => !i._deletedAt);
+    const candidates  = liveItems.length ? liveItems : g.items;
+    candidates.sort(_byActiveOrOldest);
+    const primary     = candidates[0];
+
+    // Aggregate metadata
+    const allDeleted    = g.items.every(i => !!i._deletedAt);
+    const listIdSet     = new Set(g.items.map(i => i.listId).filter(Boolean));
+    const listCount     = listIdSet.size;
+    const listsById     = (typeof groceryLists !== 'undefined' && Array.isArray(groceryLists))
+      ? Object.fromEntries(groceryLists.map(l => [l.id, l]))
+      : {};
+    const primaryList   = primary && listsById[primary.listId];
+    const primaryDept   = primary?.department || primary?.dept || '';
+
+    // Sub line: include both dept and the list count
+    const subParts = [];
+    if (primaryDept) subParts.push(primaryDept);
+    if (primaryList?.name) subParts.push(primaryList.name);
+    const sub = subParts.length ? `Item · ${subParts.join(' · ')}` : 'Grocery item';
+
+    // Other lists for the disclosure pill. Map to {id, name, deletedFlag}.
+    const otherLists = [...listIdSet]
+      .filter(lid => lid !== primary?.listId)
+      .map(lid => ({
+        id:      lid,
+        name:    listsById[lid]?.name || '(unknown list)',
+        deleted: !!listsById[lid]?._deletedAt,
+      }));
+
+    out.push({
+      title:  primary?.name || g.canonicalName,
+      sub,
+      view:   'grocery',
+      target: primary?.id,
+      state:  allDeleted ? 'deleted' : null,
+      // Aggregation metadata for the row renderer to expand on demand
+      otherLists: otherLists.length ? otherLists : null,
+      groupCount: g.items.length,
+    });
+
+    if (out.length >= _SEARCH_RESULTS_PER_SECTION + 1) break;
+  }
+
+  return {
+    results: out.slice(0, _SEARCH_RESULTS_PER_SECTION),
+    hasMore: out.length > _SEARCH_RESULTS_PER_SECTION,
+    archivedCount, deletedCount,
+  };
 }
 
-function _searchNotes(q) {
+function _searchNotes(q, opts = {}) {
+  const includeArchived = !!opts.includeArchived;
+  const includeDeleted  = !!opts.includeDeleted;
   const out = [];
+  let archivedCount = 0;
+  let deletedCount  = 0;
   for (const n of (notes || [])) {
-    if (n.deletedAt) continue;
     // Locked notes: title-only matching (body is encrypted and we don't
     // decrypt at index time). Show a lock indicator in the sub line.
     const title = (n.title || '').toLowerCase();
     const body  = n.locked ? '' : ((n.body || '').toLowerCase());
     const hay = (title + ' ' + body);
-    if (hay.includes(q)) {
-      out.push({
-        title: n.title || '(untitled note)',
-        sub:   n.locked ? '🔒 Locked note' : (n.pinned ? 'Pinned note' : 'Note'),
-        view:  'notes',
-        target: n.id,
-      });
-      if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
-    }
+    if (!hay.includes(q)) continue;
+
+    const isDeleted  = !!n.deletedAt;
+    const isArchived = !isDeleted && !!n.archived;
+
+    if (isDeleted  && !includeDeleted)  { deletedCount++;  continue; }
+    if (isArchived && !includeArchived) { archivedCount++; continue; }
+
+    out.push({
+      title: n.title || '(untitled note)',
+      sub:   n.locked ? '🔒 Locked note' : (n.pinned ? 'Pinned note' : 'Note'),
+      view:  'notes',
+      target: n.id,
+      state: isDeleted ? 'deleted' : (isArchived ? 'archived' : null),
+    });
+    if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
   }
-  return { results: out.slice(0, _SEARCH_RESULTS_PER_SECTION), hasMore: out.length > _SEARCH_RESULTS_PER_SECTION };
+  return {
+    results: out.slice(0, _SEARCH_RESULTS_PER_SECTION),
+    hasMore: out.length > _SEARCH_RESULTS_PER_SECTION,
+    archivedCount, deletedCount,
+  };
 }
 
-function _searchReminders(q) {
+function _searchReminders(q, opts = {}) {
+  const includeArchived = !!opts.includeArchived; // reminders don't have an archived state — kept for symmetry
+  const includeDeleted  = !!opts.includeDeleted;
   const out = [];
+  let archivedCount = 0;
+  let deletedCount  = 0;
   // Reminders shown on the Reminders tab come from two sources: the
   // standalone `reminders[]` array AND the `replacementReminders` arrays
   // (and legacy single-reminder fields) on each item. The renderReminders
   // function aggregates both — search must do the same or the user will
   // type a reminder name they can see on screen and get no results.
   // Aggregation logic mirrors renderReminders() — keep in sync.
-  const aggregated = [
-    ...((reminders || []).filter(r => !r._deletedAt)),
-    ...((items || []).filter(i => !i._deletedAt).flatMap(i => {
-      if (i.replacementReminders?.length) {
-        return i.replacementReminders.map(r => ({
-          id:       `item_${i.id}_${r.id}`,
-          name:     r.name ? `${i.name} — ${r.name}` : i.name,
-          interval: r.interval, unit: r.unit,
-          notes:    i.notes || '',
-        }));
-      } else if (i.replacementInterval && i.replacementUnit) {
-        return [{
-          id:       `item_${i.id}`,
-          name:     i.name,
-          interval: i.replacementInterval, unit: i.replacementUnit,
-          notes:    i.notes || '',
-        }];
-      }
-      return [];
-    })),
-  ];
+  //
+  // For the filter: standalone reminders use _deletedAt. Item-derived
+  // reminders inherit from the item — if the item is deleted, its
+  // reminders disappear too. We don't surface deleted items as reminder
+  // matches unless includeDeleted is true.
+  const standaloneAll = (reminders || []);
+  const itemDerivedAll = (items || []).flatMap(i => {
+    if (i.replacementReminders?.length) {
+      return i.replacementReminders.map(r => ({
+        id:       `item_${i.id}_${r.id}`,
+        name:     r.name ? `${i.name} — ${r.name}` : i.name,
+        interval: r.interval, unit: r.unit,
+        notes:    i.notes || '',
+        _deletedAt: i._deletedAt || null, // inherit
+      }));
+    } else if (i.replacementInterval && i.replacementUnit) {
+      return [{
+        id:       `item_${i.id}`,
+        name:     i.name,
+        interval: i.replacementInterval, unit: i.replacementUnit,
+        notes:    i.notes || '',
+        _deletedAt: i._deletedAt || null,
+      }];
+    }
+    return [];
+  });
+  const aggregated = [...standaloneAll, ...itemDerivedAll];
+
   for (const r of aggregated) {
     const hay = [r.name, r.notes].filter(Boolean).join(' ').toLowerCase();
-    if (hay.includes(q)) {
-      out.push({
-        title: r.name || '(unnamed reminder)',
-        sub:   r.interval ? `Every ${r.interval} ${r.unit || 'months'}` : 'Reminder',
-        view:  'reminders',
-        target: r.id,
-      });
-      if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
-    }
+    if (!hay.includes(q)) continue;
+
+    const isDeleted = !!r._deletedAt;
+    if (isDeleted && !includeDeleted) { deletedCount++; continue; }
+
+    out.push({
+      title: r.name || '(unnamed reminder)',
+      sub:   r.interval ? `Every ${r.interval} ${r.unit || 'months'}` : 'Reminder',
+      view:  'reminders',
+      target: r.id,
+      state: isDeleted ? 'deleted' : null,
+    });
+    if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
   }
-  return { results: out.slice(0, _SEARCH_RESULTS_PER_SECTION), hasMore: out.length > _SEARCH_RESULTS_PER_SECTION };
+  return {
+    results: out.slice(0, _SEARCH_RESULTS_PER_SECTION),
+    hasMore: out.length > _SEARCH_RESULTS_PER_SECTION,
+    archivedCount, deletedCount,
+  };
 }
 
-function _searchBudget(q) {
+function _searchBudget(q, opts = {}) {
+  const includeArchived = !!opts.includeArchived;
+  const includeDeleted  = !!opts.includeDeleted;
   const out = [];
+  let archivedCount = 0;
+  let deletedCount  = 0;
 
   // Helper: is `q` a "direct hit" against this name?
   //   - case-insensitive exact match, OR
@@ -5875,96 +6219,125 @@ function _searchBudget(q) {
   };
 
   // ── Accounts ────────────────────────────────────────────────────────────
-  // Chip on direct hit (shows balance + Update/Edit buttons). Substring-
-  // only matches fall through to a plain row that opens the editor.
+  // Accounts use a single `archived` flag (no separate deleted). When
+  // archived and includeArchived is false, count and skip. Archived
+  // accounts that ARE surfaced render as plain rows, not chips — the
+  // chip's "Update balance" action makes no sense for an archived
+  // account.
   for (const acc of (typeof budgetAccounts !== 'undefined' && Array.isArray(budgetAccounts) ? budgetAccounts : [])) {
-    if (acc.archived) continue;
     const hay = (acc.name || '').toLowerCase();
     if (!hay.includes(q)) continue;
+    const isArchived = !!acc.archived;
+    if (isArchived && !includeArchived) { archivedCount++; continue; }
     const direct = _isDirectHit(acc.name || '');
     out.push({
       title:  acc.name || '(unnamed account)',
-      sub:    direct ? null : `Account · ${_money(acc.balance)}`,
+      sub:    (direct && !isArchived) ? null : `Account · ${_money(acc.balance)}`,
       view:   'budget',
       target: acc.id,
       icon:   'i-credit-card',
-      chip:   direct ? 'account' : null,
-      payload: direct ? { id: acc.id } : null,
+      chip:   (direct && !isArchived) ? 'account' : null,
+      payload: (direct && !isArchived) ? { id: acc.id } : null,
+      state:  isArchived ? 'archived' : null,
     });
     if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
   }
 
   // ── Categories (spend buckets) ──────────────────────────────────────────
-  // Chip on direct hit (shows last 3 txs + Add/View all/Edit). Substring-
-  // only matches fall through to a plain row that opens the editor.
+  // Same archived-flag pattern. An archived category surfaces as a plain
+  // row (no chip with "Add new" — adding spend to an archived category
+  // would be surprising).
   if (out.length <= _SEARCH_RESULTS_PER_SECTION) {
     for (const cat of (typeof budgetCategories !== 'undefined' && Array.isArray(budgetCategories) ? budgetCategories : [])) {
-      if (cat.archived) continue;
       const hay = (cat.name || '').toLowerCase();
       if (!hay.includes(q)) continue;
+      const isArchived = !!cat.archived;
+      if (isArchived && !includeArchived) { archivedCount++; continue; }
       const direct = _isDirectHit(cat.name || '');
       out.push({
         title:  cat.name || '(unnamed category)',
-        sub:    direct ? null : 'Spend category',
+        sub:    (direct && !isArchived) ? null : 'Spend category',
         view:   'budget',
         target: cat.id,
         icon:   'i-tag',
-        chip:   direct ? 'category' : null,
-        payload: direct ? { id: cat.id } : null,
+        chip:   (direct && !isArchived) ? 'category' : null,
+        payload: (direct && !isArchived) ? { id: cat.id } : null,
+        state:  isArchived ? 'archived' : null,
       });
       if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
     }
   }
 
   // ── Bills ───────────────────────────────────────────────────────────────
-  // Bills remain plain rows (no chip treatment — there's no obvious quick
-  // action that makes sense without leaving search context; marking paid
-  // needs the per-month instance, which the user picks from the timeline).
+  // Bills remain plain rows (no chip treatment). They have BOTH
+  // `_deletedAt` (true delete) AND `archived` (soft-disabled).
   if (out.length <= _SEARCH_RESULTS_PER_SECTION) {
     for (const b of (typeof bills !== 'undefined' && Array.isArray(bills) ? bills : [])) {
-      if (b._deletedAt) continue;
       const hay = [b.name, b.notes].filter(Boolean).join(' ').toLowerCase();
-      if (hay.includes(q)) {
-        out.push({
-          title: b.name || '(unnamed bill)',
-          sub:   b.amount != null ? `Bill · ${_money(b.amount)}` : 'Bill',
-          view:  'budget',
-          target: b.id,
-        });
-        if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
-      }
+      if (!hay.includes(q)) continue;
+
+      const isDeleted  = !!b._deletedAt;
+      const isArchived = !isDeleted && !!b.archived;
+      if (isDeleted  && !includeDeleted)  { deletedCount++;  continue; }
+      if (isArchived && !includeArchived) { archivedCount++; continue; }
+
+      out.push({
+        title: b.name || '(unnamed bill)',
+        sub:   b.amount != null ? `Bill · ${_money(b.amount)}` : 'Bill',
+        view:  'budget',
+        target: b.id,
+        state: isDeleted ? 'deleted' : (isArchived ? 'archived' : null),
+      });
+      if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
     }
   }
 
-  return { results: out.slice(0, _SEARCH_RESULTS_PER_SECTION), hasMore: out.length > _SEARCH_RESULTS_PER_SECTION };
+  return {
+    results: out.slice(0, _SEARCH_RESULTS_PER_SECTION),
+    hasMore: out.length > _SEARCH_RESULTS_PER_SECTION,
+    archivedCount, deletedCount,
+  };
 }
 
-function _searchSavings(q) {
+function _searchSavings(q, opts = {}) {
+  const includeArchived = !!opts.includeArchived;
+  const includeDeleted  = !!opts.includeDeleted;
   // Savings opportunities are derived from items[] (Amazon Subscribe & Save
   // tracking) — search the underlying items but route results to the savings
   // view. We deliberately don't surface every stockroom item here; only ones
   // that have any savings tracking signal (logs in the last 6 months or any
   // savings metadata).
   const out = [];
+  let archivedCount = 0;
+  let deletedCount  = 0;
   const ITEM_HAS_HISTORY = it => (it.logs && it.logs.length) || it.savingsSubscribed;
   for (const item of (items || [])) {
-    if (item._deletedAt || item._archived) continue;
     if (!ITEM_HAS_HISTORY(item)) continue;
     const hay = [item.name, item.category].filter(Boolean).join(' ').toLowerCase();
-    if (hay.includes(q)) {
-      out.push({
-        title: item.name || '(untitled)',
-        sub:   item.savingsSubscribed ? 'Subscribed' : 'Tracking',
-        view:  'savings',
-        // No card-level DOM hook in savings yet — route to the view; we
-        // still scroll to top of the view and flash nothing if no match.
-        target: item.id,
-        icon:  'i-piggy-bank',
-      });
-      if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
-    }
+    if (!hay.includes(q)) continue;
+
+    const isDeleted  = !!item._deletedAt;
+    const isArchived = !isDeleted && !!item._archived;
+    if (isDeleted  && !includeDeleted)  { deletedCount++;  continue; }
+    if (isArchived && !includeArchived) { archivedCount++; continue; }
+
+    out.push({
+      title: item.name || '(untitled)',
+      sub:   item.savingsSubscribed ? 'Subscribed' : 'Tracking',
+      view:  'savings',
+      // No card-level DOM hook in savings yet — route to the view; we
+      // still scroll to top of the view and flash nothing if no match.
+      target: item.id,
+      icon:  'i-piggy-bank',
+      state: isDeleted ? 'deleted' : (isArchived ? 'archived' : null),
+    });
+    if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
   }
-  return { results: out.slice(0, _SEARCH_RESULTS_PER_SECTION), hasMore: out.length > _SEARCH_RESULTS_PER_SECTION };
+  return {
+    results: out.slice(0, _SEARCH_RESULTS_PER_SECTION),
+    hasMore: out.length > _SEARCH_RESULTS_PER_SECTION,
+    archivedCount, deletedCount,
+  };
 }
 
 // Static-view searcher — indexes labels/headers in Report / Billing /
@@ -31326,6 +31699,12 @@ collapseOmnibox = function collapseOmnibox() {
   try { _omniboxInput()?.blur(); } catch (_) {}
   // Pass 4 addition: hide the dark backdrop.
   _setOmniboxBackdropVisible(false);
+  // Reset search filter flags so the next expand starts with deleted /
+  // archived hidden again. User has to explicitly opt in each session.
+  if (typeof _GLOBAL_SEARCH !== 'undefined' && _GLOBAL_SEARCH) {
+    _GLOBAL_SEARCH.includeArchived = false;
+    _GLOBAL_SEARCH.includeDeleted  = false;
+  }
 };
 
 // ── Init: insert backdrop element so it's ready before first expand ──

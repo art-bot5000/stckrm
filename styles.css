@@ -4304,6 +4304,164 @@ body.has-demo-banner #view-notes #notes-header {
   padding: 0 1px;
 }
 
+/* ── State badges + faded rows for archived / deleted matches ──
+   Filter bar at the bottom of the result panel can reveal these. Faded
+   row tint + a small badge in the title tells the user this isn't a
+   live record. */
+.global-search-row.is-state-archived,
+.global-search-row.is-state-deleted {
+  opacity: 0.62;
+}
+.global-search-row.is-state-archived .global-search-row-title,
+.global-search-row.is-state-deleted .global-search-row-title {
+  font-weight: 500; /* slightly lighter than the 600 default */
+}
+.global-search-row.is-state-deleted .global-search-row-title {
+  text-decoration: line-through;
+  text-decoration-color: var(--muted);
+}
+.search-row-state-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+.search-row-state-badge.state-archived {
+  background: rgba(140,140,140,0.18);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.search-row-state-badge.state-deleted {
+  background: rgba(220,80,80,0.15);
+  color: #c45757;
+  border: 1px solid rgba(220,80,80,0.30);
+}
+
+/* ── Grocery aggregation: "Also in N other lists" disclosure pill ──
+   Shown below the sub-line when the same item name appears in multiple
+   grocery lists. Tap to reveal an inline list of the other list names,
+   each tappable to navigate. */
+.search-row-more-lists {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 2px 8px 2px 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.search-row-more-lists:hover {
+  background: var(--surface2);
+  color: var(--text);
+  border-color: var(--accent);
+}
+.search-row-more-lists svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.search-row-more-lists.expanded svg { transform: rotate(180deg); }
+
+.search-row-other-lists {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+}
+.search-row-other-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+  transition: background 0.1s;
+}
+.search-row-other-list-item:hover { background: var(--surface2); }
+.search-row-other-list-item svg {
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.search-row-other-list-item.is-state-deleted { opacity: 0.6; }
+.search-row-other-list-item.is-state-deleted span:first-of-type {
+  text-decoration: line-through;
+  text-decoration-color: var(--muted);
+}
+
+/* ── Filter bar at the bottom of the results panel ──
+   Two checkboxes: Include archived (N), Include deleted (N). Each
+   appears only when its count is non-zero. Re-runs the search on
+   toggle, preserving scroll. */
+.global-search-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  bottom: 0;
+}
+.global-search-filter-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.global-search-filter-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--text);
+}
+.global-search-filter-box input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  margin: 0;
+}
+.global-search-filter-box em {
+  color: var(--muted);
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.global-search-filter-box:hover span { color: var(--accent); }
+
+/* When the filter bar is inside the omnibox panel, drop the sticky
+   positioning — the omnibox-results container is already a fixed-
+   height scroll panel and sticky inside that double-paints on iOS. */
+.omnibox-results .global-search-filter-bar {
+  position: static;
+}
+
 /* ── Search chips — rich inline cards for direct-hit Budget entities ──
    Account chips show balance + Update/Edit; category chips show last 3
    transactions + Add/View all/Edit. Sized to fit naturally between plain
