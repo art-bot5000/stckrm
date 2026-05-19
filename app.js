@@ -38715,6 +38715,28 @@ function _omniboxDetectIntent(text) {
     return result;
   }
 
+  // 2a-bis. Whole-number amount WITH category/merchant context → Spend.
+  // The bare-integer case ("tesco 40 carla", "40 petrol") is ambiguous on
+  // shape alone (could be a quantity), so we ask the parser: does it
+  // resolve to a known category (via alias) or a remembered merchant?
+  // Only if yes do we promote to spend — keeps "buy 3 eggs" out of the
+  // spend bucket. Cheap pre-check first: bail if there's no integer at
+  // all so we don't run parseQuickAddInput on every keystroke.
+  if (commaCount === 0 && newlineCount === 0 && /\b\d+\b/.test(trimmed)) {
+    try {
+      if (typeof parseQuickAddInput === 'function') {
+        const probe = parseQuickAddInput(trimmed);
+        const first = probe && probe[0];
+        if (first && first.ok && first.categoryId != null) {
+          result.primary = 'spend';
+          result.enabled = new Set(['search', 'spend']);
+          result.hint = _intentHintLabel('spend', false);
+          return result;
+        }
+      }
+    } catch (_) { /* parser failure shouldn't break intent detection */ }
+  }
+
   // 2b. Long prose with no commas → Notes (primary) + Reminders enabled.
   // Threshold: more than ~6 words OR more than ~40 chars, AND zero commas.
   // Newlines (multi-line paste) also push toward Notes.
