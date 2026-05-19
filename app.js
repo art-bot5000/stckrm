@@ -6055,7 +6055,16 @@ function _renderOmniboxOrderPanel(container) {
     const isSel = row.selected;
     const qty = row.qty;
     const daysLabel = _omniboxDaysLeftLabel(stock.daysLeft);
-    const storeLabel = item.store || (typeof urlToStoreName === 'function' ? urlToStoreName(item.url || '') : '') || '';
+    const derivedStore = (typeof urlToStoreName === 'function' ? urlToStoreName(item.url || '') : '') || '';
+    const storeLabel = item.store || derivedStore || '';
+    const url = (item.url && item.url.trim()) ? item.url.trim() : '';
+    // Buy now link when the item has an online URL — opens in a new tab,
+    // stops propagation so the link click doesn't toggle the row checkbox
+    // or trigger any panel re-render side-effects. Offline-only items
+    // (no url) show the store name as plain text on the sub-line below.
+    const buyNow = url
+      ? ` · <a class="omnibox-workflow-row-buylink" href="${esc(url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Buy now <svg aria-hidden="true"><use href="#i-external-link"></use></svg></a>`
+      : (storeLabel ? ' · ' + esc(storeLabel) : '');
     const statusBadge = status === 'critical'
       ? '<span class="omnibox-workflow-row-badge state-critical">critical</span>'
       : status === 'warn'
@@ -6068,7 +6077,7 @@ function _renderOmniboxOrderPanel(container) {
       </label>
       <div class="omnibox-workflow-row-body">
         <div class="omnibox-workflow-row-title">${esc(item.name || '(untitled)')} ${statusBadge}</div>
-        <div class="omnibox-workflow-row-sub">${daysLabel ? esc(daysLabel) + ' left' : 'low stock'}${storeLabel ? ' · ' + esc(storeLabel) : ''}</div>
+        <div class="omnibox-workflow-row-sub">${daysLabel ? esc(daysLabel) + ' left' : 'low stock'}${buyNow}</div>
       </div>
       <div class="omnibox-workflow-row-qty">
         <label>Qty</label>
@@ -31340,12 +31349,31 @@ function _omniboxOutsideClick(e) {
   if (!_OMNIBOX.active) return;
   const omni = _omniboxEl();
   if (!omni) return;
-  if (omni.contains(e.target)) return;
+  // Use composedPath (captured at event dispatch time) rather than just
+  // e.target. Some handlers — workflow-panel buttons, in particular —
+  // replace innerHTML synchronously, which detaches the original target
+  // before the click finishes bubbling. omni.contains(e.target) then
+  // returns false for what was clearly an inside-click. composedPath
+  // preserves the original ancestor chain so this case is handled
+  // correctly. Older browsers without composedPath fall back to the
+  // simple contains() check.
+  const path = (typeof e.composedPath === 'function') ? e.composedPath() : null;
+  if (path && path.length) {
+    if (path.includes(omni)) return;
+  } else {
+    if (omni.contains(e.target)) return;
+  }
   // Don't collapse if the click landed inside any modal — search
   // results lead to modals (note editor, item card, etc.) opening,
   // and those clicks shouldn't trigger a collapse race.
   const modalOpen = document.querySelector('.modal-backdrop.show, .modal-backdrop[style*="display: flex"], .modal-backdrop[style*="display:flex"]');
-  if (modalOpen && modalOpen.contains(e.target)) return;
+  if (modalOpen) {
+    if (path && path.length) {
+      if (path.includes(modalOpen)) return;
+    } else if (modalOpen.contains(e.target)) {
+      return;
+    }
+  }
   collapseOmnibox();
 }
 

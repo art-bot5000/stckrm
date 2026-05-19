@@ -4626,6 +4626,30 @@ body.has-demo-banner #view-notes #notes-header {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* "Buy now" link inside an Order-panel row's sub-line. Inline pill that
+   opens the item's URL in a new tab. Stops propagation so the link tap
+   doesn't toggle the row's checkbox or trigger any re-render side
+   effect. Offline-only items (no URL) just show plain store name. */
+.omnibox-workflow-row-buylink {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent);
+  text-decoration: none;
+  font-family: var(--mono);
+  font-weight: 600;
+  border-bottom: 1px dashed transparent;
+  transition: border-color 0.1s, color 0.1s;
+}
+.omnibox-workflow-row-buylink:hover {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.omnibox-workflow-row-buylink svg {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+}
 .omnibox-workflow-row-badge {
   display: inline-block;
   margin-left: 6px;
