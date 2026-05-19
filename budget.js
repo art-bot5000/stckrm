@@ -2966,6 +2966,10 @@ let _spendEditingTxId     = null;
 let _spendEditingCatId    = null;
 let _quickAddDateOverride = null;       // ISO date if user picks a non-today date
 let _quickAddDebounceTimer= null;
+let _quickAddPrefillCatId = null;       // set when opened from a search chip's
+                                        // "Add new" — biases the parser so
+                                        // untagged entries land in this cat.
+                                        // Cleared on modal close.
 
 // ── Render entry — called by renderBudget when panel === 'spend' ───────────
 function renderBudgetSpend() {
@@ -3227,13 +3231,70 @@ function openQuickAddSpend() {
     return;
   }
   _quickAddDateOverride = null;
+  // Pick up the search-chip prefill (if any). Pull off window, clear it
+  // immediately so a second invocation without a chip doesn't reuse it.
+  try {
+    if (typeof window !== 'undefined' && window._searchChipPrefillCategoryId) {
+      _quickAddPrefillCatId = window._searchChipPrefillCategoryId;
+      window._searchChipPrefillCategoryId = null;
+    } else {
+      _quickAddPrefillCatId = null;
+    }
+  } catch (_) { _quickAddPrefillCatId = null; }
+
   document.getElementById('spend-quick-add-input').value = '';
   document.getElementById('spend-quick-add-date').value = new Date().toISOString().slice(0, 10);
   document.getElementById('spend-quick-add-preview').innerHTML = '';
   show('spend-quick-add-preview-empty', 'block');
   _refreshQuickAddCount(0);
+
+  // Banner: show which category will be the default if any
+  _refreshQuickAddPrefillBanner();
+
   openModal('spend-quick-add-modal');
   setTimeout(() => document.getElementById('spend-quick-add-input').focus(), 50);
+}
+
+// Render or hide the "Defaults to <category>" banner inside the quick-add
+// modal. Inserts a small hint div above the input on first call; updates
+// or hides it on subsequent calls. Idempotent.
+function _refreshQuickAddPrefillBanner() {
+  const input = document.getElementById('spend-quick-add-input');
+  if (!input) return;
+  let banner = document.getElementById('spend-quick-add-prefill-banner');
+  if (!_quickAddPrefillCatId) {
+    if (banner) banner.style.display = 'none';
+    return;
+  }
+  const cat = getBudgetCategoryById(_quickAddPrefillCatId);
+  if (!cat) {
+    if (banner) banner.style.display = 'none';
+    _quickAddPrefillCatId = null;
+    return;
+  }
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'spend-quick-add-prefill-banner';
+    banner.className = 'quick-add-prefill-banner';
+    // Insert just above the input
+    input.parentNode.insertBefore(banner, input);
+  }
+  banner.style.display = '';
+  banner.innerHTML =
+    `<svg aria-hidden="true" style="width:12px;height:12px;flex-shrink:0"><use href="#i-tag"></use></svg>` +
+    `<span>Defaults to <strong>${_escapeHtml(cat.name)}</strong> — type "&lt;category&gt; &lt;amount&gt;" to override</span>` +
+    `<button class="quick-add-prefill-clear" onclick="_clearQuickAddPrefill()" title="Clear default" aria-label="Clear default category">×</button>`;
+}
+
+// Clear the prefill default while the modal is open. The user might want
+// to add a mix of categorised entries and not want the chip's category
+// applied as a fallback.
+function _clearQuickAddPrefill() {
+  _quickAddPrefillCatId = null;
+  _refreshQuickAddPrefillBanner();
+  // Re-render the preview so the change is reflected in any chips already
+  // shown with the previous default.
+  _renderQuickAddPreview();
 }
 
 function _refreshQuickAddCount(n) {
@@ -3272,7 +3333,7 @@ function _renderQuickAddPreview() {
 
   // Newlines also separate entries — convert to commas for the parser
   const normalised = raw.replace(/\n/g, ',');
-  const parsed = parseQuickAddInput(normalised);
+  const parsed = parseQuickAddInput(normalised, { defaultCategoryId: _quickAddPrefillCatId });
 
   const validCount = parsed.filter(p => p.ok && p.amount > 0).length;
   _refreshQuickAddCount(validCount);
@@ -3295,6 +3356,7 @@ function _renderQuickAddChip(p) {
   let sourceTag = '';
   if (p.categoryHint)        sourceTag = '<em style="color:var(--accent2);font-style:normal;margin-left:6px;font-size:10px">explicit</em>';
   else if (p.fromMemory)     sourceTag = '<em style="color:var(--ok);font-style:normal;margin-left:6px;font-size:10px">remembered</em>';
+  else if (p.fromDefault)    sourceTag = '<em style="color:var(--accent);font-style:normal;margin-left:6px;font-size:10px">default</em>';
   else if (cat)              sourceTag = '';
   else                       sourceTag = '<em style="color:var(--warn);font-style:normal;margin-left:6px;font-size:10px">no category</em>';
 
@@ -3311,11 +3373,16 @@ async function confirmQuickAdd() {
   const raw = document.getElementById('spend-quick-add-input').value;
   const date = document.getElementById('spend-quick-add-date').value || (new Date().toISOString().slice(0, 10));
   const normalised = raw.replace(/\n/g, ',');
-  const parsed = parseQuickAddInput(normalised).filter(p => p.ok && p.amount > 0);
+  // Use the same defaultCategoryId the preview used, so the persisted
+  // transactions match the chips the user saw.
+  const parsed = parseQuickAddInput(normalised, { defaultCategoryId: _quickAddPrefillCatId }).filter(p => p.ok && p.amount > 0);
   if (parsed.length === 0) { toast('Nothing to add'); return; }
 
   const created = await commitQuickAdd(parsed, { date });
   closeModal('spend-quick-add-modal');
+  // Clear the prefill default now the modal is gone — next opening will
+  // be a fresh state unless another search-chip "Add new" tap sets it.
+  _quickAddPrefillCatId = null;
   toast(`Added ${created.length} transaction${created.length === 1 ? '' : 's'}`);
 
   // Re-render whatever's visible

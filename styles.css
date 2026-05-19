@@ -4304,6 +4304,179 @@ body.has-demo-banner #view-notes #notes-header {
   padding: 0 1px;
 }
 
+/* ── Search chips — rich inline cards for direct-hit Budget entities ──
+   Account chips show balance + Update/Edit; category chips show last 3
+   transactions + Add/View all/Edit. Sized to fit naturally between plain
+   result rows; on mobile (omnibox-panel widths) the action row wraps. */
+.search-chip {
+  margin: 6px 12px;
+  padding: 10px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+}
+.search-chip-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  min-width: 0;
+}
+.search-chip-head:hover .search-chip-title { color: var(--accent); }
+.search-chip-icon {
+  color: var(--accent);
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.search-chip-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+}
+.search-chip-head-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.search-chip-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-chip-title mark {
+  background: rgba(232,168,56,0.25);
+  color: var(--text);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.search-chip-sub {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-chip-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.search-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+.search-chip-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #111;
+}
+.search-chip-btn svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+/* Transaction mini-rows inside a category chip */
+.search-chip-txlist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+}
+.search-chip-tx {
+  display: grid;
+  grid-template-columns: 80px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.search-chip-tx:hover { background: var(--surface2); }
+.search-chip-tx-date {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+.search-chip-tx-where {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-chip-tx-amount {
+  font-size: 12px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-weight: 600;
+  text-align: right;
+}
+.search-chip-empty {
+  padding: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* "Defaults to <category>" banner inside the quick-add modal, shown when
+   the modal is opened from a search chip's "Add new" button. */
+.quick-add-prefill-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text);
+}
+.quick-add-prefill-banner svg { color: var(--accent); }
+.quick-add-prefill-banner span { flex: 1; }
+.quick-add-prefill-banner strong { color: var(--accent); }
+.quick-add-prefill-clear {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.quick-add-prefill-clear:hover { color: var(--text); background: var(--surface); }
+
 /* ── Mobile: drop-from-top half-screen panel ──
    Anchored to the top so the Android keyboard (which inflates from the
    bottom) doesn't cover the search input. Fixed at 50vh max so results

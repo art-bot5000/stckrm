@@ -5463,6 +5463,10 @@ function _renderSearchSection(sectionKey, section, isCurrent, query) {
 function _renderSearchRow(r, sectionKey, query) {
   // r.id is encoded with sectionKey to keep it unique across sections so the
   // tap handler can route correctly. We pass through view + target separately.
+  // Chip-style records (direct-hit Budget accounts / categories) get richer
+  // rendering with inline action buttons. Plain rows are unchanged.
+  if (r.chip === 'account')  return _renderSearchAccountChip(r, query);
+  if (r.chip === 'category') return _renderSearchCategoryChip(r, query);
   const titleHTML = _highlightMatch(r.title || '', query);
   const subHTML   = r.sub ? _highlightMatch(r.sub, query) : '';
   // Inline onclick keeps things simple — no event delegation needed because
@@ -5474,6 +5478,182 @@ function _renderSearchRow(r, sectionKey, query) {
       ${subHTML ? `<div class="global-search-row-sub">${subHTML}</div>` : ''}
     </div>
   </div>`;
+}
+
+// ── Search chips: rich inline cards for direct-hit Budget entities ─────────
+// Account chip — shows balance + "as of" date, plus Update Balance and Edit
+// buttons that fire Budget module functions directly. Tapping the title
+// area falls through to the normal navigate-to-budget-tab behaviour.
+// Category chip — shows last 3 transactions (each tappable to edit), plus
+// Add new / View all / Edit category actions.
+//
+// Buttons inside chips dismiss the omnibox via _searchChipAction so that
+// when a modal opens, the omnibox backdrop blur is already gone. Tapping
+// the chip's title area still navigates via _navigateToSearchResult so
+// the chip respects the same "find and flash" pattern as plain rows.
+
+function _renderSearchAccountChip(r, query) {
+  const acc = (typeof budgetAccounts !== 'undefined' && Array.isArray(budgetAccounts))
+    ? budgetAccounts.find(a => a.id === r.target)
+    : null;
+  if (!acc) {
+    // Account vanished between render passes — fall back to a plain row.
+    return _renderSearchRow({ ...r, chip: null }, 'budget', query);
+  }
+  const titleHTML = _highlightMatch(acc.name || '', query);
+  const balanceStr = _money(acc.balance);
+  const asOf = acc.balanceAsOf ? `as of ${esc(acc.balanceAsOf)}` : 'no update recorded';
+  const idJson = JSON.stringify(acc.id);
+  return `<div class="search-chip search-chip-account">
+    <div class="search-chip-head" onclick="_navigateToSearchResult(${JSON.stringify({s:'budget', v:'budget', t:acc.id}).replace(/"/g,'&quot;')})">
+      <svg class="search-chip-icon" aria-hidden="true"><use href="#i-credit-card"></use></svg>
+      <div class="search-chip-head-body">
+        <div class="search-chip-title">${titleHTML}</div>
+        <div class="search-chip-sub">Account · ${balanceStr} · ${asOf}</div>
+      </div>
+    </div>
+    <div class="search-chip-actions">
+      <button class="search-chip-btn" onclick="_searchChipAction('openUpdateBalanceModal', ${idJson})">
+        <svg aria-hidden="true"><use href="#i-refresh-cw"></use></svg>
+        Update balance
+      </button>
+      <button class="search-chip-btn" onclick="_searchChipAction('openAccountEditor', ${idJson})">
+        <svg aria-hidden="true"><use href="#i-pencil"></use></svg>
+        Edit
+      </button>
+    </div>
+  </div>`;
+}
+
+function _renderSearchCategoryChip(r, query) {
+  const cat = (typeof budgetCategories !== 'undefined' && Array.isArray(budgetCategories))
+    ? budgetCategories.find(c => c.id === r.target)
+    : null;
+  if (!cat) {
+    return _renderSearchRow({ ...r, chip: null }, 'budget', query);
+  }
+  const titleHTML = _highlightMatch(cat.name || '', query);
+  const idJson = JSON.stringify(cat.id);
+
+  // Pull the 3 most recent transactions for this category across all months.
+  // transactions is {yyyymm: {txId: tx}}. We flatten, filter, sort, slice.
+  let recent = [];
+  if (typeof transactions !== 'undefined' && transactions && typeof transactions === 'object') {
+    for (const ym of Object.keys(transactions)) {
+      const monthTxs = transactions[ym] || {};
+      for (const txId of Object.keys(monthTxs)) {
+        const tx = monthTxs[txId];
+        if (tx && tx.categoryId === cat.id) recent.push(tx);
+      }
+    }
+    // Sort by date desc, then by createdAt desc as tiebreaker.
+    recent.sort((a, b) => {
+      const ad = a.date || ''; const bd = b.date || '';
+      if (ad !== bd) return ad < bd ? 1 : -1;
+      const ac = a.createdAt || ''; const bc = b.createdAt || '';
+      return ac < bc ? 1 : -1;
+    });
+    recent = recent.slice(0, 3);
+  }
+
+  const txRows = recent.length ? recent.map(tx => {
+    const txIdJson = JSON.stringify(tx.id);
+    const dateStr = (typeof _shortDate === 'function') ? _shortDate(tx.date) : esc(tx.date || '');
+    const whereStr = esc(tx.where || '—');
+    const amtStr = _money(tx.amount);
+    return `<div class="search-chip-tx" onclick="_searchChipAction('openSpendTxEditor', ${txIdJson})">
+      <div class="search-chip-tx-date">${dateStr}</div>
+      <div class="search-chip-tx-where">${whereStr}</div>
+      <div class="search-chip-tx-amount">${amtStr}</div>
+    </div>`;
+  }).join('') : `<div class="search-chip-empty">No transactions yet</div>`;
+
+  // Category color dot, falling back to accent
+  const dotColor = esc(cat.color || 'var(--accent)');
+
+  return `<div class="search-chip search-chip-category">
+    <div class="search-chip-head" onclick="_navigateToSearchResult(${JSON.stringify({s:'budget', v:'budget', t:cat.id}).replace(/"/g,'&quot;')})">
+      <span class="search-chip-dot" style="background:${dotColor}"></span>
+      <div class="search-chip-head-body">
+        <div class="search-chip-title">${titleHTML}</div>
+        <div class="search-chip-sub">${recent.length === 0 ? 'Spend category · no transactions yet' : `Spend category · last ${recent.length} transaction${recent.length === 1 ? '' : 's'}`}</div>
+      </div>
+    </div>
+    <div class="search-chip-txlist">${txRows}</div>
+    <div class="search-chip-actions">
+      <button class="search-chip-btn" onclick="_searchChipAddSpend(${idJson})">
+        <svg aria-hidden="true"><use href="#i-plus"></use></svg>
+        Add new
+      </button>
+      <button class="search-chip-btn" onclick="_searchChipViewAllSpend(${idJson})">
+        <svg aria-hidden="true"><use href="#i-list"></use></svg>
+        View all
+      </button>
+      <button class="search-chip-btn" onclick="_searchChipAction('openBudgetCategoryEditor', ${idJson})">
+        <svg aria-hidden="true"><use href="#i-pencil"></use></svg>
+        Edit
+      </button>
+    </div>
+  </div>`;
+}
+
+// Dismiss the omnibox before opening a modal-style action. Wraps the call
+// in a try/catch so a missing function doesn't strand the user with a
+// half-closed UI. Modal opens immediately after the omnibox collapse so
+// the focus transition feels seamless on mobile.
+function _searchChipAction(fnName, ...args) {
+  try { closeGlobalSearch(); } catch (_) {}
+  if (typeof collapseOmnibox === 'function') {
+    try { collapseOmnibox(); } catch (_) {}
+  }
+  const fn = (typeof window !== 'undefined') ? window[fnName] : null;
+  if (typeof fn !== 'function') {
+    console.warn('[search-chip] action not available:', fnName);
+    return;
+  }
+  // Defer one tick so the omnibox collapse animation has begun before the
+  // modal renders on top; avoids a brief overlay+modal stacking flash.
+  setTimeout(() => {
+    try { fn(...args); } catch (e) { console.error('[search-chip] action failed:', fnName, e); }
+  }, 30);
+}
+
+// "Add new" inside a category chip — opens the quick-add spend modal
+// pre-targeted at the chip's category. openQuickAddSpend itself takes no
+// args; we set a hint that quickAddInputChanged reads when the user types,
+// so the parsed transaction lands in the right category by default.
+function _searchChipAddSpend(catId) {
+  try { closeGlobalSearch(); } catch (_) {}
+  if (typeof collapseOmnibox === 'function') {
+    try { collapseOmnibox(); } catch (_) {}
+  }
+  // Stash the target category so the quick-add modal can default to it.
+  // Cleared on modal close (or next open). Lives on window so budget.js
+  // can read it without a circular import.
+  try { window._searchChipPrefillCategoryId = catId; } catch (_) {}
+  setTimeout(() => {
+    if (typeof openQuickAddSpend === 'function') {
+      try { openQuickAddSpend(); } catch (e) { console.error(e); }
+    }
+  }, 30);
+}
+
+// "View all" inside a category chip — switches to the Budget tab's Spend
+// panel with the spend list filtered to this category. Works whether or
+// not the user is already on the Budget tab; navTo is a no-op when the
+// current view already matches.
+function _searchChipViewAllSpend(catId) {
+  try { closeGlobalSearch(); } catch (_) {}
+  if (typeof collapseOmnibox === 'function') {
+    try { collapseOmnibox(); } catch (_) {}
+  }
+  try {
+    // budget.js owns these globals — set them before navTo so the first
+    // render lands on the right panel with the filter applied.
+    if (typeof _spendCategoryFilter !== 'undefined') _spendCategoryFilter = catId;
+    if (typeof _budgetActivePanel  !== 'undefined') _budgetActivePanel  = 'spend';
+  } catch (_) { /* names may not exist if budget.js failed to load */ }
+  try { navTo('budget'); } catch (_) {}
 }
 
 // Wrap query matches in <mark> for visual emphasis. Case-insensitive, plain
@@ -5678,20 +5858,84 @@ function _searchReminders(q) {
 
 function _searchBudget(q) {
   const out = [];
-  // Bills — primary searchable budget content
-  for (const b of (typeof bills !== 'undefined' && Array.isArray(bills) ? bills : [])) {
-    if (b._deletedAt) continue;
-    const hay = [b.name, b.notes].filter(Boolean).join(' ').toLowerCase();
-    if (hay.includes(q)) {
+
+  // Helper: is `q` a "direct hit" against this name?
+  //   - case-insensitive exact match, OR
+  //   - case-insensitive whole-word token match
+  // A direct hit qualifies the record for chip treatment with inline
+  // actions. Non-direct (substring-only) matches fall back to a plain
+  // row that just opens the editor like before.
+  const _isDirectHit = (name) => {
+    if (!name) return false;
+    const n = name.toLowerCase();
+    if (n === q) return true;
+    // Build a regex with word boundaries from the (already-escaped) query.
+    const safeQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    try { return new RegExp(`\\b${safeQ}\\b`).test(n); } catch (_) { return false; }
+  };
+
+  // ── Accounts ────────────────────────────────────────────────────────────
+  // Chip on direct hit (shows balance + Update/Edit buttons). Substring-
+  // only matches fall through to a plain row that opens the editor.
+  for (const acc of (typeof budgetAccounts !== 'undefined' && Array.isArray(budgetAccounts) ? budgetAccounts : [])) {
+    if (acc.archived) continue;
+    const hay = (acc.name || '').toLowerCase();
+    if (!hay.includes(q)) continue;
+    const direct = _isDirectHit(acc.name || '');
+    out.push({
+      title:  acc.name || '(unnamed account)',
+      sub:    direct ? null : `Account · ${_money(acc.balance)}`,
+      view:   'budget',
+      target: acc.id,
+      icon:   'i-credit-card',
+      chip:   direct ? 'account' : null,
+      payload: direct ? { id: acc.id } : null,
+    });
+    if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
+  }
+
+  // ── Categories (spend buckets) ──────────────────────────────────────────
+  // Chip on direct hit (shows last 3 txs + Add/View all/Edit). Substring-
+  // only matches fall through to a plain row that opens the editor.
+  if (out.length <= _SEARCH_RESULTS_PER_SECTION) {
+    for (const cat of (typeof budgetCategories !== 'undefined' && Array.isArray(budgetCategories) ? budgetCategories : [])) {
+      if (cat.archived) continue;
+      const hay = (cat.name || '').toLowerCase();
+      if (!hay.includes(q)) continue;
+      const direct = _isDirectHit(cat.name || '');
       out.push({
-        title: b.name || '(unnamed bill)',
-        sub:   b.amount != null ? `Bill · £${b.amount}` : 'Bill',
-        view:  'budget',
-        target: b.id,
+        title:  cat.name || '(unnamed category)',
+        sub:    direct ? null : 'Spend category',
+        view:   'budget',
+        target: cat.id,
+        icon:   'i-tag',
+        chip:   direct ? 'category' : null,
+        payload: direct ? { id: cat.id } : null,
       });
       if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
     }
   }
+
+  // ── Bills ───────────────────────────────────────────────────────────────
+  // Bills remain plain rows (no chip treatment — there's no obvious quick
+  // action that makes sense without leaving search context; marking paid
+  // needs the per-month instance, which the user picks from the timeline).
+  if (out.length <= _SEARCH_RESULTS_PER_SECTION) {
+    for (const b of (typeof bills !== 'undefined' && Array.isArray(bills) ? bills : [])) {
+      if (b._deletedAt) continue;
+      const hay = [b.name, b.notes].filter(Boolean).join(' ').toLowerCase();
+      if (hay.includes(q)) {
+        out.push({
+          title: b.name || '(unnamed bill)',
+          sub:   b.amount != null ? `Bill · ${_money(b.amount)}` : 'Bill',
+          view:  'budget',
+          target: b.id,
+        });
+        if (out.length > _SEARCH_RESULTS_PER_SECTION) break;
+      }
+    }
+  }
+
   return { results: out.slice(0, _SEARCH_RESULTS_PER_SECTION), hasMore: out.length > _SEARCH_RESULTS_PER_SECTION };
 }
 
