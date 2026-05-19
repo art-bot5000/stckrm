@@ -108,6 +108,24 @@ const STORES_BY_COUNTRY = {
 function getStores(code) { return STORES_BY_COUNTRY[code] || STORES_BY_COUNTRY.OTHER; }
 
 // ═══════════════════════════════════════════
+//  DOM HELPERS — show / hide / toggle
+// ═══════════════════════════════════════════
+// Tiny wrappers around getElementById(...).style.display = ... to reduce
+// boilerplate. All three are no-ops if the element isn't in the DOM, which
+// makes them safe to call before lazy-mounted sub-views have rendered.
+//   show(id, mode='')       → display = mode  (default '' lets CSS decide)
+//   hide(id)                → display = 'none'
+//   toggle(id, visible, mode='') → conditional show/hide
+// Notes:
+//  - There are read-side checks elsewhere comparing `.style.display !== 'none'`,
+//    so we keep using `.style.display` here rather than [hidden] / a class.
+//  - For wrapper variables (`el.style.display = …`) we leave the existing
+//    pattern untouched — these helpers only target the getElementById form.
+function show(id, mode = '')   { const el = document.getElementById(id); if (el) el.style.display = mode; }
+function hide(id)              { const el = document.getElementById(id); if (el) el.style.display = 'none'; }
+function toggle(id, visible, mode = '') { const el = document.getElementById(id); if (el) el.style.display = visible ? mode : 'none'; }
+
+// ═══════════════════════════════════════════
 //  INDEXEDDB — async storage layer
 //  Replaces localStorage for all data stores.
 //  UI state (wizard, compact, notif flags) stays in localStorage.
@@ -3036,8 +3054,8 @@ function enableItemEdit() {
   }
   document.getElementById('item-modal-title').textContent = 'Edit Item';
   document.getElementById('item-modal-subtitle').textContent = 'Editing: ' + (_editingItem?.name || '');
-  document.getElementById('item-readonly-view').style.display = 'none';
-  document.getElementById('item-edit-view').style.display = 'block';
+  hide('item-readonly-view');
+  show('item-edit-view', 'block');
 }
 
 // ═══════════════════════════════════════════
@@ -3087,7 +3105,7 @@ async function wizardFinish() {
     localStorage.setItem('stockroom_seen', '1');
     localStorage.setItem('stockroom_country_set', '1');
     document.body.classList.remove('wizard-active');
-    document.getElementById('wizard').style.display = 'none';
+    hide('wizard');
   }
 }
 
@@ -9731,7 +9749,7 @@ async function findProductImage(query) {
 
 function clearProductImage() {
   pendingImageUrl = null;
-  document.getElementById('img-preview-wrap').style.display = 'none';
+  hide('img-preview-wrap');
   document.getElementById('img-preview').src = '';
 }
 
@@ -10473,7 +10491,7 @@ function openStockCountModal(id) {
   const dpu = getDaysPerUnit(item);
   const perUnitMonths = Math.max(0.25, Math.round((dpu / AVG_DAYS_PER_MONTH) * 4) / 4); // round to 0.25
   document.getElementById('sc-months').value = perUnitMonths;
-  document.getElementById('sc-preview').style.display = 'none';
+  hide('sc-preview');
 
   const remaining = document.getElementById('sc-remaining');
   const dateEl = document.getElementById('sc-date');
@@ -10919,8 +10937,8 @@ function switchToStock() {
     document.getElementById('view-stock').classList.add('active');
     const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
     if (stockTab) stockTab.classList.add('active');
-    document.getElementById('items-grid').style.display = '';
-    document.getElementById('shopping-panel').style.display = 'none';
+    show('items-grid');
+    hide('shopping-panel');
     setStockOnlyUI(true);
     updateStockShoppingHeader('stock');
     _currentView = 'stock';
@@ -10938,8 +10956,8 @@ function switchToShopping() {
     document.getElementById('view-stock').classList.add('active');
     const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
     if (stockTab) stockTab.classList.add('active');
-    document.getElementById('items-grid').style.display = 'none';
-    document.getElementById('shopping-panel').style.display = '';
+    hide('items-grid');
+    show('shopping-panel');
     // Hide the Stockroom recycle bin while in Shopping subtab — it belongs to
     // the main stock view only, and would otherwise float above the shopping list.
     const _bin = document.getElementById('items-recycle-bin');
@@ -11791,8 +11809,8 @@ function showView(name, btn) {
   if (name === 'stock') {
     updateStockShoppingHeader('stock');
     setStockOnlyUI(true);
-    document.getElementById('items-grid').style.display = '';
-    document.getElementById('shopping-panel').style.display = 'none';
+    show('items-grid');
+    hide('shopping-panel');
   }
   if (name === 'settings') {
     renderSettingsForUser();
@@ -12213,7 +12231,7 @@ function _wizGotoStep(n) {
     if (p) { p.classList.toggle('active', i === n); p.classList.toggle('done', i < n); }
   });
   document.getElementById('wizard-step-label').textContent = `Step ${n} of 4`;
-  document.getElementById('wiz-back-btn').style.display = n > 1 ? 'inline-flex' : 'none';
+  toggle('wiz-back-btn', n > 1, 'inline-flex');
   const nextBtn = document.getElementById('wiz-next-btn');
   const skipBtn = document.getElementById('wiz-skip-btn');
   if (n === 4) {
@@ -12515,13 +12533,13 @@ function openEditModal(id) {
   openSharingPanelFor('item');
 
   // Show readonly, hide edit form
-  document.getElementById('item-readonly-view').style.display = 'block';
-  document.getElementById('item-edit-view').style.display = 'none';
+  show('item-readonly-view', 'block');
+  hide('item-edit-view');
 
   // Pre-populate edit form fields
   tempStorePrices = JSON.parse(JSON.stringify(item.storePrices || []));
   if (typeof renderTempStorePrices === 'function') renderTempStorePrices();
-  if (tempStorePrices.length) document.getElementById('store-prices-section').style.display = 'block';
+  if (tempStorePrices.length) show('store-prices-section', 'block');
   document.getElementById('f-name').value = item.name;
   document.getElementById('f-category').value = item.category || 'Kitchen';
   document.getElementById('f-cadence').value = item.cadence || 'monthly';
@@ -13072,9 +13090,9 @@ function openOrderFlow(id, stage) {
   document.getElementById('order-flow-subtitle').textContent = item.name;
 
   // Show/hide stages
-  document.getElementById('order-stage-purchase').style.display   = stage === 'purchase'   ? 'block' : 'none';
-  document.getElementById('order-stage-delivered').style.display  = stage === 'delivered'  ? 'block' : 'none';
-  document.getElementById('order-stage-startusing').style.display = stage === 'startusing' ? 'block' : 'none';
+  toggle('order-stage-purchase', stage === 'purchase', 'block');
+  toggle('order-stage-delivered', stage === 'delivered', 'block');
+  toggle('order-stage-startusing', stage === 'startusing', 'block');
 
   const saveBtn = document.getElementById('of-save-btn');
   if (stage === 'purchase')   { saveBtn.textContent = 'Save Purchase'; }
@@ -13094,8 +13112,8 @@ function openOrderFlow(id, stage) {
     const pendingLog = [...(item.logs || [])].reverse().find(l => l.pendingDelivery);
     document.getElementById('of-delivered-qty').value = pendingLog?.qty || item.qty || 1;
     document.getElementById('of-started-now').checked = false;
-    document.getElementById('of-started-row').style.display = 'none';
-    document.getElementById('of-started-hint').style.display = 'block';
+    hide('of-started-row');
+    show('of-started-hint', 'block');
     document.getElementById('of-started-date').value = today();
   }
   if (stage === 'startusing') {
@@ -13116,8 +13134,8 @@ function _renderOfHistory(item) {
 
 function ofToggleStarted() {
   const checked = document.getElementById('of-started-now').checked;
-  document.getElementById('of-started-row').style.display  = checked ? 'block' : 'none';
-  document.getElementById('of-started-hint').style.display = checked ? 'none' : 'block';
+  toggle('of-started-row', checked, 'block');
+  toggle('of-started-hint', !(checked), 'block');
 }
 
 async function ofSave() {
@@ -13498,16 +13516,16 @@ function openDeliveredModal(id) {
   const pendingLog = [...(item.logs||[])].reverse().find(l => l.pendingDelivery);
   document.getElementById('delivered-qty').value = pendingLog?.qty || item.qty || 1;
   document.getElementById('delivered-started-now').checked = false;
-  document.getElementById('delivered-started-row').style.display = 'none';
-  document.getElementById('delivered-started-hint').style.display = 'block';
+  hide('delivered-started-row');
+  show('delivered-started-hint', 'block');
   document.getElementById('delivered-started-date').value = today();
   openModal('delivered-modal');
 }
 
 function toggleDeliveredStarted() {
   const checked = document.getElementById('delivered-started-now').checked;
-  document.getElementById('delivered-started-row').style.display = checked ? 'block' : 'none';
-  document.getElementById('delivered-started-hint').style.display = checked ? 'none' : 'block';
+  toggle('delivered-started-row', checked, 'block');
+  toggle('delivered-started-hint', !(checked), 'block');
 }
 
 async function saveDelivered() {
@@ -15134,7 +15152,7 @@ async function handleOAuthRedirect() {
             if (tab) showView('settings', tab);
           } else {
             localStorage.setItem('stockroom_seen', '1');
-            document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
+            document.body.classList.remove('wizard-active'); hide('wizard');
             const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
             if (stockTab) showView('stock', stockTab);
           }
@@ -15179,7 +15197,7 @@ async function handleOAuthRedirect() {
                 } else {
                   // Came from wizard — go to Stockroom
                   localStorage.setItem('stockroom_seen', '1');
-                  document.body.classList.remove('wizard-active'); document.getElementById('wizard').style.display = 'none';
+                  document.body.classList.remove('wizard-active'); hide('wizard');
                   const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
                   if (stockTab) showView('stock', stockTab);
                 }
@@ -15527,7 +15545,7 @@ async function _recoverySendOtp(emailHash) {
   try {
     await postKV(`${WORKER_URL}/recovery/request`, { email: _recoveryEmail });
   } catch(e) { console.warn('_recoverySendOtp:', e.message); }
-  document.getElementById('recovery-step-otp').style.display = '';
+  show('recovery-step-otp');
   setTimeout(() => document.getElementById('recovery-otp-input')?.focus(), 100);
 }
 
@@ -16686,16 +16704,16 @@ function requireReauth(reason, callback, opts = {}) {
   _reauthPasskeyAllowed = opts.passkeyAllowed !== false;
   document.getElementById('reauth-reason').textContent = reason;
   document.getElementById('reauth-pass').value = '';
-  document.getElementById('reauth-error').style.display = 'none';
+  hide('reauth-error');
   // Show/hide passkey option
   const pkOpt = document.getElementById('reauth-passkey-option');
   if (pkOpt) pkOpt.style.display = (_reauthPasskeyAllowed && passkeySupported()) ? 'block' : 'none';
-  document.getElementById('reauth-modal').style.display = 'flex';
+  show('reauth-modal', 'flex');
   setTimeout(() => document.getElementById('reauth-pass')?.focus(), 100);
 }
 
 function closeReauth() {
-  document.getElementById('reauth-modal').style.display = 'none';
+  hide('reauth-modal');
   _reauthCallback = null;
 }
 
@@ -16743,7 +16761,7 @@ async function reauthWithPassphrase() {
     }
 
     errEl.style.display = 'none';
-    document.getElementById('reauth-modal').style.display = 'none';
+    hide('reauth-modal');
     // MFA intercept — if enabled, show MFA modal before running callback
     if (_mfaEnabled() && _reauthCallback) {
       await _mfaIntercept(_reauthCallback);
@@ -16783,7 +16801,7 @@ async function reauthWithPasskey() {
     const finishRes = await postKV(`${WORKER_URL}/passkey/auth/finish`, { emailHash: _kvEmailHash, credentialId: credId, clientDataJSON, authenticatorData, signature });
     if (!finishRes.ok) { const d = await finishRes.json().catch(()=>({})); throw new Error(d.error || 'Verification failed'); }
     errEl.style.display = 'none';
-    document.getElementById('reauth-modal').style.display = 'none';
+    hide('reauth-modal');
     if (_mfaEnabled() && _reauthCallback) {
       await _mfaIntercept(_reauthCallback);
       _reauthCallback = null;
@@ -16824,7 +16842,7 @@ async function postLoginWizardRoute(recoveryCodes = []) {
     } else if (!countrySet) {
       // Protect already seen, but country/name not set yet
       document.body.classList.add('wizard-active');
-      document.getElementById('wizard').style.display = 'flex';
+      show('wizard', 'flex');
       document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
       document.getElementById('wizard-step-2').classList.add('active');
       wizardCountry = settings.country || 'GB';
@@ -16845,7 +16863,7 @@ async function postLoginWizardRoute(recoveryCodes = []) {
 async function _enterStockroom() {
   showDataLoadingOverlay('Syncing your data…');
   document.body.classList.remove('wizard-active');
-  document.getElementById('wizard').style.display = 'none';
+  hide('wizard');
   window.scrollTo(0, 0);
   localStorage.setItem('stockroom_seen', '1');
   const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
@@ -16901,7 +16919,7 @@ function showProtectDataScreen(recoveryCodes, isMigration = false) {
       if (subtext)  subtext.textContent = 'Complete these steps to keep your account safe.';
     }
   }
-  document.body.classList.add('wizard-active'); document.getElementById('wizard').style.display = 'flex';
+  document.body.classList.add('wizard-active'); show('wizard', 'flex');
   // Reset state — including any greying from previous visits
   const passkeySection = document.getElementById('protect-passkey-section');
   if (passkeySection) {
@@ -16912,13 +16930,13 @@ function showProtectDataScreen(recoveryCodes, isMigration = false) {
     passkeySection.style.display       = '';
     passkeySection.querySelectorAll('.protect-skip-msg').forEach(el => el.remove());
   }
-  document.getElementById('protect-passkey-done').style.display    = 'none';
-  document.getElementById('protect-passkey-buttons').style.display  = 'flex';
-  document.getElementById('protect-codes-grid').style.display       = 'none';
-  document.getElementById('protect-codes-confirm').style.display    = 'none';
+  hide('protect-passkey-done');
+  show('protect-passkey-buttons', 'flex');
+  hide('protect-codes-grid');
+  hide('protect-codes-confirm');
   document.getElementById('protect-codes-checkbox').checked         = false;
   if (hasCodes) {
-    document.getElementById('protect-codes-hidden').style.display     = '';
+    show('protect-codes-hidden');
     document.getElementById('protect-continue-btn').disabled          = true;
     document.getElementById('protect-continue-btn').style.opacity     = '0.5';
   } else {
@@ -17040,9 +17058,9 @@ function revealRecoveryCodes() {
   grid.innerHTML = _protectRecoveryCodes.map((c, i) =>
     `<div style="padding:3px 0"><span style="color:var(--muted)">${String(i+1).padStart(2,'0')}.</span> <strong>${c}</strong></div>`
   ).join('');
-  document.getElementById('protect-codes-grid').style.display   = '';
-  document.getElementById('protect-codes-hidden').style.display = 'none';
-  document.getElementById('protect-codes-confirm').style.display = 'flex';
+  show('protect-codes-grid');
+  hide('protect-codes-hidden');
+  show('protect-codes-confirm', 'flex');
 }
 
 function copyRecoveryCodes() {
@@ -17096,7 +17114,7 @@ function protectSkipPasskey() {
   if (section) {
     section.style.opacity      = '0.4';
     section.style.pointerEvents = 'none';
-    document.getElementById('protect-passkey-buttons').style.display = 'none';
+    hide('protect-passkey-buttons');
     // Remove any previous skip message to avoid duplicates
     section.querySelectorAll('.protect-skip-msg').forEach(el => el.remove());
     const skip = document.createElement('div');
@@ -17144,7 +17162,7 @@ async function recoveryStepEmail() {
   _recoveryEmail = email;
   _recoveryEmailHash = await kvHashEmail(email);
   if(errEl) errEl.style.display='none';
-  document.getElementById('recovery-step-email').style.display = 'none';
+  hide('recovery-step-email');
   // Show method choice screen — offer passkey if this device has one
   const methodStep = document.getElementById('recovery-step-method');
   const pkOption   = document.getElementById('recovery-passkey-option');
@@ -17153,14 +17171,14 @@ async function recoveryStepEmail() {
     methodStep.style.display = '';
   } else {
     // Fallback: skip straight to code
-    document.getElementById('recovery-step-code').style.display = '';
+    show('recovery-step-code');
     setTimeout(() => document.getElementById('recovery-code-input')?.focus(), 100);
   }
 }
 
 function recoveryChooseCode() {
-  document.getElementById('recovery-step-method').style.display = 'none';
-  document.getElementById('recovery-step-code').style.display = '';
+  hide('recovery-step-method');
+  show('recovery-step-code');
   setTimeout(() => document.getElementById('recovery-code-input')?.focus(), 100);
 }
 
@@ -17192,7 +17210,7 @@ async function recoveryWithPasskey() {
     if (!finishRes.ok) throw new Error(finishData.error || 'Passkey verification failed');
     // Passkey verified — store session token for OTP step, then send email code
     _recoverySessionToken = finishData.sessionToken;
-    document.getElementById('recovery-step-method').style.display = 'none';
+    hide('recovery-step-method');
     await _recoverySendOtp(emailHash);
   } catch(e) {
     if (errEl) { errEl.textContent = e.name === 'NotAllowedError' ? 'Cancelled — try again' : e.message; errEl.style.display = 'block'; }
@@ -17226,8 +17244,8 @@ async function recoveryStepCode() {
       throw new Error(otpData.error || 'Could not send email verification');
     }
     if(errEl) errEl.style.display = 'none';
-    document.getElementById('recovery-step-code').style.display = 'none';
-    document.getElementById('recovery-step-otp').style.display  = '';
+    hide('recovery-step-code');
+    show('recovery-step-otp');
     setTimeout(() => document.getElementById('recovery-otp-input')?.focus(), 100);
   } catch(err) {
     if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
@@ -17248,8 +17266,8 @@ async function recoveryStepOtp() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Invalid code');
     if(errEl) errEl.style.display = 'none';
-    document.getElementById('recovery-step-otp').style.display   = 'none';
-    document.getElementById('recovery-step-reset').style.display = '';
+    hide('recovery-step-otp');
+    show('recovery-step-reset');
     setTimeout(() => document.getElementById('recovery-new-pass')?.focus(), 100);
   } catch(err) {
     if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
@@ -17266,13 +17284,13 @@ async function recoveryResendOtp() {
 }
 
 function recoveryBack(step) {
-  document.getElementById('recovery-step-method').style.display = 'none';
-  document.getElementById('recovery-step-code').style.display   = 'none';
-  document.getElementById('recovery-step-otp').style.display    = 'none';
-  document.getElementById('recovery-step-reset').style.display  = 'none';
-  if (step === 'email')  document.getElementById('recovery-step-email').style.display = '';
-  else if (step === 'method') document.getElementById('recovery-step-method').style.display = '';
-  else if (step === 'code')   document.getElementById('recovery-step-code').style.display = '';
+  hide('recovery-step-method');
+  hide('recovery-step-code');
+  hide('recovery-step-otp');
+  hide('recovery-step-reset');
+  if (step === 'email')  show('recovery-step-email');
+  else if (step === 'method') show('recovery-step-method');
+  else if (step === 'code')   show('recovery-step-code');
 }
 
 // ── Recovery Step D: Set new passphrase ─────────────────
@@ -17336,10 +17354,10 @@ function duplicateGoToRecovery() {
   // Email already pre-filled; show step-1c at the email sub-step
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   document.getElementById('wizard-step-1c')?.classList.add('active');
-  document.getElementById('recovery-step-email').style.display = '';
-  document.getElementById('recovery-step-code').style.display  = 'none';
-  document.getElementById('recovery-step-otp').style.display   = 'none';
-  document.getElementById('recovery-step-reset').style.display = 'none';
+  show('recovery-step-email');
+  hide('recovery-step-code');
+  hide('recovery-step-otp');
+  hide('recovery-step-reset');
   const errEl = document.getElementById('recovery-email-error');
   if (errEl) errEl.style.display = 'none';
   setTimeout(() => document.getElementById('recovery-code-input')?.focus(), 100);
@@ -17349,7 +17367,7 @@ function duplicateGoToImport() {
   // Dismiss wizard, land on settings, trigger file picker
   localStorage.setItem('stockroom_seen', '1');
   document.body.classList.remove('wizard-active');
-  document.getElementById('wizard').style.display = 'none';
+  hide('wizard');
   const settingsTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Settings'));
   if (settingsTab) showView('settings', settingsTab);
   setTimeout(() => document.getElementById('import-file')?.click(), 300);
@@ -17664,10 +17682,10 @@ function showForgotPassphrase() {
     const recovEl = document.getElementById('recovery-email');
     if (recovEl) recovEl.value = loginEmail;
   }
-  document.getElementById('recovery-step-email').style.display = '';
-  document.getElementById('recovery-step-code').style.display  = 'none';
-  document.getElementById('recovery-step-otp').style.display   = 'none';
-  document.getElementById('recovery-step-reset').style.display = 'none';
+  show('recovery-step-email');
+  hide('recovery-step-code');
+  hide('recovery-step-otp');
+  hide('recovery-step-reset');
 }
 
 // ── Store passkey session (no encryption key — different model) ──
@@ -19690,7 +19708,7 @@ async function kvSignOut() {
   _clearDeviceSecretFromIdb().catch(_ => {});
   // Show login screen (fallback — full reload happens via the setTimeout
   // scheduled at the top of this function)
-  document.body.classList.add('wizard-active'); document.getElementById('wizard').style.display = 'flex';
+  document.body.classList.add('wizard-active'); show('wizard', 'flex');
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   showKvLogin();
   updateSyncUI();
@@ -21961,8 +21979,8 @@ function budgetSwitchPanel(name) {
   document.querySelectorAll('.budget-basic-link').forEach(el => {
     el.classList.toggle('active', el.dataset.panel === name);
   });
-  document.getElementById('budget-panel-dashboard').style.display = (name === 'dashboard') ? 'block' : 'none';
-  document.getElementById('budget-panel-bills').style.display     = (name === 'bills')     ? 'block' : 'none';
+  toggle('budget-panel-dashboard', (name === 'dashboard'), 'block');
+  toggle('budget-panel-bills', (name === 'bills'), 'block');
   const spendPanel = document.getElementById('budget-panel-spend');
   if (spendPanel) spendPanel.style.display = (name === 'spend') ? 'block' : 'none';
   const accountsPanel = document.getElementById('budget-panel-accounts');
@@ -22511,7 +22529,7 @@ function openBillEditor(billId = null) {
   const tpl = billId ? bills.find(b => b.id === billId) : null;
   document.getElementById('bill-editor-mode-label').textContent = tpl ? 'Edit Bill' : 'Add Bill';
   document.getElementById('bill-save-label').textContent        = tpl ? 'Save Changes' : 'Save Bill';
-  document.getElementById('bill-archive-btn').style.display     = tpl ? 'inline-flex' : 'none';
+  toggle('bill-archive-btn', tpl, 'inline-flex');
   // Phase 5: also show the Delete button alongside Archive when editing
   const delBtn = document.getElementById('bill-delete-btn');
   if (delBtn) delBtn.style.display = tpl ? 'inline-flex' : 'none';
@@ -22639,7 +22657,7 @@ function _refreshBillSplitVisibility() {
 
 function _refreshBillVariableHint() {
   const checked = document.getElementById('bill-variable').checked;
-  document.getElementById('bill-amount-hint').style.display = checked ? 'block' : 'none';
+  toggle('bill-amount-hint', checked, 'block');
 }
 document.addEventListener('change', e => {
   if (e.target?.id === 'bill-variable') _refreshBillVariableHint();
@@ -22811,14 +22829,14 @@ function _maybeShowBudgetBackfillBanner() {
 
 async function confirmBudgetPermBackfill() {
   const n = await applyBudgetPermBackfill();
-  document.getElementById('budget-backfill-banner').style.display = 'none';
+  hide('budget-backfill-banner');
   if (typeof window !== 'undefined') window._budgetPermBackfillTargets = [];
   if (n) toast(`Granted Budget access to ${n} share${n > 1 ? 's' : ''}`);
   else   toast('No shares to update');
 }
 
 function dismissBudgetPermBackfill() {
-  document.getElementById('budget-backfill-banner').style.display = 'none';
+  hide('budget-backfill-banner');
   if (typeof window !== 'undefined') window._budgetPermBackfillTargets = [];
 }
 
@@ -23648,7 +23666,7 @@ function openQuickAddSpend() {
   document.getElementById('spend-quick-add-input').value = '';
   document.getElementById('spend-quick-add-date').value = new Date().toISOString().slice(0, 10);
   document.getElementById('spend-quick-add-preview').innerHTML = '';
-  document.getElementById('spend-quick-add-preview-empty').style.display = 'block';
+  show('spend-quick-add-preview-empty', 'block');
   _refreshQuickAddCount(0);
   openModal('spend-quick-add-modal');
   setTimeout(() => document.getElementById('spend-quick-add-input').focus(), 50);
@@ -23964,8 +23982,8 @@ function openBudgetCategoryEditor(catId = null) {
   const cat = catId ? getBudgetCategoryById(catId) : null;
   document.getElementById('budget-cat-editor-mode-label').textContent = cat ? 'Edit Category' : 'Add Category';
   document.getElementById('budget-cat-editor-save-label').textContent = cat ? 'Save' : 'Create';
-  document.getElementById('budget-cat-archive-btn').style.display = cat && !cat.archived ? 'inline-flex' : 'none';
-  document.getElementById('budget-cat-delete-btn').style.display  = cat &&  cat.archived ? 'inline-flex' : 'none';
+  toggle('budget-cat-archive-btn', cat && !cat.archived, 'inline-flex');
+  toggle('budget-cat-delete-btn', cat &&  cat.archived, 'inline-flex');
 
   document.getElementById('budget-cat-name').value         = cat?.name           || '';
   document.getElementById('budget-cat-cycle').value        = cat?.budgetCycle    || 'monthly';
@@ -23991,8 +24009,8 @@ function openBudgetCategoryEditor(catId = null) {
 
 function budgetCatCycleChanged() {
   const cycle = document.getElementById('budget-cat-cycle').value;
-  document.getElementById('budget-cat-monthly-row').style.display = (cycle === 'monthly') ? 'block' : 'none';
-  document.getElementById('budget-cat-weekly-row').style.display  = (cycle === 'weekly')  ? 'block' : 'none';
+  toggle('budget-cat-monthly-row', (cycle === 'monthly'), 'block');
+  toggle('budget-cat-weekly-row', (cycle === 'weekly'), 'block');
 }
 
 async function saveBudgetCategoryFromEditor() {
@@ -24870,7 +24888,7 @@ function _renderAccountsList() {
         </p>
         <button class="btn btn-primary" onclick="openAccountEditor()"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add your first account</button>
       </div>`;
-    document.getElementById('budget-accounts-archived-section').style.display = 'none';
+    hide('budget-accounts-archived-section');
     return;
   }
 
@@ -24939,8 +24957,8 @@ function openAccountEditor(id = null) {
   const acc = id ? getAccountById(id) : null;
   document.getElementById('account-editor-mode-label').textContent = acc ? 'Edit Account' : 'Add Account';
   document.getElementById('account-editor-save-label').textContent = acc ? 'Save' : 'Create';
-  document.getElementById('account-archive-btn').style.display     = acc && !acc.archived ? 'inline-flex' : 'none';
-  document.getElementById('account-delete-btn').style.display      = acc &&  acc.archived ? 'inline-flex' : 'none';
+  toggle('account-archive-btn', acc && !acc.archived, 'inline-flex');
+  toggle('account-delete-btn', acc &&  acc.archived, 'inline-flex');
 
   document.getElementById('account-name').value         = acc?.name        || '';
   document.getElementById('account-type').value         = acc?.type        || 'current';
@@ -25085,7 +25103,7 @@ function openIncomeTemplateEditor(id = null) {
   const tpl = id ? getIncomeTemplateById(id) : null;
   document.getElementById('income-tpl-mode-label').textContent = tpl ? 'Edit Income' : 'Add Income';
   document.getElementById('income-tpl-save-label').textContent = tpl ? 'Save' : 'Add';
-  document.getElementById('income-tpl-archive-btn').style.display = tpl ? 'inline-flex' : 'none';
+  toggle('income-tpl-archive-btn', tpl, 'inline-flex');
 
   document.getElementById('income-tpl-name').value         = tpl?.name      || '';
   document.getElementById('income-tpl-amount').value       = tpl?.amount    ?? '';
@@ -25119,8 +25137,8 @@ function openIncomeTemplateEditor(id = null) {
 
 function incomeTplFreqChanged() {
   const preset = document.getElementById('income-tpl-frequency').value;
-  document.getElementById('income-tpl-anchor-row').style.display = preset !== 'monthly' ? 'block' : 'none';
-  document.getElementById('income-tpl-custom-row').style.display = preset === 'custom'  ? 'block' : 'none';
+  toggle('income-tpl-anchor-row', preset !== 'monthly', 'block');
+  toggle('income-tpl-custom-row', preset === 'custom', 'block');
 }
 
 async function saveIncomeTemplateFromEditor() {
@@ -25225,7 +25243,7 @@ function openIncomeEntryEditor(id = null) {
   const entry = id ? getIncomeEntriesForRange('1970-01-01', '2099-12-31').find(e => e.id === id) : null;
   document.getElementById('income-entry-mode-label').textContent = entry ? 'Edit Income Entry' : 'Add Income Entry';
   document.getElementById('income-entry-save-label').textContent = entry ? 'Save' : 'Add';
-  document.getElementById('income-entry-delete-btn').style.display = entry ? 'inline-flex' : 'none';
+  toggle('income-entry-delete-btn', entry, 'inline-flex');
 
   document.getElementById('income-entry-notes').value  = entry?.notes  || '';
   document.getElementById('income-entry-amount').value = entry?.amount ?? '';
@@ -26835,12 +26853,12 @@ function csvExportRangeChanged() {
     end   = today;
   } else {
     // 'custom' — leave fields editable
-    document.getElementById('csv-export-custom-row').style.display = 'block';
+    show('csv-export-custom-row', 'block');
     return;
   }
   document.getElementById('csv-export-start').value = start.toISOString().slice(0, 10);
   document.getElementById('csv-export-end').value   = end.toISOString().slice(0, 10);
-  document.getElementById('csv-export-custom-row').style.display = (range === 'custom') ? 'block' : 'none';
+  toggle('csv-export-custom-row', (range === 'custom'), 'block');
 }
 
 function _csvEscape(value) {
@@ -28087,7 +28105,7 @@ function _quickListPickSuggestion(name, dept) {
   const parts = inp.value.split(',');
   parts[parts.length - 1] = ' ' + name;
   inp.value = parts.join(',') + ', ';
-  document.getElementById('quick-list-suggestions').style.display = 'none';
+  hide('quick-list-suggestions');
   _quickListAutocomplete(inp.value);
   inp.focus();
 }
@@ -29666,7 +29684,7 @@ let _dragSrcDept = null;
 function _showChangeDeptZone() {
   // Fixed bar pinned to bottom of screen — appears when drag starts
   if (document.getElementById('grocery-change-dept-zone')) {
-    document.getElementById('grocery-change-dept-zone').style.display = 'flex';
+    show('grocery-change-dept-zone', 'flex');
     return;
   }
   const zone = document.createElement('div');
@@ -30219,7 +30237,7 @@ function openAddGroceryItem(prefillName) {
   document.getElementById('grocery-f-recurring').checked = false;
   document.getElementById('grocery-f-interval').value = '7';
   document.getElementById('grocery-f-interval-unit').value = '1';
-  document.getElementById('grocery-recurring-opts').style.display = 'none';
+  hide('grocery-recurring-opts');
   populateGroceryDeptSelect('');
   openModal('grocery-item-modal');
   setTimeout(() => document.getElementById('grocery-f-name').focus(), 100);
@@ -30246,7 +30264,7 @@ function openEditGroceryItem(id) {
     document.getElementById('grocery-f-interval').value = days;
     document.getElementById('grocery-f-interval-unit').value = '1';
   }
-  document.getElementById('grocery-recurring-opts').style.display = item.recurring ? 'block' : 'none';
+  toggle('grocery-recurring-opts', item.recurring, 'block');
   populateGroceryDeptSelect(item.department || 'other');
   openModal('grocery-item-modal');
 }
@@ -30260,7 +30278,7 @@ function populateGroceryDeptSelect(selectedId) {
 
 function toggleGroceryRecurring() {
   const checked = document.getElementById('grocery-f-recurring').checked;
-  document.getElementById('grocery-recurring-opts').style.display = checked ? 'block' : 'none';
+  toggle('grocery-recurring-opts', checked, 'block');
 }
 
 async function saveGroceryItem() {
@@ -30334,7 +30352,7 @@ function openGroceryContext(e, id) {
 }
 
 function dismissGroceryContext() {
-  document.getElementById('grocery-context-menu').style.display = 'none';
+  hide('grocery-context-menu');
   groceryContextTarget = null;
 }
 
@@ -30933,7 +30951,7 @@ async function createInviteCode() {
     if (!res.ok) throw new Error(data.error || 'Failed');
     _inviteCode = data.code;
     document.getElementById('invite-code-value').textContent = data.code;
-    document.getElementById('invite-code-display').style.display = 'block';
+    show('invite-code-display', 'block');
     toast('Invite code created — valid for 24 hours');
   } catch(err) {
     toast('Could not create invite: ' + err.message);
@@ -31558,7 +31576,7 @@ async function openAddShareTarget() {
   // Hide the "send notification" checkbox — only relevant on edit
   const sendEmailRow = document.getElementById('share-send-email-row');
   if (sendEmailRow) sendEmailRow.style.display = 'none';
-  document.getElementById('share-link-section').style.display = 'none';
+  hide('share-link-section');
   document.getElementById('share-target-save-btn').textContent = 'Create & get link';
   // Restore the three sections that bulk-share mode hides (Role / Access
   // per household / Share management). When openAddShareTarget runs from
@@ -31609,7 +31627,7 @@ async function openEditShareTarget(code) {
   const sendEmailCb = document.getElementById('share-send-email-cb');
   if (sendEmailCb) sendEmailCb.checked = false;
 
-  document.getElementById('share-link-section').style.display = 'none';
+  hide('share-link-section');
   document.getElementById('share-target-save-btn').textContent = 'Save changes';
   selectShareType(_shareTargetType, document.querySelector(`.share-type-btn[data-type="${_shareTargetType}"]`));
   // selectShareType resets _shareTargetMgmt to type default; restore the
@@ -33056,7 +33074,7 @@ async function init() {
     }
     // Always go through MFA first — protect/country/stockroom routing happens inside
     document.body.classList.remove('wizard-active');
-    document.getElementById('wizard').style.display = 'none';
+    hide('wizard');
     window.scrollTo(0, 0);
     await _mfaGate(async () => {
       // Re-read flags after _mfaGate's server pull
@@ -33066,7 +33084,7 @@ async function init() {
         showProtectDataScreen([]);
       } else if (!cs) {
         document.body.classList.add('wizard-active');
-        document.getElementById('wizard').style.display = 'flex';
+        show('wizard', 'flex');
         document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
         document.getElementById('wizard-step-2').classList.add('active');
         wizardCountry = settings.country || 'GB';
@@ -33235,7 +33253,7 @@ function renderTempStorePrices() {
 
 function openQuickAdd() {
   document.getElementById('quick-add-input').value = '';
-  document.getElementById('quick-add-preview').style.display = 'none';
+  hide('quick-add-preview');
   document.getElementById('quick-add-chips').innerHTML = '';
   openModal('quick-add-modal');
   setTimeout(() => document.getElementById('quick-add-input')?.focus(), 100);
@@ -33865,7 +33883,7 @@ async function completePendingJoin() {
     localStorage.setItem('stockroom_seen', '1');
     localStorage.setItem('stockroom_country_set', '1');
     document.body.classList.remove('wizard-active');
-    document.getElementById('wizard').style.display = 'none';
+    hide('wizard');
     applyTabPermissions();
     updateSyncPill('syncing');
     await kvSyncNow();
@@ -34473,8 +34491,8 @@ async function openNoteEditor(noteId) {
     // can hide the FAB and lock background scroll. Without this class the
     // FAB stays at z-index 1100 and renders on top of the note editor.
     document.body.classList.add('note-open');
-    document.getElementById('note-editor-body').style.display = 'flex';
-    document.getElementById('note-lock-screen').style.display = 'none';
+    show('note-editor-body', 'flex');
+    hide('note-lock-screen');
     _renderNoteEditor(n, false);
     _showNoteBody(n); // always set body (clears previous note's content from contenteditable)
     // Brand-new note: hide the sharing panel until the user titles it.
@@ -34606,17 +34624,17 @@ function _showNoteSharingPanel(n) {
 }
 
 function _showNoteLockScreen(n) {
-  document.getElementById('note-editor-body').style.display  = 'none';
-  document.getElementById('note-lock-screen').style.display = 'flex';
+  hide('note-editor-body');
+  show('note-lock-screen', 'flex');
   document.getElementById('note-lock-title').textContent = n.title;
   document.getElementById('note-lock-error').textContent = '';
-  document.getElementById('note-otp-section').style.display = 'none';
-  document.getElementById('note-unlock-btn').style.display  = 'block';
+  hide('note-otp-section');
+  show('note-unlock-btn', 'block');
   _noteOtpPending = false;
 }
 
 function _showNoteBody(n) {
-  document.getElementById('note-lock-screen').style.display = 'none';
+  hide('note-lock-screen');
   const editorBody = document.getElementById('note-editor-body');
   if (editorBody) editorBody.style.display = 'flex';
 
@@ -34711,8 +34729,8 @@ async function _sendNoteOtp() {
       return;
     }
     // Show OTP input
-    document.getElementById('note-unlock-btn').style.display = 'none';
-    document.getElementById('note-otp-section').style.display = 'flex';
+    hide('note-unlock-btn');
+    show('note-otp-section', 'flex');
     document.getElementById('note-otp-input').value = '';
     document.getElementById('note-otp-error').textContent = '';
     setTimeout(() => document.getElementById('note-otp-input')?.focus(), 100);
@@ -35198,7 +35216,7 @@ async function setNoteColour(colour) {
     s.classList.toggle('active', (s.dataset.colour || '') === (colour || ''))
   );
   _noteColourPickerOpen = false;
-  document.getElementById('note-colour-picker').style.display = 'none';
+  hide('note-colour-picker');
   await saveNotes(); await _syncNoteIfConnected();
 }
 
@@ -35898,8 +35916,8 @@ function _mfaSetupReset() {
 }
 
 function _mfaSetupSelectMethod(method) {
-  document.getElementById('mfa-setup-email-section').style.display = method === 'email' ? 'block' : 'none';
-  document.getElementById('mfa-setup-totp-section').style.display  = method === 'totp'  ? 'block' : 'none';
+  toggle('mfa-setup-email-section', method === 'email', 'block');
+  toggle('mfa-setup-totp-section', method === 'totp', 'block');
   // Tab styling
   document.querySelectorAll('.mfa-method-btn').forEach(b => {
     const active = b.dataset.method === method;
@@ -36340,7 +36358,7 @@ async function handleDeleteAccountConfirmation(token) {
       try { localStorage.clear(); } catch(e) {}
       openModal('account-deleted-modal');
       // Hide the rest of the app
-      document.getElementById('main')?.style && (document.getElementById('main').style.display = 'none');
+      hide('main');
     } else {
       const d = await res.json();
       toast('Could not complete deletion: ' + (d.error || 'Link may have expired'));
