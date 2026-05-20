@@ -6025,6 +6025,147 @@ saveBillFromEditor = async function() {
   }
 };
 
+// ── Bill amount-change scope prompt ────────────────────────────────────────
+//
+// When editing an existing bill and changing only its `amount`, the user
+// is asked whether the change should apply to the current month (and all
+// future months) or only to future months. This wraps the existing
+// saveBillFromEditor: if the bill is new, or the amount is unchanged, the
+// wrapped function runs immediately as before. If amount changed on an
+// existing bill, the save is deferred and a small modal asks for scope.
+// The chosen scope is then applied by walking already-materialised
+// instances and updating expectedAmount on those that were still tracking
+// the template (i.e. not manually overridden, not paid, not skipped).
+//
+// Saving-kind instances (split bills) are also updated proportionally so
+// the per-period amount stays consistent with the new template.
+
+let _billAmountEditCtx = null;
+
+const _phase5cSaveBillFromEditorBase = saveBillFromEditor;
+saveBillFromEditor = async function() {
+  // Only intercept when editing an existing bill
+  if (!_budgetEditingBillId) {
+    return _phase5cSaveBillFromEditorBase.call(this);
+  }
+  const existing = bills.find(b => b.id === _budgetEditingBillId);
+  if (!existing) {
+    return _phase5cSaveBillFromEditorBase.call(this);
+  }
+  // Read the proposed amount from the editor input
+  const newAmountRaw = parseFloat(document.getElementById('bill-amount').value);
+  if (isNaN(newAmountRaw) || newAmountRaw < 0) {
+    // Let the base implementation handle the toast/validation
+    return _phase5cSaveBillFromEditorBase.call(this);
+  }
+  const oldAmount = Number(existing.amount) || 0;
+  const newAmount = Number(newAmountRaw) || 0;
+  // If amount is effectively unchanged, no prompt needed
+  if (Math.abs(oldAmount - newAmount) < 0.005) {
+    return _phase5cSaveBillFromEditorBase.call(this);
+  }
+  // Capture context, show the scope modal. The actual save fires when
+  // the user picks an option (or cancels).
+  _billAmountEditCtx = {
+    billId: _budgetEditingBillId,
+    oldAmount,
+    newAmount,
+    name: existing.name || 'this bill',
+  };
+  document.getElementById('bas-subtitle').textContent =
+    `"${_billAmountEditCtx.name}" amount has changed.`;
+  document.getElementById('bas-old-amount').textContent = _money(oldAmount);
+  document.getElementById('bas-new-amount').textContent = _money(newAmount);
+  openModal('bill-amount-scope-modal');
+};
+
+// User cancelled the scope choice — close the prompt and leave the bill
+// editor open so they can adjust or cancel.
+function _cancelBillEditScope() {
+  _billAmountEditCtx = null;
+  closeModal('bill-amount-scope-modal');
+}
+
+// Called by the two scope buttons in the modal. scope is one of:
+//   'current_and_future' — apply to current month and all future months
+//   'future_only'        — apply to future months only
+async function _finaliseBillEditWithScope(scope) {
+  const ctx = _billAmountEditCtx;
+  if (!ctx) { closeModal('bill-amount-scope-modal'); return; }
+  closeModal('bill-amount-scope-modal');
+  _billAmountEditCtx = null;
+  // Run the real save first — this updates the template and
+  // materialises the current view month. Pre-existing instances keep
+  // their old expectedAmount because materialiseMonth skips existing keys.
+  await _phase5cSaveBillFromEditorBase.call(this);
+  // Now propagate to existing instances per scope
+  const fromYyyymm = (scope === 'current_and_future')
+    ? _yyyymm(new Date())
+    : _nextYyyymm(_yyyymm(new Date()));
+  const touched = _applyAmountChangeToInstances(
+    ctx.billId, ctx.oldAmount, ctx.newAmount, fromYyyymm
+  );
+  if (touched > 0) {
+    await saveBudgetLocal();
+    _syncQueue?.enqueue();
+    if (_currentView === 'budget') await renderBudget();
+  }
+}
+
+// Helper: returns YYYY-MM string of the month after the given one.
+function _nextYyyymm(yyyymm) {
+  const { year, month } = _parseYyyymm(yyyymm);
+  let y = year, m = month + 1;
+  if (m > 11) { m = 0; y++; }
+  return `${y}-${String(m + 1).padStart(2, '0')}`;
+}
+
+// Walks billInstances and updates expectedAmount on instances of this
+// bill that fall in fromYyyymm or later, where:
+//   - paidAt is null
+//   - skipped is false
+//   - the existing expectedAmount still matches the OLD template amount
+//     (i.e. has not been manually overridden)
+// Split-saving instances ('kind: saving') are updated proportionally so
+// the per-period figure follows the new template.
+// Returns the number of instances touched.
+function _applyAmountChangeToInstances(billId, oldAmount, newAmount, fromYyyymm) {
+  const tpl = bills.find(b => b.id === billId);
+  if (!tpl) return 0;
+  const splitCount = (tpl.paymentStrategy === 'split' && tpl.splitInto && tpl.splitInto.count)
+    ? tpl.splitInto.count : null;
+  const oldPerPeriod = splitCount ? Math.round((oldAmount / splitCount) * 100) / 100 : null;
+  const newPerPeriod = splitCount ? Math.round((newAmount / splitCount) * 100) / 100 : null;
+  let touched = 0;
+  for (const yyyymm of Object.keys(billInstances)) {
+    if (yyyymm < fromYyyymm) continue;
+    const month = billInstances[yyyymm];
+    if (!month) continue;
+    for (const key of Object.keys(month)) {
+      const inst = month[key];
+      if (!inst || inst.billId !== billId) continue;
+      if (inst.paidAt || inst.skipped) continue;
+      if (inst.kind === 'saving') {
+        // Saving instances are paid-when-backfilled, but defensive:
+        // only touch unpaid ones (above guard already ensures this).
+        if (oldPerPeriod == null || newPerPeriod == null) continue;
+        if (inst.expectedAmount == null) continue;
+        if (Math.abs(inst.expectedAmount - oldPerPeriod) > 0.01) continue; // overridden
+        inst.expectedAmount = newPerPeriod;
+        inst.updatedAt = _nowIso();
+        touched++;
+      } else {
+        if (inst.expectedAmount == null) continue;
+        if (Math.abs(inst.expectedAmount - oldAmount) > 0.01) continue; // overridden
+        inst.expectedAmount = newAmount;
+        inst.updatedAt = _nowIso();
+        touched++;
+      }
+    }
+  }
+  return touched;
+}
+
 // ── Income template editor — extended for Phase 4 ──────────────────────────
 const _phase3OpenIncomeTemplateEditor = openIncomeTemplateEditor;
 openIncomeTemplateEditor = function(id = null) {

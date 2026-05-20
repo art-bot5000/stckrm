@@ -454,6 +454,35 @@
 
 
 <!-- ═══════════════════════════════════════════════════════════════════════
+     BILL AMOUNT SCOPE MODAL — choose how an amount edit propagates
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="bill-amount-scope-modal" style="z-index:320">
+  <div class="modal" style="max-width:420px">
+    <h2 style="font-size:18px;margin-bottom:6px"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-pencil"></use></svg> Apply new amount</h2>
+    <p class="subtitle" id="bas-subtitle">—</p>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.55">
+      Old amount: <span id="bas-old-amount" style="color:var(--text);font-family:var(--mono);font-weight:600">—</span><br>
+      New amount: <span id="bas-new-amount" style="color:var(--text);font-family:var(--mono);font-weight:600">—</span><br>
+      <span style="display:block;margin-top:6px;font-size:11px">Paid and skipped months are never changed. Months with a manual override are also preserved.</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
+      <button class="btn btn-primary" onclick="_finaliseBillEditWithScope('current_and_future')" style="justify-content:flex-start;text-align:left">
+        <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>
+        <span>Change this month and all future months</span>
+      </button>
+      <button class="btn btn-ghost" onclick="_finaliseBillEditWithScope('future_only')" style="justify-content:flex-start;text-align:left;border:1px solid var(--border)">
+        <svg class="icon" aria-hidden="true"><use href="#i-calendar"></use></svg>
+        <span>Only change future months (keep this month)</span>
+      </button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="_cancelBillEditScope()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
      CSV EXPORT MODAL — Phase 4.5
      ═══════════════════════════════════════════════════════════════════════ -->
 <div class="modal-backdrop" id="csv-export-modal" style="z-index:300">
