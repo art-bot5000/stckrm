@@ -2550,6 +2550,13 @@ async function loadData() {
   if (Array.isArray(loadedItems)) items = loadedItems;
   if (loadedSettings && typeof loadedSettings === 'object') settings = { ...settings, ...loadedSettings };
 
+  // Load change history (synced, capped at 50). Phase 1 of the undo
+  // system — runs after items/settings so a freshly-restored history
+  // entry can reference items that exist in scope.
+  if (typeof loadHistory === 'function') {
+    try { await loadHistory(); } catch (e) { console.warn('[boot] loadHistory failed', e); }
+  }
+
   // Apply user's theme preference now that settings are loaded — this
   // re-runs applyTheme with the persisted choice, replacing the early
   // dark-default paint that happened before settings were ready.
@@ -2902,6 +2909,498 @@ function _maybeShowBinHint(section) {
     reminders: 'the bottom of the Reminders view',
   }[section] || 'the Recently Deleted section';
   toast(`Tip: deleted things sit in ${where} for 30 days`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CHANGE HISTORY — Phase 1: Foundation + Stockroom items
+//
+//  Two related but distinct data structures:
+//
+//  1. _history[]  — SYNCED, persisted, capped at 50 entries. The audit
+//     trail visible in Settings → History. Each entry has a full
+//     before/after JSON snapshot of the affected record so restores
+//     work even if the record was hard-deleted. Synced across devices.
+//
+//  2. _undoStack[] / _redoStack[] — LOCAL ONLY, in-memory. The Cmd+Z
+//     stacks. Hold the same kinds of entries as _history but with
+//     bound inverse functions. Reset on page reload. Per-device by
+//     design — Cmd+Z reflects "what I just did on THIS device".
+//
+//  Phase 1 instruments only Stockroom item actions. Subsequent phases
+//  add notes, reminders, groceries, budget. Each instrumented action
+//  calls historyRecord() with { type, domain, recordId, summary,
+//  before, after, undo, redo }. The system handles toast UI, stack
+//  management, persistence, and sync.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const HISTORY_CAP = 50;
+
+let _history = [];              // synced; loaded by loadHistory()
+let _undoStack = [];            // local; in-memory only
+let _redoStack = [];            // local; in-memory only
+let _historyDirty = false;      // mirrors _isKVDirty pattern for backup cron
+let _historyLastPushTs = 0;     // for debounce (prevent storms)
+
+// Suppress flag — set true when a restore/undo/redo is in progress so the
+// re-application doesn't itself get logged as a new history entry, which
+// would create a feedback loop. Stack functions all check this.
+let _historyApplying = false;
+
+// Domain → human label map used by the history page.
+const HISTORY_DOMAIN_LABELS = {
+  item:       'Stockroom item',
+  note:       'Note',
+  reminder:   'Reminder',
+  groceryItem:'Grocery item',
+  groceryList:'Grocery list',
+  bill:       'Bill',
+  budgetCategory:'Budget category',
+  budgetAccount: 'Budget account',
+  transaction:'Transaction',
+  incomeTemplate:'Income template',
+  incomeEntry:'Income entry',
+};
+
+// Action type → past-tense verb used in the summary line.
+const HISTORY_VERBS = {
+  create:  'created',
+  edit:    'edited',
+  delete:  'deleted',           // soft-delete (recycle bin)
+  restore: 'restored',          // out of recycle bin
+  purge:   'permanently deleted',
+  archive: 'archived',
+  unarchive: 'unarchived',
+  order:   'marked ordered',
+  unorder: 'unmarked ordered',
+  rename:  'renamed',
+};
+
+// Build a summary line. Pure-functional; never throws. The summary is
+// what shows on the history page row above the JSON detail toggle.
+function _historySummary(entry) {
+  const domain = HISTORY_DOMAIN_LABELS[entry.domain] || entry.domain;
+  const verb   = HISTORY_VERBS[entry.type] || entry.type;
+  const name   = entry.recordName || '(unnamed)';
+  return `${domain} ${verb}: ${name}`;
+}
+
+// Push a new history entry. This is the single entry point all
+// instrumented actions call. Handles:
+//   - capping at HISTORY_CAP (FIFO eviction of oldest)
+//   - timestamps + ids
+//   - dirty flag for persistence
+//   - both stacks: synced history + local undo
+//   - debounce (skip if identical entry was pushed <500ms ago — e.g.
+//     a double-click on the same button)
+//   - suppression during undo/redo to prevent feedback loops
+//
+// Caller provides:
+//   type:       'create' | 'edit' | 'delete' | 'restore' | 'order' | ...
+//   domain:     'item' | 'note' | 'reminder' | ...
+//   recordId:   id of the affected record (so duplicate detect can work)
+//   recordName: human name for the summary (e.g. item.name)
+//   before:     full JSON snapshot of the record pre-change (or null if create)
+//   after:      full JSON snapshot of the record post-change (or null if delete)
+//   undo:       function that reverses the change. Called with no args.
+//               Should be idempotent if possible. May be async.
+//   redo:       function that re-applies the change. May be async.
+function historyRecord({ type, domain, recordId, recordName, before, after, undo, redo }) {
+  if (_historyApplying) return null;  // suppress during undo/redo flow
+
+  const now = new Date().toISOString();
+  const entry = {
+    id:         uid(),
+    type, domain, recordId, recordName,
+    before:     before ? JSON.parse(JSON.stringify(before)) : null,
+    after:      after  ? JSON.parse(JSON.stringify(after))  : null,
+    at:         now,
+    // device identifier — helps later if we want "From iPhone" labels
+    deviceId:   _deviceIdShort(),
+  };
+
+  // Debounce: drop identical recent pushes (same record + type within 500ms)
+  // to swallow accidental double-fires from the UI.
+  const lastEntry = _history[_history.length - 1];
+  const sinceLast = Date.now() - _historyLastPushTs;
+  if (lastEntry
+      && lastEntry.type === type
+      && lastEntry.domain === domain
+      && lastEntry.recordId === recordId
+      && sinceLast < 500) {
+    return lastEntry; // collapse into prior entry
+  }
+  _historyLastPushTs = Date.now();
+
+  // Append to synced history, FIFO-cap
+  _history.push(entry);
+  while (_history.length > HISTORY_CAP) _history.shift();
+
+  // Append to local undo stack with bound inverses, also FIFO-cap.
+  // Doing it in two writes keeps the synced history clean (no functions
+  // in it) and the undo stack rich (closures bound to current scope).
+  _undoStack.push({ ...entry, undo: undo || null, redo: redo || null });
+  while (_undoStack.length > HISTORY_CAP) _undoStack.shift();
+  // A fresh user action invalidates the redo branch — same behaviour as
+  // browser/editor undo stacks.
+  _redoStack.length = 0;
+
+  _historyDirty = true;
+  if (typeof markKVDirty === 'function') {
+    try { markKVDirty(); } catch (_) {}
+  }
+  // Persist asynchronously — don't block the action's callsite.
+  setTimeout(() => { saveHistory().catch(() => {}); }, 0);
+  return entry;
+}
+
+// Persist _history to KV. Mirrors saveBudgetLocal etc.
+async function saveHistory() {
+  if (typeof dbPut !== 'function') return;
+  try {
+    await dbPut('history', 'history', _history);
+    _historyDirty = false;
+  } catch (e) {
+    console.warn('[history] save failed', e);
+  }
+}
+
+// Load _history from KV at boot. Called from the data-load path.
+async function loadHistory() {
+  if (typeof dbGet !== 'function') return;
+  try {
+    const stored = await dbGet('history', 'history');
+    if (Array.isArray(stored)) {
+      _history = stored.slice(-HISTORY_CAP);
+    }
+  } catch (e) {
+    console.warn('[history] load failed', e);
+  }
+}
+
+// Sync merge — called from the existing sync path. Union by entry id,
+// sort by `at`, then cap at HISTORY_CAP keeping the newest entries.
+// Conservative: entries without an `id` (shouldn't happen) are dropped.
+function mergeHistory(localList = [], remoteList = []) {
+  const byId = new Map();
+  for (const e of remoteList) { if (e && e.id) byId.set(e.id, e); }
+  for (const e of localList)  { if (e && e.id) byId.set(e.id, e); } // local wins on tie
+  const merged = [...byId.values()];
+  merged.sort((a, b) => (a.at || '') < (b.at || '') ? -1 : 1);
+  return merged.slice(-HISTORY_CAP);
+}
+
+// Apply undo from the top of _undoStack. Idempotent against an empty
+// stack. Pops the entry onto _redoStack on success. Marks _historyApplying
+// for the duration so the underlying mutation doesn't double-log.
+async function undoLastAction() {
+  if (!_undoStack.length) {
+    if (typeof toast === 'function') toast('Nothing to undo');
+    return;
+  }
+  const entry = _undoStack.pop();
+  if (!entry.undo) {
+    // No inverse bound — drop without applying. Tell the user.
+    if (typeof toast === 'function') toast('Cannot undo this action');
+    return;
+  }
+  _historyApplying = true;
+  try {
+    await entry.undo();
+    _redoStack.push(entry);
+    if (typeof toast === 'function') toast(`Undid: ${_historySummary(entry)}`);
+  } catch (e) {
+    console.warn('[history] undo failed', e);
+    if (typeof toast === 'function') toast('Undo failed');
+    // Put it back so the user can try again, or it stays available on
+    // the next Cmd+Z. Don't push to redo.
+    _undoStack.push(entry);
+  } finally {
+    _historyApplying = false;
+  }
+}
+
+// Apply redo from the top of _redoStack. Symmetric with undoLastAction.
+async function redoLastAction() {
+  if (!_redoStack.length) {
+    if (typeof toast === 'function') toast('Nothing to redo');
+    return;
+  }
+  const entry = _redoStack.pop();
+  if (!entry.redo) {
+    if (typeof toast === 'function') toast('Cannot redo this action');
+    return;
+  }
+  _historyApplying = true;
+  try {
+    await entry.redo();
+    _undoStack.push(entry);
+    if (typeof toast === 'function') toast(`Redid: ${_historySummary(entry)}`);
+  } catch (e) {
+    console.warn('[history] redo failed', e);
+    if (typeof toast === 'function') toast('Redo failed');
+    _redoStack.push(entry);
+  } finally {
+    _historyApplying = false;
+  }
+}
+
+// Restore from a history entry (Settings → History page button). Different
+// from undoLastAction because it operates on a SPECIFIC entry, not the
+// stack top. Uses entry.before/after JSON to reconstruct the record
+// rather than a bound function — bound functions don't survive a sync /
+// reload, but the JSON snapshots do.
+//
+// Returns true on success, false otherwise. Toasts a message either way.
+async function restoreFromHistory(entryId) {
+  const idx = _history.findIndex(e => e.id === entryId);
+  if (idx < 0) { if (typeof toast === 'function') toast('History entry not found'); return false; }
+  const entry = _history[idx];
+
+  _historyApplying = true;
+  let ok = false;
+  try {
+    ok = await _applyRestoreFromSnapshot(entry);
+  } catch (e) {
+    console.warn('[history] restore failed', e);
+  } finally {
+    _historyApplying = false;
+  }
+
+  if (ok) {
+    // Restoration itself is a new action — log it as such so the user
+    // can undo the restore if they hit it by mistake. The new entry
+    // doesn't carry bound inverses (the snapshot path lives on _history,
+    // not _undoStack), but a Cmd+Z right after a restore can't help us
+    // anyway because the in-memory stacks don't know about it. The
+    // history page will show both rows.
+    historyRecord({
+      type: 'restore',
+      domain: entry.domain,
+      recordId: entry.recordId,
+      recordName: entry.recordName,
+      before: null,
+      after: entry.before || entry.after || null,
+      undo: null,
+      redo: null,
+    });
+    if (typeof toast === 'function') toast(`Restored: ${_historySummary(entry)}`);
+    if (typeof scheduleRender === 'function') scheduleRender('grid', 'dashboard', 'shopping', 'notes', 'reminders', 'grocery');
+  } else {
+    if (typeof toast === 'function') toast('Restore failed — record may already be live');
+  }
+  return ok;
+}
+
+// Pure data restore from a snapshot. Phase 1 implements item-domain
+// only. Returns true if it applied a change, false otherwise.
+async function _applyRestoreFromSnapshot(entry) {
+  if (entry.domain !== 'item') return false;
+
+  // Decide whether to restore `before` (undo a create/edit) or `after`
+  // (redo a deletion's removed record). The right interpretation:
+  //   - For 'delete' / 'purge': restore the BEFORE snapshot (the record
+  //     as it was before deletion). Use before, fall back to after.
+  //   - For 'create': the user is asking us to UNDO the create →
+  //     remove the record. Set _deletedAt.
+  //   - For 'edit' / 'archive' / 'order' / etc.: restore the BEFORE
+  //     snapshot (the record as it was pre-change).
+  //
+  // We never re-apply 'after' directly because that's just "redo what
+  // we already did" which makes no sense as a restore action.
+
+  const snap = entry.before || entry.after;
+  if (!snap || !snap.id) return false;
+
+  if (entry.type === 'create') {
+    // Undo a create → soft-delete the record if it still exists.
+    const existing = items.find(i => i.id === snap.id);
+    if (!existing) return true; // already gone — nothing to do
+    existing._deletedAt = new Date().toISOString();
+    if (typeof touchField === 'function') touchField(existing, '_deletedAt');
+    await saveData();
+    if (typeof _syncQueue !== 'undefined' && _syncQueue && _syncQueue.enqueue) _syncQueue.enqueue();
+    return true;
+  }
+
+  // delete / purge / edit / archive / order / etc. → write snap back
+  const existingIdx = items.findIndex(i => i.id === snap.id);
+
+  // If the record exists (e.g. it was edited and we're rolling back),
+  // overwrite it with the snapshot. Bump updatedAt so the restore beats
+  // any in-flight sync deletion.
+  const restored = { ...snap, updatedAt: new Date().toISOString() };
+  delete restored._deletedAt; // clear any soft-delete from the snapshot
+  if (existingIdx >= 0) {
+    items[existingIdx] = restored;
+  } else {
+    items.push(restored);
+  }
+  // Remove from tombstones (if present) so a permanently-deleted record
+  // doesn't get re-removed on the next sync. The new updatedAt will
+  // beat the tombstone regardless, but cleaning up is tidier.
+  if (typeof removeTombstone === 'function') {
+    try { await removeTombstone(snap.id); } catch (_) {}
+  }
+  if (typeof touchItem === 'function') touchItem(restored);
+  await saveData();
+  if (typeof _syncQueue !== 'undefined' && _syncQueue && _syncQueue.enqueue) _syncQueue.enqueue();
+  return true;
+}
+
+// Show a toast with an Undo button. Wraps toastAction so the rest of
+// the codebase doesn't need to know about the undo machinery — call
+// this from any instrumented action to give the user a one-tap undo.
+// The button calls undoLastAction which pops the top of _undoStack —
+// works as long as no other action has been recorded in between.
+function toastWithUndo(msg) {
+  if (typeof toastAction !== 'function') {
+    if (typeof toast === 'function') toast(msg);
+    return;
+  }
+  toastAction(msg, {
+    label: 'Undo',
+    onclick: () => { undoLastAction().catch(() => {}); },
+  });
+}
+
+// ── History page rendering (Settings → Change History) ────────────────
+// Renders the synced _history list into #history-page-body. Each row
+// shows the summary, timestamp, device hint, and a Restore button.
+// Tapping a row toggles the full before/after JSON snapshot detail.
+// Renders newest-first so the user sees their most recent change at
+// the top. Renders an empty-state when there's nothing to show.
+function renderHistoryPage() {
+  const body = document.getElementById('history-page-body');
+  if (!body) return;
+
+  if (!_history.length) {
+    body.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:13px;text-align:center;background:var(--surface2);border:1px solid var(--border);border-radius:8px">No changes recorded yet.</div>';
+    return;
+  }
+
+  // Reverse a copy so we render newest first
+  const entries = [..._history].reverse();
+  body.innerHTML = entries.map(e => _historyRowHTML(e)).join('');
+}
+
+function _historyRowHTML(entry) {
+  const safeId = (typeof esc === 'function') ? esc(entry.id) : entry.id;
+  const summary = _historySummary(entry);
+  const safeSummary = (typeof esc === 'function') ? esc(summary) : summary;
+  // Friendly date — locale-aware date + time
+  let when = '';
+  try { when = new Date(entry.at).toLocaleString(); } catch (_) { when = entry.at || ''; }
+  const device = entry.deviceId ? `<span class="history-row-device" title="Device fingerprint">on ${esc(entry.deviceId)}</span>` : '';
+
+  // Pre-serialise the before/after JSON for the detail panel. Big snapshots
+  // get scrolled. Always pretty-print so the user can read it.
+  const beforeJson = entry.before ? JSON.stringify(entry.before, null, 2) : null;
+  const afterJson  = entry.after  ? JSON.stringify(entry.after,  null, 2) : null;
+  const detailHTML = `
+    <div class="history-row-detail" style="display:none">
+      ${beforeJson ? `<div class="history-detail-block">
+        <div class="history-detail-label">Before</div>
+        <pre class="history-detail-json">${esc(beforeJson)}</pre>
+      </div>` : ''}
+      ${afterJson ? `<div class="history-detail-block">
+        <div class="history-detail-label">After</div>
+        <pre class="history-detail-json">${esc(afterJson)}</pre>
+      </div>` : ''}
+      ${(!beforeJson && !afterJson) ? `<div class="history-detail-empty">No snapshot data captured.</div>` : ''}
+    </div>`;
+
+  // Restorable types: anything where a snapshot exists. Skip 'restore'
+  // entries themselves (would loop).
+  const restorable = (entry.type !== 'restore') && !!(entry.before || entry.after);
+  const restoreBtn = restorable
+    ? `<button class="btn btn-ghost btn-sm history-row-restore" onclick="event.stopPropagation();restoreFromHistory('${safeId}')">
+         <svg class="icon" aria-hidden="true"><use href="#i-rotate-ccw"></use></svg> Restore
+       </button>`
+    : '';
+
+  return `<div class="history-row" data-id="${safeId}" onclick="_toggleHistoryRow('${safeId}')">
+    <div class="history-row-head">
+      <div class="history-row-summary">${safeSummary}</div>
+      ${restoreBtn}
+    </div>
+    <div class="history-row-meta">${esc(when)} ${device}</div>
+    ${detailHTML}
+  </div>`;
+}
+
+// Toggle the detail panel inside a history row. The row itself is
+// clickable; the Restore button stops propagation so it doesn't toggle.
+function _toggleHistoryRow(entryId) {
+  const row = document.querySelector(`.history-row[data-id="${entryId}"]`);
+  if (!row) return;
+  const detail = row.querySelector('.history-row-detail');
+  if (!detail) return;
+  const open = detail.style.display !== 'none';
+  detail.style.display = open ? 'none' : '';
+  row.classList.toggle('is-expanded', !open);
+}
+
+// Confirmation dialog for clearing all history. Local AND synced — the
+// user has to mean it. Pushes nothing to history afterwards (the clear
+// would log itself otherwise, immediately re-populating it).
+async function _confirmClearHistory() {
+  if (!confirm(
+    `Clear all change history?\n\n` +
+    `This removes all ${_history.length} history entries from this device and from sync. ` +
+    `Recent changes won't be restorable from the history page after this. ` +
+    `Cmd+Z undo for the current session will continue to work.`
+  )) return;
+  _history = [];
+  _historyDirty = true;
+  if (typeof markKVDirty === 'function') { try { markKVDirty(); } catch (_) {} }
+  try { await saveHistory(); } catch (_) {}
+  if (typeof _syncQueue !== 'undefined' && _syncQueue && _syncQueue.enqueue) _syncQueue.enqueue();
+  renderHistoryPage();
+  if (typeof toast === 'function') toast('History cleared');
+}
+
+// Short device identifier shown alongside history entries. Uses the
+// existing deviceId scheme if available; falls back to a short hash of
+// userAgent for older sessions. Not a security feature — purely for
+// helping the user understand "this happened on iPhone vs laptop".
+function _deviceIdShort() {
+  try {
+    const full = (typeof window !== 'undefined' && window._deviceId) ? String(window._deviceId) : '';
+    if (full) return full.slice(0, 6);
+  } catch (_) {}
+  try {
+    const ua = (typeof navigator !== 'undefined') ? (navigator.userAgent || '') : '';
+    let h = 0;
+    for (let i = 0; i < ua.length; i++) h = ((h << 5) - h + ua.charCodeAt(i)) | 0;
+    return Math.abs(h).toString(36).slice(0, 6);
+  } catch (_) {
+    return 'unknown';
+  }
+}
+
+// Keyboard handler for Cmd+Z / Cmd+Shift+Z (Ctrl on Win/Linux). Skips
+// when focus is in a text-editing context (input, textarea, contenteditable)
+// because those want native browser undo. The Stockroom grid, Notes list,
+// Budget tabs — none of those have native undo, so they get ours.
+function _onHistoryKeydown(e) {
+  // Ignore when modifier mismatched
+  const isUndoCombo = (e.key === 'z' || e.key === 'Z') && (e.metaKey || e.ctrlKey);
+  if (!isUndoCombo) return;
+  // Defer to native undo when typing in a text field
+  const t = e.target;
+  if (t) {
+    const tag = (t.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || t.isContentEditable) return;
+  }
+  e.preventDefault();
+  if (e.shiftKey) {
+    redoLastAction().catch(() => {});
+  } else {
+    undoLastAction().catch(() => {});
+  }
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('keydown', _onHistoryKeydown);
 }
 
 // Preserve local soft-deletes when applying a wholesale remote replacement.
@@ -8222,26 +8721,51 @@ async function markOrdered(id) {
   if (!canWrite("stockroom")) { showLockBanner("stockroom"); return; }
   const item = items.find(i => i.id === id);
   if (!item) return;
+  // Snapshot before so undo/restore can roll back exactly.
+  const before = JSON.parse(JSON.stringify(item));
   item.ordered   = true;
   item.orderedAt = new Date().toISOString();
   touchField(item, 'ordered','orderedAt');
   await saveData();
   scheduleRender('grid', 'dashboard', 'shopping');
   setTimeout(syncAll, 400);
-  toast(`📦 ${item.name} marked as ordered`);
+  // Log to history with bound inverses for Cmd+Z. Skipped silently
+  // during undo/redo replay (historyRecord respects _historyApplying).
+  historyRecord({
+    type: 'order',
+    domain: 'item',
+    recordId: item.id,
+    recordName: item.name,
+    before,
+    after: JSON.parse(JSON.stringify(item)),
+    undo: async () => { await unmarkOrdered(item.id); },
+    redo: async () => { await markOrdered(item.id); },
+  });
+  toastWithUndo(`📦 ${item.name} marked as ordered`);
 }
 
 async function unmarkOrdered(id) {
   if (!canWrite("stockroom")) { showLockBanner("stockroom"); return; }
   const item = items.find(i => i.id === id);
   if (!item) return;
+  const before = JSON.parse(JSON.stringify(item));
   item.ordered   = false;
   item.orderedAt = null;
   touchField(item, 'ordered','orderedAt');
   await saveData();
   scheduleRender('grid', 'dashboard', 'shopping');
   setTimeout(syncAll, 400);
-  toast('Removed ordered status');
+  historyRecord({
+    type: 'unorder',
+    domain: 'item',
+    recordId: item.id,
+    recordName: item.name,
+    before,
+    after: JSON.parse(JSON.stringify(item)),
+    undo: async () => { await markOrdered(item.id); },
+    redo: async () => { await unmarkOrdered(item.id); },
+  });
+  toastWithUndo(`Removed ordered status: ${item.name}`);
 }
 
 // ═══════════════════════════════════════════
@@ -14554,6 +15078,20 @@ async function saveItem() {
   const storeVal = document.getElementById('f-store').value.trim()
     || urlToStoreName(document.getElementById('f-url').value.trim());
 
+  // Snapshot before any mutation so history can capture the change.
+  // For an edit: snapshot the existing item. For a create: null (the
+  // new item doesn't exist yet).
+  let _historyBefore = null;
+  if (editingId) {
+    const existing = items.find(i => i.id === editingId);
+    if (existing) _historyBefore = JSON.parse(JSON.stringify(existing));
+  }
+  // Will be filled in below — captured here so the record() call after
+  // close has both before and after.
+  let _historyAfter = null;
+  let _historyRecordId = null;
+  let _historyRecordName = name;
+
   if (editingId) {
     const item = items.find(i => i.id === editingId);
     if (item) {
@@ -14605,6 +15143,9 @@ async function saveItem() {
         'notes','startedUsing','rating','imageUrl','storePrices',
         'expiry','thresholdOverride','replacementInterval','replacementUnit'
       );
+      _historyRecordId = item.id;
+      _historyRecordName = item.name;
+      _historyAfter = JSON.parse(JSON.stringify(item));
     }
   } else {
     const lastDate  = document.getElementById('f-last-date').value;
@@ -14612,7 +15153,7 @@ async function saveItem() {
     const lastPrice = document.getElementById('f-last-price').value.trim();
     const newQty    = parseFloat(document.getElementById('f-qty').value)||1;
     const newMonths = parseFloat(document.getElementById('f-months').value)||1;
-    items.push({
+    const newItem = {
       id:                uid(),
       name,
       category:          document.getElementById('f-category').value,
@@ -14631,12 +15172,75 @@ async function saveItem() {
       thresholdOverride: (() => { const v = parseInt(document.getElementById('f-threshold')?.value); return isNaN(v) ? null : v; })(),
       logs:              lastDate ? [{ id:uid(), date:lastDate, qty:lastQty, price:lastPrice, store:storeVal }] : [],
       updatedAt:         new Date().toISOString(),
-    });
+    };
+    items.push(newItem);
+    _historyRecordId = newItem.id;
+    _historyRecordName = newItem.name;
+    _historyAfter = JSON.parse(JSON.stringify(newItem));
   }
   await saveData();
   closeModal('item-modal');
   if (editingId) clearQuickAddedFlag(editingId);
   scheduleRender('grid', 'dashboard', 'filters', 'shopping', 'sns');
+  // Log to history. Edit → type='edit' with before+after. Create →
+  // type='create' with after only. Undo for edits restores the snapshot
+  // via _applyRestoreFromSnapshot. Undo for creates soft-deletes.
+  if (_historyRecordId) {
+    const isCreate = !_historyBefore;
+    const recId = _historyRecordId;
+    historyRecord({
+      type: isCreate ? 'create' : 'edit',
+      domain: 'item',
+      recordId: recId,
+      recordName: _historyRecordName,
+      before: _historyBefore,
+      after:  _historyAfter,
+      undo: async () => {
+        if (isCreate) {
+          // Undo a create: soft-delete the new item
+          const it = items.find(i => i.id === recId);
+          if (!it) return;
+          it._deletedAt = new Date().toISOString();
+          if (typeof touchField === 'function') { try { touchField(it, '_deletedAt'); } catch (_) {} }
+          await saveData();
+          scheduleRender('grid', 'dashboard', 'shopping');
+          _syncQueue.enqueue();
+        } else {
+          // Undo an edit: restore the before snapshot
+          const idx = items.findIndex(i => i.id === recId);
+          if (idx >= 0 && _historyBefore) {
+            items[idx] = { ..._historyBefore, updatedAt: new Date().toISOString() };
+            if (typeof touchItem === 'function') touchItem(items[idx]);
+            await saveData();
+            scheduleRender('grid', 'dashboard', 'filters', 'shopping', 'sns');
+            _syncQueue.enqueue();
+          }
+        }
+      },
+      redo: async () => {
+        if (isCreate) {
+          // Redo create: undelete the item we soft-deleted
+          const it = items.find(i => i.id === recId);
+          if (!it) return;
+          delete it._deletedAt;
+          if (typeof touchField === 'function') { try { touchField(it, '_deletedAt'); } catch (_) {} }
+          await saveData();
+          scheduleRender('grid', 'dashboard', 'shopping');
+          _syncQueue.enqueue();
+        } else {
+          // Redo edit: re-apply the after snapshot
+          const idx = items.findIndex(i => i.id === recId);
+          if (idx >= 0 && _historyAfter) {
+            items[idx] = { ..._historyAfter, updatedAt: new Date().toISOString() };
+            if (typeof touchItem === 'function') touchItem(items[idx]);
+            await saveData();
+            scheduleRender('grid', 'dashboard', 'filters', 'shopping', 'sns');
+            _syncQueue.enqueue();
+          }
+        }
+      },
+    });
+  }
   toast('Item saved ✓');
   _syncQueue.enqueue('Saving item…');
 }
@@ -15350,24 +15954,46 @@ async function archiveItem(id) {
   if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
   const item = items.find(i => i.id === id);
   if (!item) return;
+  const before = JSON.parse(JSON.stringify(item));
   item._archived  = true;
   item.updatedAt  = new Date().toISOString();
   await saveData();
   scheduleRender('grid', 'dashboard');
   _syncQueue.enqueue();
-  toast(`"${item.name}" archived`);
+  historyRecord({
+    type: 'archive',
+    domain: 'item',
+    recordId: item.id,
+    recordName: item.name,
+    before,
+    after: JSON.parse(JSON.stringify(item)),
+    undo: async () => { await restoreItem(item.id); },
+    redo: async () => { await archiveItem(item.id); },
+  });
+  toastWithUndo(`"${item.name}" archived`);
 }
 
 async function restoreItem(id) {
   if (!canWrite('stockroom')) { showLockBanner('stockroom'); return; }
   const item = items.find(i => i.id === id);
   if (!item) return;
+  const before = JSON.parse(JSON.stringify(item));
   delete item._archived;
   item.updatedAt = new Date().toISOString();
   await saveData();
   scheduleRender('grid', 'dashboard');
   _syncQueue.enqueue();
-  toast(`"${item.name}" restored`);
+  historyRecord({
+    type: 'unarchive',
+    domain: 'item',
+    recordId: item.id,
+    recordName: item.name,
+    before,
+    after: JSON.parse(JSON.stringify(item)),
+    undo: async () => { await archiveItem(item.id); },
+    redo: async () => { await restoreItem(item.id); },
+  });
+  toastWithUndo(`"${item.name}" restored`);
 }
 
 async function deleteItem(id) {
@@ -15377,6 +16003,7 @@ async function deleteItem(id) {
     `Move "${item.name}" to recycle bin?\n\n` +
     `You can restore it within 30 days from the bottom of the Stockroom view.`
   )) return;
+  const before = JSON.parse(JSON.stringify(item));
   item._deletedAt = new Date().toISOString();
   if (typeof touchField === 'function') {
     try { touchField(item, '_deletedAt'); } catch(e) {}
@@ -15384,7 +16011,26 @@ async function deleteItem(id) {
   await saveData();
   closeModal('item-modal');
   scheduleRender('grid', 'dashboard', 'shopping');
-  toast('Moved to recycle bin');
+  historyRecord({
+    type: 'delete',
+    domain: 'item',
+    recordId: item.id,
+    recordName: item.name,
+    before,
+    after: null,
+    undo: async () => { await restoreItemFromBin(item.id); },
+    redo: async () => {
+      // Re-soft-delete without the confirm prompt
+      const it = items.find(i => i.id === item.id);
+      if (!it) return;
+      it._deletedAt = new Date().toISOString();
+      if (typeof touchField === 'function') { try { touchField(it, '_deletedAt'); } catch(_) {} }
+      await saveData();
+      scheduleRender('grid', 'dashboard', 'shopping');
+      _syncQueue.enqueue();
+    },
+  });
+  toastWithUndo(`"${item.name}" moved to recycle bin`);
   _maybeShowBinHint('items');
   _syncQueue.enqueue('Updating…');
 }
@@ -15392,25 +16038,77 @@ async function deleteItem(id) {
 async function restoreItemFromBin(id) {
   const item = items.find(i => i.id === id);
   if (!item) return;
+  const before = JSON.parse(JSON.stringify(item));
   delete item._deletedAt;
   if (typeof touchField === 'function') {
     try { touchField(item, '_deletedAt'); } catch(e) {}
   }
   await saveData();
   scheduleRender('grid', 'dashboard', 'shopping');
-  toast('Item restored');
+  historyRecord({
+    type: 'restore',
+    domain: 'item',
+    recordId: item.id,
+    recordName: item.name,
+    before,
+    after: JSON.parse(JSON.stringify(item)),
+    undo: async () => {
+      // Re-delete without the confirm prompt
+      const it = items.find(i => i.id === item.id);
+      if (!it) return;
+      it._deletedAt = new Date().toISOString();
+      if (typeof touchField === 'function') { try { touchField(it, '_deletedAt'); } catch(_) {} }
+      await saveData();
+      scheduleRender('grid', 'dashboard', 'shopping');
+      _syncQueue.enqueue();
+    },
+    redo: async () => { await restoreItemFromBin(item.id); },
+  });
+  toastWithUndo(`"${item.name}" restored from recycle bin`);
   _syncQueue.enqueue('Updating…');
 }
 
 async function purgeItemForever(id) {
   const item = items.find(i => i.id === id);
   if (!item) return;
-  if (!confirm(`Permanently delete "${item.name}"? This cannot be undone.`)) return;
+  if (!confirm(
+    `Permanently delete "${item.name}"?\n\n` +
+    `Removes the item from the recycle bin. You can still restore it from Settings → Change History within the next 50 changes.`
+  )) return;
+  // Snapshot the full record BEFORE we remove it so restoreFromHistory
+  // has the data it needs to reconstruct the item later.
+  const before = JSON.parse(JSON.stringify(item));
   items = items.filter(i => i.id !== id);
   await addTombstone(id);
   await saveData();
   scheduleRender('grid', 'dashboard', 'shopping');
-  toast('Permanently deleted');
+  historyRecord({
+    type: 'purge',
+    domain: 'item',
+    recordId: before.id,
+    recordName: before.name,
+    before,
+    after: null,
+    // Cmd+Z reinserts the record and removes the tombstone
+    undo: async () => {
+      items.push({ ...before, updatedAt: new Date().toISOString() });
+      if (typeof removeTombstone === 'function') {
+        try { await removeTombstone(before.id); } catch (_) {}
+      }
+      await saveData();
+      scheduleRender('grid', 'dashboard', 'shopping');
+      _syncQueue.enqueue();
+    },
+    // Redo re-purges without the confirm
+    redo: async () => {
+      items = items.filter(i => i.id !== before.id);
+      await addTombstone(before.id);
+      await saveData();
+      scheduleRender('grid', 'dashboard', 'shopping');
+      _syncQueue.enqueue();
+    },
+  });
+  toastWithUndo(`"${item.name}" permanently deleted`);
   _syncQueue.enqueue('Updating…');
 }
 
@@ -20284,6 +20982,10 @@ async function kvPush() {
     // pushSharedData / pushGuestSharedData — neither references this field).
     // Each device generates its own notifications from sync diffs.
     notifications,
+    // Change history — synced across devices, capped at 50 latest entries.
+    // Audit log of user-data changes (Phase 1: items only; later phases
+    // add other domains). Restorable via Settings → History page.
+    history: _history,
   });
   _keyFingerprint(_kvKey).then(fp => console.log('[key] kvPush: encrypting with key fingerprint:', fp));
   const ciphertext = await kvEncrypt(_kvKey, payload);
@@ -20657,6 +21359,18 @@ async function kvSyncNow(silent = false) {
         _renderNotificationBellBadge();
         if (document.getElementById('notif-panel')?.classList.contains('open')) {
           _renderNotificationPanel();
+        }
+      }
+      // Merge remote change history with local. Union by id, sorted by
+      // timestamp, capped at HISTORY_CAP. mergeHistory handles all that.
+      // Lives next to the notification merge because both follow the
+      // same pattern: per-record id, monotonic timestamp, last-write-wins.
+      if (remote.history && Array.isArray(remote.history)) {
+        _history = mergeHistory(_history, remote.history);
+        try { await saveHistory(); } catch (_) {}
+        // Re-render the history page if it's open
+        if (document.getElementById('history-page-body')) {
+          try { renderHistoryPage(); } catch (_) {}
         }
       }
       if (remote.deletedIds && Array.isArray(remote.deletedIds)) {
@@ -21113,6 +21827,11 @@ function renderSettingsForUser() {
   // Sync theme segmented control with current preference. Safe to call
   // even if buttons aren't mounted — the helper no-ops on missing IDs.
   _updateThemeUI();
+  // Refresh change-history page. No-op if the body isn't in the DOM
+  // (e.g. legacy users on an old index.html before this section landed).
+  if (typeof renderHistoryPage === 'function') {
+    try { renderHistoryPage(); } catch (_) {}
+  }
 }
 
 function updateSyncPill(state, provider) {

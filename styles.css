@@ -5988,3 +5988,105 @@ html[data-theme="light"] .setting-row {
    Left as-is for v1 — the colours still parse as "good / warning /
    error" semantically; we can tune visually in a follow-up pass.
    ────────────────────────────────────────────────────────────────────── */
+
+/* ── Settings → Change History page ──
+   Rendered into #history-page-body. Each row is the summary + meta
+   line + Restore button + a collapsed before/after JSON detail panel.
+   Designed to be readable on phone widths — single column, no fixed
+   sizes that overflow on narrow viewports. */
+
+.history-row {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color 0.1s, background 0.1s;
+}
+.history-row:hover { border-color: var(--accent); }
+.history-row.is-expanded { background: var(--surface); border-color: var(--accent); }
+
+.history-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.history-row-summary {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-row-meta {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.history-row-device {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.history-row-restore {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+.history-row-restore svg { width: 12px; height: 12px; }
+
+.history-row-detail {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.history-detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.history-detail-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.history-detail-json {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.history-detail-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 6px 0;
+  font-style: italic;
+}

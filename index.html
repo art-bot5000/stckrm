@@ -3040,6 +3040,34 @@
         </div>
       </div>
     </div>
+
+    <!-- ── HISTORY ─────────────────────────────────────
+         Audit log of recent changes to user data — last 50 entries,
+         synced across devices. Phase 1: Stockroom items only. Each
+         row shows what changed, when, and offers a Restore button to
+         roll the change back. Local Cmd+Z / toast-undo work in
+         parallel for in-session changes. -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-history"></use></svg> Change History</div>
+      <div class="acc-sec-card">
+        <div class="acc-sec-row acc-sec-row-block">
+          <div class="acc-sec-label" style="width:100%">
+            <div class="acc-sec-h">Recent changes</div>
+            <div class="acc-sec-p">The last 50 modifications to your data, across all devices. Tap a row to view the full before/after. Restore rolls a change back. Synced.</div>
+          </div>
+          <div id="history-page-body" style="width:100%;margin-top:12px;display:flex;flex-direction:column;gap:6px"></div>
+          <div style="width:100%;margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-ghost acc-sec-btn" onclick="renderHistoryPage()">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh-cw"></use></svg> Refresh
+            </button>
+            <button class="btn btn-ghost acc-sec-btn" onclick="_confirmClearHistory()" style="color:var(--muted)">
+              <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg> Clear history
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 
 <!-- ═══ GROCERY VIEW ═══ -->
