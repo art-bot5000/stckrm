@@ -1605,14 +1605,21 @@ body.note-open { overflow: hidden; touch-action: none; }
     box-shadow: 0 24px 72px rgba(0,0,0,0.55), 0 0 0 1px var(--border);
   }
   /* Painted backdrop covering the whole viewport behind the modal.
-     Sits at -1 so the modal contents render above it. */
-  #note-editor-overlay::before {
+     Originally lived on #note-editor-overlay::before with z-index:-1, but
+     because the overlay has `transform: translate(...)` it creates a new
+     stacking context — and z-index:-1 children inside a stacking context
+     still paint ABOVE the parent's own background and BELOW the parent's
+     content. With transparent children (title input, body), the dark wash
+     bled through and made the modal interior look grey. Moving it to
+     body.note-open::before puts it outside the modal's stacking context
+     entirely, so it can never bleed in. */
+  body.note-open::before {
     content: '';
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.45);
-    z-index: -1;
-    border-radius: 0;
+    z-index: 399; /* modal is z-index 400, so this sits right behind it */
+    pointer-events: none;
   }
   /* Round the toolbar corners to match the modal */
   #note-editor-overlay > #note-editor-toolbar { border-top-left-radius: 16px; border-top-right-radius: 16px; }
@@ -6358,6 +6365,14 @@ html[data-theme="light"] .budget-subnav-btn.active {
    per-note colours via inline style. */
 html[data-theme="light"] #note-editor-overlay[style*="var(--bg)"] {
   background: var(--surface) !important;
+}
+
+/* Body-level dim wash behind the note modal — on dark theme the 45%
+   black wash gives the modal lift; on light theme the same wash is
+   far too heavy and reads as muddy grey. Soften considerably for
+   light theme. */
+html[data-theme="light"] body.note-open::before {
+  background: rgba(0, 0, 0, 0.15) !important;
 }
 
 /* Note colour swatches — when a note was given one of the dark
