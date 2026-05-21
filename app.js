@@ -22215,6 +22215,33 @@ function applyTheme() {
   _updateThemeUI();
 }
 
+// Returns the background CSS value to apply to the note editor overlay
+// for a given raw note colour, taking the current theme into account.
+// - Default (no colour) → 'var(--surface)' on light (white card look),
+//   'var(--bg)' on dark (existing behaviour).
+// - Known dark-palette colours get mapped to light equivalents when
+//   the current theme is light, so notes coloured on dark mode don't
+//   look jarring on light.
+// - Unknown custom hex values pass through unchanged.
+const _NOTE_COLOUR_LIGHT_MAP = {
+  '#3a2e10': '#fbeccc', // amber
+  '#3a1010': '#fbd6d6', // red
+  '#0e3020': '#d3ecdd', // green
+  '#0e2040': '#d6e2f5', // blue
+  '#2a1040': '#e5d8f0', // purple
+  '#0e3030': '#d3ecec', // teal
+};
+function _noteBgForCurrentTheme(rawColour) {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  if (!rawColour) {
+    return isLight ? 'var(--surface)' : 'var(--bg)';
+  }
+  if (isLight && _NOTE_COLOUR_LIGHT_MAP[rawColour]) {
+    return _NOTE_COLOUR_LIGHT_MAP[rawColour];
+  }
+  return rawColour;
+}
+
 function setTheme(pref) {
   if (!['system', 'light', 'dark'].includes(pref)) pref = 'system';
   settings.theme = pref;
@@ -30080,7 +30107,7 @@ function _renderNoteEditor(n, showLock) {
 
   // Editor background
   const overlay = document.getElementById('note-editor-overlay');
-  if (overlay) overlay.style.background = n.colour || 'var(--bg)';
+  if (overlay) overlay.style.background = _noteBgForCurrentTheme(n.colour);
 
   // Undo/redo buttons
   _updateNoteUndoRedoBtns(n.id);
@@ -30718,7 +30745,7 @@ function toggleNoteColourPicker() {
 async function setNoteColour(colour) {
   const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
   n.colour = colour || null; n.updatedAt = new Date().toISOString();
-  document.getElementById('note-editor-overlay').style.background = colour || 'var(--bg)';
+  document.getElementById('note-editor-overlay').style.background = _noteBgForCurrentTheme(colour);
   document.querySelectorAll('.note-swatch').forEach(s =>
     s.classList.toggle('active', (s.dataset.colour || '') === (colour || ''))
   );

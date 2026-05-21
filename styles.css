@@ -6298,3 +6298,80 @@ html[data-theme="light"] .setting-row {
   padding: 6px 0;
   font-style: italic;
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   LIGHT THEME — adapt elements that hardcoded dark-mode colours
+   ═══════════════════════════════════════════════════════════════════
+   Several elements were styled with literal dark-slate backgrounds
+   intended for dark mode. On light theme those reads as jarring dark
+   blocks. The following rules either swap the colour, or — where the
+   hardcoded value lives in an inline style we can't easily change —
+   override with the same selector and !important. */
+
+/* Card action overlay (the hover/tap menu that slides up from the
+   bottom of a stockroom card with Log Order / Count Stock / etc.) —
+   was hardcoded rgba(20,24,38,0.78) which is dark slate. On light
+   theme make it a soft white panel with proper borders. */
+html[data-theme="light"] .card-action-overlay {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(10px) saturate(110%);
+  -webkit-backdrop-filter: blur(10px) saturate(110%);
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+html[data-theme="light"] .card-action-tile {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.08);
+  color: var(--text);
+}
+html[data-theme="light"] .card-action-tile:hover {
+  background: rgba(192, 132, 24, 0.12); /* accent at low opacity */
+  border-color: rgba(192, 132, 24, 0.4);
+}
+
+/* Budget sub-nav pill cluster — wrapper has inline
+   background:rgba(26,29,39,0.7) which is dark slate. Override here
+   so it reads as a faint bordered pill on the page surface. The
+   inline style needs !important to win. */
+html[data-theme="light"] #budget-subnav {
+  background: var(--bg) !important;
+  border-color: var(--border) !important;
+}
+/* Active tab inside the cluster — the button has inline
+   background:transparent which beats the existing .active rule.
+   Override with !important on both themes to make the active state
+   actually visible. */
+.budget-subnav-btn.active {
+  background: var(--surface) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 0 rgba(255,255,255,0.05) inset !important;
+}
+html[data-theme="light"] .budget-subnav-btn.active {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08) !important;
+}
+
+/* Note editor overlay — when the user hasn't picked a custom colour
+   the JS sets `background:var(--bg)` on the overlay. In light theme
+   `--bg` is the warm cream page background, which makes the editor
+   read as "floating in the page" instead of as a clean card. Bump
+   the default to `--surface` (white) on light theme so the editor
+   looks like a proper raised card. JS still wins for explicit
+   per-note colours via inline style. */
+html[data-theme="light"] #note-editor-overlay[style*="var(--bg)"] {
+  background: var(--surface) !important;
+}
+
+/* Note colour swatches — when a note was given one of the dark
+   palette colours (designed for dark mode), in light theme it
+   shows as a jarring dark block. Map each dark-theme palette
+   colour to a soft light-theme equivalent. Applies to both the
+   swatch dots in the picker and the overlay itself when that
+   colour is the active background. The inline style needs
+   !important to win. Custom hex colours not in this list pass
+   through unchanged. */
+html[data-theme="light"] .note-swatch[data-colour=""]        { background: var(--surface) !important; border: 1px solid var(--border); }
+html[data-theme="light"] .note-swatch[data-colour="#3a2e10"] { background: #fbeccc !important; }
+html[data-theme="light"] .note-swatch[data-colour="#3a1010"] { background: #fbd6d6 !important; }
+html[data-theme="light"] .note-swatch[data-colour="#0e3020"] { background: #d3ecdd !important; }
+html[data-theme="light"] .note-swatch[data-colour="#0e2040"] { background: #d6e2f5 !important; }
+html[data-theme="light"] .note-swatch[data-colour="#2a1040"] { background: #e5d8f0 !important; }
+html[data-theme="light"] .note-swatch[data-colour="#0e3030"] { background: #d3ecec !important; }
