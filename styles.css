@@ -1668,7 +1668,7 @@ body.note-open { overflow: hidden; touch-action: none; }
 .card-stars-row .card-star { font-size: 11px; line-height: 1; }
 .card-status {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 700;
   padding: 2px 7px;
   border-radius: 99px;
@@ -1679,7 +1679,7 @@ body.note-open { overflow: hidden; touch-action: none; }
 
 /* Name */
 .item-card .card-name {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 1.3;
   margin-bottom: 12px;
@@ -1704,7 +1704,7 @@ body.note-open { overflow: hidden; touch-action: none; }
 }
 .card-days-unit {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 15px;
   color: var(--muted);
 }
 .card-nodata {
@@ -2277,6 +2277,13 @@ body.note-open { overflow: hidden; touch-action: none; }
   /* If hiding the qty pills leaves the footer with no other children,
      collapse the now-empty footer so it doesn't add dead vertical space. */
   .card-footer:not(:has(> *:not(.card-qty):not(.card-qty-interval))) { display: none; }
+
+  /* Bump "No stock data yet" text up on mobile to match the new larger
+     hero-row text scale. Desktop has no override and stays at 12px. */
+  .card-nodata { font-size: 15px; }
+  /* Inline tag pills on cards — bigger on mobile to match the bumped
+     .card-status pill. Desktop has no override and stays at 10px. */
+  .card-inline-tag { font-size: 13px; }
 }
 
 /* ── Tag picker modal ──────────────────────────────────────────────── */
