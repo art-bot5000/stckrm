@@ -22213,6 +22213,12 @@ function applyTheme() {
   if (typeof applyAdaptiveColourTemp === 'function') applyAdaptiveColourTemp();
   // Update the segmented control in Preferences if it's mounted.
   _updateThemeUI();
+  // Note cards on the list view bake `n.colour` into inline styles, so
+  // they need a re-render when the theme changes for the colour mapping
+  // (dark hex → light pastel) to take effect on already-rendered cards.
+  if (_currentView === 'notes' && typeof renderNotes === 'function') {
+    renderNotes().catch(e => console.warn('renderNotes after theme change:', e));
+  }
 }
 
 // Returns the background CSS value to apply to the note editor overlay
@@ -29724,7 +29730,7 @@ async function renderNotes() {
 // for bulk-select (Pass 3c excludes shared notes from bulk operations).
 // Tap opens the read-only viewer modal.
 function _sharedNoteCardHTML(n, shareCode, sharerName) {
-  const bgStyle    = n.colour ? `background:${n.colour};` : '';
+  const bgStyle    = n.colour ? `background:${_noteBgForCurrentTheme(n.colour)};` : '';
   const rawPreview = n.body || '';
   const _tmpDiv = document.createElement('div'); _tmpDiv.innerHTML = rawPreview;
   const previewText = (_tmpDiv.innerText || _tmpDiv.textContent || '').trim();
@@ -29765,7 +29771,7 @@ function openSharedNoteViewer(shareCode, noteId) {
   // Body. innerHTML because notes are stored as HTML (rich text in the
   // editor). Container is NOT contenteditable; viewer is strictly read.
   bodyEl.innerHTML = n.body || '';
-  bodyEl.style.background = n.colour || 'transparent';
+  bodyEl.style.background = n.colour ? _noteBgForCurrentTheme(n.colour) : 'transparent';
   overlay.style.display = 'flex';
   document.body.classList.add('note-open');
 }
@@ -29782,7 +29788,7 @@ function closeSharedNoteViewer() {
 
 function _noteCardHTML(n) {
   const isUnlocked = _noteUnlocked.has(n.id);
-  const bgStyle    = n.colour ? `background:${n.colour};` : '';
+  const bgStyle    = n.colour ? `background:${_noteBgForCurrentTheme(n.colour)};` : '';
   const unlocked   = _noteUnlocked.get(n.id);
   const rawPreview = n.locked && !isUnlocked ? '' : (unlocked?.body || n.body || '');
   const _tmpDiv = document.createElement('div'); _tmpDiv.innerHTML = rawPreview;
