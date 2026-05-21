@@ -110,6 +110,8 @@
   <symbol id="i-flame" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"/></symbol>
   <symbol id="i-wind" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12.8 19.6A2 2 0 1 0 14 16H2"/><path d="M17.5 8a2.5 2.5 0 1 1 2 4H2"/><path d="M9.8 4.4A2 2 0 1 1 11 8H2"/></symbol>
   <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></symbol>
   <symbol id="i-thermometer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/></symbol>
   <symbol id="i-shopping-basket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 11-1 9"/><path d="m19 11-4-7"/><path d="M2 11h20"/><path d="m3.5 11 1.6 7.4a2 2 0 0 0 2 1.6h9.8a2 2 0 0 0 2-1.6l1.7-7.4"/><path d="M4.5 15.5h15"/><path d="m5 11 4-7"/><path d="m9 11 1 9"/></symbol>
   <symbol id="i-map-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></symbol>
@@ -187,6 +189,15 @@
     <div style="margin-top:16px">
       <div style="font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Common replacements</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px" id="reminder-suggestions"></div>
+    </div>
+
+    <!-- Sharing override panel — owner-only; hidden entirely on guest views.
+         Only meaningful for standalone reminders (the ones tracked in
+         reminders[]). Item-attached reminders inherit their parent item's
+         sharing — to hide an attached reminder, hide the whole item. -->
+    <div id="rem-sharing-section" style="margin-top:20px;display:none">
+      <label style="font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:8px"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Sharing</label>
+      <div id="rem-sharing-content"></div>
     </div>
 
     <div class="modal-footer" style="margin-top:20px">
@@ -443,6 +454,35 @@
 
 
 <!-- ═══════════════════════════════════════════════════════════════════════
+     BILL AMOUNT SCOPE MODAL — choose how an amount edit propagates
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="bill-amount-scope-modal" style="z-index:320">
+  <div class="modal" style="max-width:420px">
+    <h2 style="font-size:18px;margin-bottom:6px"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-pencil"></use></svg> Apply new amount</h2>
+    <p class="subtitle" id="bas-subtitle">—</p>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.55">
+      Old amount: <span id="bas-old-amount" style="color:var(--text);font-family:var(--mono);font-weight:600">—</span><br>
+      New amount: <span id="bas-new-amount" style="color:var(--text);font-family:var(--mono);font-weight:600">—</span><br>
+      <span style="display:block;margin-top:6px;font-size:11px">Paid and skipped months are never changed. Months with a manual override are also preserved.</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
+      <button class="btn btn-primary" onclick="_finaliseBillEditWithScope('current_and_future')" style="justify-content:flex-start;text-align:left">
+        <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>
+        <span>Change this month and all future months</span>
+      </button>
+      <button class="btn btn-ghost" onclick="_finaliseBillEditWithScope('future_only')" style="justify-content:flex-start;text-align:left;border:1px solid var(--border)">
+        <svg class="icon" aria-hidden="true"><use href="#i-calendar"></use></svg>
+        <span>Only change future months (keep this month)</span>
+      </button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="_cancelBillEditScope()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
      CSV EXPORT MODAL — Phase 4.5
      ═══════════════════════════════════════════════════════════════════════ -->
 <div class="modal-backdrop" id="csv-export-modal" style="z-index:300">
@@ -561,6 +601,9 @@
       </div>
     </div>
 
+    <!-- Per-tx sharing panel removed in Pass 2d-rollback. The unit of
+         share is now the budget category, not the individual tx. -->
+
     <div class="modal-footer" style="margin-top:18px;display:flex;align-items:center;gap:10px">
       <button class="btn btn-ghost btn-sm" onclick="confirmDeleteSpendTx()" style="color:var(--danger);margin-right:auto"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg> Delete</button>
       <button class="btn btn-ghost" onclick="closeModal('spend-tx-modal')">Cancel</button>
@@ -586,8 +629,11 @@
       <div id="budget-cat-archived-list" class="bill-list"></div>
     </div>
 
-    <div style="display:flex;justify-content:space-between;gap:10px;margin-top:6px">
-      <button class="btn btn-ghost btn-sm" onclick="openBudgetCategoryEditor()"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Category</button>
+    <div style="display:flex;justify-content:space-between;gap:10px;margin-top:6px;flex-wrap:wrap">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="openBudgetCategoryEditor()"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Category</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleBulkSelectMode('category')" title="Manage categories — multi-select for share / archive"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Manage</button>
+      </div>
       <button class="btn btn-ghost" onclick="closeModal('budget-cat-modal')">Done</button>
     </div>
   </div>
@@ -630,6 +676,16 @@
         <input type="color" id="budget-cat-color" value="#5b8dee"
           style="width:80px;height:36px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:2px;cursor:pointer">
       </div>
+    </div>
+
+    <!-- Sharing override panel (Pass 2e-b) — owner-only; hidden entirely
+         on guest views. Per-category overrides decide which shares see
+         this category AND its transactions. Section perm `budget: r/rw`
+         gates whether the recipient sees the budget tab at all;
+         per-category sharing decides what's inside. -->
+    <div id="bcat-sharing-section" style="margin-top:14px;display:none">
+      <label style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;display:block;margin-bottom:8px"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Sharing</label>
+      <div id="bcat-sharing-content"></div>
     </div>
 
     <div class="modal-footer" style="margin-top:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -994,6 +1050,27 @@
 
 <!-- ═══ COOKIE CONSENT BANNER (fixed overlay — kept for non-wizard contexts) ═══ -->
 <div id="cookie-consent-banner" style="display:none"></div>
+
+<!-- ═══ WIZARD BARS — visible only when body.wizard-active is set ═══
+     Mirrors the landing page header / footer so users mid-signup or
+     mid-login have a visual route back to the marketing page. The
+     header CTA is "Try the demo" (replaces Login + Create account
+     because the user is ALREADY in the login flow). Both bars are
+     position: fixed at z-index 301, sitting above the wizard (z-index 300). -->
+<header id="wizard-header" aria-hidden="false">
+  <div class="wb-inner">
+    <a class="wb-brand" href="https://stckrm.com" aria-label="STCKRM home">
+      <img src="/logo.png" alt="" class="brand-logo" width="46" height="34">
+      <span>STCKRM</span>
+    </a>
+    <div class="wb-actions">
+      <a class="btn btn-primary" href="/?action=demo">
+        Try the demo
+        <svg class="icon" aria-hidden="true" style="width:14px;height:14px"><use href="#i-chevron-right"></use></svg>
+      </a>
+    </div>
+  </div>
+</header>
 
 <!-- ═══ WIZARD ═══ -->
 <div id="wizard">
@@ -1446,6 +1523,21 @@
   </div>
 </div>
 
+<!-- Wizard footer — mirrors landing page footer. Visible only when wizard-active. -->
+<footer id="wizard-footer" aria-hidden="false">
+  <div class="wb-inner wb-inner-footer">
+    <div class="wb-footer-links">
+      <a href="https://stckrm.com#benefits">Benefits</a>
+      <a href="https://stckrm.com#how">How it works</a>
+      <a href="/?action=demo">Try the demo</a>
+    </div>
+    <div class="wb-footer-meta">
+      © <span id="wf-year"></span> · Built with care
+    </div>
+  </div>
+</footer>
+<script>(function(){var y=document.getElementById('wf-year');if(y)y.textContent=new Date().getFullYear();})();</script>
+
 <!-- PWA Install Banner — Android (shown via beforeinstallprompt) -->
 <div id="install-banner">
   <div class="install-icon" style="display:flex;align-items:center;color:var(--accent)"><svg aria-hidden="true" style="width:32px;height:32px"><use href="#i-package"></use></svg></div>
@@ -1477,13 +1569,23 @@
 <!-- ═══ HEADER ═══ -->
 <div id="app-header">
   <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-    <div style="cursor:pointer;flex-shrink:0" onclick="openProfilePicker()" title="Switch or add household">
-      <div class="logo">STOCKROOM <span id="profile-label" class="profile-label-subtitle">/ HOUSEHOLD TRACKER</span></div>
+    <div style="cursor:pointer;flex-shrink:0;display:flex;align-items:center;gap:8px" onclick="openProfilePicker()" title="Switch or add household">
+      <img src="/logo.png" alt="" class="brand-logo brand-logo-mobile" width="33" height="24">
+      <div class="logo">STCKRM <span id="profile-label" class="profile-label-subtitle">/ HOUSEHOLD TRACKER</span></div>
     </div>
     <div id="header-greeting" style="font-size:12px;color:var(--muted);display:none;align-items:center;gap:4px"></div>
   </div>
   <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
     <div id="presence-bar" style="display:none"></div>
+    <!-- Notification bell — anchors the notification panel dropdown. The
+         badge is a small counter element that's hidden when there are no
+         unread items. See _renderNotificationBellBadge in app.js. -->
+    <button id="notif-bell-btn" type="button" onclick="toggleNotificationPanel()"
+      aria-label="Notifications" title="Notifications"
+      style="background:none;border:none;cursor:pointer;padding:4px 6px;position:relative;display:flex;align-items:center;color:var(--muted);border-radius:8px">
+      <svg class="icon icon-lg" aria-hidden="true"><use href="#i-bell"></use></svg>
+      <span id="notif-bell-badge" class="notif-bell-badge" style="display:none">0</span>
+    </button>
     <button id="header-shield-btn" onclick="navTo('account-security')"
       title="Account &amp; Security"
       style="background:none;border:none;cursor:pointer;padding:4px 2px;display:flex;align-items:center;color:var(--muted)"><svg class="icon icon-lg" aria-hidden="true"><use href="#i-shield"></use></svg></button>
@@ -1527,8 +1629,22 @@
 <!-- Toggled by the burger button in the header. Anchored top-right under
      the header rather than centered as a modal — feels more like a
      standard app dropdown. Tap-outside-to-close is wired up in JS by
-     attaching a one-shot document listener when the menu opens. -->
+     attaching a one-shot document listener when the menu opens.
+     Two sections separated by a divider:
+       (1) Swappable tabs not currently in the main row — populated by
+           _applyMobileTabLayout from settings.mobileTabs. Default order
+           is Notes → Reminders → Savings.
+       (2) Fixed entries (Report / Billing / Account & Security /
+           Settings) that always live here regardless of tab choice.
+     "Edit tabs" footer button opens the picker that lets the user pick
+     which three of six swappable views appear in the main row. -->
 <nav id="mobile-menu-dropdown" class="mobile-menu-dropdown" aria-hidden="true">
+  <div id="mobile-menu-swappable">
+    <!-- Populated dynamically by _applyMobileTabLayout. Contains the
+         3 swappable views NOT currently chosen for the main tab row,
+         ordered per Notes → Reminders → Savings → (others) by default. -->
+  </div>
+  <hr class="mobile-menu-divider" id="mobile-menu-divider">
   <button class="mobile-menu-item" data-view="report" onclick="navFromMobileMenu('report')">
     <svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg>
     <span>Report</span>
@@ -1537,43 +1653,191 @@
     <svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg>
     <span>Billing</span>
   </button>
-  <button class="mobile-menu-item" data-view="settings" onclick="navFromMobileMenu('settings')">
-    <svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg>
-    <span>Settings</span>
-  </button>
   <button class="mobile-menu-item" data-view="account-security" onclick="navFromMobileMenu('account-security')">
     <svg class="icon icon-tab" aria-hidden="true"><use href="#i-shield"></use></svg>
     <span>Account &amp; Security</span>
   </button>
+  <button class="mobile-menu-item" data-view="settings" onclick="navFromMobileMenu('settings')">
+    <svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg>
+    <span>Settings</span>
+  </button>
+  <button class="mobile-menu-edit-btn" type="button" onclick="openEditTabsModal()">
+    <svg class="icon icon-tab" aria-hidden="true"><use href="#i-pencil"></use></svg>
+    <span>Edit tabs</span>
+  </button>
 </nav>
+
+<!-- ═══ NOTIFICATION PANEL ═══ -->
+<!-- Anchored top-right under the header on desktop (similar to the mobile
+     menu dropdown). On mobile (≤600px) it switches to a bottom-sheet via
+     CSS. Tap-outside-to-close and Escape are wired up in JS. -->
+<aside id="notif-panel" class="notif-panel" aria-hidden="true" aria-label="Notifications">
+  <div class="notif-panel-header">
+    <div class="notif-panel-title">
+      <svg class="icon icon-md" aria-hidden="true"><use href="#i-bell"></use></svg>
+      <span>Notifications</span>
+    </div>
+    <div class="notif-panel-header-actions">
+      <button class="notif-panel-action-btn" onclick="openNotificationHistory()" title="View full history">
+        <svg class="icon icon-sm" aria-hidden="true"><use href="#i-clock"></use></svg>
+        <span>History</span>
+      </button>
+      <button class="notif-panel-action-btn" onclick="markAllNotificationsRead()" title="Mark all as read">
+        <svg class="icon icon-sm" aria-hidden="true"><use href="#i-check"></use></svg>
+        <span>Mark read</span>
+      </button>
+      <button class="notif-panel-action-btn" onclick="clearNotificationHistory()" title="Clear history (keeps pinned)">
+        <svg class="icon icon-sm" aria-hidden="true"><use href="#i-trash-2"></use></svg>
+        <span>Clear</span>
+      </button>
+      <button class="notif-panel-close" onclick="closeNotificationPanel()" aria-label="Close">
+        <svg class="icon icon-sm" aria-hidden="true"><use href="#i-x"></use></svg>
+      </button>
+    </div>
+  </div>
+  <div id="notif-panel-body" class="notif-panel-body"></div>
+</aside>
+
+<!-- ═══ GLOBAL SEARCH MODAL ═══
+     Body-level modal opened by #global-search-btn (mobile header) and
+     #global-search-nav-btn (desktop sidebar). Centered overlay on desktop,
+     bottom sheet on mobile. The results container is populated by
+     runGlobalSearch() in app.js — see that function for the per-section
+     searchers and how the current view's section is pinned to the top. -->
+<div id="global-search-modal" class="global-search-modal" aria-hidden="true" role="dialog" aria-label="Search">
+  <div class="global-search-backdrop" onclick="closeGlobalSearch()"></div>
+  <div class="global-search-panel" role="document">
+    <div class="global-search-input-row">
+      <svg class="icon icon-lg global-search-input-icon" aria-hidden="true"><use href="#i-search"></use></svg>
+      <input id="global-search-input" type="text" placeholder="Search items, notes, reminders, settings…"
+        autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+        oninput="onGlobalSearchInput()" onkeydown="onGlobalSearchKeyDown(event)">
+      <!-- Single X clears the input text. To close the modal the user taps
+           outside (the backdrop) or presses Esc. Previously we had a
+           separate close X here AND the browser's native type="search"
+           clear X — two competing buttons. Now there's just one. -->
+      <button type="button" class="global-search-close" onclick="clearGlobalSearch()" aria-label="Clear">
+        <svg class="icon icon-md" aria-hidden="true"><use href="#i-x"></use></svg>
+      </button>
+    </div>
+    <div id="global-search-results" class="global-search-results">
+      <div class="global-search-empty">Type to search across every section.</div>
+    </div>
+  </div>
+</div>
 
 <!-- ═══ APP SIDEBAR (desktop only) ═══ -->
 <nav id="app-nav">
   <div class="app-nav-logo">
-    <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
-      <div class="logo" style="font-size:11px;letter-spacing:3px;cursor:pointer;flex-shrink:0" onclick="openProfilePicker()">STOCKROOM</div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <img src="/logo.png" alt="" class="brand-logo brand-logo-sidebar" width="29" height="21" onclick="openProfilePicker()" style="cursor:pointer">
+      <div class="logo" style="font-size:14px;letter-spacing:3px;cursor:pointer;flex-shrink:0" onclick="openProfilePicker()">STCKRM</div>
       <span id="app-nav-profile" style="font-size:12px;color:var(--muted);font-family:var(--sans);cursor:pointer;white-space:nowrap" onclick="openProfilePicker()"></span>
     </div>
   </div>
   <div class="app-nav-links">
     <button class="app-nav-link active" data-view="stock"      onclick="navTo('stock')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-package"></use></svg> <span>Stockroom</span></button>
     <button class="app-nav-link"        data-view="grocery"    onclick="navTo('grocery')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> <span>Groceries</span></button>
+    <button class="app-nav-link"        data-view="budget"     onclick="navTo('budget')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
     <button class="app-nav-link"        data-view="notes"      onclick="navTo('notes')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> <span>Notes</span></button>
     <button class="app-nav-link"        data-view="reminders"  onclick="navTo('reminders')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-bell"></use></svg> <span>Reminders</span></button>
     <button class="app-nav-link"        data-view="savings"    onclick="navTo('savings')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-piggy-bank"></use></svg> <span>Savings</span></button>
     <button class="app-nav-link"        data-view="report"     onclick="navTo('report')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> <span>Report</span></button>
-    <button class="app-nav-link"        data-view="budget"     onclick="navTo('budget')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
   </div>
   <div class="app-nav-bottom">
     <div id="app-nav-sync" class="sync-pill pending app-nav-sync-pill" onclick="handleSyncPillTap()">
       <div class="sync-dot"></div>
       <span class="sync-label-nav">Syncing…</span>
     </div>
-    <button class="app-nav-link" data-view="account-security" onclick="navTo('account-security')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shield"></use></svg> <span>Account &amp; Security</span></button>
+    <!-- Notifications — opens the same dropdown panel that the header bell
+         opens. On desktop the header is hidden, so without this entry there
+         is no way to reach notifications. The badge mirrors the one in the
+         header bell — both are kept in sync via _renderNotificationBellBadge.
+         Placed under the Connected sync pill so the bottom of the sidebar
+         reads as: status (Connected) → utility actions (Notifications) →
+         secondary nav (Billing / Account / Settings). -->
+    <button id="notif-sidebar-btn" class="app-nav-link" type="button" onclick="toggleNotificationPanel()" aria-label="Notifications">
+      <svg class="icon icon-tab" aria-hidden="true"><use href="#i-bell"></use></svg>
+      <span>Notifications</span>
+      <span id="notif-sidebar-badge" class="notif-sidebar-badge" style="display:none">0</span>
+    </button>
     <button class="app-nav-link" data-view="billing" onclick="navTo('billing')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg> <span>Billing</span></button>
+    <button class="app-nav-link" data-view="account-security" onclick="navTo('account-security')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shield"></use></svg> <span>Account &amp; Security</span></button>
     <button class="app-nav-link" data-view="settings" onclick="navTo('settings')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg> <span>Settings</span></button>
   </div>
 </nav>
+
+<!-- ═══ OMNIBOX ═══
+     Persistent input bar at top of every tab. Replaces the old
+     #global-search-modal. Collapsed = single-line search/add field.
+     Focused/typing = expanded panel with live search results above
+     and action buttons (Search/Stockroom/Groceries/Reminders/Notes/
+     Spend) at the bottom.
+     The internal search engine (runGlobalSearch, _searchStockroom etc.)
+     is reused as-is; only the UI shell is new. See OMNIBOX section in
+     app.js for the wiring. -->
+<!-- Blur scrim — JS toggles body.omnibox-expanded which fades this in
+     and blurs whatever's visible behind it. Tap to dismiss. Static
+     element in the DOM (no JS-driven creation) so the blur paints
+     immediately on expand without a layout-thrash insertion. -->
+<div id="omnibox-scrim" onclick="collapseOmnibox()" aria-hidden="true"></div>
+
+<div id="omnibox" class="omnibox" data-state="collapsed">
+  <!-- Collapsed/input row — always visible -->
+  <div class="omnibox-input-row">
+    <svg class="icon icon-lg omnibox-input-icon" aria-hidden="true"><use href="#i-search"></use></svg>
+    <textarea id="omnibox-input" rows="1" placeholder="Search or add…"
+      autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+      oninput="onOmniboxInput()"
+      onfocus="onOmniboxFocus()"
+      onkeydown="onOmniboxKeyDown(event)"></textarea>
+    <button id="omnibox-clear-btn" class="omnibox-clear" onclick="clearOmnibox()"
+      aria-label="Clear" title="Clear" style="display:none">
+      <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+    </button>
+    <button id="omnibox-collapse-btn" class="omnibox-clear" onclick="collapseOmnibox()"
+      aria-label="Close" title="Close" style="display:none">
+      <svg class="icon" aria-hidden="true"><use href="#i-chevron-up"></use></svg>
+    </button>
+  </div>
+
+  <!-- Expanded panel — visible when data-state="expanded" -->
+  <div class="omnibox-panel" id="omnibox-panel">
+    <!-- Live search results, populated by runGlobalSearch -->
+    <div class="omnibox-results" id="omnibox-results">
+      <div class="omnibox-empty">Type to search or use the buttons below to add.</div>
+    </div>
+    <!-- Action buttons. The data-layout attribute selects between three
+         button placements: "chips" (current wrapping row), "grid" (3×2
+         large buttons, the screenshot layout updated to icon-left), and
+         "list" (Spotlight-style command rows). All three live in CSS so
+         we can swap by changing one attribute — Pete to pick one and the
+         other two get removed in a follow-up. -->
+    <div class="omnibox-actions" id="omnibox-actions" data-layout="chips">
+      <button class="omnibox-action" data-action="search" onclick="omniboxAction('search')">
+        <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg> Search
+      </button>
+      <button class="omnibox-action" data-action="stockroom" onclick="omniboxAction('stockroom')"
+        data-hint="Add items — comma-separated. Example: yoghurt, eggs, bread">
+        <svg class="icon" aria-hidden="true"><use href="#i-package"></use></svg> Stockroom
+      </button>
+      <button class="omnibox-action" data-action="groceries" onclick="omniboxAction('groceries')"
+        data-hint="Add to a Quick List — comma items. Example: 2 milk, bread, apples">
+        <svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Groceries
+      </button>
+      <button class="omnibox-action" data-action="reminders" onclick="omniboxAction('reminders')">
+        <svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Reminders
+      </button>
+      <button class="omnibox-action" data-action="notes" onclick="omniboxAction('notes')">
+        <svg class="icon" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> Notes
+      </button>
+      <button class="omnibox-action" data-action="spend" onclick="omniboxAction('spend')"
+        data-hint="Where amount [category]. Example: tesco 47.50 shopping">
+        <svg class="icon" aria-hidden="true"><use href="#i-banknote"></use></svg> Spend
+      </button>
+    </div>
+  </div>
+</div>
 
 <!-- ═══ MAIN ═══ -->
 <div id="main">
@@ -1589,25 +1853,36 @@
   <div id="tabs-sticky-wrap">
   <div id="tabs">
     <button class="tab active" onclick="showView('stock',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-package"></use></svg> <span>Stockroom</span></button>
-    <button class="tab" onclick="showView('grocery',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> <span>Groceries</span></button>
+    <button class="tab" onclick="showView('budget',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
     <button class="tab" onclick="showView('notes',this)" id="notes-tab"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> <span>Notes</span></button>
+    <button class="tab" onclick="showView('grocery',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> <span>Groceries</span></button>
     <button class="tab" onclick="showView('reminders',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-bell"></use></svg> <span>Reminders</span></button>
     <button class="tab" onclick="showView('savings',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-piggy-bank"></use></svg> <span>Savings</span></button>
     <button class="tab" onclick="showView('report',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> <span>Report</span></button>
-    <button class="tab" onclick="showView('budget',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
     <button class="tab" onclick="showView('billing',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg> <span>Billing</span></button>
     <button class="tab" onclick="showView('settings',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg> <span>Settings</span></button>
   </div>
 
   </div><!-- /tabs-sticky-wrap -->
+
+  <!-- Floating back button for burger-menu views (Report, Billing, Settings,
+       Account & Security). Mobile-only; CSS shows it when body.burger-
+       view-active is set. Positioned absolutely at the top-right of the
+       view-content area so it sits inline with each view's section heading
+       without each H2 needing its own flex wrapper. -->
+  <button id="burger-view-back-btn" type="button" onclick="backFromBurgerView()"
+    aria-label="Go back" title="Back" style="display:none">
+    <svg class="icon icon-lg" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
+  </button>
+
   <div id="view-content">
 
   <!-- STOCK VIEW -->
   <div class="view active" id="view-stock">
 
   <!-- Shared Stockroom / Shopping List header — inside stock view, shown for both stock+shopping -->
-  <div id="stock-shopping-header" class="view-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-    <h2 style="font-size:18px;font-weight:700;margin:0;font-family:var(--sans)"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-package"></use></svg> <button id="hdr-stock-btn" onclick="switchToStock()" style="font-size:18px;font-weight:700;color:var(--text);background:none;border:none;cursor:pointer;padding:0;font-family:inherit;vertical-align:baseline">Your Stockroom</button> <span style="font-weight:400;color:var(--border);pointer-events:none">—</span> <button id="hdr-shopping-btn" onclick="switchToShopping()" style="font-size:18px;font-weight:400;color:var(--muted);background:none;border:none;cursor:pointer;padding:0;font-family:inherit;vertical-align:baseline">Shopping List</button></h2>
+  <div id="stock-shopping-header" class="view-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
+    <h2 style="font-size:18px;font-weight:700;margin:0"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-package"></use></svg> <button id="hdr-stock-btn" onclick="switchToStock()" style="font-size:18px;font-weight:700;color:var(--text);background:none;border:none;cursor:pointer;padding:0;font-family:inherit;vertical-align:baseline">Your Stockroom</button> <span style="font-weight:400;color:var(--border);pointer-events:none">—</span> <button id="hdr-shopping-btn" onclick="switchToShopping()" style="font-size:18px;font-weight:400;color:var(--muted);background:none;border:none;cursor:pointer;padding:0;font-family:inherit;vertical-align:baseline">Shopping List</button></h2>
     <div style="display:flex;align-items:center;gap:10px">
       <div class="days-toggle" id="days-toggle" onclick="toggleShoppingDays()" style="display:none">
         <span id="days-opt-30" class="days-opt active">30</span>
@@ -1664,24 +1939,23 @@
     <!-- Health dashboard -->
     <div id="health-dashboard" style="display:flex;gap:8px;flex-wrap:wrap"></div>
 
-    <!-- Stockroom search + filters/sort: stacked on mobile, side-by-side on desktop.
-         Three flex children: search (1 card width), filters button (½ card), sort select (½ card). -->
+    <!-- Stockroom filters/sort toolbar. The inline #stock-search input that
+         used to sit here was removed when the global search took over; the
+         filters button and sort select now anchor to the left where the
+         search used to be. Wrapper IDs are preserved so the existing CSS
+         (with its mobile/desktop sizing rules) keeps working without a
+         second sweep. -->
     <div id="stock-search-toolbar" style="display:flex;gap:10px;margin-bottom:10px">
-      <div id="stock-search-wrap">
-        <input id="stock-search" type="search" placeholder="Search items…" autocomplete="off"
-          class="grocery-search" style="width:100%;box-sizing:border-box;height:36px"
-          oninput="renderGrid()">
-      </div>
       <div id="stock-toolbar-wrap">
-        <button class="btn btn-ghost btn-sm" id="filter-toggle-btn" onclick="toggleFilters()"
-          style="display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:36px">
-          <span id="filter-toggle-icon">▸</span> Filters
-          <span id="filter-active-badge" style="display:none;background:var(--accent);color:#111;font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;font-family:var(--mono)"></span>
+        <button id="filter-toggle-btn" onclick="toggleFilters()"
+          style="display:flex;align-items:center;justify-content:flex-start;gap:8px;width:100%;height:36px;padding:5px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-family:var(--sans);font-size:12px;font-weight:normal;cursor:pointer;outline:none;text-align:left">
+          <span style="flex-shrink:0">Filters</span> <span id="filter-toggle-icon" style="color:var(--muted);font-size:10px;flex-shrink:0">▸</span>
+          <span id="filter-active-badge" style="display:none;background:var(--accent);color:#111;font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;font-family:var(--mono);margin-left:auto"></span>
         </button>
       </div>
       <div id="stock-sort-wrap">
         <select id="sort-select" onchange="setSort(this.value)"
-          style="width:100%;height:36px;font-size:12px;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:5px 8px;font-family:var(--sans);cursor:pointer;outline:none">
+          style="width:100%;height:36px;font-size:12px;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:5px 12px;font-family:var(--sans);font-weight:normal;cursor:pointer;outline:none">
           <option value="status">↕ Sort: Status</option>
           <option value="name">↕ Sort: Name</option>
           <option value="days">↕ Sort: Days left</option>
@@ -1690,15 +1964,26 @@
           <option value="added">↕ Sort: Date added</option>
         </select>
       </div>
+      <!-- Select mode toggle (Pass 1 multi-select). When in select mode,
+           tapping cards toggles them in the selection set rather than
+           opening the editor; a floating action bar provides Delete /
+           Archive / Share / Cancel. Styled identically to Filters and
+           Sort for visual consistency in this toolbar row. -->
+      <div id="stock-select-wrap">
+        <button id="stock-select-btn" onclick="toggleStockSelectMode()"
+          title="Manage items — multi-select for share / archive / delete">
+          <svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> <span class="manage-label">Manage</span>
+        </button>
+      </div>
     </div>
 
       <div id="filter-panel" style="display:none;flex-direction:column;gap:8px;margin-bottom:10px;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:10px">
         <div id="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <span style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;flex-shrink:0">Status:</span>
-          <button class="filter-chip active" onclick="setFilter('status','all',this)">All</button>
-          <button class="filter-chip" onclick="setFilter('status','critical',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Critical</button>
-          <button class="filter-chip" onclick="setFilter('status','warn',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Low</button>
-          <button class="filter-chip" onclick="setFilter('status','ok',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Good</button>
+          <button id="status-chip-all" class="filter-chip active" onclick="setFilter('status','all',this)">All <span id="status-count-all" class="chip-count"></span></button>
+          <button id="status-chip-critical" class="filter-chip" onclick="setFilter('status','critical',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Critical <span id="status-count-critical" class="chip-count"></span></button>
+          <button id="status-chip-warn" class="filter-chip" onclick="setFilter('status','warn',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Low <span id="status-count-warn" class="chip-count"></span></button>
+          <button id="status-chip-ok" class="filter-chip" onclick="setFilter('status','ok',this)"><svg class="icon" aria-hidden="true"><use href="#i-circle"></use></svg> Good <span id="status-count-ok" class="chip-count"></span></button>
           <button class="filter-chip" onclick="setFilter('cadence','monthly',this)"><svg class="icon" aria-hidden="true"><use href="#i-calendar-days"></use></svg> Monthly</button>
           <button class="filter-chip" onclick="setFilter('cadence','bulk',this)"><svg class="icon" aria-hidden="true"><use href="#i-package"></use></svg> Bulk</button>
           <button class="filter-chip" onclick="setFilter('status','archived',this)" style="opacity:0.7"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg> Archived</button>
@@ -1748,7 +2033,10 @@
         <h2 style="font-size:18px;font-weight:700;margin:0"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-bell"></use></svg> Reminders</h2>
         <p style="font-size:12px;color:var(--muted);margin-top:3px">Set reminders for Stockroom items or anything else</p>
       </div>
-      <button class="btn btn-primary btn-sm" onclick="openAddReminderModal()"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Reminder</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-ghost btn-sm" onclick="toggleBulkSelectMode('reminder')" title="Manage reminders — multi-select for share / delete"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Manage</button>
+        <button class="btn btn-primary btn-sm" onclick="openAddReminderModal()"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add Reminder</button>
+      </div>
     </div>
 
     <!-- Overdue / due soon nudge bar -->
@@ -2034,10 +2322,23 @@
         </div>
       </div>
 
+      <!-- Category bulk-select entry (Pass 2e-c) — sits above the tile
+           row, right-aligned so it's discoverable without dominating
+           the section. Selecting categories from here is the same as
+           selecting from the Manage Categories screen — same set. -->
+      <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
+        <button class="btn btn-ghost btn-sm" onclick="toggleBulkSelectMode('category')" title="Manage categories — multi-select for share / archive"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Manage</button>
+      </div>
+
       <!-- Tile row -->
       <div id="budget-spend-tiles" class="budget-tile-row" style="margin-bottom:18px">
         <!-- populated -->
       </div>
+
+      <!-- Pass 2d-rollback: the per-transaction Select button has been
+           removed. The unit of share is now the budget CATEGORY (Pass
+           2e), with its Select button landing above the tile row (just
+           added in Pass 2e-c). -->
 
       <!-- Transactions, grouped by day -->
       <div id="budget-spend-tx-list" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px">
@@ -2256,6 +2557,24 @@
       </div>
     </div>
 
+    <!-- ── PUSH NOTIFICATIONS ────────────────────────── -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-bell"></use></svg> Notifications</div>
+      <div class="acc-sec-card">
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h"><svg class="icon icon-md" aria-hidden="true"><use href="#i-bell"></use></svg> Push notifications</div>
+            <div class="acc-sec-p" id="push-settings-status">Off — turn on to get reminders even when the app is closed</div>
+            <div class="acc-sec-p" style="margin-top:4px;font-size:11px;color:var(--muted)">Notifications fire across all your devices when enabled.</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost acc-sec-btn" id="push-settings-test-btn" style="display:none" onclick="pushSelfTest()">Test</button>
+            <button class="btn btn-primary acc-sec-btn" id="push-settings-toggle-btn">Enable</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ── DATA ───────────────────────────────────────── -->
     <div class="acc-sec-section" style="margin-bottom:20px">
       <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-package"></use></svg> Data</div>
@@ -2432,6 +2751,69 @@
               style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none"
               maxlength="24">
             <button class="btn btn-primary btn-sm" onclick="addProfileFromSettings()">+ Add</button>
+          </div>
+        </div>
+        <!-- ── SHARE ACCESS CONTROL (Part A of granular permissions) ──
+             A small "who can / cannot be added to a share" panel that lives
+             at the top of the Share Access area. Two semantics:
+               • Open mode (default): anyone can be added except entries on
+                 the deny list.
+               • Allowlist mode: only entries on the allow list can be added
+                 (still minus deny).
+             Lists are checked client-side in the share-create modal. No
+             server-side enforcement — the lists exist to protect the owner
+             from themselves (accidental shares to ex-partners, former
+             cleaners), not from a malicious owner. See checkShareAccess-
+             Control + renderShareAccessControl in app.js. -->
+        <div class="acc-sec-row acc-sec-row-block" id="share-access-control-row">
+          <div class="acc-sec-label" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer" onclick="toggleShareAccessControlPanel()">
+            <div>
+              <div class="acc-sec-h"><svg class="icon icon-md" aria-hidden="true"><use href="#i-shield"></use></svg> Sharing access control</div>
+              <div class="acc-sec-p" id="sac-summary">Open mode · 0 blocked</div>
+            </div>
+            <svg class="icon" aria-hidden="true" id="sac-chevron" style="transition:transform 0.15s"><use href="#i-chevron-down"></use></svg>
+          </div>
+          <div id="share-access-control-body" style="display:none;width:100%;margin-top:14px">
+            <!-- Mode toggle -->
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+                <input type="radio" name="sac-mode" id="sac-mode-open" value="open" onchange="setShareAccessControlMode('open')" style="accent-color:var(--accent);cursor:pointer">
+                <span>Open</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+                <input type="radio" name="sac-mode" id="sac-mode-allowlist" value="allowlist" onchange="setShareAccessControlMode('allowlist')" style="accent-color:var(--accent);cursor:pointer">
+                <span>Allowlist only</span>
+              </label>
+              <span id="sac-mode-help" style="font-size:11px;color:var(--muted);flex:1;min-width:200px;line-height:1.4"></span>
+            </div>
+            <!-- Deny list (always visible) -->
+            <div style="margin-bottom:14px">
+              <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">Never share with</div>
+              <div id="sac-deny-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
+              <div style="display:flex;gap:8px">
+                <input type="email" id="sac-deny-input" placeholder="email@example.com"
+                  onkeydown="onShareAccessInputKey(event, 'deny')"
+                  autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+                  style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none">
+                <button class="btn btn-ghost btn-sm" onclick="addShareAccessEntry('deny')" style="flex-shrink:0">+ Add</button>
+              </div>
+              <div id="sac-deny-error" style="font-size:11px;color:var(--danger);margin-top:4px;min-height:14px"></div>
+            </div>
+            <!-- Allow list (only visible in allowlist mode) -->
+            <div id="sac-allow-section" style="display:none">
+              <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">Allowed emails</div>
+              <div id="sac-allow-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
+              <div style="display:flex;gap:8px">
+                <input type="email" id="sac-allow-input" placeholder="email@example.com"
+                  onkeydown="onShareAccessInputKey(event, 'allow')"
+                  autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+                  style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none">
+                <button class="btn btn-ghost btn-sm" onclick="addShareAccessEntry('allow')" style="flex-shrink:0">+ Add</button>
+              </div>
+              <div id="sac-allow-error" style="font-size:11px;color:var(--danger);margin-top:4px;min-height:14px"></div>
+            </div>
+            <!-- Conflict hint — shown if any existing share's email is on the deny list. -->
+            <div id="sac-conflict-hint" style="display:none;margin-top:12px;padding:10px 12px;border-radius:8px;background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.3);font-size:12px;line-height:1.5"></div>
           </div>
         </div>
         <div class="acc-sec-row acc-sec-row-block">
@@ -2647,6 +3029,23 @@
         </div>
         <div class="acc-sec-row">
           <div class="acc-sec-label">
+            <div class="acc-sec-h">Theme</div>
+            <div class="acc-sec-p">Match system, or pick a fixed look</div>
+          </div>
+          <div class="theme-seg" role="radiogroup" aria-label="Theme">
+            <button type="button" class="theme-seg-btn" id="theme-seg-system" role="radio" aria-checked="true" onclick="setTheme('system')" title="Match system setting">
+              <svg class="icon" aria-hidden="true"><use href="#i-monitor"></use></svg>System
+            </button>
+            <button type="button" class="theme-seg-btn" id="theme-seg-light" role="radio" aria-checked="false" onclick="setTheme('light')" title="Always light">
+              <svg class="icon" aria-hidden="true"><use href="#i-sun"></use></svg>Light
+            </button>
+            <button type="button" class="theme-seg-btn" id="theme-seg-dark" role="radio" aria-checked="false" onclick="setTheme('dark')" title="Always dark">
+              <svg class="icon" aria-hidden="true"><use href="#i-moon"></use></svg>Dark
+            </button>
+          </div>
+        </div>
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
             <div class="acc-sec-h">Budget week starts on</div>
             <div class="acc-sec-p">Affects how the Spend panel groups your weekly transactions.</div>
           </div>
@@ -2688,25 +3087,87 @@
         </div>
       </div>
     </div>
+
+    <!-- ── HISTORY ─────────────────────────────────────
+         Audit log of recent changes to user data — last 50 entries,
+         synced across devices. Phase 1: Stockroom items only. Each
+         row shows what changed, when, and offers a Restore button to
+         roll the change back. Local Cmd+Z / toast-undo work in
+         parallel for in-session changes. -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-history"></use></svg> Change History</div>
+      <div class="acc-sec-card">
+        <div class="acc-sec-row acc-sec-row-block">
+          <div class="acc-sec-label" style="width:100%">
+            <div class="acc-sec-h">Recent changes</div>
+            <div class="acc-sec-p">The last 50 modifications to your data, across all devices. Tap a row to view the full before/after. Restore rolls a change back. Synced.</div>
+          </div>
+          <div id="history-page-body" style="width:100%;margin-top:12px;display:flex;flex-direction:column;gap:6px"></div>
+          <div style="width:100%;margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-ghost acc-sec-btn" onclick="renderHistoryPage()">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh-cw"></use></svg> Refresh
+            </button>
+            <button class="btn btn-ghost acc-sec-btn" onclick="_confirmClearHistory()" style="color:var(--muted)">
+              <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg> Clear history
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 
 <!-- ═══ GROCERY VIEW ═══ -->
 <div class="view" id="view-grocery">
-  <div id="grocery-sticky-header">
-  <div class="view-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
-    <div>
-      <h2 style="font-size:18px;font-weight:700;color:var(--text);font-family:var(--sans);margin:0"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-shopping-cart"></use></svg> Groceries</h2>
-      <div id="grocery-subtitle" style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:3px"></div>
+  <!-- Mobile full-screen header (shown only when body.grocery-list-open is set) -->
+  <div id="grocery-fs-header" class="grocery-fs-header">
+    <div class="grocery-fs-topbar">
+      <button class="grocery-fs-back" onclick="_groceryGoToAllLists()" aria-label="Back to lists">
+        <svg class="icon" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
+      </button>
+      <div class="grocery-fs-title" id="grocery-fs-title">List</div>
+      <!-- Previously: an expandable inline search input + magnifier toggle
+           lived here. Both were removed when the global search took over.
+           The title now extends to fill the row's full width. -->
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <!-- Mode bar (mirrors the phase bar, but lives in the sticky header) -->
+    <div id="grocery-fs-mode-bar" class="grocery-fs-mode-bar"></div>
+  </div>
+  <div id="grocery-sticky-header">
+  <div class="view-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px">
+    <div>
+      <h2 style="font-size:18px;font-weight:700;margin:0"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-shopping-cart"></use></svg> Groceries</h2>
+      <!-- #grocery-subtitle was previously written by renderGrocery and the
+           list-picker render with "stock check — tap to mark as needed" /
+           "N lists · tap to open" / interval text. Pete asked to drop all
+           of these; renderGrocery now leaves this element empty so the row
+           collapses. Kept in DOM in case future per-view metadata wants it. -->
+      <div id="grocery-subtitle" style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:3px;display:none"></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <!-- ← All lists button — only injected by renderGrocery when an active
+           list is open AND there are 2+ lists to navigate between. Sits at
+           the left of the action cluster with a separator after it. -->
+      <span id="grocery-all-lists-slot" style="display:none;align-items:center;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="_groceryGoToAllLists()" style="flex-shrink:0">← All lists</button>
+        <span aria-hidden="true" style="display:inline-block;width:1px;height:22px;background:var(--border)"></span>
+      </span>
+      <!-- Bulk-select entry (Pass 2b) — only visible in the picker view
+           when there are 2+ lists. renderGrocery toggles its display. -->
+      <span id="grocery-select-slot" style="display:none;align-items:center;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="toggleBulkSelectMode('grocery')" title="Manage lists — multi-select for share / delete" style="flex-shrink:0"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg> Manage</button>
+      </span>
       <button class="btn btn-ghost btn-sm" onclick="openQuickList()" title="Quick add items"><svg class="icon" aria-hidden="true"><use href="#i-zap"></use></svg> Quick List</button>
-      <button class="btn btn-ghost btn-sm" onclick="openAddGroceryList()" title="Add new shopping list"><svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> Add Store</button>
+      <button class="btn btn-ghost btn-sm" onclick="openAddGroceryList()" title="Add new shopping list"><svg class="icon" aria-hidden="true"><use href="#i-store"></use></svg> Add List</button>
       <button class="btn btn-ghost btn-sm" onclick="openGroceryDepts()" title="Manage departments"><svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg> Departments</button>
       <button class="btn btn-primary btn-sm" onclick="openAddGroceryItem()">+ Add Item</button>
     </div>
   </div>
+  <!-- Active list name — populated by renderGrocery only when a list is
+       open. Sits between the page heading and the By-Dept/A-Z toolbar.
+       Hidden in the multi-list picker view. -->
+  <h3 id="grocery-active-list-name" style="display:none;font-size:20px;font-weight:700;color:var(--text);font-family:var(--sans);margin:8px 0 6px 0"></h3>
   <div class="grocery-toolbar">
-    <input class="grocery-search" id="grocery-search" type="search" placeholder="Search items…" oninput="renderGrocery()" autocomplete="off">
     <div class="grocery-sort-toggle">
       <button class="grocery-sort-btn active" id="grocery-sort-dept" onclick="setGrocerySort('dept',this)">By Dept</button>
       <button class="grocery-sort-btn" id="grocery-sort-alpha" onclick="setGrocerySort('alpha',this)">A–Z</button>
@@ -2715,7 +3176,12 @@
 
     <input type="file" id="grocery-import-file" accept=".txt,.csv,.text,.xml,.doc,.docx,.rtf,.md,.tsv" style="display:none" onchange="handleGroceryImportFile(event)">
   </div>
-  <div class="grocery-interval-info" id="grocery-interval-info"></div>
+  <!-- #grocery-interval-info was used by renderGrocery to display
+       "Shopping every N days · M items remaining". Removed from the
+       active-list header per Pete's request; the element is kept hidden
+       in the DOM so any leftover writes from edge-case code paths are
+       invisible rather than throwing. -->
+  <div class="grocery-interval-info" id="grocery-interval-info" style="display:none"></div>
   </div><!-- /grocery-sticky-header -->
   <div id="grocery-list-body"></div>
   <div style="display:flex;align-items:center;gap:8px;padding:0 2px;margin-top:4px;flex-wrap:wrap">
@@ -3018,6 +3484,24 @@
         </button>
       </div>
     </div>
+
+    <!-- ── Tag footer ───────────────────────────────────────────
+         Sits below the More list. Shows the item's current tags as
+         pills and exposes a single +Tag button that opens the
+         card-tag-picker modal (same picker used by the filter bar
+         and the desktop hover overlay). The picker layers on top
+         (z-index 500 vs this modal's 200) so the actions modal
+         remains open behind it. -->
+    <div class="ia-section ia-tag-footer">
+      <div class="ia-section-label">Tags</div>
+      <div class="ia-tag-row">
+        <div id="ia-tag-chips" class="ia-tag-chips"></div>
+        <button type="button" class="ia-tag-btn" id="ia-q-tag">
+          <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+          <span>Tag</span>
+        </button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -3111,6 +3595,15 @@
         <p style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px"><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Replacement Reminders</p>
         <div id="ro-reminders-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px"></div>
         <button class="btn btn-ghost btn-sm" onclick="openReplRemindersModal(editingId)" style="width:100%"><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Manage Replacement Reminders</button>
+      </div>
+
+      <!-- Sharing section — per-record permission overrides. Owner-only;
+           hidden entirely on guest views. Default state shows "Inherits
+           from household" with an "Override sharing" link. Clicking the
+           link expands the picker. See _renderItemSharingPanel in app.js. -->
+      <div id="ro-sharing-section" style="margin-bottom:14px;display:none">
+        <p style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px"><svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg> Sharing</p>
+        <div id="ro-sharing-content"></div>
       </div>
 
       <div class="modal-footer" style="margin-top:4px">
@@ -3487,8 +3980,11 @@
     </div>
     <div id="share-target-email-group" class="form-group" style="margin-bottom:12px">
       <label class="form-label">Their email address</label>
-      <input class="form-input" id="share-target-email" type="email" placeholder="their@email.com" autocomplete="off">
-      <p style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">They must already have a STOCKROOM account. Their email is used to encrypt the share key — it never leaves your device.</p>
+      <input class="form-input" id="share-target-email" type="email" placeholder="their@email.com" autocomplete="off" oninput="onShareTargetEmailInput()" onblur="onShareTargetEmailInput()">
+      <p style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">If they don't have a STOCKROOM account, the link will let them sign up with this email. Their email is used to encrypt the share key — it never leaves your device.</p>
+      <!-- Live access-control feedback — shows when the typed email is
+           on the deny list / missing from the allow list. Empty otherwise. -->
+      <p id="share-target-email-sac-error" style="font-size:11px;color:var(--danger);margin-top:4px;min-height:14px;line-height:1.4"></p>
     </div>
     <!-- Email notification checkbox — shown only in edit mode -->
     <div id="share-send-email-row" class="form-group" style="display:none;margin-bottom:12px">
@@ -3497,7 +3993,7 @@
         <span>Send them an email about this update</span>
       </label>
     </div>
-    <div class="form-group" style="margin-bottom:16px">
+    <div class="form-group" id="share-target-role-row" style="margin-bottom:16px">
       <label class="form-label">Role</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap" id="share-target-type-picker">
         <button class="share-type-btn active" data-type="family" onclick="selectShareType('family',this)" style="padding:8px 14px;border-radius:8px;border:2px solid var(--accent);background:rgba(232,168,56,0.1);color:var(--accent);font-size:13px;cursor:pointer">👨‍👩‍👧 Family</button>
@@ -3509,9 +4005,14 @@
       <label class="form-label">Colour</label>
       <div id="share-target-colours" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"></div>
     </div>
-    <div class="form-group" style="margin-bottom:16px">
+    <div class="form-group" id="share-target-perms-row" style="margin-bottom:16px">
       <label class="form-label" style="margin-bottom:8px">Access per household</label>
       <div id="share-household-perms" style="display:flex;flex-direction:column;gap:10px"></div>
+    </div>
+    <div class="form-group" id="share-target-mgmt-row" style="margin-bottom:16px">
+      <label class="form-label" style="margin-bottom:6px">Share management</label>
+      <p style="font-size:11px;color:var(--muted);margin:0 0 8px 0;line-height:1.4">Whether this person can see and modify who else has access to your households.</p>
+      <div id="share-mgmt-perm" style="display:flex;gap:6px;flex-wrap:wrap"></div>
     </div>
     <!-- Shown after share is created — code-only, no key in URL -->
     <div id="share-link-section" style="display:none;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px">
@@ -3521,7 +4022,7 @@
       <button class="btn btn-ghost btn-sm full" onclick="copyShareLink()"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg> Copy link</button>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('share-target-modal')">Cancel</button>
+      <button class="btn btn-ghost" onclick="_cancelShareTargetModal()">Cancel</button>
       <button class="btn btn-primary" id="share-target-save-btn" onclick="handleShareTargetBtn()">Create &amp; get link</button>
     </div>
   </div>
@@ -3743,6 +4244,8 @@
 <div id="toast">✓ Saved</div>
 
 <script src="app.js" defer></script>
+<script src="budget.js" defer></script>
+<script src="notes.js" defer></script>
 <script>
 // Demo mode early detection — set the flag and hide the wizard before
 // app.js boots, so the wizard doesn't flash on screen during loadData().
@@ -3851,10 +4354,6 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     </div>
     <button class="btn btn-primary btn-sm" onclick="openNoteEditor(null)">+ New note</button>
   </div>
-  <div style="position:relative;margin-bottom:12px">
-    <input type="text" id="notes-search" class="grocery-search" placeholder="Search notes…" oninput="filterNotes(this.value)" autocomplete="off" style="padding-left:36px">
-    <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none;display:flex;align-items:center"><svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg></span>
-  </div>
   <div id="notes-chips" style="display:flex;gap:8px;margin-bottom:16px;overflow-x:auto;padding-bottom:2px">
     <button class="note-chip active" onclick="setNotesFilter('all',this)">All</button>
     <button class="note-chip" onclick="setNotesFilter('pinned',this)"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg> Pinned</button>
@@ -3947,12 +4446,40 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     <input type="text" id="note-title-input" placeholder="Title (required)" maxlength="120"
       style="font-size:18px;font-weight:700;padding:14px 16px 10px;background:transparent;border:none;border-bottom:1px solid var(--border);color:var(--text);outline:none;width:100%;font-family:var(--sans);flex-shrink:0;box-sizing:border-box"
       oninput="onNoteTitleInput()">
+    <!-- Per-note sharing panel (Pass 3b). Hidden by default; revealed
+         by openNoteEditor() for existing (non-locked) notes via
+         openSharingPanelFor('note'). Locked and brand-new notes keep
+         this collapsed. Guests viewing shared notes never see this. -->
+    <div id="note-sharing-section" style="display:none;padding:12px 16px 0;flex-shrink:0">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">
+        Sharing
+      </div>
+      <div id="note-sharing-content"></div>
+    </div>
     <div id="note-ticks-body" style="display:none;flex:1;overflow-y:auto;padding:12px 16px"></div>
     <div id="note-body-input" contenteditable="true" spellcheck="true" data-placeholder="Write your note here…"
       style="flex:1;padding:14px 16px;background:transparent;color:var(--text);font-size:15px;line-height:1.7;outline:none;font-family:var(--sans);overflow-y:auto;min-height:0;word-break:break-word"
       oninput="onNoteBodyInput()"></div>
   </div>
   <button id="note-secure-badge" type="button" onclick="_badgeLockNow()" title="Click to lock now" style="display:none;position:absolute;bottom:16px;right:16px;background:rgba(232,168,56,0.15);border:1px solid rgba(232,168,56,0.3);border-radius:8px;padding:4px 10px;font-size:11px;color:var(--accent);font-family:var(--mono);cursor:pointer;align-items:center;gap:6px"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-lock"></use></svg> <span id="note-secure-badge-label">SECURE NOTE</span></button>
+</div>
+
+<!-- SHARED-NOTE VIEWER (Pass 3b) — read-only full-screen overlay for
+     viewing a note someone else shared with you. Distinct from the
+     note editor so we don't have to retrofit every editor action
+     with "is this note from someone else?" guards. Editing is not
+     supported in this pass; if rw perm is added later, a separate
+     toggle in this viewer can switch into an editable mode. -->
+<div id="shared-note-viewer-overlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:400;flex-direction:column;overflow:hidden">
+  <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0">
+    <button onclick="closeSharedNoteViewer()" class="btn btn-ghost btn-sm" title="Back"><svg class="icon" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button>
+    <div style="flex:1;min-width:0">
+      <div id="shared-note-viewer-title" style="font-size:16px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+      <div id="shared-note-viewer-attribution" style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:2px;display:flex;align-items:center;gap:6px"></div>
+    </div>
+  </div>
+  <div id="shared-note-viewer-body" style="flex:1;overflow-y:auto;padding:18px 16px;color:var(--text);font-size:15px;line-height:1.7;font-family:var(--sans);word-break:break-word">
+  </div>
 </div>
 
 <!-- NOTE REMINDER MODAL -->
@@ -4260,6 +4787,47 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     </div>
   </div>
 </div>
+
+<!-- ═══ EDIT MOBILE TABS MODAL ═══
+     Opened from the burger menu's "Edit tabs" footer. Six rows, one per
+     swappable view (stock / grocery / budget / notes / reminders /
+     savings). Tap to toggle. Exactly three must be selected; selecting a
+     fourth auto-unticks the oldest, FIFO-style, so the user always lands
+     on a valid configuration without an extra "you have too many" error.
+     Position pills (1 / 2 / 3) show the order they'll appear in the tab
+     row — they re-number live as the user toggles. Save persists to
+     settings.mobileTabs and immediately re-applies the layout. -->
+<div class="modal-backdrop" id="edit-tabs-modal">
+  <div class="modal" style="max-width:440px">
+    <h2><svg class="icon icon-lg" aria-hidden="true"><use href="#i-sliders"></use></svg> Edit mobile tabs</h2>
+    <p class="edit-tabs-hint">Pick three views for the main tab row. The rest stay accessible from the burger menu.</p>
+    <div id="edit-tabs-list" class="edit-tabs-list"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+      <button class="btn btn-ghost" onclick="closeEditTabsModal()">Cancel</button>
+      <button class="btn btn-primary" id="edit-tabs-save-btn" onclick="saveEditTabs()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Notification history modal -->
+<div id="notif-history-modal" class="modal-overlay">
+  <div class="modal notif-history-modal" style="max-width:560px;padding:0;display:flex;flex-direction:column;max-height:90vh">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--border);flex-shrink:0">
+      <h3 style="font-size:16px;font-weight:700;margin:0;display:flex;align-items:center;gap:8px">
+        <svg class="icon" aria-hidden="true"><use href="#i-clock"></use></svg> Notification history
+      </h3>
+      <button class="btn-icon" onclick="closeNotificationHistory()" title="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
+    </div>
+    <div style="display:flex;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0;align-items:center;flex-wrap:wrap">
+      <span style="font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px">Sort</span>
+      <button class="notif-history-sort-btn active" data-sort="date" onclick="setNotifHistorySort('date')">By date</button>
+      <button class="notif-history-sort-btn" data-sort="type" onclick="setNotifHistorySort('type')">By type</button>
+      <span id="notif-history-count" style="margin-left:auto;font-size:11px;color:var(--muted);font-family:var(--mono)"></span>
+    </div>
+    <div id="notif-history-body" class="notif-history-body"></div>
+  </div>
+</div>
+
 
 </body>
 </html>

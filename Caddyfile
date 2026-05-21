@@ -107,9 +107,6 @@
     handle /email/* {
         reverse_proxy localhost:8000
     }
-    handle /note/* {
-        reverse_proxy localhost:8000
-    }
     handle /invite/* {
         reverse_proxy localhost:8000
     }
@@ -143,7 +140,16 @@
     handle /send-now {
         reverse_proxy localhost:8000
     }
+    handle /debug-kv {
+        reverse_proxy localhost:8000
+    }
     handle /debug-schedule {
+        reverse_proxy localhost:8000
+    }
+    handle /mfa/* {
+        reverse_proxy localhost:8000
+    }
+    handle /note/* {
         reverse_proxy localhost:8000
     }
     handle /reset-schedule {

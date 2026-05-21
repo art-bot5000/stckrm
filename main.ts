@@ -6,6 +6,104 @@
 //  Email: Resend API, same cron system.
 // ═══════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════
+//  ENVIRONMENT VALIDATION — fails loud at startup
+// ═══════════════════════════════════════════════════════════
+// Two-tier check:
+//   REQUIRED  — secrets the app cannot run correctly without.
+//               Missing one → hard exit, deploy fails. This is
+//               intentional: a deploy that "succeeds" but has a
+//               silently-broken billing/auth path is worse than a
+//               deploy that visibly fails.
+//   OPTIONAL  — secrets that enable optional features. Missing
+//               one → log a warning at startup, app continues
+//               with that feature disabled.
+//
+// Hard-fail behaviour is gated on running inside Fly (detected via
+// FLY_APP_NAME, which Fly sets automatically on every machine).
+// Locally — no FLY_APP_NAME present — missing REQUIRED secrets
+// downgrade to warnings so dev workflows aren't blocked.
+//
+// Escape hatch: set STOCKROOM_SKIP_ENV_VALIDATION=1 to bypass even
+// in production. Intended for emergency rollback scenarios where
+// the validator itself has a bug; should never be needed in normal
+// operation.
+
+const REQUIRED_ENV: Array<{ key: string; feature: string }> = [
+  { key: 'ADMIN_SECRET',          feature: 'Admin endpoint authentication (security-critical)' },
+  { key: 'STRIPE_SECRET_KEY',     feature: 'Stripe billing API' },
+  { key: 'STRIPE_WEBHOOK_SECRET', feature: 'Stripe webhook signature verification (security-critical)' },
+  { key: 'STRIPE_PRICE_ID',       feature: 'Stripe checkout / subscription' },
+  { key: 'RESEND_API_KEY',        feature: 'Email delivery (auth OTPs, share invites, notifications)' },
+];
+
+const OPTIONAL_ENV: Array<{ key: string; feature: string }> = [
+  { key: 'VAPID_PUBLIC_KEY',      feature: 'Web push notifications' },
+  { key: 'VAPID_PRIVATE_KEY',     feature: 'Web push notifications' },
+  { key: 'R2_ACCOUNT_ID',         feature: 'Cloudflare R2 storage (note bodies)' },
+  { key: 'R2_ACCESS_KEY_ID',      feature: 'Cloudflare R2 storage (note bodies)' },
+  { key: 'R2_SECRET_ACCESS_KEY',  feature: 'Cloudflare R2 storage (note bodies)' },
+  { key: 'R2_BUCKET_NAME',        feature: 'Cloudflare R2 storage (note bodies)' },
+  { key: 'PUSH_DISPATCH_SECRET',  feature: 'Scheduled push dispatch authentication' },
+  { key: 'STRIPE_PUBLISHABLE_KEY',feature: 'Stripe client-side (publishable; sent to browser)' },
+];
+
+(function validateEnvironment() {
+  const isFly       = !!Deno.env.get('FLY_APP_NAME');
+  const skipFlag    = Deno.env.get('STOCKROOM_SKIP_ENV_VALIDATION') === '1';
+  const flyAppName  = Deno.env.get('FLY_APP_NAME') || '(local)';
+  const flyRegion   = Deno.env.get('FLY_REGION')   || '(local)';
+
+  console.log('─── Environment validation ───');
+  console.log(`  Host: ${isFly ? 'Fly' : 'local'} (${flyAppName} / ${flyRegion})`);
+  if (skipFlag) {
+    console.log('  ⚠ STOCKROOM_SKIP_ENV_VALIDATION=1 — all checks bypassed');
+    return;
+  }
+
+  // Check REQUIRED. Missing → fatal on Fly, warn locally.
+  const missingRequired: string[] = [];
+  for (const { key, feature } of REQUIRED_ENV) {
+    const present = !!Deno.env.get(key);
+    if (present) {
+      console.log(`  ✓ ${key.padEnd(24)} ${feature}`);
+    } else {
+      missingRequired.push(key);
+      console.log(`  ✗ ${key.padEnd(24)} MISSING — ${feature}`);
+    }
+  }
+
+  // Check OPTIONAL. Missing → warn (always, never fatal).
+  for (const { key, feature } of OPTIONAL_ENV) {
+    const present = !!Deno.env.get(key);
+    if (present) {
+      console.log(`  ✓ ${key.padEnd(24)} ${feature}`);
+    } else {
+      console.log(`  · ${key.padEnd(24)} not set — ${feature} disabled`);
+    }
+  }
+
+  if (missingRequired.length === 0) {
+    console.log('─── All required secrets present ───');
+    return;
+  }
+
+  // Hard fail only on Fly. Locally we want the dev workflow to keep
+  // working with degraded features; the warnings above are enough.
+  if (isFly) {
+    console.error('');
+    console.error('═══ FATAL: required environment variables missing ═══');
+    console.error(`  Missing: ${missingRequired.join(', ')}`);
+    console.error('  Set them via: flyctl secrets set KEY=value');
+    console.error('  Or to bypass this check (NOT RECOMMENDED):');
+    console.error('    flyctl secrets set STOCKROOM_SKIP_ENV_VALIDATION=1');
+    console.error('═══════════════════════════════════════════════════════');
+    Deno.exit(1);
+  } else {
+    console.log(`  ⚠ Running locally with ${missingRequired.length} required secret(s) missing — features will degrade or break`);
+  }
+})();
+
 const env = {
   APP_URL:       Deno.env.get('APP_URL')       || 'https://stckrm.fly.dev',
   WORKER_URL:    Deno.env.get('WORKER_URL')    || '',
@@ -14,15 +112,15 @@ const env = {
   ADMIN_EMAIL:   Deno.env.get('ADMIN_EMAIL')   || 'pete@artbot5000.com',
 };
 
-// ── Crypto migration config ───────────────────────────────
-// Accounts registered before this date are crypto_version='v1'.
-// After this date, new accounts get 'v2'. Existing v1 users are
-// migrated on their next login after this date.
-// Grace period: v1 ciphertext kept for 90 days after migration,
-// then deleted. Set CRYPTO_V2_SWITCHOVER to a future date to
-// schedule the migration; set to a past date to migrate immediately.
-const CRYPTO_V2_SWITCHOVER     = '2026-05-01'; // ISO date
-const CRYPTO_V1_GRACE_DAYS     = 90;
+// ── Crypto architecture ───────────────────────────────────
+// All accounts use the v2 envelope architecture:
+//   - DATA KEY: random 256-bit AES-GCM key, never stored raw
+//   - WRAP KEY: PBKDF2(passphrase, kdf_salt, 600,000 iters) → AES-KW
+//   - On disk we store an envelope: the data key wrapped by the wrap key
+//   - Recovery: extra envelopes wrapped by recovery-code-derived keys
+// Legacy v1 (passphrase-derived data key, no envelope) was retired —
+// the auto-migration path that ran on first login post-2026-05-01
+// upgraded the entire user base in May 2026.
 
 // On Fly.io, DENO_KV_PATH points to a mounted volume (/data/stockroom.db)
 // Locally (or on Deno Deploy) it defaults to the built-in KV store
@@ -1001,34 +1099,6 @@ Deno.cron('stockroom-kv-email-check', '0 * * * *', async () => {
   await cronCheck();
 });
 
-// Send migration notification emails 7 days before switchover (runs daily at 09:00)
-Deno.cron('stockroom-crypto-migration-notify', '0 9 * * *', async () => {
-  const now        = new Date();
-  const switchover = new Date(CRYPTO_V2_SWITCHOVER);
-  const daysUntil  = Math.ceil((switchover.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-  if (daysUntil !== 7) return; // only send exactly 7 days before
-  console.log('Cron: sending migration notification emails');
-  // Iterate all users on v1 and notify them
-  const iter = kv.list({ prefix: ['user'] });
-  for await (const entry of iter) {
-    const key = entry.key as string[];
-    if (key[2] !== 'email') continue;
-    const emailHash     = key[1];
-    const cryptoVersion = await kvGet(['user', emailHash, 'crypto_version']);
-    const alreadyNotified = await kvGet(['user', emailHash, 'migration_notified']);
-    if ((cryptoVersion.value || 'v1') !== 'v1') continue;
-    if (alreadyNotified.value) continue;
-    const emailAddr = entry.value as string;
-    try {
-      await sendMigrationEmail(emailAddr, 'notify');
-      await kvSet(['user', emailHash, 'migration_notified'], now.toISOString());
-      console.log('Migration notify sent to:', emailHash.slice(0, 8) + '…');
-    } catch(e) {
-      console.warn('Migration notify failed for', emailHash.slice(0, 8), e.message);
-    }
-  }
-});
-
 // ── Account deletion helper — deletes EVERY key for a given emailHash ──
 // Used by both /user/delete (self) and /admin/delete-account.
 // Covers: user data, devices, passkeys, sessions, challenges, wrapped keys,
@@ -1052,14 +1122,15 @@ async function _deleteAllUserData(kv: Deno.Kv, emailHash: string): Promise<void>
   }
 
   const prefixesToScan = [
-    ['user',             emailHash],   // verifier, key envelopes, data, settings, etc.
+    ['user',             emailHash],   // verifier, key envelopes, data, settings, email_verified, etc.
     ['device',           emailHash],   // trusted devices
     ['passkey',          emailHash],   // WebAuthn credentials
     ['passkey_session',  emailHash],   // active session tokens
     ['passkey_challenge',emailHash],   // pending WebAuthn challenges
     ['passkey_key',          emailHash],   // old server-wrapped data key copies (deprecated)
     ['passkey_prf_envelope', emailHash],   // PRF/device-bound envelope (new architecture)
-    ['email_verify',     emailHash],   // email verification OTPs
+    ['email_verify',     emailHash],   // (legacy) email verification namespace
+    ['email_verify_otp', emailHash],   // pending email verify OTP — actual key shape
     ['note_body',        emailHash],   // secure note bodies
     ['notes_session',    emailHash],   // notes 2FA session tokens
     ['mfa_otp',          emailHash],   // MFA login OTP
@@ -1074,6 +1145,9 @@ async function _deleteAllUserData(kv: Deno.Kv, emailHash: string): Promise<void>
 
   // Point keys (not prefix-scanned)
   await kv.delete(['recovery_otp', emailHash]);
+  // Login rate-limit counter — leaving this would let a deleted-then-
+  // recreated account inherit a stale lockout window.
+  await kv.delete(['rate_limit', 'login', emailHash]);
 
   // Share targets owned by this user + their data
   const shares = kv.list({ prefix: ['share'] });
@@ -1495,6 +1569,599 @@ async function gateFeature(
   return { ok: true, status: 200, reason: 'ok' };
 }
 
+// ── Billing notification queue ────────────────────────────────────────
+// Webhook handlers can't write into the user's *encrypted* notification
+// inbox (the server doesn't have their key). Instead we queue notifications
+// in a plaintext side-namespace, and the client absorbs+acks them on its
+// next billing/status poll. Notification *content* here is billing/account
+// metadata (subscription state, payment outcomes, referral progress) — it's
+// not user-generated data, so storing in plaintext doesn't violate the E2E
+// guarantee.
+//
+// KV layout:
+//   ['billing_notif_queue', emailHash, notifId] → QueuedBillingNotification
+//
+// Lifecycle: server pushes via queueBillingNotification(), client pulls all
+// via GET-style POST endpoint, then POSTs ack with ids → server deletes.
+// 30-day TTL on each entry as a safety net so unacked notifs don't pile up
+// for accounts that never come back online.
+//
+// Dedupe: queueBillingNotification skips the push if any existing entry
+// for the same (emailHash, sourceRef) is unacked. Client-side dedupe in
+// addNotification provides a second safety net.
+interface QueuedBillingNotification {
+  id:         string;
+  type:       'billing' | 'account';
+  subtype:    string;   // e.g. 'upgrade', 'payment-failed', 'referral-qualified'
+  title:      string;
+  body:       string;
+  sourceRef:  string;   // dedupe key, e.g. 'billing:upgrade:sub_1ABC'
+  createdAt:  number;   // unix seconds
+}
+
+const BILLING_NOTIF_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+async function queueBillingNotification(
+  emailHash: string,
+  payload: Omit<QueuedBillingNotification, 'id' | 'createdAt'>
+): Promise<void> {
+  if (!emailHash) return;
+  // Dedupe by sourceRef — scan the user's queue and skip if a notification
+  // with the same sourceRef is already pending. This protects against the
+  // same Stripe event being processed twice (idempotency middleware should
+  // catch most, but webhooks can retry on transient errors).
+  try {
+    const iter = kv.list({ prefix: ['billing_notif_queue', emailHash] });
+    for await (const entry of iter) {
+      const existing = entry.value as QueuedBillingNotification | null;
+      if (existing && existing.sourceRef === payload.sourceRef) {
+        console.log(`[billing-notif] dedupe skip ${emailHash.slice(0,8)} ${payload.sourceRef}`);
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn(`[billing-notif] dedupe scan failed (continuing): ${(err as Error).message}`);
+  }
+  const id = crypto.randomUUID();
+  const entry: QueuedBillingNotification = {
+    id,
+    createdAt: Math.floor(Date.now() / 1000),
+    ...payload,
+  };
+  await kvSet(['billing_notif_queue', emailHash, id], JSON.stringify(entry), {
+    expireIn: BILLING_NOTIF_TTL_MS,
+  });
+  console.log(`[billing-notif] queued ${emailHash.slice(0,8)} ${payload.subtype} ${payload.sourceRef}`);
+
+  // Also fan out as a push to any subscribed devices. Server-side billing
+  // content is not user-generated and the push relay already knows this
+  // user has a Stockroom account (they have a subscription with us), so
+  // we accept the small visibility leak of "title visible to push relay"
+  // in exchange for the user actually seeing the notification on their
+  // phone. Pushes use the fallbackTitle path — no ciphertext, since the
+  // server has no access to the user's data key.
+  try {
+    const pushPayload: ScheduledPushPayload = {
+      id:            crypto.randomUUID(),
+      dueAt:         Date.now(),
+      sourceRef:     payload.sourceRef,
+      ciphertextB64: '', // empty → SW falls back to fallbackTitle
+      fallbackTitle: payload.title,
+    };
+    await schedulePushPayload(emailHash, pushPayload);
+  } catch (err) {
+    console.warn(`[billing-notif] push schedule failed (in-app still delivered): ${(err as Error).message}`);
+  }
+}
+
+async function listBillingNotifications(emailHash: string): Promise<QueuedBillingNotification[]> {
+  const out: QueuedBillingNotification[] = [];
+  const iter = kv.list({ prefix: ['billing_notif_queue', emailHash] });
+  for await (const entry of iter) {
+    try {
+      const parsed: QueuedBillingNotification = typeof entry.value === 'string'
+        ? JSON.parse(entry.value)
+        : (entry.value as QueuedBillingNotification);
+      if (parsed && parsed.id) out.push(parsed);
+    } catch (err) {
+      console.warn(`[billing-notif] bad entry for ${emailHash.slice(0,8)}: ${(err as Error).message}`);
+    }
+  }
+  return out;
+}
+
+async function ackBillingNotifications(emailHash: string, ids: string[]): Promise<number> {
+  let deleted = 0;
+  for (const id of ids) {
+    if (typeof id !== 'string' || !id) continue;
+    try {
+      await kv.delete(['billing_notif_queue', emailHash, id]);
+      deleted++;
+    } catch (err) {
+      console.warn(`[billing-notif] ack delete failed ${id}: ${(err as Error).message}`);
+    }
+  }
+  return deleted;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// WEB PUSH (Option A — client-prepared payloads, server-delivered)
+// ══════════════════════════════════════════════════════════════════════
+// Architecture:
+//   1. Client device gets push permission, subscribes via pushManager,
+//      POSTs the {endpoint, p256dh, auth} subscription object here.
+//   2. Server stores subscriptions per-user, fans out at dispatch time.
+//   3. Client schedules payloads — for each *future* notification it
+//      wants to fire, it encrypts the body with its own data key and
+//      POSTs {dueAt, sourceRef, ciphertextB64} to /push/schedule.
+//      The server stores this in a time-bucketed queue keyed by user.
+//   4. Every 5 minutes, a cron endpoint scans for payloads where
+//      dueAt <= now, dispatches an encrypted-body push to each of the
+//      user's subscriptions, then deletes the payload.
+//   5. The SW receives the push, decrypts the body with the user's key
+//      (read from IDB), and shows the notification.
+//
+// E2E preservation: The server never sees notification *content*. It
+// sees timing (dueAt) and sourceRef (used for dedupe) — these leak
+// metadata but not the underlying data. Stricter (Option C) would
+// hide timing too; for Stockroom that level of secrecy isn't needed.
+//
+// VAPID = Voluntary Application Server Identification. The protocol
+// uses a public/private keypair (ES256) to sign each push request,
+// proving to FCM/Mozilla/APNs that pushes are coming from a known
+// application server (not arbitrary spam).
+const VAPID_CFG = {
+  publicKey:  Deno.env.get('VAPID_PUBLIC_KEY')  || '',
+  privateKey: Deno.env.get('VAPID_PRIVATE_KEY') || '',
+  subject:    Deno.env.get('VAPID_SUBJECT')     || 'mailto:pete@artbot5000.com',
+};
+const vapidConfigured = () => !!(VAPID_CFG.publicKey && VAPID_CFG.privateKey);
+
+// ── KV layout ─────────────────────────────────────────────────────────
+//   ['push_sub', emailHash, deviceId]                    → PushSubscription
+//   ['push_queue', emailHash, dueAtPaddedMs, payloadId]  → ScheduledPayload
+//   ['push_failures', emailHash, deviceId]               → consecutive failure count
+// The queue key uses a zero-padded dueAt timestamp so kv.list with a
+// prefix returns entries in chronological order, and we can range-scan
+// the "due" subset with a start/end bound efficiently.
+interface PushSubscriptionRecord {
+  endpoint:    string;
+  p256dhB64:   string;     // base64url client public key (P-256)
+  authB64:     string;     // base64url auth secret (16 random bytes)
+  deviceId:    string;     // our own device identifier
+  uaLabel?:    string;     // friendly label for debugging
+  createdAt:   number;
+  lastUsed?:   number;
+}
+
+interface ScheduledPushPayload {
+  id:           string;
+  dueAt:        number;    // unix ms
+  sourceRef:    string;    // dedupe key, e.g. 'reminder:item_abc_rem1:2026-05-15'
+  ciphertextB64: string;   // client-encrypted notification body (AES-GCM, with iv prepended)
+  // Server passes the ciphertext verbatim in the push payload. The SW
+  // decrypts using the user's data key.
+  fallbackTitle?: string;  // shown if SW can't decrypt (untrusted device,
+                           // missing key). Generic so as not to leak content
+                           // — e.g. "New Stockroom notification".
+}
+
+function _padDueAt(ms: number): string {
+  // 16-digit zero-padded covers up through year 5138 — comfortable margin.
+  return String(ms).padStart(16, '0');
+}
+
+// Base64url helpers — Web Push spec uses base64url throughout.
+function b64UrlEncode(buf: ArrayBuffer | Uint8Array): string {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function b64UrlDecode(s: string): Uint8Array {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// ── VAPID JWT signing ────────────────────────────────────────────────
+// Web Push expects an Authorization header of:
+//   vapid t=<JWT signed with VAPID private key>, k=<VAPID public key>
+// JWT payload: { aud, exp, sub }. Algorithm: ES256 (ECDSA P-256 SHA-256).
+async function _importVapidPrivateKey(): Promise<CryptoKey> {
+  // VAPID_PRIVATE_KEY is the raw 32-byte d-parameter base64url-encoded
+  // (the standard format used by every web-push library).
+  const d = b64UrlDecode(VAPID_CFG.privateKey);
+  if (d.length !== 32) throw new Error(`VAPID private key must be 32 bytes (got ${d.length})`);
+  // The public key (uncompressed 65 bytes: 0x04 + x + y) is also needed
+  // to build the JWK. We have it in base64url form.
+  const pub = b64UrlDecode(VAPID_CFG.publicKey);
+  if (pub.length !== 65 || pub[0] !== 0x04) throw new Error('VAPID public key must be uncompressed 65 bytes starting with 0x04');
+  const x = pub.slice(1, 33);
+  const y = pub.slice(33, 65);
+  const jwk = {
+    kty: 'EC',
+    crv: 'P-256',
+    d:   b64UrlEncode(d),
+    x:   b64UrlEncode(x),
+    y:   b64UrlEncode(y),
+    ext: true,
+  };
+  return crypto.subtle.importKey(
+    'jwk',
+    jwk as JsonWebKey,
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['sign'],
+  );
+}
+
+async function _signVapidJWT(audience: string, ttlSeconds = 12 * 3600): Promise<string> {
+  const header  = { typ: 'JWT', alg: 'ES256' };
+  const payload = {
+    aud: audience,
+    exp: Math.floor(Date.now() / 1000) + ttlSeconds,
+    sub: VAPID_CFG.subject,
+  };
+  const enc = new TextEncoder();
+  const h = b64UrlEncode(enc.encode(JSON.stringify(header)));
+  const p = b64UrlEncode(enc.encode(JSON.stringify(payload)));
+  const signingInput = `${h}.${p}`;
+  const key = await _importVapidPrivateKey();
+  const sigRaw = await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    key,
+    enc.encode(signingInput),
+  );
+  // crypto.subtle returns raw r||s (64 bytes for P-256), which is exactly
+  // what JWS expects for ES256 — no DER conversion needed.
+  const s = b64UrlEncode(sigRaw);
+  return `${signingInput}.${s}`;
+}
+
+// ── RFC 8291 payload encryption ──────────────────────────────────────
+// Web Push uses aes128gcm content encoding: derive a content-encryption
+// key + nonce from an ephemeral ECDH between server and subscription,
+// HKDF-mixed with the subscription's auth secret. Output format:
+//   salt(16) || rs(4, big-endian) || idlen(1) || keyid || ciphertext+tag
+// where keyid is the server's ephemeral public key (uncompressed 65B).
+async function _encryptWebPushBody(
+  plaintext: Uint8Array,
+  recipientP256dh: Uint8Array,
+  recipientAuth: Uint8Array,
+): Promise<Uint8Array> {
+  // 1) Generate ephemeral ECDH P-256 keypair for the server
+  const serverKp = await crypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    ['deriveBits'],
+  ) as CryptoKeyPair;
+  const serverPubRaw = await crypto.subtle.exportKey('raw', serverKp.publicKey); // 65 bytes
+  const serverPub = new Uint8Array(serverPubRaw);
+
+  // 2) Import recipient public key
+  const recipientPubKey = await crypto.subtle.importKey(
+    'raw',
+    recipientP256dh,
+    { name: 'ECDH', namedCurve: 'P-256' },
+    false,
+    [],
+  );
+
+  // 3) ECDH shared secret
+  const sharedSecret = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'ECDH', public: recipientPubKey },
+    serverKp.privateKey,
+    256,
+  ));
+
+  // 4) HKDF — extract+expand to derive PRK, then CEK and nonce.
+  // RFC 8291 uses two HKDFs:
+  //   first:  IKM=sharedSecret, salt=auth, info="WebPush: info\0" || ua_public || as_public
+  //   second: IKM=above PRK, salt=random_salt, info="Content-Encoding: aes128gcm\0" -> CEK
+  //                                       info="Content-Encoding: nonce\0"       -> nonce
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+
+  const info1 = new Uint8Array(
+    new TextEncoder().encode('WebPush: info\0').length + 65 + 65,
+  );
+  let off = 0;
+  const wpiInfo = new TextEncoder().encode('WebPush: info\0');
+  info1.set(wpiInfo, off); off += wpiInfo.length;
+  info1.set(recipientP256dh, off); off += 65;
+  info1.set(serverPub, off);
+
+  const prk1Key = await crypto.subtle.importKey(
+    'raw', recipientAuth, { name: 'HKDF' }, false, ['deriveBits'],
+  );
+  const ikm = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt: sharedSecret, info: info1 },
+    prk1Key,
+    256,
+  ));
+
+  // Stage 2: salt-mix to derive CEK + nonce
+  const ikmKey = await crypto.subtle.importKey(
+    'raw', ikm, { name: 'HKDF' }, false, ['deriveBits'],
+  );
+  const cekInfo   = new TextEncoder().encode('Content-Encoding: aes128gcm\0');
+  const nonceInfo = new TextEncoder().encode('Content-Encoding: nonce\0');
+  const cek = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt, info: cekInfo }, ikmKey, 128,
+  ));
+  const nonce = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt, info: nonceInfo }, ikmKey, 96,
+  ));
+
+  // 5) Pad plaintext with single 0x02 byte (aes128gcm record terminator)
+  const padded = new Uint8Array(plaintext.length + 1);
+  padded.set(plaintext, 0);
+  padded[plaintext.length] = 0x02;
+
+  const cekKey = await crypto.subtle.importKey(
+    'raw', cek, { name: 'AES-GCM' }, false, ['encrypt'],
+  );
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce }, cekKey, padded,
+  ));
+
+  // 6) Assemble header: salt(16) || rs(4, BE = 4096) || idlen(1=65) || serverPub(65)
+  const recordSize = 4096;
+  const out = new Uint8Array(16 + 4 + 1 + 65 + ciphertext.length);
+  out.set(salt, 0);
+  // rs in big-endian
+  out[16] = (recordSize >>> 24) & 0xff;
+  out[17] = (recordSize >>> 16) & 0xff;
+  out[18] = (recordSize >>> 8)  & 0xff;
+  out[19] =  recordSize         & 0xff;
+  out[20] = 65; // idlen
+  out.set(serverPub, 21);
+  out.set(ciphertext, 21 + 65);
+  return out;
+}
+
+// ── Subscription store ───────────────────────────────────────────────
+async function setPushSubscription(emailHash: string, sub: PushSubscriptionRecord): Promise<void> {
+  await kvSet(['push_sub', emailHash, sub.deviceId], JSON.stringify(sub));
+}
+async function listPushSubscriptions(emailHash: string): Promise<PushSubscriptionRecord[]> {
+  const out: PushSubscriptionRecord[] = [];
+  const iter = kv.list({ prefix: ['push_sub', emailHash] });
+  for await (const entry of iter) {
+    try {
+      const parsed: PushSubscriptionRecord = typeof entry.value === 'string'
+        ? JSON.parse(entry.value)
+        : entry.value as PushSubscriptionRecord;
+      if (parsed?.endpoint) out.push(parsed);
+    } catch { /* skip */ }
+  }
+  return out;
+}
+async function deletePushSubscription(emailHash: string, deviceId: string): Promise<void> {
+  await kv.delete(['push_sub', emailHash, deviceId]);
+  await kv.delete(['push_failures', emailHash, deviceId]);
+}
+async function bumpPushFailures(emailHash: string, deviceId: string): Promise<number> {
+  const r = await kvGet(['push_failures', emailHash, deviceId]);
+  const prev = r.value ? Number(r.value) : 0;
+  const next = prev + 1;
+  await kvSet(['push_failures', emailHash, deviceId], String(next));
+  return next;
+}
+async function clearPushFailures(emailHash: string, deviceId: string): Promise<void> {
+  await kv.delete(['push_failures', emailHash, deviceId]);
+}
+
+// ── Scheduled payload store ──────────────────────────────────────────
+async function schedulePushPayload(
+  emailHash: string,
+  payload: ScheduledPushPayload,
+): Promise<void> {
+  // Dedupe: scan the user's queue for an entry with the same sourceRef.
+  // If found, delete it and replace — this lets the client "update" a
+  // scheduled payload (e.g. recompute the title, push the time back)
+  // without leaving stale duplicates.
+  try {
+    const iter = kv.list({ prefix: ['push_queue', emailHash] });
+    for await (const entry of iter) {
+      try {
+        const existing: ScheduledPushPayload = typeof entry.value === 'string'
+          ? JSON.parse(entry.value)
+          : entry.value as ScheduledPushPayload;
+        if (existing?.sourceRef === payload.sourceRef) {
+          await kv.delete(entry.key);
+        }
+      } catch { /* skip */ }
+    }
+  } catch (err) {
+    console.warn(`[push] schedule dedupe scan failed: ${(err as Error).message}`);
+  }
+  await kvSet(
+    ['push_queue', emailHash, _padDueAt(payload.dueAt), payload.id],
+    JSON.stringify(payload),
+  );
+}
+
+async function cancelPushPayloadBySourceRef(emailHash: string, sourceRef: string): Promise<number> {
+  let removed = 0;
+  const iter = kv.list({ prefix: ['push_queue', emailHash] });
+  for await (const entry of iter) {
+    try {
+      const existing: ScheduledPushPayload = typeof entry.value === 'string'
+        ? JSON.parse(entry.value)
+        : entry.value as ScheduledPushPayload;
+      if (existing?.sourceRef === sourceRef) {
+        await kv.delete(entry.key);
+        removed++;
+      }
+    } catch { /* skip */ }
+  }
+  return removed;
+}
+
+async function listAllUsersWithDuePayloads(now: number): Promise<Map<string, ScheduledPushPayload[]>> {
+  // Scan ALL push_queue entries with dueAt <= now. The key layout makes
+  // this scan ordered, so once we encounter an entry with dueAt > now
+  // for a given user we could skip — but we'd need the scan to be
+  // per-user-prefixed to take advantage. Simpler: scan everything once
+  // every 5 minutes; volumes will be very low for a while.
+  const byUser = new Map<string, ScheduledPushPayload[]>();
+  const iter = kv.list({ prefix: ['push_queue'] });
+  for await (const entry of iter) {
+    try {
+      const key = entry.key as unknown as string[];
+      const userHash = key[1];
+      const payload: ScheduledPushPayload = typeof entry.value === 'string'
+        ? JSON.parse(entry.value)
+        : entry.value as ScheduledPushPayload;
+      if (!payload || typeof payload.dueAt !== 'number') continue;
+      if (payload.dueAt > now) continue;
+      if (!byUser.has(userHash)) byUser.set(userHash, []);
+      byUser.get(userHash)!.push(payload);
+    } catch { /* skip */ }
+  }
+  return byUser;
+}
+
+async function deleteScheduledPayload(emailHash: string, dueAt: number, payloadId: string): Promise<void> {
+  await kv.delete(['push_queue', emailHash, _padDueAt(dueAt), payloadId]);
+}
+
+// ── Send a push to a single subscription ─────────────────────────────
+// Returns { ok, status, shouldUnsubscribe }. The push services use 404
+// or 410 to signal the subscription is permanently invalid — in that
+// case we remove it. Transient errors (5xx, network) bump a failure
+// counter; after 5 consecutive failures we also unsubscribe.
+async function sendPushToSubscription(
+  sub: PushSubscriptionRecord,
+  ciphertext: Uint8Array,
+): Promise<{ ok: boolean; status: number; shouldUnsubscribe: boolean }> {
+  if (!vapidConfigured()) {
+    return { ok: false, status: 0, shouldUnsubscribe: false };
+  }
+  const url = new URL(sub.endpoint);
+  const audience = `${url.protocol}//${url.host}`;
+  let jwt: string;
+  try {
+    jwt = await _signVapidJWT(audience);
+  } catch (err) {
+    console.error('[push] vapid sign failed:', (err as Error).message);
+    return { ok: false, status: 0, shouldUnsubscribe: false };
+  }
+  try {
+    const r = await fetch(sub.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type':     'application/octet-stream',
+        'Content-Encoding': 'aes128gcm',
+        'TTL':              '86400',     // queue for up to 24h if recipient offline
+        'Urgency':          'normal',
+        'Authorization':    `vapid t=${jwt}, k=${VAPID_CFG.publicKey}`,
+      },
+      body: ciphertext,
+    });
+    // 201 Created is the happy path. 410 Gone / 404 Not Found mean the
+    // subscription is dead — caller should remove it.
+    if (r.status === 201 || r.status === 200 || r.status === 202) {
+      return { ok: true, status: r.status, shouldUnsubscribe: false };
+    }
+    if (r.status === 404 || r.status === 410) {
+      return { ok: false, status: r.status, shouldUnsubscribe: true };
+    }
+    // 4xx other than gone usually means our request is malformed; log and
+    // don't retry forever.
+    console.warn(`[push] dispatch ${r.status} for ${sub.endpoint.slice(0, 60)}`);
+    return { ok: false, status: r.status, shouldUnsubscribe: false };
+  } catch (err) {
+    console.warn('[push] fetch error:', (err as Error).message);
+    return { ok: false, status: 0, shouldUnsubscribe: false };
+  }
+}
+
+// Build the on-the-wire JSON body that the SW will decrypt. We pass the
+// client-encrypted ciphertext through verbatim plus a few server-known
+// hints (sourceRef, fallback title). All of this lives INSIDE the
+// aes128gcm-encrypted layer that Web Push wraps around it, so even the
+// push relay can't read the sourceRef.
+function _buildPushBody(payload: ScheduledPushPayload): Uint8Array {
+  const body = {
+    v:             1,
+    sourceRef:     payload.sourceRef,
+    fallbackTitle: payload.fallbackTitle || 'New Stockroom notification',
+    ciphertextB64: payload.ciphertextB64,
+  };
+  return new TextEncoder().encode(JSON.stringify(body));
+}
+
+// ── Dispatcher (cron-callable) ───────────────────────────────────────
+// Returns counts so the cron endpoint can log them.
+async function runPushDispatch(now = Date.now()): Promise<{
+  users: number; payloads: number; pushes: number; failures: number; unsubscribed: number;
+}> {
+  const stats = { users: 0, payloads: 0, pushes: 0, failures: 0, unsubscribed: 0 };
+  if (!vapidConfigured()) {
+    console.warn('[push-dispatch] VAPID not configured — skipping');
+    return stats;
+  }
+  const byUser = await listAllUsersWithDuePayloads(now);
+  stats.users = byUser.size;
+  for (const [emailHash, payloads] of byUser) {
+    const subs = await listPushSubscriptions(emailHash);
+    if (subs.length === 0) {
+      // No active subscriptions — discard the payloads. They've already
+      // been delivered to the in-app inbox via other channels.
+      for (const p of payloads) {
+        await deleteScheduledPayload(emailHash, p.dueAt, p.id);
+      }
+      continue;
+    }
+    for (const payload of payloads) {
+      stats.payloads++;
+      const bodyBytes = _buildPushBody(payload);
+      // Fan out to every device subscription this user has
+      for (const sub of subs) {
+        const p256dh = b64UrlDecode(sub.p256dhB64);
+        const auth = b64UrlDecode(sub.authB64);
+        let ciphertext: Uint8Array;
+        try {
+          ciphertext = await _encryptWebPushBody(bodyBytes, p256dh, auth);
+        } catch (err) {
+          console.error('[push] encrypt failed for', sub.deviceId, (err as Error).message);
+          stats.failures++;
+          continue;
+        }
+        const result = await sendPushToSubscription(sub, ciphertext);
+        if (result.ok) {
+          stats.pushes++;
+          await clearPushFailures(emailHash, sub.deviceId);
+          // Update last-used so we know which subs are live
+          sub.lastUsed = now;
+          await setPushSubscription(emailHash, sub);
+        } else if (result.shouldUnsubscribe) {
+          await deletePushSubscription(emailHash, sub.deviceId);
+          stats.unsubscribed++;
+        } else {
+          stats.failures++;
+          const fc = await bumpPushFailures(emailHash, sub.deviceId);
+          if (fc >= 5) {
+            console.warn(`[push] sub ${sub.deviceId} hit 5 consecutive failures — removing`);
+            await deletePushSubscription(emailHash, sub.deviceId);
+            stats.unsubscribed++;
+          }
+        }
+      }
+      // Whether or not all sends succeeded, drop the payload — Web Push
+      // services will retry within their TTL, and re-sending on the next
+      // cron would create duplicates.
+      await deleteScheduledPayload(emailHash, payload.dueAt, payload.id);
+    }
+  }
+  return stats;
+}
+
 async function handleStripeEvent(event: any): Promise<void> {
   const type: string = event.type;
   const obj = event?.data?.object || {};
@@ -1584,6 +2251,10 @@ async function _handleSubscriptionUpsert(emailHash: string, sub: any): Promise<v
     console.log(`[stripe-webhook] ignoring subscription update for grandfathered ${emailHash}`);
     return;
   }
+  // Capture prior state BEFORE mutation so we can detect transitions for
+  // notification emission.
+  const priorStatus = acct.status;
+  const priorCancelAtPeriodEnd = !!acct.cancelAtPeriodEnd;
   acct.stripeSubscriptionId = sub.id;
   // Stripe statuses: trialing, active, past_due, canceled, unpaid, incomplete, incomplete_expired
   // Map onto our schema:
@@ -1604,16 +2275,111 @@ async function _handleSubscriptionUpsert(emailHash: string, sub: any): Promise<v
   if (sub.default_payment_method) acct.cardOnFile = true;
   await setBillingAccount(emailHash, acct);
   console.log(`[stripe-webhook] sub ${sub.id} status=${sub.status} -> local status=${acct.status}`);
+
+  // ── Notification emission ────────────────────────────────────────────
+  // Emit only on TRUE state transitions so users don't get spammed when
+  // Stripe sends multiple `customer.subscription.updated` events for the
+  // same logical change (it sometimes does — e.g. card update + period
+  // recalc within seconds of each other).
+  //
+  // Source refs are versioned by sub.id so resubscribing produces a new
+  // welcome notification rather than dedupe-suppressing it.
+  if (priorStatus !== acct.status) {
+    // Going from {free, none, canceled, undefined} → trialing/active
+    // is the "welcome to Pro" moment.
+    if ((priorStatus === 'free' || priorStatus === 'none' || priorStatus === 'canceled' || priorStatus === undefined)
+        && (acct.status === 'trialing' || acct.status === 'active')) {
+      await queueBillingNotification(emailHash, {
+        type:      'billing',
+        subtype:   'upgrade',
+        title:     acct.status === 'trialing' ? 'Welcome to Stockroom Pro — trial started' : 'Welcome to Stockroom Pro',
+        body:      'Photos, grocery mode, notes, and email reminders are now unlocked on this account.',
+        sourceRef: `billing:upgrade:${sub.id}`,
+      });
+    }
+    // Going active → past_due means a payment failed since the last event.
+    // The invoice.payment_failed handler also emits a notification — but
+    // that event sometimes lands AFTER the subscription update, so we
+    // emit here too. The shared sourceRef (`billing:past-due:<sub-id>`)
+    // means the second emit dedupes.
+    if (acct.status === 'past_due' && priorStatus !== 'past_due') {
+      await queueBillingNotification(emailHash, {
+        type:      'billing',
+        subtype:   'payment-failed',
+        title:     'Payment problem',
+        body:      'We couldn\'t process your latest payment. Update your card to keep your subscription active.',
+        sourceRef: `billing:past-due:${sub.id}`,
+      });
+    }
+    // Recovered from past_due back to active — let them know payment went through.
+    if (priorStatus === 'past_due' && acct.status === 'active') {
+      await queueBillingNotification(emailHash, {
+        type:      'billing',
+        subtype:   'payment-recovered',
+        title:     'Payment received',
+        body:      'Your subscription is back to active.',
+        sourceRef: `billing:recovered:${sub.id}:${acct.currentPeriodEnd || ''}`,
+      });
+    }
+    // Cancellation taking effect (vs scheduled — see cancelAtPeriodEnd below).
+    if (acct.status === 'canceled' && priorStatus !== 'canceled') {
+      await queueBillingNotification(emailHash, {
+        type:      'billing',
+        subtype:   'canceled',
+        title:     'Subscription cancelled',
+        body:      'Your Stockroom Pro plan has ended. Your data stays — you can resubscribe at any time.',
+        sourceRef: `billing:canceled:${sub.id}`,
+      });
+    }
+  }
+  // Schedule-to-cancel transition (separate from immediate cancel): the
+  // user clicked "Cancel" but they still have time on the clock until
+  // currentPeriodEnd. Worth a notification because they may want to undo.
+  if (acct.cancelAtPeriodEnd && !priorCancelAtPeriodEnd) {
+    const endsLabel = acct.currentPeriodEnd
+      ? new Date(acct.currentPeriodEnd * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+      : 'the end of this period';
+    await queueBillingNotification(emailHash, {
+      type:      'billing',
+      subtype:   'cancel-scheduled',
+      title:     'Cancellation scheduled',
+      body:      `Your subscription will end on ${endsLabel}. You can resume any time before then.`,
+      sourceRef: `billing:cancel-scheduled:${sub.id}:${acct.currentPeriodEnd || ''}`,
+    });
+  }
+  // Resumed a previously-scheduled cancellation.
+  if (!acct.cancelAtPeriodEnd && priorCancelAtPeriodEnd && acct.status === 'active') {
+    await queueBillingNotification(emailHash, {
+      type:      'billing',
+      subtype:   'cancel-resumed',
+      title:     'Subscription resumed',
+      body:      'You\'re no longer scheduled to cancel — your subscription continues.',
+      sourceRef: `billing:cancel-resumed:${sub.id}:${acct.currentPeriodEnd || ''}`,
+    });
+  }
 }
 
 async function _handleSubscriptionDeleted(emailHash: string, sub: any): Promise<void> {
   const acct = await ensureBillingAccount(emailHash);
   if (acct.grandfathered) return;
+  const wasActive = acct.status !== 'canceled' && acct.status !== 'free' && acct.status !== 'none';
   acct.status = 'canceled';
   acct.cancelAtPeriodEnd = false;
   // Keep stripeSubscriptionId for historical reference; the user might
   // resubscribe and we'll create a new one on the next checkout.
   await setBillingAccount(emailHash, acct);
+  // Only emit if this represents a real transition. If the subscription
+  // was already canceled before this hard-delete event, we already sent
+  // a "Subscription cancelled" notification via _handleSubscriptionUpsert.
+  if (wasActive) {
+    await queueBillingNotification(emailHash, {
+      type:      'billing',
+      subtype:   'canceled',
+      title:     'Subscription ended',
+      body:      'Your Stockroom Pro plan has ended. Your data stays — you can resubscribe at any time.',
+      sourceRef: `billing:canceled:${sub.id}`,
+    });
+  }
 }
 
 // Stripe sends this 3 days before a Stripe-side trial ends. We use it as
@@ -1621,8 +2387,17 @@ async function _handleSubscriptionDeleted(emailHash: string, sub: any): Promise<
 // event will not fire — we handle that separately via a daily cron. For
 // users who have moved to a Stripe trial (added card), this fires.
 async function _handleTrialWillEnd(emailHash: string, sub: any): Promise<void> {
-  // Phase 2: just log. Email in a future polish pass.
   console.log(`[stripe-webhook] trial_will_end for ${emailHash}, ends at ${sub.trial_end}`);
+  const endsLabel = typeof sub.trial_end === 'number'
+    ? new Date(sub.trial_end * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    : 'soon';
+  await queueBillingNotification(emailHash, {
+    type:      'billing',
+    subtype:   'trial-ending',
+    title:     'Your trial is ending soon',
+    body:      `Your free trial ends on ${endsLabel}. Add a payment method to keep Pro features active.`,
+    sourceRef: `billing:trial-ending:${sub.id}`,
+  });
 }
 
 // Successful payment. Sync any subscription changes (period rolled forward,
@@ -1635,6 +2410,26 @@ async function _handleInvoicePaid(emailHash: string, invoice: any): Promise<void
     await _handleSubscriptionUpsert(emailHash, sub);
   } catch (err) {
     console.error(`[stripe-webhook] failed to fetch subscription ${invoice.subscription}:`, (err as Error).message);
+  }
+  // Renewal receipt notification. We only emit on RENEWALS (billing_reason
+  // = subscription_cycle), not the first invoice — the first invoice's
+  // success is already covered by the "Welcome to Pro" notification from
+  // _handleSubscriptionUpsert. Emitting both would be redundant clutter.
+  if (invoice.billing_reason === 'subscription_cycle') {
+    const amount = typeof invoice.amount_paid === 'number'
+      ? (invoice.amount_paid / 100).toFixed(2)
+      : null;
+    const currency = (typeof invoice.currency === 'string' ? invoice.currency.toUpperCase() : '');
+    const amountLabel = amount
+      ? (currency === 'GBP' ? `£${amount}` : currency === 'USD' ? `$${amount}` : currency === 'EUR' ? `€${amount}` : `${amount} ${currency}`)
+      : 'your subscription';
+    await queueBillingNotification(emailHash, {
+      type:      'billing',
+      subtype:   'renewal',
+      title:     'Payment received',
+      body:      `${amountLabel} charged for your Stockroom Pro renewal.`,
+      sourceRef: `billing:renewal:${invoice.id}`,
+    });
   }
   // Advance the referral state machine if this user is a referee.
   // Each successful invoice (1st → converted, 2nd → qualified). Idempotent
@@ -1649,6 +2444,16 @@ async function _handleInvoiceFailed(emailHash: string, invoice: any): Promise<vo
   acct.status = 'past_due';
   await setBillingAccount(emailHash, acct);
   console.log(`[stripe-webhook] invoice.payment_failed for ${emailHash}, marked past_due`);
+  // Notification — shared sourceRef prefix with the subscription-upsert
+  // past_due emit so we don't double-notify if both events land.
+  const subId = invoice.subscription || 'unknown';
+  await queueBillingNotification(emailHash, {
+    type:      'billing',
+    subtype:   'payment-failed',
+    title:     'Card declined',
+    body:      'We couldn\'t process your latest payment. Update your card to keep your subscription active.',
+    sourceRef: `billing:past-due:${subId}`,
+  });
 }
 
 async function _handlePaymentMethodAttached(emailHash: string, pm: any): Promise<void> {
@@ -1761,6 +2566,46 @@ async function runBillingMigration(): Promise<void> {
 runBillingMigration().catch(err => {
   console.error('Billing migration: unhandled error:', err);
 });
+
+// ── Internal push dispatch scheduler ──────────────────────────────────
+// Runs runPushDispatch() every 5 minutes from this same Deno process,
+// so we don't need an external cron / scheduled machine. Fly keeps the
+// app machine alive 24/7, so the interval just keeps ticking.
+//
+// Single-flight: if a previous tick is still working (slow KV scan,
+// transient network, etc.), we skip rather than queue. The next tick
+// will pick up whatever is due. Total volume is small enough that
+// 5-minute granularity is plenty.
+//
+// Disabled when VAPID isn't configured (e.g. on staging without secrets
+// set) so we don't log warnings on every tick.
+const PUSH_DISPATCH_INTERVAL_MS = 5 * 60 * 1000;
+let _pushDispatchInflight = false;
+async function _pushDispatchTick(): Promise<void> {
+  if (_pushDispatchInflight) {
+    console.log('[push-dispatch] previous tick still running — skipping');
+    return;
+  }
+  if (!vapidConfigured()) return;
+  _pushDispatchInflight = true;
+  try {
+    const stats = await runPushDispatch();
+    if (stats.users > 0 || stats.payloads > 0) {
+      console.log(`[push-dispatch] tick users=${stats.users} payloads=${stats.payloads} pushes=${stats.pushes} failures=${stats.failures} unsubscribed=${stats.unsubscribed}`);
+    }
+  } catch (err) {
+    console.error('[push-dispatch] tick error:', (err as Error).message);
+  } finally {
+    _pushDispatchInflight = false;
+  }
+}
+// Stagger the first tick by ~30 seconds so it doesn't race startup work.
+// Then keep firing every 5 minutes for the lifetime of the process.
+setTimeout(() => {
+  _pushDispatchTick().catch(_ => {});
+  setInterval(() => { _pushDispatchTick().catch(_ => {}); }, PUSH_DISPATCH_INTERVAL_MS);
+}, 30_000);
+console.log(`[push-dispatch] internal scheduler armed — interval ${PUSH_DISPATCH_INTERVAL_MS / 1000}s`);
 
 // ═══════════════════════════════════════════════════════════
 //  REFERRALS — Phase 3
@@ -2153,6 +2998,17 @@ async function processInvoiceForReferral(refereeHash: string): Promise<void> {
     await setReferralSignup(refereeHash, signup);
     await _bumpReferrerStat(signup.referrerHash, 'convertedCount', 1);
     console.log(`[referral] ${refereeHash.slice(0,8)} converted (1st payment)`);
+    // Notify the REFERRER that someone they referred just made their
+    // first payment. This is a "progress" notification — they don't get
+    // a free month yet (that's at qualification), but they should know
+    // their referral is on track.
+    await queueBillingNotification(signup.referrerHash, {
+      type:      'billing',
+      subtype:   'referral-converted',
+      title:     'Your referral made their first payment',
+      body:      'One more payment and you\'ll earn a free month of Stockroom Pro.',
+      sourceRef: `billing:referral-converted:${refereeHash}`,
+    });
     return;
   }
 
@@ -2181,6 +3037,14 @@ async function processInvoiceForReferral(refereeHash: string): Promise<void> {
     console.log(`[referral] ${refereeHash.slice(0,8)} QUALIFIED — referrer ${signup.referrerHash.slice(0,8)} got 30 days`);
     // Send referrer email (best-effort, async)
     _sendReferrerQualifiedEmail(signup.referrerHash).catch(_ => {});
+    // Notify the REFERRER — they just earned a free month.
+    await queueBillingNotification(signup.referrerHash, {
+      type:      'billing',
+      subtype:   'referral-qualified',
+      title:     'You earned a free month',
+      body:      'Your referral made their second payment — we\'ve added a free month of Stockroom Pro to your account.',
+      sourceRef: `billing:referral-qualified:${refereeHash}`,
+    });
   }
 }
 
@@ -2223,6 +3087,208 @@ Deno.serve(async (request) => {
       const status = await getBillingStatusForUser(emailHash);
       return json(status, corsHeaders);
     } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Billing: pending notifications queue ──
+  // Returns server-queued billing/account notifications for this user.
+  // The client absorbs each one into its encrypted notification inbox
+  // (via addNotification, which handles dedupe), then POSTs the ids back
+  // to /billing/ack-notifications to remove them from the queue.
+  if (url.pathname === '/billing/pending-notifications' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      const items = await listBillingNotifications(emailHash);
+      return json({ items }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Billing: ack notifications ──
+  // Takes a list of ids previously returned by /billing/pending-notifications
+  // and removes them from the queue. Idempotent: acking an id that's
+  // already gone is a no-op.
+  if (url.pathname === '/billing/ack-notifications' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, ids } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      if (!Array.isArray(ids)) return json({ error: 'ids must be an array' }, corsHeaders, 400);
+      const deleted = await ackBillingNotifications(emailHash, ids);
+      return json({ ok: true, deleted }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // WEB PUSH ROUTES
+  // ══════════════════════════════════════════════════════════════════
+
+  // ── Push: config — return public VAPID key so client can subscribe ──
+  // No auth needed — the public key is, by definition, public.
+  if (url.pathname === '/push/config' && request.method === 'GET') {
+    return json({
+      configured: vapidConfigured(),
+      publicKey:  VAPID_CFG.publicKey || null,
+    }, corsHeaders);
+  }
+
+  // ── Push: subscribe — register a device's pushManager subscription ──
+  // Client posts the subscription object returned by pushManager.subscribe()
+  // plus our internal deviceId so we can update an existing record when
+  // the same device re-subscribes (push endpoints rotate occasionally).
+  if (url.pathname === '/push/subscribe' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, endpoint, p256dhB64, authB64, deviceId, uaLabel } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      if (typeof endpoint !== 'string' || !endpoint.startsWith('https://')) {
+        return json({ error: 'endpoint required' }, corsHeaders, 400);
+      }
+      if (typeof p256dhB64 !== 'string' || typeof authB64 !== 'string') {
+        return json({ error: 'keys required' }, corsHeaders, 400);
+      }
+      if (typeof deviceId !== 'string' || !deviceId) {
+        return json({ error: 'deviceId required' }, corsHeaders, 400);
+      }
+      const sub: PushSubscriptionRecord = {
+        endpoint,
+        p256dhB64,
+        authB64,
+        deviceId,
+        uaLabel:   typeof uaLabel === 'string' ? uaLabel : undefined,
+        createdAt: Date.now(),
+      };
+      await setPushSubscription(emailHash, sub);
+      await clearPushFailures(emailHash, deviceId);
+      console.log(`[push] subscribed ${emailHash.slice(0,8)} device=${deviceId.slice(0,8)}`);
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Push: unsubscribe — remove a device's subscription ──
+  if (url.pathname === '/push/unsubscribe' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, deviceId } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      if (typeof deviceId !== 'string' || !deviceId) {
+        return json({ error: 'deviceId required' }, corsHeaders, 400);
+      }
+      await deletePushSubscription(emailHash, deviceId);
+      console.log(`[push] unsubscribed ${emailHash.slice(0,8)} device=${deviceId.slice(0,8)}`);
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Push: schedule a future payload ──
+  // The client encrypts the notification body with its own data key (so
+  // the server never sees content) and posts {dueAt, sourceRef, ciphertext}.
+  // Idempotent: scheduling with the same sourceRef replaces any pending
+  // entry, which lets the client update titles or reschedule cleanly.
+  if (url.pathname === '/push/schedule' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, dueAt, sourceRef, ciphertextB64, fallbackTitle } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      if (typeof dueAt !== 'number' || !Number.isFinite(dueAt)) {
+        return json({ error: 'dueAt required (ms timestamp)' }, corsHeaders, 400);
+      }
+      if (typeof sourceRef !== 'string' || !sourceRef) {
+        return json({ error: 'sourceRef required' }, corsHeaders, 400);
+      }
+      if (typeof ciphertextB64 !== 'string' || !ciphertextB64) {
+        return json({ error: 'ciphertextB64 required' }, corsHeaders, 400);
+      }
+      // Cap the queue depth per user to defend against runaway clients.
+      // 1000 future payloads is comfortably above any reasonable real
+      // usage (Stockroom users have dozens of reminders, not thousands).
+      let queueSize = 0;
+      const sizeIter = kv.list({ prefix: ['push_queue', emailHash] });
+      for await (const _entry of sizeIter) {
+        queueSize++;
+        if (queueSize >= 1000) break;
+      }
+      if (queueSize >= 1000) {
+        return json({ error: 'queue full' }, corsHeaders, 429);
+      }
+      const payload: ScheduledPushPayload = {
+        id:            crypto.randomUUID(),
+        dueAt,
+        sourceRef,
+        ciphertextB64,
+        fallbackTitle: typeof fallbackTitle === 'string' ? fallbackTitle : undefined,
+      };
+      await schedulePushPayload(emailHash, payload);
+      return json({ ok: true, id: payload.id }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Push: cancel scheduled payloads by sourceRef ──
+  // Used when a reminder is dismissed/edited so the client can cancel the
+  // future push without waiting for it to fire.
+  if (url.pathname === '/push/cancel' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, sourceRef } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      if (typeof sourceRef !== 'string' || !sourceRef) {
+        return json({ error: 'sourceRef required' }, corsHeaders, 400);
+      }
+      const removed = await cancelPushPayloadBySourceRef(emailHash, sourceRef);
+      return json({ ok: true, removed }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
+  }
+
+  // ── Push: dispatch cron endpoint ──
+  // Called by Fly scheduled machines every 5 minutes. Authenticated via
+  // a shared secret env var so random callers can't trigger dispatch.
+  // Returns counts as JSON for the caller to log.
+  if (url.pathname === '/push/dispatch' && request.method === 'POST') {
+    try {
+      const expected = Deno.env.get('PUSH_DISPATCH_SECRET') || '';
+      const got = request.headers.get('X-Dispatch-Secret') || '';
+      if (!expected || got !== expected) {
+        return json({ error: 'unauthorized' }, corsHeaders, 401);
+      }
+      const stats = await runPushDispatch();
+      console.log(`[push-dispatch] users=${stats.users} payloads=${stats.payloads} pushes=${stats.pushes} failures=${stats.failures} unsubscribed=${stats.unsubscribed}`);
+      return json({ ok: true, ...stats }, corsHeaders);
+    } catch(err) {
+      console.error('[push-dispatch] error:', (err as Error).message);
+      return json({ error: (err as Error).message }, corsHeaders, 500);
+    }
+  }
+
+  // ── Push: admin self-test — send a test notification to all my subs ──
+  // Authenticated as the user; useful for sanity-checking subscribe flow.
+  if (url.pathname === '/push/self-test' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      const subs = await listPushSubscriptions(emailHash);
+      if (subs.length === 0) {
+        return json({ ok: false, error: 'No subscriptions on this account' }, corsHeaders);
+      }
+      // Build a tiny test payload — no real ciphertext, just the fallback
+      // path. SW will show fallbackTitle directly.
+      const body = _buildPushBody({
+        id: 'self-test',
+        dueAt: Date.now(),
+        sourceRef: 'self-test:' + Date.now(),
+        ciphertextB64: '',
+        fallbackTitle: 'Stockroom push test — working ✓',
+      });
+      let pushed = 0, failed = 0;
+      for (const sub of subs) {
+        const ct = await _encryptWebPushBody(body, b64UrlDecode(sub.p256dhB64), b64UrlDecode(sub.authB64));
+        const res = await sendPushToSubscription(sub, ct);
+        if (res.ok) pushed++; else failed++;
+      }
+      return json({ ok: true, pushed, failed, subs: subs.length }, corsHeaders);
+    } catch(err) {
+      return json({ error: (err as Error).message }, corsHeaders, 500);
+    }
   }
 
   // ── Billing: checkout — create a Stripe Checkout Session ──
@@ -2801,6 +3867,32 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
+  // ── Email verification status (unauthenticated check) ──────
+  // Used by the client on session restore to detect "user has a
+  // cached session but their account isn't email-verified" — e.g.
+  // they signed up, the OTP email failed, they closed the tab,
+  // come back later. Without this check the client would let them
+  // straight into the app on a session that the server now refuses
+  // (post-fix). Returns minimal info: whether the account exists,
+  // whether it's verified, and the stored email if any. The same
+  // existence signal is already implicit in /user/register's
+  // "account already exists" response, so no new info is leaked.
+  if (url.pathname === '/user/email-verified' && request.method === 'POST') {
+    try {
+      const { emailHash } = await request.json();
+      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);
+      const verifierRow = await kvGet(['user', emailHash, 'verifier']);
+      if (!verifierRow.value) return json({ exists: false, verified: false }, corsHeaders);
+      const verified = await kvGet(['user', emailHash, 'email_verified']);
+      const emailRow = await kvGet(['user', emailHash, 'email']);
+      return json({
+        exists: true,
+        verified: !!verified.value,
+        email: emailRow.value || null,
+      }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
   // ── Account recovery ──────────────────────────────────
   if (url.pathname === '/recovery/request' && request.method === 'POST') {
     try {
@@ -3178,10 +4270,19 @@ Deno.serve(async (request) => {
   // ── Passkey: list credentials ─────────────────────────
   if (url.pathname === '/passkey/list' && request.method === 'POST') {
     try {
-      const { emailHash, sessionToken } = await request.json();
-      if (!emailHash || !sessionToken) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const session = await kvGet(['passkey_session', emailHash, sessionToken]);
-      if (!session.value) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { emailHash, sessionToken, verifier } = await request.json();
+      if (!emailHash || (!sessionToken && !verifier)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      // Accept passkey session OR passphrase verifier — the recurring
+      // auth-gap pattern. A user signed in via passphrase on a device
+      // that never registered a passkey still has a legitimate need
+      // to view (and add to) their passkey list.
+      if (sessionToken) {
+        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!session.value) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const credentials = [];
       const entries = kv.list({ prefix: ['passkey', emailHash] });
       for await (const entry of entries) {
@@ -3197,10 +4298,15 @@ Deno.serve(async (request) => {
   // ── Passkey: remove credential ────────────────────────
   if (url.pathname === '/passkey/remove' && request.method === 'POST') {
     try {
-      const { emailHash, sessionToken, credentialId } = await request.json();
-      if (!emailHash || !sessionToken || !credentialId) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const session = await kvGet(['passkey_session', emailHash, sessionToken]);
-      if (!session.value) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { emailHash, sessionToken, verifier, credentialId } = await request.json();
+      if (!emailHash || !credentialId || (!sessionToken && !verifier)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!session.value) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       await kvDel(['passkey', emailHash, credentialId]);
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
@@ -3259,12 +4365,10 @@ Deno.serve(async (request) => {
         await kvSet(['user', emailHash, 'key_envelope_passphrase'], passphraseEnvelope);
       }
 
-      // v2: separate random KDF salt for PBKDF2 derivation
-      if (kdfSalt) await kvSet(['user', emailHash, 'kdf_salt'], kdfSalt);
-
-      // Stamp crypto version — v2 if kdfSalt present, v1 otherwise
-      const cryptoVersion = kdfSalt ? 'v2' : 'v1';
-      await kvSet(['user', emailHash, 'crypto_version'], cryptoVersion);
+      // v2 envelope architecture is the only supported format. kdfSalt
+      // is required — it's the random per-user salt used for PBKDF2.
+      if (!kdfSalt) return json({ error: 'kdfSalt required (v2 only)' }, corsHeaders, 400);
+      await kvSet(['user', emailHash, 'kdf_salt'], kdfSalt);
 
       // Store recovery code envelopes (up to 10)
       if (recoveryEnvelopes && Array.isArray(recoveryEnvelopes)) {
@@ -3274,13 +4378,13 @@ Deno.serve(async (request) => {
         }
         await kvSet(['user', emailHash, 'recovery_count'], String(recoveryEnvelopes.length));
       }
-      return json({ ok: true, cryptoVersion }, corsHeaders);
+      return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
   // ── Get passphrase envelope + salt ────────────────────
-  // Client sends emailHash + verifier, gets back encrypted DATA KEY.
-  // Also returns crypto_version so client knows whether to migrate.
+  // Client sends emailHash + verifier, gets back the encrypted DATA KEY
+  // envelope and salts needed to derive the wrap key.
   if (url.pathname === '/key/get' && request.method === 'POST') {
     try {
       const { emailHash, verifier, sessionToken } = await request.json();
@@ -3297,28 +4401,22 @@ Deno.serve(async (request) => {
         return json({ error: 'Missing credentials' }, corsHeaders, 400);
       }
 
-      const salt          = await kvGet(['user', emailHash, 'key_salt']);
-      const envelope      = await kvGet(['user', emailHash, 'key_envelope_passphrase']);
-      const kdfSalt       = await kvGet(['user', emailHash, 'kdf_salt']);
-      const cryptoVersion = await kvGet(['user', emailHash, 'crypto_version']);
+      const salt     = await kvGet(['user', emailHash, 'key_salt']);
+      const envelope = await kvGet(['user', emailHash, 'key_envelope_passphrase']);
+      const kdfSalt  = await kvGet(['user', emailHash, 'kdf_salt']);
 
-      // Legacy users (before key envelope) won't have these
-      if (!salt.value || !envelope.value) {
-        return json({ legacy: true, message: 'No key envelope found — legacy account' }, corsHeaders);
+      // Passkey-only accounts have no passphrase envelope but may still
+      // call /key/get during a probe — return what we have. The client
+      // distinguishes by checking `envelope` itself.
+      if (!salt.value || !envelope.value || !kdfSalt.value) {
+        return json({ ok: true, envelope: null, salt: null, kdfSalt: null }, corsHeaders);
       }
-
-      const now        = new Date();
-      const switchover = new Date(CRYPTO_V2_SWITCHOVER);
-      const migrationDue = now >= switchover && (cryptoVersion.value || 'v1') === 'v1';
 
       return json({
         ok: true,
-        salt:          salt.value,
-        envelope:      envelope.value,
-        kdfSalt:       kdfSalt.value   || null,
-        cryptoVersion: cryptoVersion.value || 'v1',
-        migrationDue,
-        switchoverDate: CRYPTO_V2_SWITCHOVER,
+        salt:    salt.value,
+        envelope: envelope.value,
+        kdfSalt: kdfSalt.value,
       }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
@@ -3376,12 +4474,16 @@ Deno.serve(async (request) => {
   }
 
   // ── Update passphrase envelope ─────────────────────────
-
-  // Called when user changes passphrase — re-wraps DATA KEY
+  // Re-wraps DATA KEY when user changes passphrase. The data key
+  // inside the envelope is unchanged, so all per-household ciphertext,
+  // share keys, ECDH keypair, and recovery envelopes stay readable.
+  // Passphrase rotation is O(1), not O(data).
   if (url.pathname === '/key/update-passphrase' && request.method === 'POST') {
     try {
-      const { emailHash, verifier, sessionToken, newVerifier, newSalt, newEnvelope } = await request.json();
-      if (!emailHash || !newVerifier || !newSalt || !newEnvelope) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const { emailHash, verifier, sessionToken, newVerifier, newSalt, newEnvelope, newKdfSalt } = await request.json();
+      if (!emailHash || !newVerifier || !newSalt || !newEnvelope || !newKdfSalt) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
 
       // Verify current auth
       if (sessionToken) {
@@ -3394,9 +4496,10 @@ Deno.serve(async (request) => {
         return json({ error: 'Missing credentials' }, corsHeaders, 400);
       }
 
-      await kvSet(['user', emailHash, 'verifier'], newVerifier);
-      await kvSet(['user', emailHash, 'key_salt'], newSalt);
-      await kvSet(['user', emailHash, 'key_envelope_passphrase'], newEnvelope);
+      await kvSet(['user', emailHash, 'verifier'],                 newVerifier);
+      await kvSet(['user', emailHash, 'key_salt'],                 newSalt);
+      await kvSet(['user', emailHash, 'key_envelope_passphrase'],  newEnvelope);
+      await kvSet(['user', emailHash, 'kdf_salt'],                 newKdfSalt);
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
@@ -3430,72 +4533,6 @@ Deno.serve(async (request) => {
       }
       await kvSet(['user', emailHash, 'recovery_count'], String(recoveryEnvelopes.length));
       return json({ ok: true }, corsHeaders);
-    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
-  }
-
-  // ── Crypto migration: re-encrypt data with v2 standard ───
-  // Client has already decrypted with v1 key, re-encrypted with v2 key,
-  // and sends: new verifier, new key envelope (v2), new kdfSalt, new ciphertext.
-  // Server preserves v1 ciphertext under a grace-period key, updates primary.
-  if (url.pathname === '/crypto/migrate' && request.method === 'POST') {
-    try {
-      const {
-        emailHash, verifier,
-        newVerifier, newSalt, newEnvelope, newKdfSalt,
-        newRecoveryEnvelopes, ciphertext,
-      } = await request.json();
-      if (!emailHash || !verifier || !newVerifier || !newSalt || !newEnvelope || !newKdfSalt || !ciphertext) {
-        return json({ error: 'Missing fields' }, corsHeaders, 400);
-      }
-      const stored = await kvGet(['user', emailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) {
-        return json({ error: 'Unauthorised' }, corsHeaders, 401);
-      }
-      const currentVersion = await kvGet(['user', emailHash, 'crypto_version']);
-      if (currentVersion.value === 'v2') {
-        return json({ ok: true, alreadyMigrated: true }, corsHeaders);
-      }
-
-      // Archive v1 ciphertext under grace-period key (retained for CRYPTO_V1_GRACE_DAYS)
-      const existingData = await kvGet(['user', emailHash, 'data']);
-      if (existingData.value) {
-        const graceExpiry = Date.now() + CRYPTO_V1_GRACE_DAYS * 24 * 60 * 60 * 1000;
-        await kvSet(['user', emailHash, 'v1_data_archive'], existingData.value,
-          { expireIn: CRYPTO_V1_GRACE_DAYS * 24 * 60 * 60 * 1000 });
-        await kvSet(['user', emailHash, 'v1_grace_expires'], new Date(graceExpiry).toISOString());
-      }
-
-      // Write v2 primary data
-      await kvSet(['user', emailHash, 'data'], ciphertext);
-
-      // Update key material to v2
-      await kvSet(['user', emailHash, 'verifier'],               newVerifier);
-      await kvSet(['user', emailHash, 'key_salt'],               newSalt);
-      await kvSet(['user', emailHash, 'key_envelope_passphrase'], newEnvelope);
-      await kvSet(['user', emailHash, 'kdf_salt'],               newKdfSalt);
-      await kvSet(['user', emailHash, 'crypto_version'],         'v2');
-      await kvSet(['user', emailHash, 'migrated_at'],            new Date().toISOString());
-
-      // Update recovery envelopes if provided
-      if (newRecoveryEnvelopes && Array.isArray(newRecoveryEnvelopes)) {
-        for (let i = 0; i < 10; i++) {
-          await kvDel(['user', emailHash, 'recovery', String(i)]);
-          await kvDel(['user', emailHash, 'recovery_used', String(i)]);
-        }
-        for (let i = 0; i < Math.min(newRecoveryEnvelopes.length, 10); i++) {
-          await kvSet(['user', emailHash, 'recovery', String(i)], newRecoveryEnvelopes[i]);
-          await kvSet(['user', emailHash, 'recovery_used', String(i)], 'false');
-        }
-        await kvSet(['user', emailHash, 'recovery_count'], String(newRecoveryEnvelopes.length));
-      }
-
-      // Send migration confirmation email
-      const emailAddr = await kvGet(['user', emailHash, 'email']);
-      if (emailAddr.value && env.RESEND_API_KEY) {
-        sendMigrationEmail(emailAddr.value, 'complete').catch(() => {});
-      }
-
-      return json({ ok: true, cryptoVersion: 'v2' }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
@@ -3885,7 +4922,8 @@ Deno.serve(async (request) => {
   }
 
   // ── Admin: crypto version status ──────────────────────
-  // Returns counts of v1/v2 users so we know when migration is complete.
+  // All accounts are v2; this endpoint is kept for the admin UI which
+  // still polls it. Returns total user count and zero v1.
   if (url.pathname === '/admin/crypto-status' && request.method === 'POST') {
     try {
       const body = await request.json();
@@ -3895,36 +4933,18 @@ Deno.serve(async (request) => {
         return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);
       }
       await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });
-      let v1Count = 0, v2Count = 0, unknownCount = 0;
+      let total = 0;
       const iter = kv.list({ prefix: ['user'] });
-      const seen = new Set();
       for await (const entry of iter) {
         const key = entry.key as string[];
-        if (key[2] === 'crypto_version') {
-          const emailHash = key[1];
-          if (seen.has(emailHash)) continue;
-          seen.add(emailHash);
-          if (entry.value === 'v2') v2Count++;
-          else if (entry.value === 'v1') v1Count++;
-          else unknownCount++;
-        }
+        if (key[2] === 'verifier') total++;
       }
-      // Users with no crypto_version key are implicitly v1
-      const verifierIter = kv.list({ prefix: ['user'] });
-      const withVerifier = new Set();
-      for await (const entry of verifierIter) {
-        const key = entry.key as string[];
-        if (key[2] === 'verifier') withVerifier.add(key[1]);
-      }
-      const implicitV1 = [...withVerifier].filter(h => !seen.has(h)).length;
       return json({
         ok: true,
-        v1: v1Count + implicitV1,
-        v2: v2Count,
-        unknown: unknownCount,
-        total: v1Count + v2Count + unknownCount + implicitV1,
-        switchoverDate: CRYPTO_V2_SWITCHOVER,
-        graceDays: CRYPTO_V1_GRACE_DAYS,
+        v1: 0,
+        v2: total,
+        unknown: 0,
+        total,
       }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
@@ -3948,11 +4968,9 @@ Deno.serve(async (request) => {
         const emailHash = key[1];
         if (seen.has(emailHash)) continue;
         seen.add(emailHash);
-        const [emailR, createdR, versionR, migratedR, pendingDelR, deactivationR] = await Promise.all([
+        const [emailR, createdR, pendingDelR, deactivationR] = await Promise.all([
           kvGet(['user', emailHash, 'email']),
           kvGet(['user', emailHash, 'created']),
-          kvGet(['user', emailHash, 'crypto_version']),
-          kvGet(['user', emailHash, 'migrated_at']),
           kvGet(['user', emailHash, 'pending_deletion']),
           kvGet(['deactivation', emailHash]),
         ]);
@@ -3960,8 +4978,10 @@ Deno.serve(async (request) => {
           emailHash,
           email:          emailR.value   as string | null || null,
           created:        createdR.value as string | null || null,
-          cryptoVersion:  versionR.value as string        || 'v1',
-          migrated:       migratedR.value as string | null || null,
+          // All accounts are v2 — kept in the response shape for the
+          // existing admin.html badge column (always shows v2 ✓).
+          cryptoVersion:  'v2',
+          migrated:       null,
           pendingDeletion: pendingDelR.value ? JSON.parse(pendingDelR.value as string) : null,
           deactivated:    deactivationR.value ? JSON.parse(deactivationR.value as string) : null,
         });
@@ -4336,8 +5356,8 @@ Deno.serve(async (request) => {
   // ── Recovery: complete reset with new passphrase ──────
   if (url.pathname === '/recovery/reset' && request.method === 'POST') {
     try {
-      const { emailHash, recoveryToken, newVerifier, newSalt, newEnvelope } = await request.json();
-      if (!emailHash || !recoveryToken || !newVerifier || !newSalt || !newEnvelope) {
+      const { emailHash, recoveryToken, newVerifier, newSalt, newEnvelope, newKdfSalt } = await request.json();
+      if (!emailHash || !recoveryToken || !newVerifier || !newSalt || !newEnvelope || !newKdfSalt) {
         return json({ error: 'Missing fields' }, corsHeaders, 400);
       }
       const stored = await kvGet(['recovery_token', emailHash]);
@@ -4346,9 +5366,10 @@ Deno.serve(async (request) => {
       if (tokenData.token !== recoveryToken) return json({ error: 'Invalid recovery token' }, corsHeaders, 401);
 
       // Update verifier and passphrase envelope with new passphrase
-      await kvSet(['user', emailHash, 'verifier'], newVerifier);
-      await kvSet(['user', emailHash, 'key_salt'], newSalt);
+      await kvSet(['user', emailHash, 'verifier'],                newVerifier);
+      await kvSet(['user', emailHash, 'key_salt'],                newSalt);
       await kvSet(['user', emailHash, 'key_envelope_passphrase'], newEnvelope);
+      await kvSet(['user', emailHash, 'kdf_salt'],                newKdfSalt);
       await kvDel(['recovery_token', emailHash]);
 
       // Issue session token
@@ -4375,15 +5396,23 @@ Deno.serve(async (request) => {
         if (existing.value === verifier) return json({ ok: true, existing: true }, corsHeaders);
         return json({ error: 'Email already registered with a different passphrase' }, corsHeaders, 409);
       }
-      // Determine crypto version for this account
-      const now        = new Date();
-      const switchover = new Date(CRYPTO_V2_SWITCHOVER);
-      const cryptoVersion = now >= switchover ? 'v2' : 'v1';
+      const now = new Date();
       await kvSet(['user', emailHash, 'verifier'], verifier);
       await kvSet(['user', emailHash, 'created'], now.toISOString());
-      await kvSet(['user', emailHash, 'crypto_version'], cryptoVersion);
-      // Store plaintext email (hashed separately) so we can send migration emails
+      // Store plaintext email (hashed separately) so we can address
+      // operational emails like account-deletion confirmations.
       if (email) await kvSet(['user', emailHash, 'email'], email);
+
+      // Defensively clear any residual email_verified flag and pending
+      // verification OTP from a previous account life. _deleteAllUserData
+      // already covers these via prefix scan, but a fresh registration is
+      // the canonical "new identity" event — verification status from a
+      // prior signup must not carry over. Without this, a deleted-then-
+      // recreated account could skip the OTP step entirely (and thence
+      // join shares) because /email/verify/send returns alreadyVerified
+      // and /user/verify allows sign-in.
+      await kvDel(['user', emailHash, 'email_verified']);
+      await kvDel(['email_verify_otp', emailHash]);
 
       // ── Billing: create or refresh the billing record ──
       // For new signups, we initialise a 30-day local trial (hybrid model
@@ -4436,7 +5465,7 @@ Deno.serve(async (request) => {
         }
       }
 
-      return json({ ok: true, cryptoVersion, referralApplied, referralReason }, corsHeaders);
+      return json({ ok: true, referralApplied, referralReason }, corsHeaders);
     } catch(err) {
       return json({ error: err.message }, corsHeaders, 500);
     }
@@ -4484,48 +5513,27 @@ Deno.serve(async (request) => {
       // Success — clear rate limit
       if (rl.attempts.length > 0) await kvSet(rlKey, JSON.stringify({ attempts: [], lockedUntil: 0 }), { expireIn: WINDOW });
 
-      // ── Email verification gate ─────────────────────────────────
-      // Passphrase is correct, but if the account's email has never been
-      // verified, the client must complete verification before entering
-      // the app. We return 403 with a flag so the client can route to
-      // the verification step rather than treating this as a hard error.
-      // The plaintext email (stored at register/verify time) is returned
-      // so the client doesn't need to ask the user to type it again.
-      const emailVerified = await kvGet(['user', emailHash, 'email_verified']);
-      if (!emailVerified.value) {
+      // ── Email verification gate ─────────────────────────
+      // Block sign-in until the user has confirmed their email address.
+      // Without this gate, anyone who completes signup but never enters
+      // the OTP (e.g. by closing the tab on wizard-step-1f) can still
+      // log in normally — and worse, can accept share invites without
+      // the owner ever seeing an OTP roundtrip. The client expects 403
+      // with { requiresEmailVerification: true } and routes to the OTP
+      // step. Note: this fires AFTER rate-limit clearing because a
+      // correct passphrase is what got us here — the issue is only the
+      // missing email confirmation, not bad credentials.
+      const verified = await kvGet(['user', emailHash, 'email_verified']);
+      if (!verified.value) {
         const emailRow = await kvGet(['user', emailHash, 'email']);
         return json({
-          error: 'Email address not verified',
+          error: 'Email verification required',
           requiresEmailVerification: true,
           email: emailRow.value || null,
         }, corsHeaders, 403);
       }
 
       return json({ ok: true }, corsHeaders);
-    } catch(err) {
-      return json({ error: (err as Error).message }, corsHeaders, 500);
-    }
-  }
-
-  // ── User: check if an account's email is verified ─────────
-  // Lightweight, unauthenticated lookup by emailHash. Used by the client
-  // on session restore to detect "user pressed Back during verification
-  // and now has a session for an unverified account" — in which case it
-  // routes to the verification step instead of letting them in.
-  // Returns plaintext email so the verification UI can address them by name.
-  if (url.pathname === '/user/email-verified' && request.method === 'POST') {
-    try {
-      const { emailHash } = await request.json();
-      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);
-      const exists = await kvGet(['user', emailHash, 'verifier']);
-      if (!exists.value) return json({ exists: false }, corsHeaders);
-      const verified = await kvGet(['user', emailHash, 'email_verified']);
-      const emailRow = await kvGet(['user', emailHash, 'email']);
-      return json({
-        exists: true,
-        verified: !!verified.value,
-        email: emailRow.value || null,
-      }, corsHeaders);
     } catch(err) {
       return json({ error: (err as Error).message }, corsHeaders, 500);
     }
@@ -4658,7 +5666,7 @@ Deno.serve(async (request) => {
   if (url.pathname === '/share/create' && request.method === 'POST') {
     try {
       const body = await request.json();
-      const { ownerEmailHash, verifier, sessionToken, name, type, ownerName, households, householdNames, colour } = body;
+      const { ownerEmailHash, verifier, sessionToken, name, type, ownerName, households, householdNames, colour, shareManagement, guestEmail, pendingInvite } = body;
       if (!ownerEmailHash || (!verifier && !sessionToken) || !name || !households) return json({ error: 'Missing required fields' }, corsHeaders, 400);
       if (sessionToken) {
         const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
@@ -4669,12 +5677,27 @@ Deno.serve(async (request) => {
       }
       const code = Array.from(crypto.getRandomValues(new Uint8Array(4)))
         .map(b => b.toString(36).padStart(2,'0')).join('').toUpperCase().slice(0,6);
+      // Validate shareManagement; default to 'none' if absent or invalid.
+      const mgmt = ['none','view','edit'].includes(shareManagement) ? shareManagement : 'none';
+      // pendingInvite is set by the client when the guest doesn't have an
+      // ECDH public key yet (i.e. no STOCKROOM account at create time).
+      // It's a hint for the owner UI ("awaiting signup") and lets us
+      // recognise a sign-up-via-link flow on the server side. The actual
+      // ECDH key wrapping happens later via the existing rewrap queue.
+      const validPending = pendingInvite && typeof pendingInvite === 'object'
+        && typeof pendingInvite.guestEmailHash === 'string'
+        ? { guestEmailHash: pendingInvite.guestEmailHash, guestEmail: pendingInvite.guestEmail || null }
+        : null;
       const target = {
         name, type: type||'guest', ownerName: ownerName||'Owner', ownerEmailHash,
         households, householdNames: householdNames||{}, colour: colour||'#e8a838',
+        shareManagement: mgmt,
+        ...(typeof guestEmail === 'string' && guestEmail ? { guestEmail } : {}),
+        ...(validPending ? { pendingInvite: validPending } : {}),
         createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 24*60*60*1000).toISOString(),
+        expiresAt: new Date(Date.now() + 60*60*1000).toISOString(),
         members: [],
+        memberDetails: {},
       };
       await kvSet(['share', code], JSON.stringify(target));
       const link = `${env.APP_URL}?join=${code}`;
@@ -4715,13 +5738,108 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
+  // ── Guest share envelope: store ────────────────────────
+  // The GUEST stores the share key wrapped under their own data key.
+  // This makes the share survive anything that survives the guest's
+  // own data — browser clear, new device, passphrase change. The
+  // ECDH-wrapped key from /share/ecdh-key/get is only used for the
+  // first-time handshake; once the guest has it, they immediately
+  // re-wrap with their data key and store under their own namespace.
+  //
+  // Auth is the GUEST's auth, not the owner's. The owner has no
+  // visibility into what the guest stores — this is the guest's
+  // own private cache of their share access, encrypted with their
+  // own data key. Server holds ciphertext only.
+  if (url.pathname === '/user/share-envelope/store' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, code, envelope } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken) || !code || !envelope) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      // Auth — accept either passphrase verifier or session token.
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      // Optional sanity check: the guest must actually be a member of
+      // this share. Without this we'd accept envelope writes from any
+      // authenticated user — not a security hole (the envelope is just
+      // their own ciphertext) but rejecting non-members keeps the data
+      // model tidy and surfaces logic errors early.
+      const share = await kvGet(['share', code.toUpperCase()]);
+      if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);
+      const target = JSON.parse(share.value);
+      if (!target.members?.includes(emailHash)) {
+        return json({ error: 'Not a member of this share' }, corsHeaders, 403);
+      }
+      await kvSet(['user', emailHash, 'share_envelope', code.toUpperCase()], envelope);
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Guest share envelope: get ──────────────────────────
+  // Called on fresh device / browser / login to recover the share key
+  // without needing the owner online. Returns the ciphertext blob; the
+  // client's data key is what unwraps it.
+  if (url.pathname === '/user/share-envelope/get' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, code } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken) || !code) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      const env = await kvGet(['user', emailHash, 'share_envelope', code.toUpperCase()]);
+      if (!env.value) return json({ ok: true, envelope: null }, corsHeaders);
+      return json({ ok: true, envelope: env.value }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Guest share envelope: delete ──────────────────────
+  // Called on leave-share or eviction. The envelope is also covered by
+  // _deleteAllUserData on full account deletion (prefix scan picks it
+  // up under ['user', emailHash, ...]).
+  if (url.pathname === '/user/share-envelope/delete' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, code } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken) || !code) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      await kvDel(['user', emailHash, 'share_envelope', code.toUpperCase()]);
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
   // ── Share: list (authenticated) ──────────────────────
+  // Accepts both `verifier` (passphrase login) and `sessionToken` (passkey
+  // login). Mismatched auth was a recurring bug — passkey sessions getting
+  // silently rejected. See pattern note in account memory.
   if (url.pathname === '/share/list' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier } = await request.json();
-      if (!ownerEmailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken } = await request.json();
+      if (!ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const targets = [];
       const entries = kv.list({ prefix: ['share'] });
       for await (const entry of entries) {
@@ -4732,6 +5850,48 @@ Deno.serve(async (request) => {
         } catch(e) {}
       }
       return json({ targets }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Share: memberships (GUEST-side list) ───────────────
+  // Returns every share the calling user is a MEMBER of (not owner).
+  // Called on a fresh login to restore _shareState when the previous
+  // localStorage cache was wiped (browser clear, new device, sign-out
+  // and back in). Without this, the share-envelope mechanism has no
+  // way to know which envelopes to fetch — _shareState is the precondition.
+  //
+  // Returns the same shape as /share/list so the client can hydrate
+  // _shareState directly from a member entry. We don't include the
+  // members list of the share (privacy: guest A doesn't need to see
+  // guest B's emailHash). Just the metadata needed to identify the
+  // share and render the UI.
+  if (url.pathname === '/share/memberships' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      const memberships = [];
+      const entries = kv.list({ prefix: ['share'] });
+      for await (const entry of entries) {
+        if (entry.key.length !== 2) continue; // skip share_data entries
+        try {
+          const data = JSON.parse(entry.value);
+          if (data.ownerEmailHash === emailHash) continue; // they own it, not a member
+          if (!Array.isArray(data.members) || !data.members.includes(emailHash)) continue;
+          // Strip the members list — privacy. Other shape fields are
+          // already public knowledge to legitimate members (the share
+          // metadata is what /share/join returns to anyone with the code).
+          const { members, ...publicShape } = data;
+          memberships.push({ code: entry.key[1], ...publicShape });
+        } catch(e) {}
+      }
+      return json({ memberships }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
@@ -4748,9 +5908,19 @@ Deno.serve(async (request) => {
         const expiresAt = target.expiresAt ? new Date(target.expiresAt).getTime() : Infinity;
         if (Date.now() > expiresAt) return json({ error: 'This invite link has expired. Ask the owner for a new link.' }, corsHeaders, 410);
       }
-      // No credentials at all — return metadata so UI can prompt sign-in
+      // No credentials at all — return metadata so UI can prompt sign-in.
+      // Include `pendingInvite` so the share-gate can pre-fill the email
+      // for guests who don't have an account yet (the link was created
+      // for a specific address and signing up with that address gives
+      // them direct access without an owner-side rewrap roundtrip).
       if (!guestEmailHash || (!guestVerifier && !guestSessionToken)) {
-        return json({ ok: false, requiresAuth: true, ownerName: target.ownerName, name: target.name, type: target.type, householdNames: target.householdNames, households: target.households }, corsHeaders);
+        return json({
+          ok: false, requiresAuth: true,
+          ownerName: target.ownerName, name: target.name, type: target.type,
+          ownerEmailHash: target.ownerEmailHash,
+          householdNames: target.householdNames, households: target.households,
+          ...(target.pendingInvite ? { pendingInvite: target.pendingInvite } : {}),
+        }, corsHeaders);
       }
       // Authenticate: accept passkey sessionToken OR passphrase verifier
       if (guestSessionToken) {
@@ -4760,10 +5930,53 @@ Deno.serve(async (request) => {
         const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);
         if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
       }
+
+      // ── Email verification gate (security-critical) ─────────────
+      // Even with a valid passphrase or session, refuse to admit an
+      // unverified account to a share. This is the canonical security
+      // boundary — without it, an attacker who registers (or re-registers
+      // a deleted account) can join any share they were invited to
+      // without ever proving they control the inbox. Client-side checks
+      // in shareGateSignIn / shareGateRegister are belt-and-braces; this
+      // is the actual fence.
+      const guestVerified = await kvGet(['user', guestEmailHash, 'email_verified']);
+      if (!guestVerified.value) {
+        const emailRow = await kvGet(['user', guestEmailHash, 'email']);
+        return json({
+          error: 'Email verification required before joining a shared household',
+          requiresEmailVerification: true,
+          email: emailRow.value || null,
+        }, corsHeaders, 403);
+      }
       if (!target.members) target.members = [];
-      if (!target.members.includes(guestEmailHash)) {
+      if (!target.memberDetails) target.memberDetails = {};
+      const isNewMember = !target.members.includes(guestEmailHash);
+      if (isNewMember) {
         target.members.push(guestEmailHash);
-        await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
+        // If this share was created for a guest who didn't have an account
+        // at create time, joining is the moment we promote pendingInvite
+        // to guestEmail (so the owner UI shows a normal "linked" state)
+        // and clear pendingInvite. We only do this when the joining
+        // emailHash matches the pending one — a guest who signs up with a
+        // different email shouldn't silently consume someone else's pending invite.
+        if (target.pendingInvite && target.pendingInvite.guestEmailHash === guestEmailHash) {
+          if (target.pendingInvite.guestEmail) target.guestEmail = target.pendingInvite.guestEmail;
+          delete target.pendingInvite;
+        }
+      }
+      // Record/refresh memberDetails on every successful join so the owner
+      // can see when each guest first connected and last accessed the share.
+      const nowIso = new Date().toISOString();
+      const md = target.memberDetails[guestEmailHash] || {};
+      if (!md.firstSeenAt) md.firstSeenAt = nowIso;
+      md.lastActiveAt = nowIso;
+      target.memberDetails[guestEmailHash] = md;
+      await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
+      // Re-joining a previously-evicted member clears the revocation marker
+      // (the owner can re-add them via /share/update or by sharing the link
+      // again — this just allows the rejoin path to succeed).
+      if (isNewMember) {
+        await kvDel(['share_revoked', code.toUpperCase(), guestEmailHash]);
       }
       return json({ ok: true, ...target, code: code.toUpperCase() }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
@@ -4788,10 +6001,69 @@ Deno.serve(async (request) => {
       const hKey = household && household !== 'default' ? household : 'default';
       await kvSetLarge(['share_data', code.toUpperCase(), hKey], ciphertext);
       await kvSet(['share_data', code.toUpperCase(), `${hKey}_modified`], new Date().toISOString());
+      // Mark the writer as the owner — guests pulling this blob can use
+      // this to skip merging their own writes back as if they were owner edits.
+      await kvSet(['share_data', code.toUpperCase(), `${hKey}_writer`], JSON.stringify({ kind: 'owner', emailHash: ownerEmailHash, at: new Date().toISOString() }));
       // Share data lives under the owner's emailHash conceptually — mark the
       // owner dirty so the per-user backup captures the new ciphertext.
       await markUserDirty(ownerEmailHash);
       return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Share: guest pushes their own edits back to the share blob ──────
+  // Authenticated as a guest member with at least one rw permission on
+  // the requested household. The server can't read what's in the
+  // ciphertext (e2e encrypted with the share key), so per-section
+  // enforcement is necessarily at the blob level — if the guest has no
+  // rw permission on the household at all, we refuse. If they have at
+  // least one rw section, we accept the whole blob and trust the client
+  // not to mutate read-only sections. (The owner's view of merged
+  // state is ground truth, and tampering would be visible to them on
+  // their next sync — see pull-guest-writes flow.)
+  if (url.pathname === '/share/data/push-guest' && request.method === 'POST') {
+    try {
+      const { guestEmailHash, guestVerifier, guestSessionToken, code, household, ciphertext } = await request.json();
+      if (!code || !guestEmailHash || (!guestVerifier && !guestSessionToken) || !ciphertext) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      if (guestSessionToken) {
+        const sessStored = await kvGet(['passkey_session', guestEmailHash, guestSessionToken]);
+        if (!sessStored.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);
+        if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      // Email-verification gate (see /share/join, /share/data/pull)
+      const guestVerifiedPush = await kvGet(['user', guestEmailHash, 'email_verified']);
+      if (!guestVerifiedPush.value) {
+        return json({ error: 'Email verification required', requiresEmailVerification: true }, corsHeaders, 403);
+      }
+      const revoked = await kvGet(['share_revoked', code.toUpperCase(), guestEmailHash]);
+      if (revoked.value) return json({ error: 'Access revoked', revoked: true }, corsHeaders, 403);
+      const share = await kvGet(['share', code.toUpperCase()]);
+      if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);
+      const target = JSON.parse(share.value);
+      if (!target.members?.includes(guestEmailHash)) return json({ error: 'Not a member of this share' }, corsHeaders, 403);
+      const hKey  = household && household !== 'default' ? household : 'default';
+      const perms = target.households?.[hKey];
+      if (!perms) return json({ error: 'No access to this household' }, corsHeaders, 403);
+      // Require at least one rw section on this household. A read-only
+      // guest must not be able to overwrite the share blob.
+      const hasAnyRw = Object.values(perms).some(p => p === 'rw');
+      if (!hasAnyRw) return json({ error: 'No write access to this household' }, corsHeaders, 403);
+      await kvSetLarge(['share_data', code.toUpperCase(), hKey], ciphertext);
+      const nowIso = new Date().toISOString();
+      await kvSet(['share_data', code.toUpperCase(), `${hKey}_modified`], nowIso);
+      // Stamp the writer as this guest so the owner can recognise the
+      // edit and merge it into their own data on next sync. Without
+      // this, an owner pulling the share blob after a guest write would
+      // be unable to distinguish guest changes from their own last push.
+      await kvSet(['share_data', code.toUpperCase(), `${hKey}_writer`], JSON.stringify({ kind: 'guest', emailHash: guestEmailHash, at: nowIso }));
+      // Mark owner dirty for backup purposes — a guest write is still a
+      // write to the owner's logical share data.
+      await markUserDirty(target.ownerEmailHash);
+      return json({ ok: true, modified: nowIso }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
@@ -4808,6 +6080,19 @@ Deno.serve(async (request) => {
         const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);
         if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
       }
+      // Email verification gate — also enforced at /share/join, but
+      // re-checked here so that a guest who joined before the gate was
+      // added (legacy data) can't keep pulling shared data without
+      // verifying. Defence in depth.
+      const guestVerifiedPull = await kvGet(['user', guestEmailHash, 'email_verified']);
+      if (!guestVerifiedPull.value) {
+        return json({ error: 'Email verification required', requiresEmailVerification: true }, corsHeaders, 403);
+      }
+      // Check eviction marker first — short-circuits before share record fetch
+      // so a removed guest gets a clear, fast response and the client can
+      // self-clean its share state.
+      const revoked = await kvGet(['share_revoked', code.toUpperCase(), guestEmailHash]);
+      if (revoked.value) return json({ error: 'Access revoked', revoked: true }, corsHeaders, 403);
       const share = await kvGet(['share', code.toUpperCase()]);
       if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);
       const target = JSON.parse(share.value);
@@ -4817,7 +6102,138 @@ Deno.serve(async (request) => {
       if (!perms) return json({ error: 'No access to this household' }, corsHeaders, 403);
       const data     = await kvGetLarge(['share_data', code.toUpperCase(), hKey]);
       const modified = await kvGet(['share_data', code.toUpperCase(), `${hKey}_modified`]);
-      return json({ ciphertext: data.value||null, modified: modified.value||null, permissions: perms, householdNames: target.householdNames }, corsHeaders);
+      const writerR  = await kvGet(['share_data', code.toUpperCase(), `${hKey}_writer`]);
+      let writer = null;
+      try { writer = writerR.value ? JSON.parse(writerR.value) : null; } catch(_e) { writer = null; }
+      // Record member activity. We update at most every 60 seconds per member
+      // to avoid hammering KV — pulls are frequent (every focus/visibility
+      // change for active guests). Owner sees a "last active" timestamp
+      // accurate to the minute, which is enough granularity.
+      try {
+        const now = Date.now();
+        if (!target.memberDetails) target.memberDetails = {};
+        const md = target.memberDetails[guestEmailHash] || {};
+        const lastTs = md.lastActiveAt ? new Date(md.lastActiveAt).getTime() : 0;
+        if (now - lastTs > 60 * 1000) {
+          md.lastActiveAt = new Date(now).toISOString();
+          if (!md.firstSeenAt) md.firstSeenAt = md.lastActiveAt;
+          md.pullCount = (md.pullCount || 0) + 1;
+          target.memberDetails[guestEmailHash] = md;
+          await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
+        }
+      } catch(_e) { /* best-effort, never block the pull */ }
+      return json({
+        ciphertext: data.value||null,
+        modified: modified.value||null,
+        writer,
+        permissions: perms,
+        householdNames: target.householdNames,
+      }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Share: owner pulls share blob to absorb guest writes ────
+  // After a guest pushes via /share/data/push-guest, the owner needs a
+  // way to read the updated blob and merge those changes into their
+  // own KV data. This endpoint authenticates as owner and returns the
+  // blob plus writer metadata. The owner's client decrypts with the
+  // share key and merges using the same logic as the standard sync.
+  if (url.pathname === '/share/data/pull-owner' && request.method === 'POST') {
+    try {
+      const { ownerEmailHash, verifier, sessionToken, code, household } = await request.json();
+      if (!ownerEmailHash || (!verifier && !sessionToken) || !code) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      const share = await kvGet(['share', code.toUpperCase()]);
+      if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);
+      const target = JSON.parse(share.value);
+      if (target.ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
+      const hKey     = household && household !== 'default' ? household : 'default';
+      const data     = await kvGetLarge(['share_data', code.toUpperCase(), hKey]);
+      const modified = await kvGet(['share_data', code.toUpperCase(), `${hKey}_modified`]);
+      const writerR  = await kvGet(['share_data', code.toUpperCase(), `${hKey}_writer`]);
+      let writer = null;
+      try { writer = writerR.value ? JSON.parse(writerR.value) : null; } catch(_e) { writer = null; }
+      return json({
+        ciphertext: data.value||null,
+        modified: modified.value||null,
+        writer,
+        householdNames: target.householdNames,
+      }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Share: cheap multi-tip endpoint for active-tab polling ────
+  // Returns the modified timestamp + last writer for every (code,
+  // household) pair the caller has access to. Used by the client's
+  // 15s active-tab poll to decide whether to fire a real sync. No
+  // ciphertext, no decryption, no bandwidth — just a few KV point
+  // reads per request.
+  //
+  // Auth: caller passes their emailHash + verifier|sessionToken.
+  // Per share, we either confirm they own it OR they're a member.
+  // Anything else they ask about is silently dropped (returns null
+  // for that stamp) so we don't leak existence of shares to non-
+  // members.
+  if (url.pathname === '/share/tips' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, codes } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken) || !Array.isArray(codes) || !codes.length) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      // Auth — accept either passphrase verifier or session token.
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      // Email-verification gate — same as /share/data/pull et al.
+      // Without this an unverified attacker could still poll for
+      // existence of shares, which leaks low-grade info. Cheap to
+      // gate.
+      const verifiedRow = await kvGet(['user', emailHash, 'email_verified']);
+      if (!verifiedRow.value) {
+        return json({ error: 'Email verification required', requiresEmailVerification: true }, corsHeaders, 403);
+      }
+      // Cap codes at 20 to bound work per request. A normal user is
+      // a member of one share or owner of a handful — well under 20.
+      const requestedCodes = codes.slice(0, 20).map(c => String(c).toUpperCase());
+      const tips = {};
+      for (const code of requestedCodes) {
+        const shareRow = await kvGet(['share', code]);
+        if (!shareRow.value) continue;
+        let target;
+        try { target = JSON.parse(shareRow.value); } catch(_e) { continue; }
+        const isOwner    = target.ownerEmailHash === emailHash;
+        const isMember   = Array.isArray(target.members) && target.members.includes(emailHash);
+        if (!isOwner && !isMember) continue; // silently drop
+        // For each household in this share, return its tip.
+        const households = target.households ? Object.keys(target.households) : ['default'];
+        for (const hKey of households) {
+          const stamp     = `${code}:${hKey}`;
+          const modifiedR = await kvGet(['share_data', code, `${hKey}_modified`]);
+          const writerR   = await kvGet(['share_data', code, `${hKey}_writer`]);
+          let writer = null;
+          try {
+            if (writerR.value) {
+              const w = JSON.parse(writerR.value);
+              writer = w?.kind || null;
+            }
+          } catch(_e) {}
+          tips[stamp] = {
+            modified: modifiedR.value || null,
+            writer,
+          };
+        }
+      }
+      return json({ tips }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
@@ -4837,7 +6253,7 @@ Deno.serve(async (request) => {
   // ── Share: update permissions ─────────────────────────
   if (url.pathname === '/share/update' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, sessionToken, code, name, type, colour, households } = await request.json();
+      const { ownerEmailHash, verifier, sessionToken, code, name, type, colour, households, shareManagement } = await request.json();
       if (!code || !ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
       if (sessionToken) {
         const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
@@ -4850,7 +6266,15 @@ Deno.serve(async (request) => {
       if (!r.value) return json({ error: 'Not found' }, corsHeaders, 404);
       const existing = JSON.parse(r.value);
       if (existing.ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
-      const updated = { ...existing, ...(name&&{name}), ...(type&&{type}), ...(colour&&{colour}), ...(households&&{households}) };
+      // shareManagement is a string ('none' | 'view' | 'edit'); accept it
+      // explicitly so we don't merge in undefined and clobber existing.
+      const validMgmt = ['none','view','edit'].includes(shareManagement) ? shareManagement : null;
+      const updated = {
+        ...existing,
+        ...(name&&{name}), ...(type&&{type}), ...(colour&&{colour}),
+        ...(households&&{households}),
+        ...(validMgmt!==null && { shareManagement: validMgmt }),
+      };
       await kvSet(['share', code.toUpperCase()], JSON.stringify(updated));
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
@@ -4861,10 +6285,15 @@ Deno.serve(async (request) => {
 
   if (url.pathname === '/share/delete' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, code } = await request.json();
-      if (!code || !ownerEmailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken, code } = await request.json();
+      if (!code || !ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const r = await kvGet(['share', code.toUpperCase()]);
       if (r.value && JSON.parse(r.value).ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
       await kvDel(['share', code.toUpperCase()]);
@@ -4879,18 +6308,69 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
+  // ── Share: remove a single member (surgical eject) ────
+  // Accepts owner credentials (passphrase or passkey) and a guestEmailHash.
+  // Removes the member from the share record, deletes their ECDH-wrapped
+  // key entry, and writes a "revoked" tombstone entry so the guest's next
+  // pull returns 403 fast and they can detect the eviction client-side.
+  // The share itself stays intact for other members.
+  if (url.pathname === '/share/member/remove' && request.method === 'POST') {
+    try {
+      const { ownerEmailHash, verifier, sessionToken, code, guestEmailHash } = await request.json();
+      if (!code || !ownerEmailHash || (!verifier && !sessionToken) || !guestEmailHash) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      const r = await kvGet(['share', code.toUpperCase()]);
+      if (!r.value) return json({ error: 'Not found' }, corsHeaders, 404);
+      const target = JSON.parse(r.value);
+      if (target.ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
+      // Drop from members list
+      target.members = (target.members || []).filter((m: string) => m !== guestEmailHash);
+      // Drop activity record for this member
+      if (target.memberDetails && typeof target.memberDetails === 'object') {
+        delete target.memberDetails[guestEmailHash];
+      }
+      await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
+      // Drop the ECDH-wrapped key so the guest can't decrypt new pushes
+      await kvDel(['share_ecdh_key', code.toUpperCase(), guestEmailHash]);
+      // Write a short-lived revocation marker that the guest's next /pull
+      // can read to know they were evicted (so the client can self-clean).
+      // 7 day TTL is enough for any realistic resync window.
+      await kvSet(
+        ['share_revoked', code.toUpperCase(), guestEmailHash],
+        new Date().toISOString(),
+        { expireIn: 7 * 24 * 60 * 60 * 1000 }
+      );
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
   // ── Share: refresh link (new 24h window) ─────────────
   if (url.pathname === '/share/refresh' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, code } = await request.json();
-      if (!code || !ownerEmailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken, code } = await request.json();
+      if (!code || !ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
       const r = await kvGet(['share', code.toUpperCase()]);
       if (!r.value) return json({ error: 'Not found' }, corsHeaders, 404);
       const existing = JSON.parse(r.value);
       if (existing.ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
-      existing.expiresAt = new Date(Date.now() + 24*60*60*1000).toISOString();
+      // Match the original 1-hour window from /share/create — refresh
+      // gives the link a fresh hour, not a different duration.
+      existing.expiresAt = new Date(Date.now() + 60*60*1000).toISOString();
       await kvSet(['share', code.toUpperCase()], JSON.stringify(existing));
       return json({ ok: true, expiresAt: existing.expiresAt }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
@@ -5134,7 +6614,7 @@ Deno.serve(async (request) => {
           <a href="${inviteLink}" style="background:#e8a838;color:#111;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:16px">Accept invite →</a>
         </div>
         <p style="font-size:12px;color:#999;text-align:center">Or copy this link: <code>${inviteLink}</code></p>
-        <p style="font-size:12px;color:#999;text-align:center">This link expires in 24 hours.</p>` : '';
+        <p style="font-size:12px;color:#999;text-align:center">This link expires in 1 hour.</p>` : '';
 
       const permsSection = permLines ? `
         <div style="background:#1a1d27;border-radius:8px;padding:14px 16px;margin:16px 0">
@@ -5931,56 +7411,6 @@ async function cronCheck() {
 }
 
 // ── Email sending ─────────────────────────────────────────
-async function sendMigrationEmail(to: string, stage: 'notify' | 'complete') {
-  if (!env.RESEND_API_KEY) return;
-  const appUrl = env.APP_URL;
-
-  const subjects = {
-    notify:   'STOCKROOM — Security upgrade coming on ' + CRYPTO_V2_SWITCHOVER,
-    complete: 'STOCKROOM — Your account has been upgraded',
-  };
-
-  const bodies = {
-    notify: `
-      <p>Hi,</p>
-      <p>We're upgrading STOCKROOM's encryption standard on <strong>${CRYPTO_V2_SWITCHOVER}</strong>.</p>
-      <p>What this means for you:</p>
-      <ul>
-        <li>Your data stays completely safe — nothing will be lost.</li>
-        <li>The next time you sign in after ${CRYPTO_V2_SWITCHOVER}, you'll be prompted to enter your passphrase once to complete the upgrade.</li>
-        <li>Your data will be re-encrypted using stronger standards and synced automatically.</li>
-        <li>Your old encrypted data will be kept as a backup for ${CRYPTO_V1_GRACE_DAYS} days, then deleted.</li>
-      </ul>
-      <p>No action is needed before the date — just sign in as normal after ${CRYPTO_V2_SWITCHOVER}.</p>`,
-    complete: `
-      <p>Hi,</p>
-      <p>Your STOCKROOM account has been upgraded to our stronger encryption standard.</p>
-      <ul>
-        <li>Your data is now protected with 600,000-iteration PBKDF2 and a unique random salt.</li>
-        <li>Your previous encrypted data will be kept as a backup for ${CRYPTO_V1_GRACE_DAYS} days, then permanently deleted.</li>
-        <li>We recommend generating a fresh set of recovery codes in Settings → Security checklist.</li>
-      </ul>`,
-  };
-
-  const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:560px;margin:32px auto;color:#333">
-    <div style="background:#111;padding:20px 24px;border-radius:12px 12px 0 0;display:flex;align-items:center;gap:12px">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e8a838" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg>
-      <span style="color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px">STOCKROOM</span>
-    </div>
-    <div style="background:#fff;border:1px solid #e5e7eb;border-top:none;padding:24px 28px;border-radius:0 0 12px 12px">
-      ${bodies[stage]}
-      <div style="text-align:center;margin-top:28px">
-        <a href="${appUrl}" style="background:#e8a838;color:#111;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px">Open STOCKROOM →</a>
-      </div>
-    </div>
-  </body></html>`;
-
-  await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: env.FROM_EMAIL, to: [to], subject: subjects[stage], html }),
-  });
-}
 
 async function sendEmail(to, urgentItems, upcomingItems, household = null) {
   if (!env.RESEND_API_KEY) return { ok: false, error: 'No RESEND_API_KEY configured' };

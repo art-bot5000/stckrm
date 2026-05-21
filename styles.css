@@ -1,3 +1,8 @@
+  /* ── Theme tokens ──────────────────────────────────────────────────
+     Dark is the default. Light mode applies when <html data-theme="light">.
+     The applyTheme() function in app.js sets data-theme based on the
+     user's settings.theme preference ('system' | 'light' | 'dark'),
+     resolving 'system' via prefers-color-scheme. */
   :root {
     --bg: #0f1117; --surface: #1a1d27; --surface2: #22263a;
     --border: #2e3350; --accent: #e8a838; --accent2: #5b8dee;
@@ -13,6 +18,38 @@
     --glass-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 1px 0 rgba(255,255,255,0.05) inset;
     --card-shadow: 0 2px 12px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.04) inset;
     --card-shadow-hover: 0 6px 24px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset;
+  }
+  /* ── LIGHT MODE ──────────────────────────────────────────────────
+     Warm off-white palette. Amber and blue accents darkened slightly
+     for AA contrast on light surfaces. Shadows softened. */
+  html[data-theme="light"] {
+    --bg: #f5f3ec;          /* warm off-white, easier on the eye than stark white */
+    --surface: #ffffff;
+    --surface2: #ebe8df;
+    --border: #d8d4c8;
+    --accent: #c08418;      /* amber, darker for contrast on white */
+    --accent2: #3b6fd0;     /* blue, darker for contrast on white */
+    --danger: #c83838;
+    --warn: #c08418;
+    --ok: #2e9560;
+    --text: #1a1d27;        /* very dark blue-grey (was --surface in dark) */
+    --muted: #6b6f7d;
+    --glass-border: rgba(0,0,0,0.08);
+    --glass-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 1px 0 rgba(255,255,255,0.6) inset;
+    --card-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 1px 0 rgba(255,255,255,0.5) inset;
+    --card-shadow-hover: 0 6px 20px rgba(0,0,0,0.1), 0 1px 0 rgba(255,255,255,0.6) inset;
+  }
+  /* Smooth crossfade when toggling theme — applied to props the
+     theme actually changes. Skipped for users with reduced-motion. */
+  html, body, .settings-card, .modal, .acc-sec-card, .item-card,
+  .note-card, #app-nav, #app-header, .tab, .btn, input, select, textarea {
+    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html, body, .settings-card, .modal, .acc-sec-card, .item-card,
+    .note-card, #app-nav, #app-header, .tab, .btn, input, select, textarea {
+      transition: none;
+    }
   }
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   body { background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; }
@@ -60,8 +97,103 @@
     justify-content: space-between; position: sticky; top: 0; z-index: 100;
     box-shadow: 0 1px 0 rgba(255,255,255,0.04), 0 4px 20px rgba(0,0,0,0.3);
   }
-  .logo { font-family: var(--mono); font-size: 13px; letter-spacing: 3px; color: var(--accent); font-weight: 700; }
+  .logo { font-family: var(--mono); font-size: 16px; letter-spacing: 3px; color: var(--accent); font-weight: 700; }
   .logo span { color: var(--muted); font-weight: 400; }
+
+  /* ── BRAND LOGO IMAGE ──
+     Used in the app header (mobile), the sidebar (desktop), and the
+     wizard header/footer bars. width/height attrs on each <img>
+     define intrinsic size; these rules handle display + a tiny
+     vertical optical nudge to align with the wordmark. */
+  .brand-logo {
+    display: inline-block;
+    flex-shrink: 0;
+    transform: translateY(-1px);
+  }
+  .brand-logo-mobile { /* relies on width=33 height=24 attrs */ }
+  .brand-logo-sidebar { /* relies on width=29 height=21 attrs */ }
+
+  /* ── WIZARD BARS ──
+     Shown only when body.wizard-active is set. Mirror the landing
+     page header / footer. Header CTA is "Try the demo" (Login /
+     Create-account would be circular — user IS in login). */
+  #wizard-header,
+  #wizard-footer {
+    display: none;
+  }
+  body.wizard-active #wizard-header,
+  body.wizard-active #wizard-footer {
+    display: block;
+    position: fixed;
+    left: 0; right: 0;
+    z-index: 301;
+    background: rgba(15,17,23,0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  body.wizard-active #wizard-header {
+    top: 0;
+    border-bottom: 1px solid var(--glass-border);
+  }
+  body.wizard-active #wizard-footer {
+    bottom: 0;
+    border-top: 1px solid var(--glass-border);
+  }
+  .wb-inner {
+    max-width: 1200px; margin: 0 auto;
+    padding: 14px 24px;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  }
+  .wb-inner-footer {
+    padding: 16px 24px;
+    flex-wrap: wrap;
+    font-size: 12px; color: var(--muted);
+  }
+  .wb-brand {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-family: var(--mono); font-weight: 700; font-size: 17px;
+    letter-spacing: 3px; color: var(--accent);
+    text-decoration: none;
+  }
+  .wb-inner-footer .wb-brand { font-size: 14px; }
+  .wb-actions {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .wb-actions .btn {
+    font-size: 14px;
+    padding: 10px 18px;
+    border-radius: 8px;
+  }
+  .wb-footer-links {
+    display: flex; gap: 18px;
+  }
+  .wb-footer-links a {
+    color: var(--muted);
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+  .wb-footer-links a:hover { color: var(--text); }
+  .wb-footer-meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 1px;
+  }
+  body.wizard-active #wizard {
+    padding-top: 72px;
+    padding-bottom: 60px;
+  }
+  @media (max-width: 560px) {
+    .wb-inner { padding: 12px 14px; gap: 8px; }
+    .wb-actions { gap: 6px; }
+    .wb-actions .btn { padding: 9px 12px; font-size: 13px; }
+    .wb-brand { font-size: 14px; letter-spacing: 2px; }
+    .wb-inner-footer { padding: 14px 14px; gap: 10px; justify-content: center; text-align: center; }
+    .wb-footer-links { gap: 12px; }
+    body.wizard-active #wizard {
+      padding-top: 60px;
+      padding-bottom: 90px;
+    }
+  }
 
   /* ── BUTTONS ── */
   .btn { font-family: var(--sans); font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all 0.18s cubic-bezier(0.34,1.56,0.64,1); position: relative; }
@@ -474,13 +606,27 @@
        Account & Security / Billing / Settings / Report links. */
     #header-burger-btn { display: inline-flex !important; }
 
-    /* Hide the now-burger-menu tabs at this breakpoint and below.
-       This applies to BOTH the medium range (601–899px, where the
-       tab bar would otherwise overflow horizontally) AND the mobile
-       range (≤600px, where the 3×2 grid expects exactly 6 tabs). */
+    /* Hide Report / Billing / Settings tabs across the entire mobile
+       range (≤899px) — these are burger-menu-only on mobile. The
+       three swappable tabs (Notes / Reminders / Savings) used to be
+       hidden here too via the 3×2 grid being capped at 6, but with
+       the new single-row design they're hidden via the dynamic
+       [data-mobile-tab="off"] attribute set by _applyMobileTabLayout
+       in app.js — that lets the user customise which three appear in
+       the main row from the burger menu's Edit button. */
     #tabs > .tab[onclick*="'report'"],
     #tabs > .tab[onclick*="'billing'"],
     #tabs > .tab[onclick*="'settings'"] { display: none; }
+  }
+
+  /* Dynamic mobile-tab visibility — applied at ≤600px only. At
+     medium widths (601–899px) the full 6-tab row layout is preferred
+     since horizontal space allows. data-mobile-tab="off" hides the
+     tab on small screens; the JS that sets it (_applyMobileTabLayout)
+     only ever marks 3 of 6 swappable tabs off, so the visible row
+     always has exactly three buttons. */
+  @media (max-width: 600px) {
+    #tabs > .tab[data-mobile-tab="off"] { display: none; }
   }
 
   @media (max-width: 600px) {
@@ -493,7 +639,7 @@
 
     /* ── HEADER ── */
     #app-header { padding: 0 12px; gap: 8px; }
-    .logo { font-size: 12px; letter-spacing: 2px; }
+    .logo { font-size: 14px; letter-spacing: 2px; }
     .logo span { display: none; } /* hide "/ HOUSEHOLD TRACKER" on small screens */
     #sync-label { display: none; } /* keep dot, hide text label */
     .sync-pill { padding: 5px 7px; margin-left: 2px; }
@@ -501,9 +647,13 @@
     /* ── MAIN LAYOUT ── */
     #main { padding: 16px 12px; }
 
-    /* ── TABS: 3×2 grid on mobile (icon above label) ──
-       Stockroom + Groceries + Notes on row 1, Reminders + Savings + Budget
-       on row 2. Burger-menu items are hidden by the wider 899px rule. */
+    /* ── TABS: single row of three on mobile (icon + label inline) ──
+       The grid spans three columns; only the three tabs not flagged
+       data-mobile-tab="off" are visible, giving a single row. Default
+       trio is Stockroom / Groceries / Budget; the user can swap any of
+       them for Notes / Reminders / Savings via the burger menu's Edit
+       button. Report / Billing / Settings live in the burger menu only
+       (hidden by the wider 899px rule above). */
     #tabs {
       width: 100%;
       display: grid;
@@ -531,6 +681,51 @@
       text-overflow: ellipsis;
       max-width: 100%;
     }
+
+    /* ── BURGER-VIEW BACK BUTTON ──
+       On mobile, when the user navigates into a burger-menu page (Report,
+       Billing, Settings, Account & Security), hide the 3×2 tab grid and
+       show a small floating back arrow at the top-right of the view area.
+       Sits inline with each view's section heading without needing any H2
+       restructuring — works for all four burger views uniformly. Pattern
+       set by body.burger-view-active in showView(). */
+    body.burger-view-active #tabs { display: none; }
+    body.burger-view-active #tabs-sticky-wrap {
+      /* Collapse the now-empty tab-bar slot so the section heading rises
+         to the same vertical position as it occupies on non-burger views. */
+      min-height: 0;
+      padding: 0;
+      margin: 0;
+    }
+    body.burger-view-active #burger-view-back-btn {
+      display: inline-flex !important;
+      align-items: center;
+      justify-content: center;
+      position: absolute;
+      /* Anchored to the top-right corner of #main. #main is the positioning
+         parent — see body.burger-view-active #main { position: relative }
+         below. Top offset matches #main's padding-top so the button aligns
+         with the section heading's baseline. */
+      top: 16px;
+      right: 12px;
+      z-index: 50;
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      /* Lighter grey than the page background so it reads as an actionable
+         control without competing with primary buttons. */
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+    body.burger-view-active #burger-view-back-btn:hover,
+    body.burger-view-active #burger-view-back-btn:active {
+      background: var(--surface);
+      transform: translateX(-2px);
+    }
+    body.burger-view-active #main { position: relative; }
 
     /* ── CARDS: single column, slightly more padding ── */
     #items-grid { grid-template-columns: 1fr; gap: 12px; }
@@ -598,11 +793,10 @@
     .shopping-link { padding: 8px 12px; font-size: 14px; }
 
     /* ── REMINDERS / GROCERY ── */
-    .grocery-item-name { font-size: 19px; }
-    .grocery-item-meta { font-size: 15px; }
-    .grocery-dept-label { font-size: 14px; }
-    .grocery-dept-count { font-size: 14px; }
-    .grocery-search { font-size: 16px; }
+    .grocery-item-name { font-size: 22px; }
+    .grocery-item-meta { font-size: 16px; }
+    .grocery-dept-label { font-size: 15px; }
+    .grocery-dept-count { font-size: 15px; }
 
     /* ── STOCK COUNT / PRICE HISTORY MODALS ── */
     #ph-chart svg { min-height: 140px; }
@@ -647,18 +841,72 @@
 
   /* Hide header action buttons on mobile — FAB replaces them */
   @media (max-width: 699px) {
-    #fab-btn { display:flex !important; }
+    /* NOTE: no !important here. openModal() sets fab-btn.style.display='none'
+       inline when a modal opens; an !important here would beat that inline
+       style and leave the FAB rendering on top of every bottom-sheet modal.
+       updateFab() sets display:flex inline whenever the FAB should appear,
+       so we don't need !important to keep it visible on mobile. */
+    #fab-btn { display:flex; }
     /* Header quick-add and add-item buttons hidden on mobile */
     #app-header .btn-primary,
     #app-header .btn-ghost { display:none; }
     /* Keep sync pill visible */
     #app-header #sync-pill { display:flex; }
-    /* Grocery and reminders header action buttons too */
-    #view-grocery > div:first-child .btn-primary,
-    #view-grocery > div:first-child .btn-ghost,
+    /* Reorder the right-side header cluster on mobile via flex `order`:
+       sync-pill (connected dot) FIRST, then the global search button, then
+       the notification bell, then the burger menu. The HTML source order
+       has the bell first (so it sits leftmost on desktop where the order
+       is intentional alongside the shield / quick-add / add-item buttons).
+       On mobile, only these four elements remain visible — swapping their
+       visual order via CSS leaves the DOM untouched, so desktop layout and
+       keyboard tab-order for accessibility-conscious users are unaffected. */
+    #app-header #sync-pill         { order: 0; }
+    #app-header #global-search-btn { order: 1; }
+    #app-header #notif-bell-btn    { order: 2; }
+    #app-header #header-burger-btn { order: 3; }
+    /* Grocery and reminders header action buttons too.
+       NOTE: scoped to #grocery-sticky-header (the desktop header row) so we
+       don't accidentally hide buttons in the mobile #grocery-fs-header,
+       which is a sibling div added before the sticky header — without
+       this scope, the more general "> div:first-child" selector matched
+       the FS header and hid its action buttons (Start Shopping, Done,
+       back arrow, edit pencil). */
+    #grocery-sticky-header .btn-primary,
+    #grocery-sticky-header .btn-ghost,
     #view-reminders > div:first-child .btn-primary { display:none; }
     /* Add padding to bottom of views so FAB doesn't overlap last items */
     #view-stock, #view-grocery, #view-reminders { padding-bottom: 110px; }
+
+    /* ── Full-screen grocery list mode (body.grocery-list-open) ──
+       Mirrors the body.note-open pattern. When the user has opened a
+       specific grocery list on mobile, the rest of the app chrome gets
+       out of the way and the list takes the full viewport. The
+       grocery-fs-header block becomes visible and sticks to the top so
+       back-arrow / search / sort / mode-bar are always reachable. */
+    body.grocery-list-open #app-header,
+    body.grocery-list-open #tabs,
+    body.grocery-list-open #grocery-sticky-header,
+    body.grocery-list-open #grocery-phase-bar {
+      display: none !important;
+    }
+    /* FAB stays visible in list-open mode — see getGroceryFabActions for
+       the context-aware primary action (Edit list vs. Quick list). */
+    body.grocery-list-open #main { padding-top: 0; padding-left: 0; padding-right: 0; }
+    body.grocery-list-open #view-grocery { padding-bottom: 24px; }
+    body.grocery-list-open .grocery-fs-header {
+      display: block;
+      position: sticky;
+      top: 0;
+      z-index: 95;
+      background: var(--bg);
+    }
+    /* The dynamic mode bar inside the FS header reuses the .grocery-phase-bar
+       look but with smaller margins to fit a sticky-header context. */
+    body.grocery-list-open #grocery-fs-mode-bar .grocery-phase-bar {
+      margin-bottom: 0;
+    }
+    /* Body list contents need horizontal padding back (since #main lost it) */
+    body.grocery-list-open #grocery-list-body { padding: 8px 14px 24px; }
   }
 
   /* ══════════════════════════════════════
@@ -745,19 +993,14 @@
     #stock-top-sections { display:flex; flex-direction:row; gap:16px; }
     #pending-deliveries-section, #incomplete-section { flex:1; min-width:0; }
 
-    /* ── Inline search replaces standalone search bar on desktop ── */
-    #stock-search-mobile { display:none; }
-    #stock-search-inline { display:flex !important; }
-    #stock-toolbar-row { flex-wrap:nowrap; }
-    /* Search + filters/sort row layout:
-       - Mobile: stacked via flex-wrap (each child grows to 100% width)
-       - Desktop ≥900px: 3 cells on one row, search at 1 card width,
-         filters and sort each at half a card width.
-         Spacing matches #items-grid gap (10px). */
-    #view-stock #stock-search-toolbar { flex-direction: row; flex-wrap: nowrap; gap: 10px; }
-    #view-stock #stock-search-wrap   { flex: 0 0 280px; max-width: 280px; min-width: 0; }
+    /* Stockroom toolbar layout — desktop. The #stock-search-wrap that
+       used to occupy the leftmost slot was removed when the global search
+       took over; filters and sort now anchor to the left of the row.
+       Spacing matches #items-grid gap (10px). */
+    #view-stock #stock-search-toolbar { flex-direction: row; flex-wrap: nowrap; gap: 10px; justify-content: flex-start; }
     #view-stock #stock-toolbar-wrap  { flex: 0 0 135px; max-width: 135px; min-width: 0; }
     #view-stock #stock-sort-wrap     { flex: 0 0 135px; max-width: 135px; min-width: 0; }
+    #view-stock #stock-select-wrap   { flex: 0 0 110px; max-width: 110px; min-width: 0; }
     #view-report { max-width: 100%; }
     /* Compact-width views (~800px, left-aligned to match Stockroom and Report) */
     #view-grocery,
@@ -812,8 +1055,47 @@
      GROCERY LIST STYLES
   ══════════════════════════════════════ */
   .grocery-toolbar { display:flex; gap:8px; align-items:center; margin-bottom:14px; flex-wrap:wrap; }
-  .grocery-search { flex:1; min-width:160px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:9px 14px; color:var(--text); font-family:var(--sans); font-size:14px; outline:none; }
-  .grocery-search:focus { border-color:var(--accent); }
+  /* .grocery-search and :focus rules removed — the inline search input that
+     used this class (and was reused by #stock-search and #notes-search via
+     the same className) was deleted when the global search took over. */
+
+  /* ── Full-screen grocery list header (mobile only) ──
+     Shows back arrow + title + search-toggle, with the sort/edit row
+     and mode bar below. The whole stack sticks to the top of the
+     viewport when the user scrolls so back / mode-switch are always
+     reachable. Hidden by default; mobile-only @media rules toggle it. */
+  .grocery-fs-header { display: none; }
+  .grocery-fs-topbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .grocery-fs-back, .grocery-fs-iconbtn {
+    flex-shrink: 0;
+    width: 40px; height: 40px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 10px;
+    background: transparent; border: none; color: var(--text);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s;
+  }
+  .grocery-fs-back:hover, .grocery-fs-iconbtn:hover {
+    background: var(--surface2);
+  }
+  .grocery-fs-back .icon, .grocery-fs-iconbtn .icon { width: 22px; height: 22px; }
+  .grocery-fs-title {
+    flex: 1; min-width: 0;
+    font-family: var(--sans);
+    font-size: 17px; font-weight: 700; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* The expandable .grocery-fs-search-inline input and its .grocery-fs-search-
+     open state used to live here. Removed when the global search took over. */
+  .grocery-fs-mode-bar:empty { display: none; }
+  /* The mode bar reuses .grocery-phase-bar styling internally — see render */
+  .grocery-fs-mode-bar { padding: 8px 12px; background: var(--bg); }
 
   /* View header — applied to the title row of every top-level view. Standardises
      spacing below the title so navigating between tabs doesn't shift the page. */
@@ -831,9 +1113,10 @@
     vertical-align: -0.18em;
   }
 
-  /* Stockroom toolbar — Search / Filters / Sort all use the same base surface
-     + border so they read as a single related toolbar group. */
-  #stock-search-toolbar #stock-search,
+  /* Stockroom toolbar — Filters / Sort share the same base surface + border
+     so they read as a single related toolbar group. The #stock-search input
+     that used to be in this row was removed when the global search took
+     over; the rules below previously targeted #stock-search too. */
   #stock-search-toolbar #filter-toggle-btn,
   #stock-search-toolbar #sort-select {
     background: var(--surface) !important;
@@ -843,9 +1126,6 @@
     font-size: 12px;
     font-family: var(--sans);
   }
-  #stock-search-toolbar #stock-search { color: var(--text) !important; padding: 8px 12px; }
-  #stock-search-toolbar #stock-search::placeholder { color: var(--muted); }
-  #stock-search-toolbar #stock-search:focus { border-color: var(--accent) !important; }
   #stock-search-toolbar #filter-toggle-btn:hover,
   #stock-search-toolbar #sort-select:hover { color: var(--text) !important; }
   .grocery-sort-toggle { display:flex; background:var(--surface2); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
@@ -854,7 +1134,7 @@
   .grocery-dept-header { display:flex; align-items:center; justify-content:space-between; padding:10px 0 6px; margin-top:6px; border-bottom:1px solid var(--border); }
   .grocery-dept-label { font-family:var(--mono); font-size:12px; letter-spacing:1.5px; text-transform:uppercase; color:var(--accent); font-weight:700; display:flex; align-items:center; gap:6px; }
   .grocery-dept-count { font-size:12px; color:var(--muted); font-family:var(--mono); }
-  .grocery-item { display:flex; align-items:center; gap:12px; padding:16px 0; border-bottom:1px solid rgba(46,51,80,0.35); min-height:56px; }
+  .grocery-item { display:flex; align-items:center; gap:12px; padding:18px 0; border-bottom:1px solid rgba(46,51,80,0.35); min-height:62px; }
   .grocery-item.checked { opacity:0.4; }
   .grocery-item.checked .grocery-item-name { text-decoration:line-through; color:var(--muted); }
   /* Shop phase: items NOT marked needed during stock check render as
@@ -889,8 +1169,8 @@
   .grocery-cb:checked { background:var(--ok); border-color:var(--ok); }
   .grocery-cb:checked::after { content:'✓'; color:#111; font-size:14px; font-weight:700; display:block; line-height:1; }
   .grocery-item-info { flex:1; min-width:0; }
-  .grocery-item-name { font-size:17px; font-weight:600; line-height:1.3; }
-  .grocery-item-meta { font-size:13px; color:var(--muted); margin-top:4px; }
+  .grocery-item-name { font-size:18px; font-weight:600; line-height:1.3; }
+  .grocery-item-meta { font-size:14px; color:var(--muted); margin-top:4px; }
   .grocery-item-actions { display:flex; gap:4px; }
   .grocery-icon-btn { background:transparent; border:none; color:var(--muted); font-size:16px; cursor:pointer; padding:4px; border-radius:4px; line-height:1; }
   .grocery-icon-btn:hover { color:var(--text); }
@@ -962,44 +1242,11 @@
   }
   .grocery-item.checked .grocery-qty-stepper { opacity: 0.5; }
 
-  /* Active-list toolbar — back-to-all-lists + mode toggle on one row */
-  .grocery-active-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 12px;
-  }
-  .grocery-mode-toggle {
-    display: inline-flex;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 99px;
-    padding: 3px;
-    flex-shrink: 0;
-  }
-  .grocery-mode-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    background: transparent;
-    border: 0;
-    color: var(--muted);
-    font-family: var(--sans);
-    font-size: 12px;
-    font-weight: 600;
-    padding: 7px 12px;
-    border-radius: 99px;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .grocery-mode-btn .icon { width: 13px; height: 13px; }
-  .grocery-mode-btn:hover:not(.active) { color: var(--text); }
-  .grocery-mode-btn.active {
-    background: var(--accent);
-    color: #111;
-  }
+  /* .grocery-active-toolbar was the standalone "← All lists" row that sat
+     between the sticky header and the list body. Its function moved into
+     the header's button cluster (see #grocery-all-lists-slot). The unused
+     .grocery-mode-toggle / .grocery-mode-btn pair that lived here was
+     dropped at the same time — no callers in HTML or JS. */
 
   .grocery-empty { text-align:center; padding:60px 20px; color:var(--muted); }
   .grocery-empty-icon { font-size:48px; margin-bottom:12px; }
@@ -1121,8 +1368,6 @@
   /* Amazon import banner sits at top of Stockroom; constrain to 800px to match
      the toolbar width and align left with the rest of the view. */
   .amazon-banner { max-width: 800px; }
-  /* Cap inline search width */
-  #stock-search-inline { flex:0 1 320px !important; max-width:320px; }
   /* Sort select height matches filter button */
   #sort-select { padding:8px 24px 8px 10px !important; height:36px; box-sizing:border-box; }
   /* Grocery: hide Edit button + Add Item in multi-list picker view */
@@ -1130,8 +1375,11 @@
   body.grocery-multilist .grocery-toolbar .btn-primary { display:none !important; }
   /* Notes view on desktop - must clear the 220px sidebar since it is at body level.
      Width constrained to 800px to match Reminders/Savings/etc (the 800px max-width
-     rule above doesn't apply because position:fixed + right:0 would override it). */
-  #view-notes { position:fixed; top:0; bottom:0; left:220px; width:800px; overflow-y:auto; padding:28px 36px; display:none; background:var(--bg); z-index:10; }
+     rule above doesn't apply because position:fixed + right:0 would override it).
+     top:52px clears the sticky omnibox above (input-row 10+22+8+10 + 1px border ≈ 51px).
+     Omnibox sits at top:0 / z-index:95; #view-notes is z-index:10 so without this
+     offset the omnibox covers the view header. */
+  #view-notes { position:fixed; top:52px; bottom:0; left:220px; width:800px; overflow-y:auto; padding:28px 36px; display:none; background:var(--bg); z-index:10; }
   #view-notes.active { display:block; }
   /* Width constraints centralised in the desktop @media block above */
   #view-account-security.active { display:block; }
@@ -1139,10 +1387,15 @@
   #view-settings { max-width: 720px; }
 }
 /* Notes view on mobile — view sits at body level (outside #main), so it
-   doesn't inherit #main's 16px/12px padding. Match it explicitly so notes
-   don't render edge-to-edge. */
+   doesn't inherit #main's 16px/12px padding. Match the horizontal padding
+   explicitly so notes don't render edge-to-edge. Top padding is zeroed
+   because the tab bar's natural bottom edge (inside #main, with #main's
+   bottom padding already zeroed by body.notes-view-active below) already
+   gives a tight visual baseline matching every other top-level view —
+   without this, Notes shows an extra ~16px gap above the title compared
+   to Stockroom / Groceries / etc. */
 @media (max-width: 899px) {
-  #view-notes { padding: 16px 12px; }
+  #view-notes { padding: 0 12px 16px; }
   /* When Notes is active, hide the now-empty #view-content and zero #main's
      bottom padding so the empty space (otherwise ~32px) doesn't push the
      Notes header below where other tabs render. The tab bar lives in
@@ -1201,9 +1454,13 @@
 #view-account-security.active { display:block !important; }
 /* Settings view — same width as Account & Security */
 #view-settings { max-width:680px; }
-/* Ensure acc-sec rows use flex regardless of any settings overrides */
-.acc-sec-card .acc-sec-row { display:flex !important; }
-.acc-sec-card .acc-sec-row.acc-sec-row-block { flex-direction:column !important; }
+/* Ensure acc-sec rows use flex regardless of any settings overrides — but
+   skip rows that have been explicitly hidden via inline style="display:none"
+   (e.g. #household-joined-section, which is only shown when _shareState is
+   set). Without the :not() guard the !important rule forces every row
+   visible, including ones the JS specifically hid. */
+.acc-sec-card .acc-sec-row:not([style*="display:none"]):not([style*="display: none"]) { display:flex !important; }
+.acc-sec-card .acc-sec-row.acc-sec-row-block:not([style*="display:none"]):not([style*="display: none"]) { flex-direction:column !important; }
 .acc-sec-section-title { font-size:11px; font-weight:700; color:var(--muted); font-family:var(--mono); letter-spacing:1.5px; text-transform:uppercase; margin-bottom:10px; padding-left:2px; }
 .acc-sec-card { background:var(--surface); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
 .acc-sec-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 18px; border-bottom:1px solid var(--border); }
@@ -1348,14 +1605,21 @@ body.note-open { overflow: hidden; touch-action: none; }
     box-shadow: 0 24px 72px rgba(0,0,0,0.55), 0 0 0 1px var(--border);
   }
   /* Painted backdrop covering the whole viewport behind the modal.
-     Sits at -1 so the modal contents render above it. */
-  #note-editor-overlay::before {
+     Originally lived on #note-editor-overlay::before with z-index:-1, but
+     because the overlay has `transform: translate(...)` it creates a new
+     stacking context — and z-index:-1 children inside a stacking context
+     still paint ABOVE the parent's own background and BELOW the parent's
+     content. With transparent children (title input, body), the dark wash
+     bled through and made the modal interior look grey. Moving it to
+     body.note-open::before puts it outside the modal's stacking context
+     entirely, so it can never bleed in. */
+  body.note-open::before {
     content: '';
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.45);
-    z-index: -1;
-    border-radius: 0;
+    z-index: 399; /* modal is z-index 400, so this sits right behind it */
+    pointer-events: none;
   }
   /* Round the toolbar corners to match the modal */
   #note-editor-overlay > #note-editor-toolbar { border-top-left-radius: 16px; border-top-right-radius: 16px; }
@@ -1647,46 +1911,15 @@ body.note-open { overflow: hidden; touch-action: none; }
   text-overflow: ellipsis;
 }
 
-/* Tag button — sits centered under the 6-tile grid inside the overlay.
-   Same look-and-feel as the tiles but narrower and self-centered, since
-   it's a single secondary action separate from the grid. */
-.card-action-tag-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  align-self: center;
-  padding: 6px 16px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  color: var(--text);
-  font-family: var(--sans);
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, transform 0.1s;
-  min-width: 100px;
-  flex-shrink: 0;
-}
-.card-action-tag-btn:hover {
-  background: rgba(232, 168, 56, 0.14);
-  border-color: rgba(232, 168, 56, 0.4);
-}
-.card-action-tag-btn:active { transform: scale(0.96); }
-.card-action-tag-btn .icon {
-  width: 14px;
-  height: 14px;
-  color: var(--accent);
-  flex-shrink: 0;
-}
+/* .card-action-tag-btn CSS removed — the Tag button is now a regular
+   grid tile alongside the others, plus a new Share tile. Action grid
+   holds 8 tiles in a 3×3 layout (Pass 2e-c follow-up). The 9th cell
+   stays empty. */
 
 /* On compact view, action tiles get tighter */
 .compact-view .card-action-overlay { padding: 8px; gap: 6px; }
 .compact-view .card-action-tile { font-size: 10px; padding: 5px 6px; gap: 5px; }
 .compact-view .card-action-tile .icon { width: 12px; height: 12px; }
-.compact-view .card-action-tag-btn { font-size: 10px; padding: 5px 14px; }
-.compact-view .card-action-tag-btn .icon { width: 12px; height: 12px; }
 
 /* ── Item actions modal (mobile long-press) ── */
 .item-actions-modal-inner { padding: 0; overflow: hidden; }
@@ -1852,6 +2085,62 @@ body.note-open { overflow: hidden; touch-action: none; }
 .ia-list-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ia-chev { width: 14px; height: 14px; color: var(--muted); flex-shrink: 0; }
 
+/* ── Tag footer in item-actions modal ──────────────────────────────────
+   Shows current item tags as pills plus a +Tag button that opens the
+   shared card-tag-picker. Lives at the bottom of the actions modal so
+   it's reachable on mobile without scrolling past the More list. */
+.ia-tag-footer { padding-top: 4px; padding-bottom: 18px; }
+.ia-tag-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ia-tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  align-items: center;
+}
+.ia-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--sans);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.ia-tag-empty {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+.ia-tag-btn {
+  background: var(--surface2);
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  padding: 6px 14px 6px 10px;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.ia-tag-btn:hover  { background: rgba(232,168,56,0.10); border-color: rgba(232,168,56,0.40); }
+.ia-tag-btn:active { transform: scale(0.97); }
+.ia-tag-btn .icon  { width: 14px; height: 14px; color: var(--accent); }
+
 /* Mobile mobile-first: hide desktop-only meta row, keep card vertical */
 @media (max-width: 899px) {
   .card-meta-desktop { display: none; }
@@ -1940,6 +2229,56 @@ body.note-open { overflow: hidden; touch-action: none; }
   letter-spacing: 0.2px;
 }
 
+/* ── Card hero-block: hero (days-left) + optional tags ─────────────────
+   Default (desktop): block flow — the mobile-shown tags copy is hidden so
+   the hero stands alone above the bar. Tags render in their original
+   position via .card-tags-row-desktop further down.
+   Mobile (≤899px): becomes a flex row so the tag chips sit opposite the
+   days-left number, above the stock balance bar. */
+.card-hero-block { display: block; }
+.card-tags-row-mobile  { display: none; }   /* desktop: hide mobile copy */
+.card-tags-row-desktop { display: flex; }   /* desktop: show original-position copy */
+
+@media (max-width: 899px) {
+  .card-hero-block {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  /* Inside the flex row the hero shouldn't also push its own bottom margin —
+     the wrapper carries the spacing to the bar below. */
+  .card-hero-block > .card-hero,
+  .card-hero-block > .card-nodata { margin-bottom: 0; flex: 0 1 auto; }
+  /* Mobile-shown tags: pushed to the right, capped width so they never eat
+     the days number even when the user has lots of tags. */
+  .card-tags-row-mobile {
+    display: flex;
+    margin-bottom: 0;
+    justify-content: flex-end;
+    flex: 0 1 auto;
+    max-width: 60%;
+  }
+  /* Restore the gap that .card-hero used to provide above the bar. */
+  .card-hero-block { margin-bottom: 10px; }
+
+  /* Desktop-position tags row: hidden on mobile (the .card-hero-block copy
+     replaces it). */
+  .card-tags-row-desktop { display: none; }
+
+  /* "Xmo per purchase" qty pill is the per-purchase interval fallback —
+     hide it on mobile to declutter the bottom row. The same info is still
+     available in the item detail modal. */
+  .card-qty-interval { display: none; }
+  /* "X left" qty pill is also redundant on mobile — the days-left hero
+     and the slim stock bar above already communicate the same info. The
+     full count remains visible in the item detail modal. */
+  .card-qty { display: none; }
+  /* If hiding the qty pills leaves the footer with no other children,
+     collapse the now-empty footer so it doesn't add dead vertical space. */
+  .card-footer:not(:has(> *:not(.card-qty):not(.card-qty-interval))) { display: none; }
+}
+
 /* ── Tag picker modal ──────────────────────────────────────────────── */
 #card-tag-picker-modal.modal-overlay {
   position: fixed;
@@ -1989,13 +2328,74 @@ body.note-open { overflow: hidden; touch-action: none; }
 }
 
 
-/* Mobile: search at 100% on row 1, filters+sort split 50/50 on row 2 */
+/* Manage button — base styles for both desktop and mobile. Previously
+   these lived as an inline style="..." on the button element in
+   index.html, but inline styles always win over @media rules, which
+   made it impossible to centre the icon on mobile. Moving the rules
+   here so the @media block below can override them cleanly. */
+#view-stock #stock-select-btn {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  height: 36px;
+  padding: 5px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: normal;
+  cursor: pointer;
+  outline: none;
+}
+#view-stock #stock-select-btn:hover { color: var(--text); }
+
+/* Mobile: three equal-width buttons on one row in the order
+   Manage > Filters > Sort. Uses flex `order` so DOM stays as-is for
+   desktop (which has its own fixed-width rules above and keeps the
+   original Filters > Sort > Manage layout). */
 @media (max-width: 899px) {
   #view-stock #stock-search-toolbar { flex-wrap: wrap; }
-  #view-stock #stock-search-wrap   { flex: 1 1 100%; max-width: 100%; }
-  #view-stock #stock-toolbar-wrap  { flex: 1 1 calc(50% - 5px); max-width: calc(50% - 5px); }
-  #view-stock #stock-sort-wrap     { flex: 1 1 calc(50% - 5px); max-width: calc(50% - 5px); }
+  #view-stock #stock-toolbar-wrap  { flex: 1 1 calc(33.333% - 7px); max-width: calc(33.333% - 7px); order: 2; }
+  #view-stock #stock-sort-wrap     { flex: 1 1 calc(33.333% - 7px); max-width: calc(33.333% - 7px); order: 3; }
+  #view-stock #stock-select-wrap   { flex: 1 1 calc(33.333% - 7px); max-width: calc(33.333% - 7px); order: 1; }
+  /* Sort dropdown gets tight padding on mobile so "Sort: Status" still fits
+     in a third-width button without truncation. */
+  #view-stock #stock-sort-wrap #sort-select { padding-left: 8px; padding-right: 22px; }
+  /* Tighten the Manage button's horizontal padding a touch on mobile so the
+     icon + label combo fits comfortably in a 33%-width column. The icon stays
+     left-aligned, matching how Filters and Sort render their content. */
+  #view-stock #stock-select-btn { padding: 5px 8px; gap: 6px; }
 }
+
+/* Only at genuinely narrow widths (small phones, ~33% column gets too tight)
+   do we collapse the Manage button to an icon-only tile. The cutoff was
+   chosen empirically: at 480px viewport, a 33% column is ~150px including
+   gutters, which is the point where "Manage" + icon starts to crowd the
+   Filters and Sort labels. Above this width the label stays visible. */
+@media (max-width: 480px) {
+  #view-stock #stock-select-btn               { justify-content: center; padding: 5px; gap: 0; }
+  #view-stock #stock-select-btn .manage-label { display: none; }
+}
+
+/* Status filter chips inside the collapsible Filters panel show a small
+   count badge (e.g. "Critical 9"). The span is empty when the count is
+   zero — the :empty selector keeps the chip clean rather than showing
+   a phantom badge. */
+#filter-bar .filter-chip .chip-count {
+  display: inline-block;
+  margin-left: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 0;
+}
+#filter-bar .filter-chip .chip-count:empty { display: none; }
+#filter-bar .filter-chip.active .chip-count { color: inherit; }
 
 
 /* Health dashboard merged into the unified Filters bar — hide the old container */
@@ -2052,12 +2452,48 @@ body.note-open { overflow: hidden; touch-action: none; }
   border-radius: 12px;
   opacity: 0.85;
 }
+/* When collapsed: tighten the section and visually muffle it so it
+   reads as "yes the bin exists, no it isn't holding your attention". */
+.recycle-bin-section.recycle-bin-collapsed {
+  padding-bottom: 12px;
+}
+.recycle-bin-section.recycle-bin-collapsed .recycle-bin-subtitle,
+.recycle-bin-section.recycle-bin-collapsed .recycle-bin-rows {
+  display: none;
+}
+.recycle-bin-section.recycle-bin-collapsed .recycle-bin-header {
+  margin-bottom: 0;
+}
 .recycle-bin-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.recycle-bin-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.recycle-bin-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+}
+.recycle-bin-chevron .icon { width: 14px; height: 14px; }
+/* Default (expanded): chevron points down. Collapsed: rotate to point right. */
+.recycle-bin-section.recycle-bin-collapsed .recycle-bin-chevron {
+  transform: rotate(-90deg);
 }
 .recycle-bin-title {
   display: flex;
@@ -3118,6 +3554,140 @@ body.has-demo-banner #view-notes #notes-header {
 }
 .mobile-menu-item.active .icon-tab { color: #111; }
 
+/* Divider between the swappable-tab block and the fixed entries
+   (Report / Billing / Account & Security / Settings) — keeps the
+   structure scannable so users can tell that the top group are
+   tabs they could promote to the main row. */
+.mobile-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 4px;
+  border: 0;
+}
+
+/* "Edit tabs" entry at the bottom of the burger menu. Visually
+   muted so it doesn't compete with nav items — it's a meta-action,
+   not a destination. Pencil icon picks up the accent on hover to
+   signal interactivity. */
+.mobile-menu-edit-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  margin-top: 4px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+}
+.mobile-menu-edit-btn:hover {
+  background: rgba(232,168,56,0.07);
+  color: var(--text);
+  border-color: rgba(232,168,56,0.40);
+}
+.mobile-menu-edit-btn .icon-tab {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+.mobile-menu-edit-btn:hover .icon-tab { color: var(--accent); }
+
+/* ── Edit-tabs modal ───────────────────────────────────────────
+   Lets the user choose which three of six swappable views appear
+   in the mobile tab row. Each row shows a checkbox + icon + label;
+   tapping anywhere toggles selection. Selecting a 4th item auto-
+   unticks the oldest selection (FIFO) so the user always has
+   exactly three. The modal is a standard .modal-backdrop so it
+   inherits the bottom-sheet mobile styling automatically. */
+.edit-tabs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 14px 0 18px;
+}
+.edit-tabs-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+  user-select: none;
+}
+.edit-tabs-row:hover {
+  background: rgba(232,168,56,0.06);
+  border-color: rgba(232,168,56,0.30);
+}
+.edit-tabs-row.selected {
+  background: rgba(232,168,56,0.12);
+  border-color: rgba(232,168,56,0.50);
+}
+.edit-tabs-row .icon-tab {
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.edit-tabs-row-label {
+  flex: 1;
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.edit-tabs-row-position {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  background: rgba(232,168,56,0.15);
+  padding: 3px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.5px;
+}
+.edit-tabs-checkbox {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+.edit-tabs-checkbox .icon {
+  width: 14px;
+  height: 14px;
+  color: #111;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.edit-tabs-row.selected .edit-tabs-checkbox {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.edit-tabs-row.selected .edit-tabs-checkbox .icon { opacity: 1; }
+.edit-tabs-hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 0 0 6px;
+}
+
 /* Burger button refines on hover/active for a tactile feel */
 #header-burger-btn:hover,
 #header-burger-btn:active {
@@ -3147,3 +3717,2676 @@ body.has-demo-banner #view-notes #notes-header {
     height: 22px;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   NOTIFICATION SYSTEM — bell badge + dropdown panel
+   ═══════════════════════════════════════════════════════════
+   The bell sits in the header alongside the sync pill. The badge is
+   a small accent-coloured pill anchored to the top-right of the bell
+   button, showing unread count. Hidden when count is zero (display
+   toggled inline by _renderNotificationBellBadge in app.js).
+
+   The panel is a fixed-position dropdown anchored top-right under the
+   header on desktop. On mobile (≤600px) it becomes a bottom-sheet
+   taking the bottom 80% of the viewport so it's reachable with a
+   thumb. Tap-outside-to-close and Escape handled in JS. */
+
+/* Bell button — hover state for tactile feel */
+#notif-bell-btn:hover,
+#notif-bell-btn:active {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+}
+
+/* Unread count badge — anchored to the top-right corner of the bell */
+.notif-bell-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  background: var(--danger);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 99px;
+  min-width: 16px;
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  border: 1.5px solid var(--bg);
+}
+
+/* Panel container — desktop dropdown */
+.notif-panel {
+  display: none;
+  position: fixed;
+  top: 56px;
+  right: 12px;
+  width: 380px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 96px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.35);
+  z-index: 950;
+  flex-direction: column;
+  transform: translateY(-6px) scale(0.98);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.16s cubic-bezier(0.34,1.56,0.64,1),
+              opacity   0.12s ease-out;
+}
+.notif-panel.open {
+  display: flex;
+  transform: translateY(0) scale(1);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Header — title left, action buttons right, divider below */
+.notif-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.notif-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+.notif-panel-title .icon { color: var(--accent); }
+.notif-panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.notif-panel-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 8px;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.notif-panel-action-btn:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+  border-color: var(--border);
+}
+.notif-panel-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  margin-left: 2px;
+}
+.notif-panel-close:hover { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
+
+/* Scrollable body — list of notifications */
+.notif-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 6px 8px;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Section labels (Pinned / Recent) */
+.notif-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 10px 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+.notif-section-label .icon { color: var(--accent); }
+
+/* Each notification row — icon, content, actions */
+.notif-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 10px;
+  border-radius: 10px;
+  margin: 2px 4px;
+  background: transparent;
+  transition: background-color 0.15s ease;
+  border-left: 3px solid transparent;
+  touch-action: pan-y;          /* let vertical scroll through; we capture horizontal */
+  will-change: transform;        /* smoother swipe transform on mobile */
+}
+.notif-row:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
+.notif-row.unread {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-left-color: var(--accent);
+}
+.notif-row.unread:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.notif-row.pinned {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  border-left-color: var(--accent);
+}
+.notif-row.pinned.unread {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* Icon column — type-specific colour comes via accent for now */
+.notif-icon {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  margin-top: 1px;
+}
+.notif-icon .icon { width: 18px; height: 18px; }
+
+/* Content column — title + body + meta. clickable surface for jump-to-source */
+.notif-content {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+.notif-title {
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+  margin-bottom: 3px;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+.notif-body {
+  font-family: var(--sans);
+  font-size: 13.5px;
+  color: var(--muted);
+  line-height: 1.4;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+.notif-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 5px;
+  display: flex;
+  gap: 6px;
+}
+.notif-source { color: var(--muted); }
+
+/* Right-side action buttons — pin, dismiss. Show on hover on desktop;
+   always visible on touch via the @media (hover:none) override below. */
+.notif-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0.4;
+  transition: opacity 0.15s ease;
+}
+.notif-row:hover .notif-actions { opacity: 1; }
+.notif-pin-btn,
+.notif-dismiss-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.notif-pin-btn:hover,
+.notif-dismiss-btn:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+.notif-pin-btn.active {
+  color: var(--accent);
+}
+.notif-pin-btn.active:hover { color: var(--accent); }
+.notif-pin-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.notif-pin-btn:disabled:hover {
+  background: transparent;
+  color: var(--muted);
+}
+/* Bump icon sizes inside pin/dismiss buttons */
+.notif-pin-btn .icon,
+.notif-dismiss-btn .icon { width: 18px; height: 18px; }
+
+/* Touch devices: keep actions visible always (no hover) */
+@media (hover: none) {
+  .notif-actions { opacity: 1; }
+}
+
+/* ─────────────────────────────────────────────────────────
+   Context-aware action buttons inside notification rows
+   ─────────────────────────────────────────────────────────
+   Appears below the notification body, full-width strip of small
+   buttons. Wraps on narrow widths so long labels like
+   "Mark toothbrush head replaced" don't overflow. */
+.notif-ctx-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.notif-ctx-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.notif-ctx-btn:hover {
+  background: color-mix(in srgb, var(--text) 8%, var(--surface2));
+  border-color: color-mix(in srgb, var(--text) 20%, var(--border));
+}
+.notif-ctx-btn.primary {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent);
+}
+.notif-ctx-btn.primary:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.notif-ctx-btn .icon {
+  flex-shrink: 0;
+}
+
+/* Empty state */
+.notif-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--muted);
+}
+
+/* "Your next reminder" footer card */
+.notif-next-reminder {
+  margin: 0 4px;
+}
+.notif-next-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  margin: 4px 6px 8px;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 10px;
+}
+.notif-next-icon {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.notif-next-icon .icon { width: 18px; height: 18px; }
+.notif-next-content { flex: 1; min-width: 0; }
+.notif-next-title {
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+  margin-bottom: 2px;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+.notif-next-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* End-of-list terminator — visual full-stop so the user sees they've
+   reached the bottom of the notification panel. */
+.notif-end-terminator {
+  text-align: center;
+  padding: 14px 0 18px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+/* Notification history modal */
+.notif-history-modal { overflow: hidden; }
+.notif-history-body {
+  overflow-y: auto;
+  padding: 4px 6px 14px;
+  flex: 1;
+  min-height: 0;
+}
+.notif-history-sort-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.notif-history-sort-btn:hover {
+  background: color-mix(in srgb, var(--text) 8%, var(--surface2));
+  color: var(--text);
+}
+.notif-history-sort-btn.active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--accent);
+}
+.notif-history-subhead {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 10px 12px 4px;
+}
+.notif-history-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  margin: 2px 4px;
+}
+.notif-history-row:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
+/* Dismissed notifications appear in the history modal at lower opacity so
+   they read as "you already swiped this away" without disappearing. */
+.notif-history-row.notif-dismissed { opacity: 0.55; }
+.notif-history-row.notif-dismissed .notif-title { text-decoration: line-through; text-decoration-thickness: 1px; }
+.notif-dismissed-tag {
+  font-style: italic;
+  color: var(--muted);
+}
+
+/* Notification history modal overlay — element-scoped (the global
+   .modal-overlay class is not a generic implementation). Higher z-index
+   than the notification panel so it stacks above the panel on mobile
+   where you'd open History while the panel is on screen. */
+#notif-history-modal.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 1200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+#notif-history-modal.modal-overlay.active { display: flex; }
+#notif-history-modal .modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  width: 100%;
+  max-width: 560px;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+}
+/* On mobile, expand the modal to nearly full-screen */
+@media (max-width: 600px) {
+  #notif-history-modal.modal-overlay { padding: 8px; }
+  #notif-history-modal .modal { max-width: 100%; max-height: 95vh; }
+}
+
+/* Flash highlight for an element that was just navigated to from a
+   notification. Adds a temporary accent-coloured ring that pulses twice
+   so the user sees exactly which card/reminder triggered the click. */
+@keyframes notifFlashPulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 70%, transparent); }
+  40%  { box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 35%, transparent); }
+  70%  { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+.notif-flash {
+  animation: notifFlashPulse 1.6s ease-out;
+  position: relative;
+  z-index: 1;
+}
+
+/* ─────────────────────────────────────────────────────────
+   Mobile: full-screen under the app header
+   ─────────────────────────────────────────────────────────
+   Anchors directly under #app-header (56px tall on mobile) and
+   extends to the bottom of the viewport. Keeps rounded top corners
+   so the panel still reads as a distinct surface separated from the
+   title bar. Slides DOWN from the header on open (was: up from bottom).
+   safe-area-inset-bottom keeps the last row clear of the home-bar
+   gesture area on iOS PWAs and Android 3-button nav. */
+@media (max-width: 600px) {
+  .notif-panel {
+    top: 56px;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-width: 100%;
+    max-height: none;
+    height: calc(100vh - 56px);
+    height: calc(100dvh - 56px); /* dvh accounts for mobile chrome bars when supported */
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+    /* Start fully off-screen above the visible panel area, then slide down.
+       Combined with the snappier mobile-only transition below this gives
+       the quick top-to-bottom drop the user expects. */
+    transform: translateY(-100%);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+    transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+                opacity   0.12s ease-out;
+  }
+  .notif-panel.open {
+    transform: translateY(0);
+  }
+  .notif-panel-header {
+    padding: 14px 16px;
+  }
+  /* Hide labels on action buttons to save space — icons only */
+  .notif-panel-action-btn span { display: none; }
+  .notif-panel-action-btn {
+    padding: 6px 8px;
+  }
+  .notif-row {
+    padding: 12px 10px;
+  }
+  .notif-title { font-size: 16px; }
+  .notif-body  { font-size: 14px; }
+  /* FAB sits at z-index 1100 by default which is ABOVE the notification
+     panel (z-index 950). When the panel is open on mobile we want it
+     behind. Push the FAB below the panel's layer while the panel is open. */
+  body.notif-panel-open #fab-btn,
+  body.notif-panel-open #fab-container { z-index: 900 !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   NOTIFICATION SIDEBAR BUTTON — desktop entry point
+   ═══════════════════════════════════════════════════════════
+   On desktop (≥900px) the header is hidden, so the sidebar bell is the
+   only way to reach notifications. The button reuses the existing
+   .app-nav-link styling for hover/active states; the badge is pushed to
+   the right end via margin-left:auto so it sits in the same spot as a
+   notification dot in macOS/iOS sidebars. */
+.notif-sidebar-badge {
+  margin-left: auto;
+  background: var(--danger);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 99px;
+  min-width: 18px;
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+/* Pulse the badge briefly when its content changes (handled via JS by
+   toggling a class). For now we just style the steady state. */
+#notif-sidebar-btn { position: relative; }
+
+/* ═══════════════════════════════════════════════════════════
+   NOTIFICATION PANEL — desktop positioning override
+   ═══════════════════════════════════════════════════════════
+   On desktop (≥900px) the header is hidden and the panel is triggered
+   from the sidebar. Anchoring top-right (the base style) would leave the
+   panel detached from its trigger. Anchor near the sidebar instead so
+   the visual connection is clear. The sidebar is fixed at left:0 width
+   220px, so we anchor at left:224px (just past the sidebar's right edge)
+   with a top offset that places it level with the bottom of the sidebar
+   nav items.
+
+   The mobile bottom-sheet rule below (max-width:600px) is unchanged. */
+@media (min-width: 900px) {
+  .notif-panel {
+    top: auto;
+    bottom: 16px;
+    left: 224px;
+    right: auto;
+    width: 380px;
+    max-height: calc(100vh - 32px);
+    box-shadow: 0 12px 36px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.35);
+    /* Slide-in direction is left-to-right on desktop to feel anchored to
+       the sidebar; override the base translateY-from-top animation. */
+    transform: translateX(-8px) scale(0.98);
+  }
+  .notif-panel.open {
+    transform: translateX(0) scale(1);
+  }
+  /* Header bell badge is invisible on desktop because the header itself
+     is display:none, but make it explicit so the inline display=inline-flex
+     applied by JS doesn't accidentally show it. */
+  #app-header #notif-bell-badge { display: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   GLOBAL SEARCH
+   Opened by:
+   - Mobile: #global-search-btn in the app header
+   - Desktop: #global-search-nav-btn in the sidebar
+   See openGlobalSearch / runGlobalSearch in app.js for behaviour.
+═══════════════════════════════════════════════════════════════════ */
+
+/* ── Sidebar search button (desktop only) ──
+   Designed to read like a lighter sibling of the Connected pill below it:
+   fully rounded (pill shape, matching .sync-pill's 99px), slightly smaller
+   than the full-height nav links, with a darker fill so it sits visually
+   distinct from the .app-nav-link entries above it. */
+.app-nav-search-wrap {
+  padding: 8px;
+  border-top: 1px solid var(--glass-border);
+}
+.app-nav-search-btn {
+  width: 100%;
+  position: relative;
+  /* Override .app-nav-link defaults — shorter, pill-shaped, darker bg. */
+  padding: 7px 14px !important;
+  border-radius: 99px !important;
+  border: 1px solid var(--border) !important;
+  background: var(--bg) !important;
+  font-size: 13px !important;
+}
+.app-nav-search-btn:hover { background: var(--surface2) !important; }
+
+/* ── Modal shell ── */
+.global-search-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1180;
+  /* Above modals (200–950) and below toasts (~99998). The notif-history
+     modal sits at 1200; we deliberately go just below so search-from-notif
+     would close the notif modal first if both were somehow open. */
+  align-items: flex-start;
+  justify-content: center;
+  padding: 80px 16px 16px;
+}
+.global-search-modal.open { display: flex; }
+.global-search-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(6px) saturate(120%);
+  -webkit-backdrop-filter: blur(6px) saturate(120%);
+}
+.global-search-panel {
+  position: relative;
+  width: 100%;
+  max-width: 600px;
+  max-height: calc(100vh - 96px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(0,0,0,0.55), 0 6px 16px rgba(0,0,0,0.35);
+  overflow: hidden;
+  animation: globalSearchIn 0.18s cubic-bezier(0.34,1.56,0.64,1);
+}
+@keyframes globalSearchIn {
+  from { opacity: 0; transform: translateY(-12px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+
+/* ── Search input row ── */
+.global-search-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* Slightly tighter than the original 14px/16px — on desktop this row is
+     the only "header" of the modal and doesn't need as much breathing room
+     as a mobile bottom-sheet handle would. */
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  /* Darker than the panel surface so the input area reads as a distinct
+     editable field rather than blending into the result list below. */
+  background: var(--bg);
+  flex-shrink: 0;
+}
+.global-search-input-icon { color: var(--muted); flex-shrink: 0; }
+#global-search-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 16px;
+  /* Disable the iOS auto-zoom on input focus by ensuring font-size ≥ 16px. */
+  padding: 2px 0;
+}
+#global-search-input::placeholder { color: var(--muted); }
+/* Belt-and-braces: kill the native search-input clear X on browsers that
+   render one. We use type="text" already, but if anyone ever flips this
+   back to type="search" the X won't reappear. */
+#global-search-input::-webkit-search-cancel-button,
+#global-search-input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
+.global-search-close {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 6px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+}
+.global-search-close:hover { background: var(--surface2); color: var(--text); }
+
+/* ── Results container ── */
+.global-search-results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0 12px;
+}
+.global-search-empty {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 28px 16px;
+}
+.global-search-section {
+  padding: 6px 0 4px;
+}
+.global-search-section-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 10px 16px 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.global-search-section-title .icon { width: 13px; height: 13px; color: var(--accent); }
+.global-search-section-title.current { color: var(--accent); }
+.global-search-section-more {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 6px 16px 4px;
+  font-style: italic;
+}
+.global-search-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background 0.1s, border-left-color 0.1s;
+}
+.global-search-row:hover,
+.global-search-row.active {
+  background: var(--surface2);
+  border-left-color: var(--accent);
+}
+.global-search-row-icon {
+  color: var(--muted);
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+.global-search-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.global-search-row-title {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.global-search-row-sub {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.global-search-row mark {
+  background: rgba(232,168,56,0.25);
+  color: var(--text);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* ── State badges + faded rows for archived / deleted matches ──
+   Filter bar at the bottom of the result panel can reveal these. Faded
+   row tint + a small badge in the title tells the user this isn't a
+   live record. */
+.global-search-row.is-state-archived,
+.global-search-row.is-state-deleted {
+  opacity: 0.62;
+}
+.global-search-row.is-state-archived .global-search-row-title,
+.global-search-row.is-state-deleted .global-search-row-title {
+  font-weight: 500; /* slightly lighter than the 600 default */
+}
+.global-search-row.is-state-deleted .global-search-row-title {
+  text-decoration: line-through;
+  text-decoration-color: var(--muted);
+}
+.search-row-state-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+.search-row-state-badge.state-archived {
+  background: rgba(140,140,140,0.18);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.search-row-state-badge.state-deleted {
+  background: rgba(220,80,80,0.15);
+  color: #c45757;
+  border: 1px solid rgba(220,80,80,0.30);
+}
+
+/* ── Grocery aggregation: "Also in N other lists" disclosure pill ──
+   Shown below the sub-line when the same item name appears in multiple
+   grocery lists. Tap to reveal an inline list of the other list names,
+   each tappable to navigate. */
+.search-row-more-lists {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 2px 8px 2px 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.search-row-more-lists:hover {
+  background: var(--surface2);
+  color: var(--text);
+  border-color: var(--accent);
+}
+.search-row-more-lists svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.search-row-more-lists.expanded svg { transform: rotate(180deg); }
+
+.search-row-other-lists {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+}
+.search-row-other-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+  transition: background 0.1s;
+}
+.search-row-other-list-item:hover { background: var(--surface2); }
+.search-row-other-list-item svg {
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.search-row-other-list-item.is-state-deleted { opacity: 0.6; }
+.search-row-other-list-item.is-state-deleted span:first-of-type {
+  text-decoration: line-through;
+  text-decoration-color: var(--muted);
+}
+
+/* ── Filter bar at the bottom of the results panel ──
+   Two checkboxes: Include archived (N), Include deleted (N). Each
+   appears only when its count is non-zero. Re-runs the search on
+   toggle, preserving scroll. */
+.global-search-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  bottom: 0;
+}
+.global-search-filter-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.global-search-filter-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--text);
+}
+.global-search-filter-box input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  margin: 0;
+}
+.global-search-filter-box em {
+  color: var(--muted);
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.global-search-filter-box:hover span { color: var(--accent); }
+
+/* When the filter bar is inside the omnibox panel, drop the sticky
+   positioning — the omnibox-results container is already a fixed-
+   height scroll panel and sticky inside that double-paints on iOS. */
+.omnibox-results .global-search-filter-bar {
+  position: static;
+}
+
+/* ── Omnibox workflow panels (Order / Delivered) ──
+   Typed shortcuts (`order`, `delivered`) hijack the results panel for
+   stockroom bulk flows. Header + chooser pills (Order only) + list of
+   rows + footer with action buttons. Designed to drop into both the
+   legacy global-search modal AND the omnibox results container. */
+.omnibox-workflow-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 100%;
+}
+.omnibox-workflow-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.omnibox-workflow-header > svg { color: var(--accent); flex-shrink: 0; margin-top: 2px; }
+.omnibox-workflow-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+.omnibox-workflow-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+.omnibox-workflow-back {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+.omnibox-workflow-back:hover { background: var(--surface2); border-color: var(--accent); }
+.omnibox-workflow-back svg { width: 14px; height: 14px; }
+
+/* Chooser pills — 4 large buttons for the Order workflow stage 1 */
+.omnibox-workflow-chooser {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 12px 16px;
+}
+.omnibox-workflow-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text);
+  text-align: left;
+  transition: background 0.1s, border-color 0.1s, transform 0.08s;
+}
+.omnibox-workflow-pill:not(:disabled):hover {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+.omnibox-workflow-pill:not(:disabled):active { transform: scale(0.98); }
+.omnibox-workflow-pill:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.omnibox-workflow-pill svg {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.omnibox-workflow-pill-label {
+  font-size: 13px;
+  font-weight: 700;
+}
+.omnibox-workflow-pill-count {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--muted);
+}
+
+/* List of items in stage 2 (Order) or the only stage (Delivery) */
+.omnibox-workflow-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 4px 0;
+}
+.omnibox-workflow-section-label {
+  padding: 8px 16px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.omnibox-workflow-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.omnibox-workflow-row:last-child { border-bottom: none; }
+.omnibox-workflow-row.is-selected { background: rgba(232,168,56,0.05); }
+.omnibox-workflow-row-check {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.omnibox-workflow-row-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+.omnibox-workflow-row-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.omnibox-workflow-row-icon svg { width: 16px; height: 16px; }
+.omnibox-workflow-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.omnibox-workflow-row-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.omnibox-workflow-row-sub {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* "Buy now" link inside an Order-panel row's sub-line. Inline pill that
+   opens the item's URL in a new tab. Stops propagation so the link tap
+   doesn't toggle the row's checkbox or trigger any re-render side
+   effect. Offline-only items (no URL) just show plain store name. */
+.omnibox-workflow-row-buylink {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent);
+  text-decoration: none;
+  font-family: var(--mono);
+  font-weight: 600;
+  border-bottom: 1px dashed transparent;
+  transition: border-color 0.1s, color 0.1s;
+}
+.omnibox-workflow-row-buylink:hover {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.omnibox-workflow-row-buylink svg {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+}
+.omnibox-workflow-row-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+.omnibox-workflow-row-badge.state-critical {
+  background: rgba(220,80,80,0.15);
+  color: #c45757;
+  border: 1px solid rgba(220,80,80,0.30);
+}
+.omnibox-workflow-row-badge.state-low {
+  background: rgba(232,168,56,0.18);
+  color: #c47a1f;
+  border: 1px solid rgba(232,168,56,0.30);
+}
+
+/* Qty input on Order rows */
+.omnibox-workflow-row-qty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.omnibox-workflow-row-qty label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 700;
+}
+.omnibox-workflow-row-qty input {
+  width: 56px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--mono);
+  text-align: center;
+}
+.omnibox-workflow-row-qty input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Action button on Delivery rows */
+.omnibox-workflow-row-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+.omnibox-workflow-row-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #111;
+}
+.omnibox-workflow-row-btn svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+.omnibox-workflow-row-btn.btn-start-using {
+  background: rgba(76,187,138,0.15);
+  border-color: rgba(76,187,138,0.40);
+  color: var(--ok);
+}
+.omnibox-workflow-row-btn.btn-start-using:hover {
+  background: var(--ok);
+  color: #fff;
+  border-color: var(--ok);
+}
+
+/* Footer with action buttons */
+.omnibox-workflow-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+/* Narrow viewports: chooser stacks single column */
+@media (max-width: 520px) {
+  .omnibox-workflow-chooser { grid-template-columns: 1fr; }
+}
+
+/* ── Search chips — rich inline cards for direct-hit Budget entities ──
+   Account chips show balance + Update/Edit; category chips show last 3
+   transactions + Add/View all/Edit. Sized to fit naturally between plain
+   result rows; on mobile (omnibox-panel widths) the action row wraps. */
+.search-chip {
+  margin: 6px 12px;
+  padding: 10px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+}
+.search-chip-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  min-width: 0;
+}
+.search-chip-head:hover .search-chip-title { color: var(--accent); }
+.search-chip-icon {
+  color: var(--accent);
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.search-chip-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+}
+.search-chip-head-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.search-chip-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-chip-title mark {
+  background: rgba(232,168,56,0.25);
+  color: var(--text);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.search-chip-sub {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-chip-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.search-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+.search-chip-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #111;
+}
+.search-chip-btn svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+/* Transaction mini-rows inside a category chip */
+.search-chip-txlist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+}
+.search-chip-tx {
+  display: grid;
+  grid-template-columns: 80px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.search-chip-tx:hover { background: var(--surface2); }
+.search-chip-tx-date {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+.search-chip-tx-where {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-chip-tx-amount {
+  font-size: 12px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-weight: 600;
+  text-align: right;
+}
+.search-chip-empty {
+  padding: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* "Defaults to <category>" banner inside the quick-add modal, shown when
+   the modal is opened from a search chip's "Add new" button. */
+.quick-add-prefill-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text);
+}
+.quick-add-prefill-banner svg { color: var(--accent); }
+.quick-add-prefill-banner span { flex: 1; }
+.quick-add-prefill-banner strong { color: var(--accent); }
+.quick-add-prefill-clear {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.quick-add-prefill-clear:hover { color: var(--text); background: var(--surface); }
+
+/* ── Mobile: drop-from-top half-screen panel ──
+   Anchored to the top so the Android keyboard (which inflates from the
+   bottom) doesn't cover the search input. Fixed at 50vh max so results
+   are scrollable inside the panel while the bottom half of the screen
+   shows the blurred-out app behind. body.global-search-open (set by
+   openGlobalSearch) locks background scrolling so swipes inside the
+   results don't bleed through to the app underneath. */
+@media (max-width: 899px) {
+  .global-search-modal {
+    /* Top-aligned, full-width — the panel itself controls its own height */
+    padding: 0;
+    align-items: flex-start;
+    justify-content: stretch;
+  }
+  .global-search-panel {
+    max-width: 100%;
+    width: 100%;
+    height: 50vh;
+    max-height: 50vh;
+    border-radius: 0 0 16px 16px;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+    /* Hand the results their own scroll container — see .global-search-
+       results below. The panel itself doesn't scroll, only the inner
+       results list does, so the input row stays pinned at the top. */
+  }
+  @keyframes globalSearchIn {
+    from { opacity: 0.6; transform: translateY(-20px); }
+    to   { opacity: 1;   transform: translateY(0); }
+  }
+}
+/* Body scroll lock while the search modal is open. Mirrors the body.note-
+   open pattern used for the note editor — prevents the app behind the
+   modal from scrolling when the user swipes within the search results. */
+body.global-search-open { overflow: hidden; touch-action: none; }
+
+/* ── Header search button placement on mobile ──
+   The new #global-search-btn sits between sync-pill and notif-bell. Order
+   values are set in the @media (max-width: 699px) block above alongside
+   the other header cluster items. Desktop hides this button entirely —
+   the sidebar search button takes over. */
+@media (min-width: 900px) {
+  #global-search-btn { display: none; }
+}
+/* Desktop sidebar search wrap only shows when the sidebar itself shows. The
+   sidebar is desktop-only (min-width: 900px). On mobile the wrap is hidden
+   alongside the rest of the sidebar via the existing #app-nav rules. */
+@media (max-width: 899px) {
+  .app-nav-search-wrap { display: none; }
+}
+
+/* ─── Bulk multi-select mode (Pass 2a generic) ───────────────────────────
+   Body class .bulk-select-mode is set whenever ANY section is in bulk-
+   select mode. The action bar (#bulk-select-bar) lives at body level and
+   is shared across all sections. Stockroom is currently the only wired
+   section; passes 2b/c/d add groceries / reminders / spends.
+   Per-section variant classes (.bulk-select-mode-stock, -grocery, etc.)
+   let each section add scoped overrides if needed (e.g. hide a tab-
+   specific FAB, tweak which child elements respond to hover). */
+body.bulk-select-mode .item-card { cursor: pointer; transition: outline 0.12s; }
+body.bulk-select-mode .item-card:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.item-card.selected { outline: 2px solid var(--accent); outline-offset: -2px; background: rgba(232,168,56,0.05); }
+/* Card per-item action menus + swipe-hints are suppressed in select mode
+   so taps go straight to selection toggle. */
+body.bulk-select-mode .card-actions,
+body.bulk-select-mode .swipe-hint { display: none !important; }
+/* Hide the existing FAB when any select mode is active; the action bar
+   takes over the same role. */
+body.bulk-select-mode #fab-btn { display: none !important; }
+
+.bulk-select-bar {
+  /* Sticky on desktop: clings to the bottom of the content section when
+     content is short, anchors to viewport bottom when content overflows
+     and the user scrolls. Mounts inside #main (see _renderBulkSelectBar)
+     so it's centered against the content column, not the full window.
+     Mobile override below switches to position:fixed full-width — that's
+     the conventional pattern there given the bottom tab bar. */
+  position: sticky;
+  bottom: 16px;
+  z-index: 700;
+  /* Width fits content; centered via auto margins. Tight top margin so
+     the bar anchors visually to the bottom of the section's content
+     rather than floating in empty space below. */
+  margin: 12px auto 16px;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--surface);
+  /* Accent (amber/orange) outline + glow so it's immediately obvious that
+     manage / multi-select mode is active. Matches the same accent applied
+     to the section's Manage button below. */
+  border: 2px solid var(--accent);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 4px rgba(232,168,56,0.12);
+  backdrop-filter: blur(6px);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+/* Manage-button "active" highlight — the trigger button that put us into
+   bulk-select mode should match the orange outline of the action bar so
+   the user can see at a glance that the mode is engaged. We can't easily
+   re-target the exact button that was clicked, so instead we light up the
+   Manage button(s) inside whichever section is currently in select mode.
+   Each section has a clear scoping selector (the `.bulk-select-mode-<key>`
+   body class together with the section's view container or a button id). */
+
+/* Stockroom: dedicated #stock-select-btn lives inside #view-stock. */
+body.bulk-select-mode-stock #view-stock #stock-select-btn {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(232,168,56,0.08);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Generic .btn.btn-ghost.btn-sm Manage buttons inside the relevant view
+   containers — covers Groceries (manage / share), Reminders (manage), and
+   the Budget Spend section's Manage Categories button. Targeting the
+   onclick attribute lets us light up only the specific Manage entry-point
+   button, not every ghost button in the section. */
+body.bulk-select-mode-grocery #view-grocery .btn.btn-ghost[onclick*="toggleBulkSelectMode('grocery')"],
+body.bulk-select-mode-reminder #view-reminders .btn.btn-ghost[onclick*="toggleBulkSelectMode('reminder')"],
+body.bulk-select-mode-category #view-budget .btn.btn-ghost[onclick*="toggleBulkSelectMode('category')"],
+body.bulk-select-mode-category #budget-cat-modal .btn.btn-ghost[onclick*="toggleBulkSelectMode('category')"] {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+  background: rgba(232,168,56,0.08) !important;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.bulk-select-bar-count {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--muted);
+  padding-right: 8px;
+  border-right: 1px solid var(--border);
+  margin-right: 4px;
+  white-space: nowrap;
+}
+@media (max-width: 899px) {
+  .bulk-select-bar {
+    /* On mobile, revert to fixed full-width — sticky inside a scrolling
+       content area is cramped on phones, and the existing tab bar at
+       the bottom is a familiar reference point. */
+    position: fixed;
+    margin: 0;
+    width: auto;
+    bottom: 12px;
+    left: 8px;
+    right: 8px;
+    transform: none;
+    max-width: none;
+    border-radius: 16px;
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+}
+
+/* ─── Grocery list picker — bulk-select mode (Pass 2b) ──────────────────
+   When body has .bulk-select-mode-grocery, the per-card action buttons
+   (pin / edit / delete) and the per-list sharing indicator are hidden so
+   the only interaction with a card is tap-to-toggle-selection. Cards get
+   the same .selected outline + accent tint as Stockroom cards via the
+   shared body.bulk-select-mode rules below the section.
+   Note: .item-card.selected CSS already applies to the .selected class
+   — the .grocery-picker-card class doesn't pick those rules up, so we
+   add an equivalent rule for that class here. */
+body.bulk-select-mode-grocery .grocery-picker-card { cursor: pointer; transition: outline 0.12s; }
+body.bulk-select-mode-grocery .grocery-picker-card:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.grocery-picker-card.selected { outline: 2px solid var(--accent); outline-offset: -2px; background: rgba(232,168,56,0.05); }
+/* Suppress per-card buttons in select mode — the action bar's bulk
+   Delete / Share covers their function across the selection. */
+body.bulk-select-mode-grocery .grocery-picker-card-actions { display: none !important; }
+
+/* ─── Reminder cards — bulk-select mode (Pass 2c) ──────────────────────
+   Standalone reminder cards get the same .selected outline + accent tint
+   as Stockroom cards. Item-attached cards (data-bulk-disabled) grey out
+   to signal they aren't selectable here — the user has to go to the
+   item editor in Stockroom to override their sharing.
+   The per-card action row (Mark replaced / Edit / Delete chip) is
+   suppressed in select mode so taps go to selection toggle only. */
+body.bulk-select-mode-reminder .reminder-card { cursor: pointer; transition: outline 0.12s; }
+body.bulk-select-mode-reminder .reminder-card:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.reminder-card.selected { outline: 2px solid var(--accent); outline-offset: -2px; background: rgba(232,168,56,0.05); }
+/* Item-attached cards aren't selectable — visually grey out and disable
+   the hover affordance so the user knows. They still respond to clicks
+   to open the timeline. */
+body.bulk-select-mode-reminder [data-bulk-disabled="true"] {
+  opacity: 0.45;
+  pointer-events: auto; /* keep clicks working for timeline */
+}
+body.bulk-select-mode-reminder [data-bulk-disabled="true"]:hover {
+  outline: none;
+}
+/* Hide the per-card action buttons row in select mode — bulk Delete +
+   bulk Share in the action bar cover their function. */
+body.bulk-select-mode-reminder .reminder-card-actions { display: none !important; }
+body.bulk-select-mode-reminder [data-bulk-disabled="true"] .reminder-card-actions { display: none !important; }
+
+/* Spend-tx-row bulk-select CSS removed in Pass 2d-rollback. The unit of
+   share for budget data is now the CATEGORY (Pass 2e). Pass 2e-c will
+   add the equivalent .bulk-select-mode-category scoped rules. */
+
+/* ─── Budget categories — bulk-select mode (Pass 2e-c) ───────────────────
+   Two render surfaces share this section key: the Spend view's tile
+   row (.budget-cat-tile) and the Manage Categories list rows
+   (.bill-row.budget-cat-row). Both get the same .selected outline +
+   accent tint to read as "picked" regardless of which surface the user
+   is on. Class name matches the other sections (stock/grocery/reminder)
+   for consistency with toggleBulkSelection's class toggle. */
+
+/* Spend-view tiles */
+body.bulk-select-mode-category .budget-cat-tile { cursor: pointer; transition: outline 0.12s; }
+body.bulk-select-mode-category .budget-cat-tile:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.budget-cat-tile.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: rgba(232,168,56,0.08);
+}
+/* In bulk mode, suppress the is-filtered styling so a tile that's both
+   filtered AND selected reads as just-selected. Avoids dual-outline
+   confusion. Filter state still exists in memory; this only affects
+   the visual. */
+body.bulk-select-mode-category .budget-cat-tile.is-filtered:not(.selected) {
+  outline: none;
+}
+
+/* Manage Categories rows */
+body.bulk-select-mode-category .budget-cat-row { cursor: pointer; transition: outline 0.12s; }
+body.bulk-select-mode-category .budget-cat-row:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.budget-cat-row.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: rgba(232,168,56,0.08);
+}
+/* Hide per-row action buttons (Edit / Unarchive icon) in select mode
+   so taps go straight to selection toggle. The action bar covers the
+   bulk equivalent of these actions. */
+body.bulk-select-mode-category .budget-cat-row .bill-actions { display: none !important; }
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 1
+   Persistent top-of-app input bar. Collapsed = ~44px single-line
+   field. Focused/typing = expanded panel with live search results
+   above and action buttons (Search/Stockroom/Groceries/Reminders/
+   Notes/Spend) at the bottom.
+
+   Reuses the .global-search-* result row classes for the inner result
+   list so we don't duplicate styling — runGlobalSearch's renderer just
+   targets #omnibox-results instead of #global-search-results.
+
+   Mobile (<900px): omnibox sits below #app-header. When expanded,
+   covers from below the header to mid-screen (max-height: 70vh).
+   Desktop (≥900px): omnibox sits at top of #main, sidebar already
+   handles primary nav. Expanded panel anchors below the input row.
+═══════════════════════════════════════════════════════════════════ */
+
+/* ── Container ── */
+.omnibox {
+  /* Sticky so it stays at the top of the viewport as the user scrolls.
+     On mobile it sits below the 56px #app-header (which is also sticky
+     at top:0, z-index 100). We sit at top:56px to land just under it.
+     On desktop the header is hidden — see media query below.
+     When expanded, the .omnibox itself flips to position:fixed so the
+     panel overlays the app instead of pushing content down — see the
+     [data-state="expanded"] block. */
+  position: sticky;
+  top: 56px;
+  z-index: 95;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.omnibox[data-state="expanded"] {
+  /* Overlay mode: float on top of the page so nothing below shifts when
+     the panel opens. left/right take the same horizontal extents as the
+     sticky position would. The blur overlay (#omnibox-scrim) sits behind
+     the omnibox and renders the blurred view of the app underneath. */
+  position: fixed;
+  left: 0;
+  right: 0;
+  /* top stays at 56px on mobile (under the app header) and 0 on desktop
+     (handled in the media query). The desktop media query also restores
+     left:220px so the sidebar isn't covered. */
+  border-bottom-color: transparent;
+}
+
+/* Blur scrim — rendered as a sibling element via JS when the omnibox
+   expands. backdrop-filter blurs whatever's visible behind it, giving
+   the "rest of app is blurred not darkened" effect Pete asked for.
+   The scrim is its own element so it can absorb taps to dismiss the
+   panel without interfering with the omnibox's own pointer events. */
+#omnibox-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 94; /* one less than .omnibox */
+  background: rgba(15,17,23,0.18);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease-out;
+}
+body.omnibox-expanded #omnibox-scrim {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Body scroll-lock while expanded — keeps the app underneath frozen so
+   only the omnibox results scroll. Applied to <html> too because some
+   mobile browsers (iOS Safari) scroll the html element rather than body. */
+html.omnibox-locked,
+body.omnibox-expanded {
+  overflow: hidden;
+}
+
+/* ── Input row (always visible) ── */
+.omnibox-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.omnibox-input-icon {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+#omnibox-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--sans);
+  /* iOS auto-zooms inputs <16px — keep at 16px to avoid the zoom flicker. */
+  font-size: 16px;
+  line-height: 1.4;
+  padding: 4px 0;
+  resize: none;
+  overflow: hidden;       /* hide scrollbars; height is JS-controlled */
+  max-height: 96px;       /* ≈4 lines at 16px/1.4 */
+}
+#omnibox-input::placeholder { color: var(--muted); }
+
+.omnibox-clear {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 6px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.omnibox-clear:hover { background: var(--surface2); color: var(--text); }
+
+/* ── Expanded panel ── */
+/* Hidden by default; data-state="expanded" reveals it. */
+.omnibox-panel {
+  display: none;
+  flex-direction: column;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  /* Box-shadow at the bottom makes the panel feel like it floats over
+     the content beneath. Subtle — matches the .global-search-panel feel. */
+  box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+}
+.omnibox[data-state="expanded"] .omnibox-panel {
+  display: flex;
+}
+
+/* Results pane reuses .global-search-* row classes so we don't duplicate
+   the markup that runGlobalSearch emits. We just give the wrapper a
+   bounded max-height so it scrolls instead of pushing the action
+   buttons off-screen. */
+.omnibox-results {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  max-height: 50vh;
+  min-height: 0;
+}
+.omnibox-empty {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 24px 16px;
+}
+
+/* Re-skin .global-search-section etc. when they appear inside #omnibox-
+   results. The classes are identical — they just need the slight
+   padding tweak because we're not inside a modal anymore. */
+.omnibox-results .global-search-section { padding: 4px 0 2px; }
+.omnibox-results .global-search-section-title { padding: 8px 14px 4px; }
+.omnibox-results .global-search-row { padding: 8px 14px; }
+
+/* ── Action buttons ─────────────────────────────────────────────────
+   The action row can adopt one of three layouts via data-layout on the
+   .omnibox-actions container. This lets us prototype placement without
+   touching markup or JS. Defaults to "chips" (matches the historical
+   wrapping-row design). Pete to choose one; we drop the others later.
+
+   Common rules below apply regardless of layout. Layout-specific blocks
+   follow further down. */
+.omnibox-actions {
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.omnibox-action {
+  /* Icon-LEFT-of-text in every layout — the source order in index.html is
+     <svg> then text, and `inline-flex; align-items:center` gives us the
+     horizontal arrangement automatically. Explicit `flex-direction:row`
+     here so a stray override from any future layout block can't accidentally
+     stack icon-above-text. */
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  font-family: var(--sans);
+  /* Match the desktop tab button font-size exactly (.tab is 13px / 700 on
+     desktop, 11px on mobile — see the @media (max-width: 899px) block for
+     the mobile bump-down). */
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.12s;
+  white-space: nowrap;
+  text-align: left;
+}
+.omnibox-action:hover {
+  background: var(--surface);
+  border-color: var(--muted);
+}
+.omnibox-action:active {
+  transform: scale(0.97);
+}
+.omnibox-action .icon {
+  /* Icon size matches .icon-tab in tabs (22px desktop, 18px mobile) but
+     scaled down slightly so a 13px text label doesn't get dominated.
+     Tweak together if Pete wants smaller. */
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+/* Disabled state — used by intent detection. */
+.omnibox-action:disabled,
+.omnibox-action[data-disabled="true"] {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+/* Detected primary action — highlighted with accent fill. */
+.omnibox-action[data-primary="true"] {
+  background: var(--accent);
+  color: #111;
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px rgba(232,168,56,0.3);
+}
+.omnibox-action[data-primary="true"] .icon { color: #111; }
+
+/* ── Layout A: wrapping chip row (default; current/historical) ──
+   Compact pills that wrap to a second row at narrow widths. Familiar
+   from search overlays in Notion / Linear. Best when the actions are
+   secondary to the live results above. */
+.omnibox-actions,
+.omnibox-actions[data-layout="chips"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px;
+}
+
+/* ── Layout B: 3-column grid (the "previous design" from the screenshot,
+   updated for icon-left + tab-size text). Each cell stretches to fill its
+   column and tap targets are uniformly large — easy to hit on mobile. */
+.omnibox-actions[data-layout="grid"] {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 12px 14px;
+}
+.omnibox-actions[data-layout="grid"] .omnibox-action {
+  justify-content: center;   /* centre icon+label inside the grid cell */
+  padding: 14px 10px;
+}
+
+/* ── Layout C: vertical command list (Spotlight / Raycast style). Each
+   action a full-width row with icon on the left and any data-hint pinned
+   to the right. Reads as commands; works well with the hint system. */
+.omnibox-actions[data-layout="list"] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+}
+.omnibox-actions[data-layout="list"] .omnibox-action {
+  width: 100%;
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  border-bottom-color: transparent;
+  background: transparent;
+  padding: 12px 18px;
+  /* Hints (when present via the data-hint attribute) shift right via
+     margin-left:auto on the ::after pseudo, see Pass-2 styling below. */
+}
+.omnibox-actions[data-layout="list"] .omnibox-action:hover {
+  background: var(--surface);
+  border-bottom-color: var(--border);
+}
+.omnibox-actions[data-layout="list"] .omnibox-action[data-primary="true"] {
+  background: rgba(232,168,56,0.12);
+  color: var(--text);
+  box-shadow: none;
+}
+.omnibox-actions[data-layout="list"] .omnibox-action[data-primary="true"] .icon {
+  color: var(--accent);
+}
+
+/* ── Mobile (<900px) ── */
+@media (max-width: 899px) {
+  /* On mobile the omnibox sits below the 56px header. When expanded,
+     limit results height so the input + actions stay visible and we
+     don't blow past the keyboard's safe area. */
+  .omnibox[data-state="expanded"] .omnibox-results {
+    max-height: 40vh;
+  }
+  .omnibox-input-row { padding: 7px 12px; }
+  /* Action button text drops to 11px to match the mobile tab buttons
+     (see .tab block at line ~647). Icons scale slightly down too so
+     they don't dominate the smaller label. */
+  .omnibox-action { font-size: 11px; font-weight: 700; }
+  .omnibox-action .icon { width: 14px; height: 14px; }
+  /* Layout-specific mobile paddings */
+  .omnibox-actions[data-layout="chips"] { padding: 8px 10px; gap: 5px; }
+  .omnibox-actions[data-layout="chips"] .omnibox-action { padding: 7px 10px; }
+  .omnibox-actions[data-layout="grid"] { padding: 10px 10px; gap: 6px; }
+  .omnibox-actions[data-layout="grid"] .omnibox-action { padding: 12px 6px; }
+  .omnibox-actions[data-layout="list"] .omnibox-action { padding: 11px 14px; }
+}
+
+/* ── Desktop (≥900px) ── */
+@media (min-width: 900px) {
+  /* Header is hidden on desktop (sidebar replaces it), so the omnibox
+     sits at the very top. The sidebar (220px wide) is fixed-position,
+     so the omnibox needs to sit to the right of it. The body of #main
+     already has margin-left: 220px to clear the sidebar; we want the
+     omnibox to match that. */
+  .omnibox {
+    top: 0;
+    margin-left: 220px;
+  }
+  /* When expanded (position:fixed), margin-left no longer applies the
+     way it does on a sticky element — left/right are the explicit
+     positioning anchors. Set left to 220px so the sidebar stays
+     uncovered, and clear the margin. */
+  .omnibox[data-state="expanded"] {
+    margin-left: 0;
+    left: 220px;
+    right: 0;
+    top: 0;
+  }
+  /* The blur scrim also needs to clear the sidebar on desktop so the
+     sidebar nav stays usable while the omnibox is open. */
+  #omnibox-scrim {
+    left: 220px;
+  }
+  .omnibox-input-row { padding: 10px 36px; }
+  .omnibox-actions[data-layout="chips"] { padding: 12px 36px; }
+  .omnibox-actions[data-layout="grid"]  { padding: 14px 36px; }
+  .omnibox-actions[data-layout="list"]  { padding: 8px 0; }
+  .omnibox-actions[data-layout="list"] .omnibox-action { padding-left: 36px; padding-right: 36px; }
+  .omnibox-results .global-search-section-title { padding-left: 36px; padding-right: 36px; }
+  .omnibox-results .global-search-row { padding-left: 36px; padding-right: 36px; }
+  .omnibox-empty { padding: 28px 36px; }
+}
+
+/* ── Wizard / full-screen mode escape hatches ──
+   The wizard and the full-screen grocery list view hide the rest of the
+   chrome — hide the omnibox along with them. */
+body.wizard-active .omnibox,
+body.grocery-list-open .omnibox,
+body.note-open .omnibox {
+  display: none !important;
+}
+
+/* ── Scroll lock when expanded on mobile ──
+   When typing actively, prevent the background from scrolling — same
+   pattern as body.global-search-open. The omnibox itself sets/clears
+   this class on focus/collapse. */
+body.omnibox-expanded { /* reserved for future scroll-lock if needed */ }
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 2: Intent hint
+   Small label that sits above the action buttons, telling the user
+   what the omnibox thinks they're trying to do ("Looks like a note",
+   "Add to Stockroom (keyword)", etc.). Updated by _applyOmniboxIntent
+   in app.js.
+
+   Hidden when there's no detected intent — keeps the panel clean for
+   empty input or ambiguous short queries.
+═══════════════════════════════════════════════════════════════════ */
+.omnibox-intent-hint {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--accent);
+  padding: 8px 14px 0;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  /* Slight pulse animation when the hint changes — tiny affordance to
+     draw the eye when the user's input crosses a detection threshold. */
+  animation: omniboxHintFade 0.18s ease-out;
+}
+@keyframes omniboxHintFade {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (min-width: 900px) {
+  .omnibox-intent-hint {
+    padding-left: 36px;
+    padding-right: 36px;
+  }
+}
+
+/* When the hint sits directly above the actions row, the actions row's
+   own border-top would duplicate ours. Suppress the actions border in
+   that case so we only get one separator line. */
+.omnibox-intent-hint + .omnibox-actions {
+  border-top: none;
+  padding-top: 8px;
+}
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 2 FIX
+   Override the data-disabled rule so greyed-out action buttons remain
+   clickable. The visual dimming stays as a guidance cue, but the user
+   can always force-click an action against the suggestion.
+
+   Specifically targets [data-disabled="true"] only — leaves the
+   `:disabled` rule intact in case any other code paths set the
+   real disabled attribute.
+═══════════════════════════════════════════════════════════════════ */
+.omnibox-action[data-disabled="true"] {
+  /* Reset blocking properties from the original Pass 1 rule. */
+  pointer-events: auto;
+  cursor: pointer;
+  /* Keep the dim opacity so it's still clear which buttons are the
+     "recommended" path vs the "available but not suggested" ones. */
+  opacity: 0.4;
+}
+/* Subtle hover state so the user knows the button IS clickable even
+   when greyed — without making it look like a primary CTA. */
+.omnibox-action[data-disabled="true"]:hover {
+  opacity: 0.65;
+  background: var(--surface);
+  border-color: var(--muted);
+}
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 3: Inline Spend preview + hover hints
+═══════════════════════════════════════════════════════════════════ */
+
+/* ── Inline Spend preview block ──
+   Sits between the search results and the intent hint when spend is
+   the detected intent. Reuses .quick-add-chip styling from the
+   existing Spend Quick Add modal so chips look identical to what
+   the user sees in that modal. */
+.omnibox-spend-preview {
+  padding: 10px 14px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+.omnibox-spend-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.omnibox-spend-preview-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.omnibox-spend-preview-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* When the preview sits directly above the intent hint, suppress the
+   hint's own border-top so we only get one separator line — matches
+   the trick the .omnibox-intent-hint + .omnibox-actions selector uses. */
+.omnibox-spend-preview + .omnibox-intent-hint {
+  border-top: none;
+}
+
+@media (min-width: 900px) {
+  .omnibox-spend-preview {
+    padding-left: 36px;
+    padding-right: 36px;
+  }
+}
+
+/* ── Hover hints on Stockroom / Groceries / Spend buttons ──
+   Replaces the native `title=` tooltips which are slow, native-styled,
+   and broken on mobile. Pure CSS via [data-hint] attribute on the
+   button; ::after pseudo-element absolutely-positioned above.
+
+   Only shown on devices that support hover (skips mobile / touch by
+   default — touch users tap the button instead). */
+@media (hover: hover) {
+  .omnibox-action[data-hint] {
+    position: relative;
+  }
+  .omnibox-action[data-hint]::after {
+    content: attr(data-hint);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%) translateY(2px);
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    font-family: var(--sans);
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+    max-width: 320px;
+    /* Word-wrap fallback for narrow viewports */
+    overflow-wrap: anywhere;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.12s, transform 0.12s;
+    /* Float above neighbouring buttons and the panel border. */
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .omnibox-action[data-hint]:hover::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  /* On the rightmost buttons the centered tooltip can clip off-screen.
+     Allow wrapping for those. The `white-space: nowrap` above keeps
+     short hints on a single line; this rule kicks in only when the
+     content is long enough to wrap. */
+  .omnibox-action[data-hint]:last-of-type::after,
+  .omnibox-action[data-hint]:nth-last-of-type(2)::after {
+    white-space: normal;
+    width: 240px;
+    text-align: left;
+  }
+}
+
+/* Mobile: tap-to-show via :focus. Tooltip appears below the button
+   instead of above (more room, less likely to be covered by the
+   on-screen keyboard if it shows up). */
+@media (hover: none) {
+  .omnibox-action[data-hint]:focus {
+    position: relative;
+  }
+  .omnibox-action[data-hint]:focus::after {
+    content: attr(data-hint);
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    font-family: var(--sans);
+    letter-spacing: 0;
+    text-transform: none;
+    width: max-content;
+    max-width: 80vw;
+    pointer-events: none;
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+}
+/* ═══════════════════════════════════════════════════════════════════
+   OMNIBOX — Pass 4: Mobile 3×2 grid + darkened backdrop
+
+   Mobile-only changes. Desktop keeps the horizontal pill row.
+
+   Grid layout (mobile, <900px):
+     Row 1: Stockroom │ Spend     │ Notes
+     Row 2: Groceries │ Reminders │ Search
+
+   Source order in HTML is: Search, Stockroom, Groceries, Reminders,
+   Notes, Spend — kept that way so tab/keyboard order still hits
+   Search first. Visual order on mobile is driven by `order:` on each
+   button. Desktop ignores `order:` because flex-row honours it but
+   we're using the pre-existing flex-wrap layout which renders in
+   source order at full width without explicit order values.
+═══════════════════════════════════════════════════════════════════ */
+
+/* ── Mobile (<900px): 3×2 grid ── */
+@media (max-width: 899px) {
+  .omnibox-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-auto-rows: 1fr;
+    gap: 6px;
+    padding: 10px 12px;
+  }
+
+  /* Reset the default action button so it sits as a grid cell, not a
+     horizontal pill. Mirrors the tab-bar style: icon above label,
+     centered, equal cells. */
+  .omnibox-actions .omnibox-action {
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 10px 4px;
+    font-size: 11px;
+    white-space: nowrap;
+    text-align: center;
+    min-width: 0;
+    overflow: hidden;
+    /* Reset the pill-row hover transform — looks odd on a grid cell. */
+  }
+  .omnibox-actions .omnibox-action .icon {
+    width: 18px;
+    height: 18px;
+  }
+
+  /* Explicit cell positions via flex `order`. Grid auto-placement
+     fills source-order; `order` on grid items relocates them. The
+     numbers correspond to grid cells 1..6 (row-major). */
+  .omnibox-actions .omnibox-action[data-action="stockroom"] { order: 1; }
+  .omnibox-actions .omnibox-action[data-action="spend"]     { order: 2; }
+  .omnibox-actions .omnibox-action[data-action="notes"]     { order: 3; }
+  .omnibox-actions .omnibox-action[data-action="groceries"] { order: 4; }
+  .omnibox-actions .omnibox-action[data-action="reminders"] { order: 5; }
+  .omnibox-actions .omnibox-action[data-action="search"]    { order: 6; }
+}
+
+/* ── Mobile backdrop ──
+   Darkens the page content behind the expanded omnibox panel.
+   `omnibox-backdrop` is created by JS on init and appended to body.
+   Hidden by default (opacity 0, pointer-events none). When the
+   .visible class is added, it fades in and intercepts taps so the
+   user can tap-to-collapse.
+
+   Sits at top: 0 with the omnibox panel above it via z-index. The
+   panel is z:95 and sticky at top:56px (below header). Backdrop is
+   z:94 so the panel sits above. */
+.omnibox-backdrop {
+  display: none; /* gated by media query below */
+}
+
+@media (max-width: 899px) {
+  .omnibox-backdrop {
+    display: block;
+    position: fixed;
+    /* Cover everything from the bottom of the header down. Header is
+       56px tall and pinned at top:0. Omnibox panel itself sits over
+       the top of the backdrop and is z:95 so it stays crisp. */
+    top: 56px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 94;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease-out;
+    /* Belt-and-braces: prevent the backdrop from intercepting page
+       scroll when invisible. */
+    -webkit-tap-highlight-color: transparent;
+  }
+  .omnibox-backdrop.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* Wizard / full-screen mode escape hatches — already hide the omnibox
+   itself; also suppress the backdrop so it doesn't lurk behind those
+   modal states. */
+body.wizard-active .omnibox-backdrop,
+body.grocery-list-open .omnibox-backdrop,
+body.note-open .omnibox-backdrop,
+body.global-search-open .omnibox-backdrop {
+  display: none !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THEME PICKER — Segmented control in Preferences
+   ═══════════════════════════════════════════════════════════════════════
+   Three buttons (System / Light / Dark) styled as a unified pill group,
+   matching the visual weight of the .acc-sec-select dropdowns in the
+   same Preferences card. */
+.theme-seg {
+  display: inline-flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 0;
+  flex-shrink: 0;
+}
+.theme-seg-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+.theme-seg-btn:hover {
+  color: var(--text);
+}
+.theme-seg-btn.active {
+  background: var(--accent);
+  color: #111;
+}
+.theme-seg-btn .icon {
+  width: 13px;
+  height: 13px;
+}
+/* In light mode, the amber accent on white-ish dropdown background
+   benefits from a touch more weight on the active state */
+html[data-theme="light"] .theme-seg-btn.active {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   LIGHT MODE — Chrome overrides
+   ═══════════════════════════════════════════════════════════════════════
+   A number of UI surfaces (tabs, modals, settings cards, sidebar, etc.)
+   hardcode rgba(26,29,39,...) — the dark mode --surface value — directly
+   in their background declarations because they want a specific opacity
+   that var(--surface) can't express. In light mode these need to flip to
+   a white-ish base. Each override below mirrors the original rule's
+   opacity but uses 255,255,255 (white) instead, plus tweaks to .btn-ghost
+   etc. where a 4% white tint on a white card is invisible.
+
+   Scoped under html[data-theme="light"] so dark mode stays untouched. */
+
+html[data-theme="light"] #app-header {
+  background: rgba(255,255,255,var(--surface-opacity));
+  box-shadow: 0 1px 0 rgba(0,0,0,0.05), 0 4px 20px rgba(0,0,0,0.06);
+}
+html[data-theme="light"] #tabs {
+  background: rgba(255,255,255,0.7);
+}
+html[data-theme="light"] .settings-card {
+  background: rgba(255,255,255,0.7);
+}
+html[data-theme="light"] .modal {
+  background: rgba(255,255,255,0.92);
+  box-shadow: var(--glass-shadow), 0 0 0 1px rgba(0,0,0,0.03) inset;
+}
+html[data-theme="light"] #app-nav {
+  background: rgba(255,255,255,0.95);
+  border-right: 1px solid var(--glass-border);
+}
+html[data-theme="light"] .settings-collapsible-header {
+  background: rgba(255,255,255,0.7);
+}
+html[data-theme="light"] .settings-collapsible-header:hover,
+html[data-theme="light"] .settings-collapsible-header:active {
+  background: rgba(232,232,220,0.8);
+}
+html[data-theme="light"] #view-settings .settings-section-header {
+  background: rgba(255,255,255,0.7);
+}
+
+/* Ghost buttons — a 4% white tint on a white card is invisible. Use a
+   light grey tint instead. Hover bumps to a slightly stronger grey. */
+html[data-theme="light"] .btn-ghost {
+  background: rgba(0,0,0,0.03);
+  border: 1px solid var(--border);
+}
+html[data-theme="light"] .btn-ghost:hover {
+  background: rgba(0,0,0,0.06);
+  border-color: var(--muted);
+}
+
+/* Item card hover — white-on-white border doesn't pop. Use the accent
+   instead, which already happens elsewhere via :hover. */
+html[data-theme="light"] .item-card:hover {
+  border-color: var(--accent);
+}
+
+/* Hover backgrounds that use white-tint don't work on a white surface.
+   Note rows, etc. — flip the tint to a dark one. */
+html[data-theme="light"] .note-row:hover {
+  background: rgba(0,0,0,0.025);
+}
+html[data-theme="light"] .note-row:active {
+  background: rgba(0,0,0,0.04);
+}
+
+/* Mobile menu hover tint — the amber 7% tint reads as a faint cream
+   on white; bump it for better feedback. */
+html[data-theme="light"] .mobile-menu-item:hover {
+  background: rgba(192,132,24,0.10);
+}
+html[data-theme="light"] .app-nav-link:hover {
+  background: rgba(192,132,24,0.08);
+}
+html[data-theme="light"] .app-nav-link.active {
+  background: rgba(192,132,24,0.14);
+}
+
+/* Hairline borders that hardcode rgba(46,51,80,...) — that's the dark
+   --border colour. Replace with a light hairline. */
+html[data-theme="light"] .report-table td,
+html[data-theme="light"] .log-entry,
+html[data-theme="light"] .tag-input-row,
+html[data-theme="light"] .grocery-item,
+html[data-theme="light"] .dept-manage-row,
+html[data-theme="light"] .setting-row {
+  border-bottom-color: rgba(0,0,0,0.06);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Light-mode status pill backgrounds — the .sync-pill, item status
+   chips etc. often layer a coloured rgba tint over the chrome. These
+   were tuned against the dark blue surface; on white they look pale.
+   Left as-is for v1 — the colours still parse as "good / warning /
+   error" semantically; we can tune visually in a follow-up pass.
+   ────────────────────────────────────────────────────────────────────── */
+
+/* ── Settings → Change History page ──
+   Rendered into #history-page-body. Each row is the summary + meta
+   line + Restore button + a collapsed before/after JSON detail panel.
+   Designed to be readable on phone widths — single column, no fixed
+   sizes that overflow on narrow viewports. */
+
+.history-row {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color 0.1s, background 0.1s;
+}
+.history-row:hover { border-color: var(--accent); }
+.history-row.is-expanded { background: var(--surface); border-color: var(--accent); }
+
+.history-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.history-row-summary {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-row-meta {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.history-row-device {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.history-row-restore {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+.history-row-restore svg { width: 12px; height: 12px; }
+
+.history-row-detail {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.history-detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.history-detail-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.history-detail-json {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.history-detail-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 6px 0;
+  font-style: italic;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   LIGHT THEME — adapt elements that hardcoded dark-mode colours
+   ═══════════════════════════════════════════════════════════════════
+   Several elements were styled with literal dark-slate backgrounds
+   intended for dark mode. On light theme those reads as jarring dark
+   blocks. The following rules either swap the colour, or — where the
+   hardcoded value lives in an inline style we can't easily change —
+   override with the same selector and !important. */
+
+/* Card action overlay (the hover/tap menu that slides up from the
+   bottom of a stockroom card with Log Order / Count Stock / etc.) —
+   was hardcoded rgba(20,24,38,0.78) which is dark slate. On light
+   theme make it a soft white panel with proper borders. */
+html[data-theme="light"] .card-action-overlay {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(10px) saturate(110%);
+  -webkit-backdrop-filter: blur(10px) saturate(110%);
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+html[data-theme="light"] .card-action-tile {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.08);
+  color: var(--text);
+}
+html[data-theme="light"] .card-action-tile:hover {
+  background: rgba(192, 132, 24, 0.12); /* accent at low opacity */
+  border-color: rgba(192, 132, 24, 0.4);
+}
+
+/* Budget sub-nav pill cluster — wrapper has inline
+   background:rgba(26,29,39,0.7) which is dark slate. Override here
+   so it reads as a faint bordered pill on the page surface. The
+   inline style needs !important to win. */
+html[data-theme="light"] #budget-subnav {
+  background: var(--bg) !important;
+  border-color: var(--border) !important;
+}
+/* Active tab inside the cluster — the button has inline
+   background:transparent which beats the existing .active rule.
+   Override with !important on both themes to make the active state
+   actually visible. */
+.budget-subnav-btn.active {
+  background: var(--surface) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 0 rgba(255,255,255,0.05) inset !important;
+}
+html[data-theme="light"] .budget-subnav-btn.active {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08) !important;
+}
+
+/* Note editor overlay — when the user hasn't picked a custom colour
+   the JS sets `background:var(--bg)` on the overlay. In light theme
+   `--bg` is the warm cream page background, which makes the editor
+   read as "floating in the page" instead of as a clean card. Bump
+   the default to `--surface` (white) on light theme so the editor
+   looks like a proper raised card. JS still wins for explicit
+   per-note colours via inline style. */
+html[data-theme="light"] #note-editor-overlay[style*="var(--bg)"] {
+  background: var(--surface) !important;
+}
+
+/* Body-level dim wash behind the note modal — on dark theme the 45%
+   black wash gives the modal lift; on light theme the same wash is
+   far too heavy and reads as muddy grey. Soften considerably for
+   light theme. */
+html[data-theme="light"] body.note-open::before {
+  background: rgba(0, 0, 0, 0.15) !important;
+}
+
+/* Note colour swatches — when a note was given one of the dark
+   palette colours (designed for dark mode), in light theme it
+   shows as a jarring dark block. Map each dark-theme palette
+   colour to a soft light-theme equivalent. Applies to both the
+   swatch dots in the picker and the overlay itself when that
+   colour is the active background. The inline style needs
+   !important to win. Custom hex colours not in this list pass
+   through unchanged. */
+html[data-theme="light"] .note-swatch[data-colour=""]        { background: var(--surface) !important; border: 1px solid var(--border); }
+html[data-theme="light"] .note-swatch[data-colour="#3a2e10"] { background: #fbeccc !important; }
+html[data-theme="light"] .note-swatch[data-colour="#3a1010"] { background: #fbd6d6 !important; }
+html[data-theme="light"] .note-swatch[data-colour="#0e3020"] { background: #d3ecdd !important; }
+html[data-theme="light"] .note-swatch[data-colour="#0e2040"] { background: #d6e2f5 !important; }
+html[data-theme="light"] .note-swatch[data-colour="#2a1040"] { background: #e5d8f0 !important; }
+html[data-theme="light"] .note-swatch[data-colour="#0e3030"] { background: #d3ecec !important; }

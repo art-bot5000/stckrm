@@ -11,9 +11,11 @@ RUN npm install
 # Frontend source files live at the repo root, not in src/. The previous
 # Dockerfile copied from src/ which silently became stale, so root-level
 # edits never reached production.
-COPY app.js scanner.js styles.css index.html landing.html sw.js manifest.json admin.html ./
+COPY app.js budget.js notes.js scanner.js styles.css index.html landing.html sw.js manifest.json admin.html logo.png ./
 RUN mkdir -p public && \
     npx terser app.js --compress --mangle --comments false -o public/app.js && \
+    npx terser budget.js --compress --mangle --comments false -o public/budget.js && \
+    npx terser notes.js --compress --mangle --comments false -o public/notes.js && \
     npx terser scanner.js --compress --mangle --comments false -o public/scanner.js && \
     npx cleancss -o public/styles.css styles.css && \
     if [ "$STOCKROOM_ENV" = "staging" ]; then \
@@ -32,7 +34,8 @@ RUN mkdir -p public && \
       -o public/landing.html && \
     cp sw.js public/sw.js && \
     cp manifest.json public/manifest.json && \
-    cp admin.html public/admin.html
+    cp admin.html public/admin.html && \
+    cp logo.png public/logo.png
 
 FROM denoland/deno:2.3.1
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && \

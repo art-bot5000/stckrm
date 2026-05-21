@@ -1,8 +1,10 @@
-name: Deploy to Fly.io
+name: Deploy to Fly.io (Staging)
 
+# Triggered on pushes to the `staging` branch, OR manually from the Actions tab.
+# Production deploy.yml is untouched and continues to deploy `main` to stckrm.
 on:
   push:
-    branches: [main]
+    branches: [staging]
   workflow_dispatch:
 
 jobs:
@@ -19,7 +21,7 @@ jobs:
             index.html landing.html
             sw.js manifest.json admin.html
             main.ts deno.json start.sh Caddyfile
-            logo.png
+            fly.staging.toml
           )
           MISSING=()
           for f in "${REQUIRED[@]}"; do
@@ -39,46 +41,26 @@ jobs:
           node --check budget.js  && echo "✅ budget.js syntax OK"
           node --check scanner.js && echo "✅ scanner.js syntax OK"
 
-      - name: Check Dockerfile references
-        run: |
-          DOCKERFILE_FILES=(
-            app.js budget.js scanner.js styles.css
-            index.html landing.html admin.html
-            sw.js manifest.json
-          )
-          MISSING=()
-          for f in "${DOCKERFILE_FILES[@]}"; do
-            if [ ! -f "$f" ]; then
-              MISSING+=("$f")
-            fi
-          done
-          if [ ${#MISSING[@]} -gt 0 ]; then
-            echo "❌ Dockerfile references missing files: ${MISSING[*]}"
-            exit 1
-          fi
-          echo "✅ All Dockerfile COPY references exist"
-
   deploy:
-    name: Deploy
+    name: Deploy to staging
     needs: preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
-      - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only --strategy rolling --ha=false --no-cache
+      - name: Deploy to Fly.io (staging)
+        run: flyctl deploy --config fly.staging.toml --remote-only --strategy rolling --ha=false --no-cache
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        # --no-cache: forces a clean rebuild of all Docker layers. We had a
-        # bug where index.html updates weren't reaching production because
-        # Depot's remote builder was reusing cached minify-step output.
-        # Without this, frontend file changes can silently not deploy.
+        # Same --no-cache rationale as production: avoid Depot's remote
+        # builder reusing cached minify-step output, which silently breaks
+        # frontend file changes.
 
       - name: Verify deployment health
         if: always()
         run: |
           sleep 5
-          flyctl status --app stckrm
+          flyctl status --app stckrm-staging
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
