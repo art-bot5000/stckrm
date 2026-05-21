@@ -5079,7 +5079,15 @@ function _enforceNotificationCap() {
   if (pinned.length > NOTIFICATIONS_PINNED_MAX) {
     // Sort pinned by createdAt desc; the OLDEST ones get demoted
     pinned.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    pinned.slice(NOTIFICATIONS_PINNED_MAX).forEach(n => { n.pinned = false; });
+    // Stamp pinnedAt on demote so the merge treats this as a fresh
+    // unpin decision and propagates it across devices. Without the
+    // stamp, the demote would lose to any other device that still
+    // remembers the original pin (their pinnedAt would equal ours).
+    const demoteTs = new Date().toISOString();
+    pinned.slice(NOTIFICATIONS_PINNED_MAX).forEach(n => {
+      n.pinned = false;
+      n.pinnedAt = demoteTs;
+    });
   }
   // Then: enforce total cap — keep all pinned plus newest unpinned
   if (notifications.length <= NOTIFICATIONS_CAP) return;
@@ -7514,10 +7522,15 @@ async function toggleNotificationPin(id) {
     }
   }
   n.pinned = !n.pinned;
+  // Stamp the moment of this pin/unpin decision so the cross-device merge
+  // (kvSyncNow notifications branch) can pick the latest action rather
+  // than OR'ing the two sides' pinned flags. The previous OR-merge made
+  // unpins bounce back after a sync round-trip: PULL → MERGE → PUSH ran
+  // before the server had seen our new false, so the merge re-applied
+  // remote's stale true and the pin reappeared. With pinnedAt, whichever
+  // side toggled most recently wins for both pinned + pinnedAt.
+  n.pinnedAt = new Date().toISOString();
   await saveNotificationsLocal();
-  // The merge ORs pinned flags across devices, so a local unpin can't
-  // override a remote pin — but a local pin will reach other devices.
-  // Worth syncing in any case so pin state is at least consistent post-pull.
   _syncQueue.enqueue('Syncing notifications…');
   _renderNotificationPanel();
 }
@@ -21609,9 +21622,10 @@ async function kvSyncNow(silent = false) {
       // ── Notifications merge ──
       // Union by id, preferring earliest readAt (read is sticky), earliest
       // dismissedAt (dismissal is sticky too — so dismissing on one device
-      // propagates to others), and OR'd pinned flag. Cap enforcement after
-      // merge keeps total ≤50 and pins ≤3, demoting oldest pins if a merge
-      // from another device would otherwise exceed the limit.
+      // propagates to others), and LATEST pinnedAt wins for the pinned
+      // flag. Cap enforcement after merge keeps total ≤50 and pins ≤3,
+      // demoting oldest pins if a merge from another device would
+      // otherwise exceed the limit.
       // Only own-account pulls carry notifications — share blobs never do,
       // so this branch only runs for the owner pulling their own data.
       if (Array.isArray(remote.notifications)) {
@@ -21632,7 +21646,24 @@ async function kvSyncNow(silent = false) {
           if (rn.dismissedAt && (!ln.dismissedAt || new Date(rn.dismissedAt) < new Date(ln.dismissedAt))) {
             merged.dismissedAt = rn.dismissedAt;
           }
-          merged.pinned = !!(ln.pinned || rn.pinned);
+          // Pinned: LATEST pinnedAt wins for both pinned + pinnedAt
+          // together, so a recent unpin on one device beats a stale pin
+          // on the other. Falls back to OR for records with no pinnedAt
+          // on either side (legacy data from before this fix shipped) —
+          // that preserves the old "pin propagates, unpin can't" shape
+          // for ancient records but lets any toggle on the new code
+          // stamp the timestamp and start winning correctly.
+          const lTs = ln.pinnedAt ? new Date(ln.pinnedAt).getTime() : 0;
+          const rTs = rn.pinnedAt ? new Date(rn.pinnedAt).getTime() : 0;
+          if (lTs === 0 && rTs === 0) {
+            merged.pinned = !!(ln.pinned || rn.pinned);
+          } else if (rTs > lTs) {
+            merged.pinned   = !!rn.pinned;
+            merged.pinnedAt = rn.pinnedAt;
+          } else {
+            merged.pinned   = !!ln.pinned;
+            merged.pinnedAt = ln.pinnedAt || rn.pinnedAt;
+          }
           byId.set(rn.id, merged);
         }
         notifications = Array.from(byId.values());
