@@ -1431,7 +1431,7 @@ function _exitDemo() {
 // localStorage so a refresh during the same session doesn't replay them.
 const _DEMO_NUDGE_CONTENT = {
   stockroom: {
-    text: "These items show every status — Critical, Low, Good, even a pending delivery. Tap any card for details, or long-press for actions.",
+    text: "These items show every status — Critical, Low, Good, even a pending delivery. Tap any card for quick actions, or long-press to edit details.",
     anchor: '#items-grid',
     placement: 'top',
   },
@@ -10684,10 +10684,11 @@ function _showCardActions(id) {
   card.classList.add('actions-open');
 }
 
-// ── Item actions modal (mobile long-press) ────────────────────
-// On touch devices the in-card hover overlay isn't ergonomic — buttons
-// are too small. We pop a proper modal instead with full-size touch
-// targets, summary stats, and a clean iOS-style secondary action list.
+// ── Item actions modal (mobile short tap) ─────────────────────
+// On touch devices a short tap on the card pops this modal — full-size
+// tap targets, summary stats, and a clean iOS-style secondary action list.
+// Long-press goes to the heavier edit modal. The desktop equivalent is
+// the in-card hover overlay (cardActionOverlayHTML).
 function openItemActionsModal(id) {
   const item = items.find(i => i.id === id);
   if (!item) return;
@@ -10783,6 +10784,40 @@ function openItemActionsModal(id) {
   if (archLabel) archLabel.textContent = archived ? 'Restore' : 'Archive';
   wire('ia-l-archive', () => archived ? restoreItem(id) : archiveItem(id));
 
+  // ── +Tag footer ──────────────────────────────────────────────
+  // Shows the item's currently-applied tags as small pills, plus a
+  // single +Tag button that opens the existing card-tag-picker modal
+  // (same picker as the desktop hover overlay's Tag tile and the filter
+  // bar's +Tag chip). Picker lets the user toggle existing tags or
+  // create a new one with name + colour — anything created here is
+  // applied to this item automatically by createTagFromPicker().
+  // The picker uses its own .modal-overlay (z-index 500), so it layers
+  // over this modal-backdrop (z-index 200) without dismissing it; the
+  // user returns to the actions modal once they close the picker.
+  const tagChipsHost = document.getElementById('ia-tag-chips');
+  if (tagChipsHost) {
+    const customTags = getCustomTags();
+    const itemTags = item.tags || [];
+    const chips = itemTags.map(i => {
+      const tag = customTags[i];
+      if (!tag || !tag.trim()) return '';
+      const c = getTagColor(i);
+      return `<span class="ia-tag-chip"
+        style="background:${c.bg};border:1px solid ${c.border};color:${c.text}"
+        >${esc(tag)}</span>`;
+    }).filter(Boolean).join('');
+    tagChipsHost.innerHTML = chips || `<span class="ia-tag-empty">No tags yet</span>`;
+  }
+  // The +Tag button keeps the actions modal open underneath; the picker
+  // overlays on top and dismisses itself via its own close button.
+  const tagBtn = document.getElementById('ia-q-tag');
+  if (tagBtn) {
+    tagBtn.onclick = (e) => {
+      e.stopPropagation();
+      openCardTagPicker(id);
+    };
+  }
+
   openModal('item-actions-modal');
 }
 
@@ -10802,8 +10837,14 @@ function _dismissCardActions(id) {
 }
 
 // ── Click on the card body ────────────────────────────────────
-// Suppress the open-edit click if a long-press just fired (touch path);
-// otherwise always open the edit modal (and dismiss any open overlay first).
+// Suppress the open-edit click if a long-press just fired (touch path).
+// Routing differs by device:
+//   • Touch (coarse pointer, no hover) → short tap opens the quick action
+//     panel; long-press opens the detailed edit modal. This puts the
+//     common actions (Log Order / Count Stock / Edit / +Tag) one tap away
+//     and reserves the long-press for the heavier editor.
+//   • Desktop (fine pointer + hover) → click opens the edit modal as
+//     before, since desktop users already get actions via hover overlay.
 function onCardClick(event, id) {
   // Multi-select mode (Pass 2a generic): when active, taps toggle the
   // item's selection instead of opening the editor. Action menus + hover
@@ -10819,7 +10860,14 @@ function onCardClick(event, id) {
     return;
   }
   _dismissCardActions(id);
-  openEditModal(id);
+  // Touch devices: short tap → quick action panel. Desktop: click → editor.
+  const isTouch = window.matchMedia
+    && window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+  if (isTouch) {
+    openItemActionsModal(id);
+  } else {
+    openEditModal(id);
+  }
 }
 
 // ── Desktop hover ─────────────────────────────────────────────
@@ -10842,7 +10890,7 @@ function onCardHoverLeave(id) {
 // ── Mobile long-press ─────────────────────────────────────────
 // Coexists with the existing right-swipe to log purchase. The long-press
 // is cancelled the moment swipeMove acquires a horizontal lock, so a user
-// who swipes won't accidentally trigger the actions panel.
+// who swipes won't accidentally trigger the editor.
 function onCardTouchStart(event, id) {
   if (_cardInteractionFrozen()) return;
   swipeStart(event, id);
@@ -10855,9 +10903,11 @@ function onCardTouchStart(event, id) {
   st.longPressTimer = setTimeout(() => {
     st.longPressFired = true;
     st.suppressClick = true;
-    // Touch path: open the proper modal with bigger tap targets, rather
-    // than the cramped in-card overlay (which is the desktop hover affordance).
-    openItemActionsModal(id);
+    // Touch path: long-press opens the detailed edit modal. Short tap is
+    // reserved for the quick action panel (see onCardClick). This pairing
+    // surfaces the lighter actions first and gates the heavier editor
+    // behind an intentional hold.
+    openEditModal(id);
     if (navigator.vibrate) navigator.vibrate(20);
   }, CARD_LONG_PRESS_MS);
 }
@@ -11091,6 +11141,27 @@ function openCardTagPickerForCreate() {
 function closeCardTagPicker() {
   const modal = document.getElementById('card-tag-picker-modal');
   if (modal) modal.classList.remove('active');
+  // If the item-actions modal is still open for the same item, refresh
+  // its tag chips strip so the user sees the result of their toggle/
+  // create immediately without having to reopen the modal.
+  const iaModal = document.getElementById('item-actions-modal');
+  if (_cardTagPickerItemId && iaModal && iaModal.classList.contains('open')) {
+    const item = items.find(i => i.id === _cardTagPickerItemId);
+    const host = document.getElementById('ia-tag-chips');
+    if (item && host) {
+      const customTags = getCustomTags();
+      const itemTags = item.tags || [];
+      const chips = itemTags.map(i => {
+        const tag = customTags[i];
+        if (!tag || !tag.trim()) return '';
+        const c = getTagColor(i);
+        return `<span class="ia-tag-chip"
+          style="background:${c.bg};border:1px solid ${c.border};color:${c.text}"
+          >${esc(tag)}</span>`;
+      }).filter(Boolean).join('');
+      host.innerHTML = chips || `<span class="ia-tag-empty">No tags yet</span>`;
+    }
+  }
   _cardTagPickerItemId = null;
   _resetTagPickerNewForm();
 }

@@ -2060,6 +2060,62 @@ body.note-open { overflow: hidden; touch-action: none; }
 .ia-list-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ia-chev { width: 14px; height: 14px; color: var(--muted); flex-shrink: 0; }
 
+/* ── Tag footer in item-actions modal ──────────────────────────────────
+   Shows current item tags as pills plus a +Tag button that opens the
+   shared card-tag-picker. Lives at the bottom of the actions modal so
+   it's reachable on mobile without scrolling past the More list. */
+.ia-tag-footer { padding-top: 4px; padding-bottom: 18px; }
+.ia-tag-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ia-tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  align-items: center;
+}
+.ia-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--sans);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.ia-tag-empty {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+.ia-tag-btn {
+  background: var(--surface2);
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  padding: 6px 14px 6px 10px;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.ia-tag-btn:hover  { background: rgba(232,168,56,0.10); border-color: rgba(232,168,56,0.40); }
+.ia-tag-btn:active { transform: scale(0.97); }
+.ia-tag-btn .icon  { width: 14px; height: 14px; color: var(--accent); }
+
 /* Mobile mobile-first: hide desktop-only meta row, keep card vertical */
 @media (max-width: 899px) {
   .card-meta-desktop { display: none; }

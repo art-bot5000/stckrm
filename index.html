@@ -3466,6 +3466,24 @@
         </button>
       </div>
     </div>
+
+    <!-- ── Tag footer ───────────────────────────────────────────
+         Sits below the More list. Shows the item's current tags as
+         pills and exposes a single +Tag button that opens the
+         card-tag-picker modal (same picker used by the filter bar
+         and the desktop hover overlay). The picker layers on top
+         (z-index 500 vs this modal's 200) so the actions modal
+         remains open behind it. -->
+    <div class="ia-section ia-tag-footer">
+      <div class="ia-section-label">Tags</div>
+      <div class="ia-tag-row">
+        <div id="ia-tag-chips" class="ia-tag-chips"></div>
+        <button type="button" class="ia-tag-btn" id="ia-q-tag">
+          <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+          <span>Tag</span>
+        </button>
+      </div>
+    </div>
   </div>
 </div>
 
