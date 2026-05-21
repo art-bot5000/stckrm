@@ -8,8 +8,8 @@
     --border: #2e3350; --accent: #e8a838; --accent2: #5b8dee;
     --danger: #e85050; --warn: #e8a838; --ok: #4cbb8a;
     --text: #e8eaf2; --muted: #7880a0;
-    --mono: 'Space Mono', monospace;
-    --sans: 'Instrument Sans', system-ui, sans-serif;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'Inter', system-ui, sans-serif;
     /* ── Adaptive colour temperature (overridden by JS) ── */
     --temp-tint: rgba(0,0,0,0);
     --surface-opacity: 0.82;
