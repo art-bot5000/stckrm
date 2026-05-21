@@ -1629,8 +1629,22 @@
 <!-- Toggled by the burger button in the header. Anchored top-right under
      the header rather than centered as a modal — feels more like a
      standard app dropdown. Tap-outside-to-close is wired up in JS by
-     attaching a one-shot document listener when the menu opens. -->
+     attaching a one-shot document listener when the menu opens.
+     Two sections separated by a divider:
+       (1) Swappable tabs not currently in the main row — populated by
+           _applyMobileTabLayout from settings.mobileTabs. Default order
+           is Notes → Reminders → Savings.
+       (2) Fixed entries (Report / Billing / Account & Security /
+           Settings) that always live here regardless of tab choice.
+     "Edit tabs" footer button opens the picker that lets the user pick
+     which three of six swappable views appear in the main row. -->
 <nav id="mobile-menu-dropdown" class="mobile-menu-dropdown" aria-hidden="true">
+  <div id="mobile-menu-swappable">
+    <!-- Populated dynamically by _applyMobileTabLayout. Contains the
+         3 swappable views NOT currently chosen for the main tab row,
+         ordered per Notes → Reminders → Savings → (others) by default. -->
+  </div>
+  <hr class="mobile-menu-divider" id="mobile-menu-divider">
   <button class="mobile-menu-item" data-view="report" onclick="navFromMobileMenu('report')">
     <svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg>
     <span>Report</span>
@@ -1646,6 +1660,10 @@
   <button class="mobile-menu-item" data-view="settings" onclick="navFromMobileMenu('settings')">
     <svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg>
     <span>Settings</span>
+  </button>
+  <button class="mobile-menu-edit-btn" type="button" onclick="openEditTabsModal()">
+    <svg class="icon icon-tab" aria-hidden="true"><use href="#i-pencil"></use></svg>
+    <span>Edit tabs</span>
   </button>
 </nav>
 
@@ -4765,6 +4783,27 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
         <button class="btn btn-primary btn-sm" onclick="createTagFromPicker()" style="margin-top:4px"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg> Add tag</button>
       </div>
       <div id="card-tag-picker-max-note" style="display:none;font-size:12px;color:var(--muted);font-style:italic">Maximum 5 tags. Delete one in Settings → Tags before creating another.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ EDIT MOBILE TABS MODAL ═══
+     Opened from the burger menu's "Edit tabs" footer. Six rows, one per
+     swappable view (stock / grocery / budget / notes / reminders /
+     savings). Tap to toggle. Exactly three must be selected; selecting a
+     fourth auto-unticks the oldest, FIFO-style, so the user always lands
+     on a valid configuration without an extra "you have too many" error.
+     Position pills (1 / 2 / 3) show the order they'll appear in the tab
+     row — they re-number live as the user toggles. Save persists to
+     settings.mobileTabs and immediately re-applies the layout. -->
+<div class="modal-backdrop" id="edit-tabs-modal">
+  <div class="modal" style="max-width:440px">
+    <h2><svg class="icon icon-lg" aria-hidden="true"><use href="#i-sliders"></use></svg> Edit mobile tabs</h2>
+    <p class="edit-tabs-hint">Pick three views for the main tab row. The rest stay accessible from the burger menu.</p>
+    <div id="edit-tabs-list" class="edit-tabs-list"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+      <button class="btn btn-ghost" onclick="closeEditTabsModal()">Cancel</button>
+      <button class="btn btn-primary" id="edit-tabs-save-btn" onclick="saveEditTabs()">Save</button>
     </div>
   </div>
 </div>

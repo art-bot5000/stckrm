@@ -2573,6 +2573,11 @@ async function loadData() {
     const banner = document.getElementById('amazon-banner-mobile');
     if (banner) banner.style.display = 'none';
   }
+  // Apply user's mobile tab choice (defaults to Stockroom/Groceries/
+  // Budget if unset). Defined further down in the file but available
+  // at call time since this is run from an async boot path. Wrapped
+  // defensively so a malformed setting can never block boot.
+  try { if (typeof _applyMobileTabLayout === 'function') _applyMobileTabLayout(); } catch(e) { console.warn('[boot] mobile tab layout failed', e); }
 }
 
 async function saveData() {
@@ -9899,6 +9904,10 @@ if (_bc) {
       if (fresh) {
         settings = { ...settings, ...fresh };
         scheduleRender('settings-ui');
+        // Mobile tab choice could have been changed on another device/
+        // tab — re-apply so this tab's row + burger menu match the
+        // persisted setting without a reload.
+        try { if (typeof _applyMobileTabLayout === 'function') _applyMobileTabLayout(); } catch (_) {}
       }
     }
   };
@@ -13448,6 +13457,208 @@ function navFromMobileMenu(name) {
 }
 // Stub kept for backwards-compat with any cached HTML/onclicks.
 function closeMobileMenuOnOverlay(e) { closeMobileMenu(); }
+
+// ═══════════════════════════════════════════
+//  MOBILE TAB LAYOUT — swappable main row
+// ═══════════════════════════════════════════
+// At ≤600px the main tab row shows exactly three of six swappable views;
+// the rest live in the top of the burger menu. The user picks which three
+// via the burger's "Edit tabs" footer (openEditTabsModal). Choice is
+// persisted in settings.mobileTabs as a 3-element array of view names.
+//
+// At the medium range (601–899px) the full 6-tab row is preferred (more
+// horizontal space) so the data-mobile-tab="off" attribute is gated by
+// the @media (max-width: 600px) rule in styles.css — at 601–899px every
+// tab is shown except Report/Billing/Settings (those always burger-only).
+//
+// Three pieces work in concert:
+//   1. _applyMobileTabLayout() — sets data-mobile-tab attribute + CSS
+//      order on each .tab, AND rebuilds #mobile-menu-swappable with the
+//      views NOT in the main row, in fixed Notes→Reminders→Savings
+//      preference order.
+//   2. settings.mobileTabs — array of 3 view names (default
+//      ['stock','grocery','budget']). Persisted via _saveSettings.
+//   3. openEditTabsModal / saveEditTabs — UI for picking 3 of 6.
+//
+// Called from: boot (after settings load), saveEditTabs (after persist),
+// the SETTINGS_CHANGED broadcast handler (other tabs/devices), and on
+// window resize (in case the user crosses the 600px threshold and we
+// want the burger contents to match what's actually visible).
+
+const _MOBILE_TAB_DEFAULTS = ['stock', 'grocery', 'budget'];
+const _MOBILE_TAB_SWAPPABLE = ['stock', 'grocery', 'budget', 'notes', 'reminders', 'savings'];
+// Preferred order when listing swappable views in the burger menu —
+// Pete's spec: Notes → Reminders → Savings come first, then any of the
+// "main three" defaults that got bumped out land after.
+const _MOBILE_TAB_BURGER_ORDER = ['notes', 'reminders', 'savings', 'stock', 'grocery', 'budget'];
+// Display metadata for the picker rows and the dynamically-injected
+// burger-menu buttons. Mirrors the icons + labels used in #tabs / sidebar.
+const _MOBILE_TAB_META = {
+  stock:     { icon: 'i-package',         label: 'Stockroom'  },
+  grocery:   { icon: 'i-shopping-cart',   label: 'Groceries'  },
+  budget:    { icon: 'i-banknote',        label: 'Budget'     },
+  notes:     { icon: 'i-notebook-pen',    label: 'Notes'      },
+  reminders: { icon: 'i-bell',            label: 'Reminders'  },
+  savings:   { icon: 'i-piggy-bank',      label: 'Savings'    },
+};
+
+// Return a sanitised 3-element array of swappable view names from
+// settings, falling back to defaults if the stored value is malformed
+// or missing. Guarantees the result is always valid for layout.
+function _getMobileTabs() {
+  const v = settings && settings.mobileTabs;
+  if (Array.isArray(v) && v.length === 3
+      && v.every(n => _MOBILE_TAB_SWAPPABLE.includes(n))
+      && new Set(v).size === 3) {
+    return v.slice();
+  }
+  return _MOBILE_TAB_DEFAULTS.slice();
+}
+
+// Map a view name back to its .tab button in #tabs. Returns null if
+// the view isn't a swappable tab (e.g. report/billing/settings have
+// their own tab buttons but aren't part of the swap pool).
+function _getTabButtonForView(view) {
+  const tabs = document.querySelectorAll('#tabs > .tab');
+  for (const t of tabs) {
+    const oc = t.getAttribute('onclick') || '';
+    if (oc.includes(`'${view}'`)) return t;
+  }
+  return null;
+}
+
+function _applyMobileTabLayout() {
+  const chosen = _getMobileTabs(); // 3 view names in user's preferred order
+  // 1. Mark each swappable tab on/off and set its display order to match
+  //    the user's chosen sequence. Tabs not in the swap pool (report/
+  //    billing/settings) are left alone — they're hidden via the static
+  //    onclick selectors in the ≤899px media query.
+  _MOBILE_TAB_SWAPPABLE.forEach(view => {
+    const btn = _getTabButtonForView(view);
+    if (!btn) return;
+    const idx = chosen.indexOf(view);
+    if (idx === -1) {
+      btn.setAttribute('data-mobile-tab', 'off');
+      btn.style.order = ''; // not relevant when hidden
+    } else {
+      btn.setAttribute('data-mobile-tab', 'on');
+      btn.style.order = String(idx); // grid honours `order` on items
+    }
+  });
+
+  // 2. Rebuild the swappable section at the top of the burger menu —
+  //    contains the 3 views NOT currently in the main row, in fixed
+  //    Notes → Reminders → Savings → (other defaults) order so the
+  //    burger reads predictably regardless of which trio is chosen.
+  const host = document.getElementById('mobile-menu-swappable');
+  if (host) {
+    const inBurger = _MOBILE_TAB_BURGER_ORDER.filter(v => !chosen.includes(v));
+    host.innerHTML = inBurger.map(view => {
+      const m = _MOBILE_TAB_META[view];
+      if (!m) return '';
+      return `<button class="mobile-menu-item" data-view="${view}" onclick="navFromMobileMenu('${view}')">
+        <svg class="icon icon-tab" aria-hidden="true"><use href="#${m.icon}"></use></svg>
+        <span>${m.label}</span>
+      </button>`;
+    }).join('');
+  }
+  // 3. The active highlight may now be on a freshly-injected button —
+  //    re-run the syncer so the currently-open view is highlighted
+  //    correctly in the burger menu if it lives there.
+  try { _syncMobileMenuActive(); } catch (_) {}
+}
+
+// ── Edit-tabs modal ──
+// Local state for the modal so we don't mutate settings.mobileTabs until
+// the user taps Save. Stored as an ordered array; new picks append, so
+// removing the first lets us implement a "drop oldest" FIFO rule when
+// the user already has three selected and taps a fourth.
+let _editTabsState = null;
+
+function openEditTabsModal() {
+  _editTabsState = _getMobileTabs(); // start from current setting
+  _renderEditTabsList();
+  // Closing the burger menu first feels cleaner than layering the
+  // modal over the open dropdown — and the dropdown's outside-click
+  // listener would fight the modal's tap targets otherwise.
+  closeMobileMenu();
+  openModal('edit-tabs-modal');
+}
+function closeEditTabsModal() {
+  closeModal('edit-tabs-modal');
+  _editTabsState = null;
+}
+function _renderEditTabsList() {
+  const host = document.getElementById('edit-tabs-list');
+  if (!host) return;
+  // Iterate in the burger order so the rows read Notes/Reminders/Savings
+  // first — consistent with where users find them in the menu.
+  const rows = _MOBILE_TAB_BURGER_ORDER.map(view => {
+    const m = _MOBILE_TAB_META[view];
+    if (!m) return '';
+    const idx = _editTabsState.indexOf(view);
+    const selected = idx !== -1;
+    const positionPill = selected
+      ? `<span class="edit-tabs-row-position">${idx + 1}</span>`
+      : '';
+    return `<div class="edit-tabs-row ${selected ? 'selected' : ''}"
+              data-view="${view}"
+              onclick="_toggleEditTabsRow('${view}')">
+      <svg class="icon icon-tab" aria-hidden="true"><use href="#${m.icon}"></use></svg>
+      <span class="edit-tabs-row-label">${m.label}</span>
+      ${positionPill}
+      <span class="edit-tabs-checkbox">
+        <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>
+      </span>
+    </div>`;
+  }).join('');
+  host.innerHTML = rows;
+  // Re-enable Save (a previous open might have left it disabled if state
+  // ever drifted to <3 selections in an edge case).
+  const saveBtn = document.getElementById('edit-tabs-save-btn');
+  if (saveBtn) saveBtn.disabled = false;
+}
+function _toggleEditTabsRow(view) {
+  if (!_editTabsState) return;
+  const idx = _editTabsState.indexOf(view);
+  if (idx !== -1) {
+    // Deselecting — but only if doing so wouldn't leave fewer than 3
+    // selections (otherwise the user is stuck with no valid config).
+    if (_editTabsState.length <= 1) return;
+    _editTabsState.splice(idx, 1);
+    // We allow temporary <3 selection while picking, but in practice
+    // the FIFO rule below keeps us at exactly 3 most of the time.
+  } else {
+    // Selecting — if already at 3, drop the oldest (FIFO).
+    _editTabsState.push(view);
+    if (_editTabsState.length > 3) _editTabsState.shift();
+  }
+  _renderEditTabsList();
+}
+async function saveEditTabs() {
+  if (!_editTabsState || _editTabsState.length !== 3) {
+    if (typeof toast === 'function') toast('Pick exactly 3 tabs');
+    return;
+  }
+  settings.mobileTabs = _editTabsState.slice();
+  settings.mobileTabsUpdatedAt = new Date().toISOString();
+  try { await _saveSettings(); } catch (e) { console.warn('saveEditTabs persist failed', e); }
+  try { _syncQueue && _syncQueue.enqueue && _syncQueue.enqueue(); } catch (_) {}
+  _applyMobileTabLayout();
+  closeEditTabsModal();
+  if (typeof toast === 'function') toast('Tabs updated');
+}
+
+// Re-apply on resize so the burger menu always lists views that are
+// genuinely off the main row. Cheap (DOM attribute writes), but debounce
+// anyway to avoid spamming during a resize drag on desktop dev tools.
+let _mobileTabResizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(_mobileTabResizeTimer);
+  _mobileTabResizeTimer = setTimeout(() => {
+    try { _applyMobileTabLayout(); } catch (_) {}
+  }, 150);
+});
 
 // Promo code field handlers
 function onBillingPromoInput() {

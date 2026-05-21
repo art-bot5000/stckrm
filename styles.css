@@ -606,13 +606,27 @@
        Account & Security / Billing / Settings / Report links. */
     #header-burger-btn { display: inline-flex !important; }
 
-    /* Hide the now-burger-menu tabs at this breakpoint and below.
-       This applies to BOTH the medium range (601–899px, where the
-       tab bar would otherwise overflow horizontally) AND the mobile
-       range (≤600px, where the 3×2 grid expects exactly 6 tabs). */
+    /* Hide Report / Billing / Settings tabs across the entire mobile
+       range (≤899px) — these are burger-menu-only on mobile. The
+       three swappable tabs (Notes / Reminders / Savings) used to be
+       hidden here too via the 3×2 grid being capped at 6, but with
+       the new single-row design they're hidden via the dynamic
+       [data-mobile-tab="off"] attribute set by _applyMobileTabLayout
+       in app.js — that lets the user customise which three appear in
+       the main row from the burger menu's Edit button. */
     #tabs > .tab[onclick*="'report'"],
     #tabs > .tab[onclick*="'billing'"],
     #tabs > .tab[onclick*="'settings'"] { display: none; }
+  }
+
+  /* Dynamic mobile-tab visibility — applied at ≤600px only. At
+     medium widths (601–899px) the full 6-tab row layout is preferred
+     since horizontal space allows. data-mobile-tab="off" hides the
+     tab on small screens; the JS that sets it (_applyMobileTabLayout)
+     only ever marks 3 of 6 swappable tabs off, so the visible row
+     always has exactly three buttons. */
+  @media (max-width: 600px) {
+    #tabs > .tab[data-mobile-tab="off"] { display: none; }
   }
 
   @media (max-width: 600px) {
@@ -633,9 +647,13 @@
     /* ── MAIN LAYOUT ── */
     #main { padding: 16px 12px; }
 
-    /* ── TABS: 3×2 grid on mobile (icon above label) ──
-       Stockroom + Budget + Notes on row 1, Groceries + Reminders + Savings
-       on row 2. Burger-menu items are hidden by the wider 899px rule. */
+    /* ── TABS: single row of three on mobile (icon + label inline) ──
+       The grid spans three columns; only the three tabs not flagged
+       data-mobile-tab="off" are visible, giving a single row. Default
+       trio is Stockroom / Groceries / Budget; the user can swap any of
+       them for Notes / Reminders / Savings via the burger menu's Edit
+       button. Report / Billing / Settings live in the burger menu only
+       (hidden by the wider 899px rule above). */
     #tabs {
       width: 100%;
       display: grid;
@@ -3528,6 +3546,140 @@ body.has-demo-banner #view-notes #notes-header {
   font-weight: 700;
 }
 .mobile-menu-item.active .icon-tab { color: #111; }
+
+/* Divider between the swappable-tab block and the fixed entries
+   (Report / Billing / Account & Security / Settings) — keeps the
+   structure scannable so users can tell that the top group are
+   tabs they could promote to the main row. */
+.mobile-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 4px;
+  border: 0;
+}
+
+/* "Edit tabs" entry at the bottom of the burger menu. Visually
+   muted so it doesn't compete with nav items — it's a meta-action,
+   not a destination. Pencil icon picks up the accent on hover to
+   signal interactivity. */
+.mobile-menu-edit-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  margin-top: 4px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+}
+.mobile-menu-edit-btn:hover {
+  background: rgba(232,168,56,0.07);
+  color: var(--text);
+  border-color: rgba(232,168,56,0.40);
+}
+.mobile-menu-edit-btn .icon-tab {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+.mobile-menu-edit-btn:hover .icon-tab { color: var(--accent); }
+
+/* ── Edit-tabs modal ───────────────────────────────────────────
+   Lets the user choose which three of six swappable views appear
+   in the mobile tab row. Each row shows a checkbox + icon + label;
+   tapping anywhere toggles selection. Selecting a 4th item auto-
+   unticks the oldest selection (FIFO) so the user always has
+   exactly three. The modal is a standard .modal-backdrop so it
+   inherits the bottom-sheet mobile styling automatically. */
+.edit-tabs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 14px 0 18px;
+}
+.edit-tabs-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+  user-select: none;
+}
+.edit-tabs-row:hover {
+  background: rgba(232,168,56,0.06);
+  border-color: rgba(232,168,56,0.30);
+}
+.edit-tabs-row.selected {
+  background: rgba(232,168,56,0.12);
+  border-color: rgba(232,168,56,0.50);
+}
+.edit-tabs-row .icon-tab {
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.edit-tabs-row-label {
+  flex: 1;
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.edit-tabs-row-position {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  background: rgba(232,168,56,0.15);
+  padding: 3px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.5px;
+}
+.edit-tabs-checkbox {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+.edit-tabs-checkbox .icon {
+  width: 14px;
+  height: 14px;
+  color: #111;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.edit-tabs-row.selected .edit-tabs-checkbox {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.edit-tabs-row.selected .edit-tabs-checkbox .icon { opacity: 1; }
+.edit-tabs-hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 0 0 6px;
+}
 
 /* Burger button refines on hover/active for a tactile feel */
 #header-burger-btn:hover,
