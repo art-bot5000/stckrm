@@ -19848,12 +19848,22 @@ async function kvPull() {
       household: activeProfile,
     });
   if (!res.ok) return null;
-  const { ciphertext } = await res.json();
+  const body = await res.json();
+  const { ciphertext, forceRemote, forceRemoteMeta } = body;
   if (!ciphertext) return null;
   try {
     _keyFingerprint(_kvKey).then(fp => console.log('[key] kvPull: decrypting with key fingerprint:', fp));
     const plain = await kvDecrypt(_kvKey, ciphertext);
-    return JSON.parse(plain);
+    const parsed = JSON.parse(plain);
+    // Stash the server-side restore signal on the returned object. The caller
+    // (kvSyncNow) checks this and switches to "remote wins wholesale" merge
+    // for that one sync, then acks via /data/force-remote/ack to clear it.
+    // Private __ prefix to mark it as not part of the user's data shape.
+    if (forceRemote) {
+      parsed.__forceRemote     = true;
+      parsed.__forceRemoteMeta = forceRemoteMeta || null;
+    }
+    return parsed;
   } catch(e) {
     console.error('kvPull: decrypt failed — key mismatch or corrupted data.', e.message);
     throw new KvDecryptError('Could not decrypt your data — the encryption key may be wrong.');
@@ -19898,6 +19908,108 @@ async function kvSyncNow(silent = false) {
     }
     const remote = await kvPull();
     if (remote && Array.isArray(remote.items)) {
+      // ── Force-remote restore mode ──
+      // When the server signals that this user's KV blob was just
+      // restored by an admin (see restoreUserFromR2Snapshot in main.ts),
+      // bypass the LWW merge entirely and take server state wholesale.
+      // Without this, any local edits made after the restored snapshot's
+      // date win the per-item updatedAt comparison and silently undo the
+      // restore (e.g. tags revert because tag-toggle bumps updatedAt).
+      // Owner-only — share-state pulls don't carry this flag.
+      if (remote.__forceRemote && !_shareState) {
+        const meta = remote.__forceRemoteMeta || {};
+        console.warn('[restore] Force-remote applied — replacing local state with restored snapshot.', meta);
+        items = remote.items;
+        await saveData();
+        if (remote.settings) {
+          // Take settings wholesale, but stamp lastSynced ourselves at end
+          settings = { ...remote.settings };
+          await _saveSettings();
+          try { _refreshAmazonBannerVisibility(); } catch(_) {}
+          try { updateHeaderGreeting(); } catch(_) {}
+          try { _updateSidebarProfile(); } catch(_) {}
+        }
+        // Groceries / departments / lists
+        if (Array.isArray(remote.groceries))   { groceryItems = remote.groceries;   await _saveGroceryLocal(); }
+        if (Array.isArray(remote.departments)) { groceryDepts = remote.departments; await saveGroceryDepts(); }
+        if (Array.isArray(remote.groceryLists)) {
+          groceryLists = remote.groceryLists;
+          if (typeof _saveGroceryLists === 'function') await _saveGroceryLists();
+        }
+        // Reminders
+        if (Array.isArray(remote.reminders)) { reminders = remote.reminders; await saveReminders(); }
+        // Notes (own-account only — never restore into share blobs)
+        if (Array.isArray(remote.notes)) { notes = remote.notes; await saveNotes(); }
+        // Budget — Phase 1 (bills) + Phase 2 (categories/transactions) + Phase 3 (accounts/income)
+        if (Array.isArray(remote.bills))                 bills            = remote.bills;
+        if (remote.billInstances && typeof remote.billInstances === 'object') billInstances = remote.billInstances;
+        if (remote.budgetSettings && typeof remote.budgetSettings === 'object') budgetSettings = remote.budgetSettings;
+        if (Array.isArray(remote.bills) || remote.billInstances || remote.budgetSettings) {
+          try { await saveBudgetLocal(); } catch (_) {}
+        }
+        if (Array.isArray(remote.budgetCategories)) budgetCategories = remote.budgetCategories;
+        if (remote.transactions && typeof remote.transactions === 'object') transactions = remote.transactions;
+        if (Array.isArray(remote.budgetCategories) || remote.transactions) {
+          try { await saveBudgetSpendLocal(); } catch (_) {}
+        }
+        if (Array.isArray(remote.budgetAccounts))  budgetAccounts  = remote.budgetAccounts;
+        if (Array.isArray(remote.incomeTemplates)) incomeTemplates = remote.incomeTemplates;
+        if (remote.incomeEntries && typeof remote.incomeEntries === 'object') incomeEntries = remote.incomeEntries;
+        if (Array.isArray(remote.budgetAccounts) || Array.isArray(remote.incomeTemplates) || remote.incomeEntries) {
+          try { await saveBudgetAccountsAndIncomeLocal(); } catch (_) {}
+        }
+        // Tombstones — replace local sets with the snapshot's
+        if (Array.isArray(remote.deletedIds))                  { try { await saveDeletedIds(new Set(remote.deletedIds)); } catch (_) {} }
+        if (Array.isArray(remote.groceryListDeletedIds))       { try { await dbPut('groceryLists', '_deletedIds', [...new Set(remote.groceryListDeletedIds)]); } catch (_) {} }
+        if (Array.isArray(remote.billsDeletedIds))             billsDeletedIds             = new Set(remote.billsDeletedIds);
+        if (Array.isArray(remote.budgetCategoryDeletedIds))    budgetCategoryDeletedIds    = new Set(remote.budgetCategoryDeletedIds);
+        if (Array.isArray(remote.budgetTransactionDeletedIds)) budgetTransactionDeletedIds = new Set(remote.budgetTransactionDeletedIds);
+        if (Array.isArray(remote.budgetAccountDeletedIds))     budgetAccountDeletedIds     = new Set(remote.budgetAccountDeletedIds);
+        if (Array.isArray(remote.incomeTemplateDeletedIds))    incomeTemplateDeletedIds    = new Set(remote.incomeTemplateDeletedIds);
+        if (Array.isArray(remote.incomeEntryDeletedIds))       incomeEntryDeletedIds       = new Set(remote.incomeEntryDeletedIds);
+        // Household directory — update names/colours from the snapshot. The
+        // actual per-household data blobs are restored server-side and will be
+        // applied to local state when the user switches to each household
+        // (kvSyncNow pulls per-household, and the force-remote flag persists
+        // for 24h so each pull picks it up in turn).
+        if (remote.householdDir && typeof remote.householdDir === 'object') {
+          try {
+            const localProfiles = await getProfiles();
+            for (const [k, meta] of Object.entries(remote.householdDir)) {
+              if (!localProfiles[k]) {
+                localProfiles[k] = { name: meta.name, colour: meta.colour, items: [], settings: {}, reminders: [], groceries: [], departments: [] };
+              } else {
+                if (meta.name)   localProfiles[k].name   = meta.name;
+                if (meta.colour) localProfiles[k].colour = meta.colour;
+              }
+            }
+            await saveProfiles(localProfiles);
+            try { renderSettingsHouseholdList(); } catch (_) {}
+          } catch (e) { console.warn('[restore] householdDir update failed:', e?.message || e); }
+        }
+        // History + notifications
+        if (Array.isArray(remote.history))       { _history = remote.history; try { await saveHistory(); } catch (_) {} }
+        if (Array.isArray(remote.notifications)) { notifications = remote.notifications; try { await saveNotificationsLocal(); } catch (_) {} _renderNotificationBellBadge(); }
+        scheduleRender(...RENDER_REGIONS);
+        // Stamp lastSynced and persist
+        settings.lastSynced = new Date().toISOString();
+        try { await _saveSettings(); } catch (_) {}
+        // Ack the flag so subsequent syncs go back to normal LWW.
+        // Fire-and-forget — if it fails the worst case is the next sync
+        // also force-merges (same outcome since the local state is now
+        // already what the snapshot held).
+        try {
+          await postKV(`${WORKER_URL}/data/force-remote/ack`, {
+            emailHash: _kvEmailHash,
+            ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+          });
+        } catch (e) { console.warn('[restore] force-remote ack failed:', e?.message || e); }
+        // Surface a toast so the user knows the restore landed
+        try { toast('Your data was restored from a backup'); } catch (_) {}
+        if (!_wasSilent) updateSyncPill('synced'); else updateSyncPill('connected');
+        hideDataLoadingOverlay();
+        return;
+      }
       const localLastSynced  = settings.lastSynced ? new Date(settings.lastSynced).getTime() : 0;
       const remoteLastSynced = remote.lastSynced   ? new Date(remote.lastSynced).getTime()   : 0;
       const remoteWins       = remoteLastSynced > localLastSynced;
