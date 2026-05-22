@@ -11,11 +11,12 @@ RUN npm install
 # Frontend source files live at the repo root, not in src/. The previous
 # Dockerfile copied from src/ which silently became stale, so root-level
 # edits never reached production.
-COPY app.js budget.js notes.js scanner.js styles.css index.html landing.html sw.js manifest.json admin.html logo.png ./
+COPY app.js budget.js notes.js demo.js scanner.js styles.css index.html landing.html sw.js manifest.json admin.html logo.png ./
 RUN mkdir -p public && \
     npx terser app.js --compress --mangle --comments false -o public/app.js && \
     npx terser budget.js --compress --mangle --comments false -o public/budget.js && \
     npx terser notes.js --compress --mangle --comments false -o public/notes.js && \
+    npx terser demo.js --compress --mangle --comments false -o public/demo.js && \
     npx terser scanner.js --compress --mangle --comments false -o public/scanner.js && \
     npx cleancss -o public/styles.css styles.css && \
     if [ "$STOCKROOM_ENV" = "staging" ]; then \
