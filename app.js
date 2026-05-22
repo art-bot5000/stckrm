@@ -25014,22 +25014,6 @@ async function leaveShare() {
 }
 
 // ── Share state: stored share (old key, migration) ────────
-function loadHouseholdShareState() {
-  // Migrated to loadShareState() — kept for backwards compat
-  loadShareState();
-  if (!_shareState) {
-    // Check old format
-    try {
-      const raw = localStorage.getItem('stockroom_household_share');
-      if (raw) {
-        const d = JSON.parse(raw);
-        if (d.fileId) { _sharedFileId = d.fileId; }
-      }
-    } catch(e) {}
-  }
-  updateHouseholdShareUI();
-}
-
 function saveHouseholdShareState() { saveShareState(); }
 
 async function createInviteCode() {
@@ -25057,14 +25041,6 @@ async function createInviteCode() {
   } finally {
     if (btn) { btn.innerHTML = '<svg class="icon" aria-hidden="true" style="vertical-align:-3px"><use href="#i-link"></use></svg> Generate invite code'; btn.disabled = false; }
   }
-}
-
-function copyInviteCode() {
-  const code = document.getElementById('invite-code-value')?.textContent?.trim();
-  if (!code) return;
-  navigator.clipboard?.writeText(code).then(() => toast('Code copied ✓')).catch(() => {
-    prompt('Copy this invite code:', code);
-  });
 }
 
 async function joinHousehold() {
@@ -25095,36 +25071,6 @@ async function joinHousehold() {
   } finally {
     if (btn) { btn.textContent = 'Join'; btn.disabled = false; }
   }
-}
-
-function leaveHousehold() { leaveShare(); }
-
-// ── Proxy read/write used when _sharedFileId is set ──────
-async function proxyReadDrive() {
-  const code   = _shareState?.code || '';
-  const hParam = activeProfile && activeProfile !== 'default' ? `&household=${encodeURIComponent(activeProfile)}` : '';
-  const res    = await fetch(`${WORKER_URL}/sync/pull?share=${encodeURIComponent(code)}${hParam}`);
-  if (res.status === 404) return null;
-  if (res.status === 403) {
-    const d = await res.json().catch(() => ({}));
-    throw new Error('ACCESS_DENIED: ' + (d.error || 'No access'));
-  }
-  if (res.status === 503) throw new Error('OWNER_NOT_CONNECTED');
-  if (!res.ok) throw new Error('Proxy read failed: ' + res.status);
-  return res.json();
-}
-
-async function proxyWriteDrive(payload) {
-  // Shared user — push via backend, permission validated server-side with share code
-  const code   = _shareState?.code || '';
-  const hParam = activeProfile && activeProfile !== 'default' ? `&household=${encodeURIComponent(activeProfile)}` : '';
-  const res    = await fetch(`${WORKER_URL}/sync/push?share=${encodeURIComponent(code)}${hParam}`, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    payload,
-  });
-  if (res.status === 403) throw new Error('READ_ONLY');
-  if (!res.ok) throw new Error('Proxy write failed: ' + res.status);
 }
 
 async function proxyGetModifiedTime() {
@@ -27297,45 +27243,6 @@ async function init() {
   // Attaches once at init; the handler itself no-ops when the user is
   // already inside the search input so plain "k" keystrokes don't fight.
   document.addEventListener('keydown', _globalSearchKeyShortcut);
-}
-
-// ═══════════════════════════════════════════════════════════
-//  STORE PRICES (multiple stores per item)
-//  Moved from scanner.js — needed as soon as the item modal opens
-// ═══════════════════════════════════════════════════════════
-
-function renderStorePricesSection(item) {
-  const section = document.getElementById('store-prices-section');
-  const list    = document.getElementById('store-prices-list');
-  if (!section || !list) return;
-  const prices = item?.storePrices || [];
-  section.style.display = 'block';
-  if (!prices.length) {
-    list.innerHTML = `<p style="font-size:12px;color:var(--muted);padding:4px 0">No store prices added yet. Click + Add Store to compare prices across different shops.</p>`;
-    return;
-  }
-  list.innerHTML = prices.map((sp, i) => `
-    <div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
-      <input type="text" value="${esc(sp.store)}" placeholder="Store name"
-        style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px"
-        onchange="updateStorePrice(${i},'store',this.value)">
-      <input type="text" value="${esc(sp.price)}" placeholder="Price"
-        style="width:80px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px;font-family:var(--mono)"
-        onchange="updateStorePrice(${i},'price',this.value)">
-      <button onclick="removeStorePrice(${i})" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:2px 4px"
-        onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--muted)'"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
-    </div>`).join('');
-  if (prices.length > 1) {
-    const parsed = prices.map((sp,i) => ({ i, val: parsePriceValue(sp.price) })).filter(x => x.val !== null);
-    if (parsed.length > 1) {
-      const min = Math.min(...parsed.map(x => x.val));
-      const cheapestIdx = parsed.find(x => x.val === min)?.i;
-      if (cheapestIdx !== undefined) {
-        const rows = list.querySelectorAll('div');
-        if (rows[cheapestIdx]) rows[cheapestIdx].style.background = 'rgba(76,187,138,0.08)';
-      }
-    }
-  }
 }
 
 function addStorePriceRow() {
