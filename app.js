@@ -372,7 +372,6 @@ async function migrateFromLocalStorage(lsKey, dbStore, dbKey, transform) {
 //  CONFIG
 // ═══════════════════════════════════════════
 const CLIENT_ID       = '589308993147-rfj3kbaave6uhf3k1ojes3ph2l1pkd1m.apps.googleusercontent.com';
-const SCOPES          = 'https://www.googleapis.com/auth/drive.file';
 // KV-native: no Drive file
 // Same-origin backend: the frontend always talks to whichever backend
 // served it. Production (stckrm.com / app.stckrm.com) hits its own
@@ -381,8 +380,6 @@ const SCOPES          = 'https://www.googleapis.com/auth/drive.file';
 const WORKER_URL      = (typeof location !== 'undefined' && location.origin)
   ? location.origin
   : 'https://stckrm.fly.dev';
-// Legacy constants kept to prevent reference errors in dead code paths
-const DROPBOX_FILE    = '';
 
 // ═══════════════════════════════════════════
 //  STATE
@@ -850,11 +847,6 @@ let activeProfile = 'default'; // household profile key
 
 // ── Notes state ───────────────────────────────────────────
 // (Notes state moved to notes.js: notes[], _notesFilter, _editingNoteId, _noteUnlocked, _noteColourPickerOpen, _noteUndoStack, _noteRedoStack, _noteBodyDirty, _noteAutoSaveTimer, _noteOtpPending, _sharedNotesIncoming)
-
-// Drive / Dropbox — disabled in KV build (kept as no-op vars to avoid reference errors)
-let driveConnected   = false;
-let dropboxToken     = null;
-let dropboxConnected = false;
 
 // ═══════════════════════════════════════════
 //  MODAL HELPERS (defined early — used everywhere)
@@ -2140,13 +2132,6 @@ function enableItemEdit() {
   show('item-edit-view', 'block');
 }
 
-// ═══════════════════════════════════════════
-// Drive / Dropbox functions — stubbed as no-ops in KV build
-function openDrivePermissionModal() { /* Drive removed — KV build */ }
-function proceedConnectDrive()      { /* Drive removed — KV build */ }
-function wizardConnectDrive()       { /* Drive removed — KV build */ }
-function wizardConnectDropbox()     { /* Drive removed — KV build */ }
-
 function wizardNext() {
   localStorage.setItem('stockroom_country_set', '1');
   document.getElementById('wizard-step-1').classList.remove('active');
@@ -3151,14 +3136,6 @@ function _pushB64UrlToUint8Array(b64) {
   const out = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
   return out;
-}
-
-// Uint8Array → base64 (standard, NOT base64url — what crypto.subtle
-// outputs typically lands in). Used when posting subscription keys.
-function _pushBytesToB64(bytes) {
-  let s = '';
-  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-  return btoa(s);
 }
 
 // Friendly UA label for the subscription record. Matches the device
@@ -8591,13 +8568,6 @@ async function checkCloudAhead() {
     } else if (kvConnected) {
       const res = await postKV(`${WORKER_URL}/data/modified`, {emailHash: _kvEmailHash, verifier: _kvVerifier, household: activeProfile});
       if (res.ok) remoteModified = (await res.json()).modifiedTime;
-    } else if (false && false) { // dropbox disabled in KV build
-      const res = await fetch('https://api.dropboxapi.com/2/files/get_metadata', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${dropboxToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: DROPBOX_FILE }),
-      });
-      if (res.ok) remoteModified = (await res.json()).server_modified;
     }
 
     // Owner-side share-blob check: if we own any shares, ALSO check whether
@@ -15171,12 +15141,6 @@ async function _doExportData(includeSecureNotes = false) {
 // useless without the user's passphrase. Restoring is currently a manual
 // process via support; this is a personal "time machine" to inspect or
 // archive past states.
-function _bhFmtBytes(n) {
-  if (!n) return '0 B';
-  if (n < 1024) return n + ' B';
-  if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
-  return (n/1024/1024).toFixed(2) + ' MB';
-}
 function _bhFmtAge(iso) {
   if (!iso) return '—';
   const ms = Date.now() - new Date(iso).getTime();
@@ -15943,91 +15907,6 @@ async function sendEmailNow() {
     if (data.ok) toast('Report sent ✓ — check your inbox');
     else toast('Send failed: ' + (data.error || 'unknown error'));
   } catch(e) { toast('Could not reach email service'); }
-}
-
-async function handleOAuthRedirect() {
-  const qParams = new URLSearchParams(location.search);
-
-  // ── Google Drive code flow (returns via query string from Worker) ──
-  const driveAuth = qParams.get('drive_auth');
-  if (driveAuth) {
-    history.replaceState(null, '', location.pathname);
-    if (driveAuth === 'success') {
-      // Refresh token is now stored in backend KV — frontend just sets connected flag
-      driveConnected = true;
-      try { localStorage.setItem('stockroom_drive', JSON.stringify({ driveConnected })); } catch(e){}
-      updateSyncUI();
-      const wizardStep = localStorage.getItem('stockroom_wizard_step');
-      if (wizardStep === '2') { localStorage.removeItem('stockroom_wizard_step'); wizardNext(); }
-      // First sync via backend proxy — no access token needed
-      syncNow().then(() => {
-        try {
-          const preAuthView = sessionStorage.getItem('stockroom_pre_auth_view');
-          sessionStorage.removeItem('stockroom_pre_auth_view');
-          if (preAuthView === 'settings') {
-            const tab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Settings'));
-            if (tab) showView('settings', tab);
-          } else {
-            localStorage.setItem('stockroom_seen', '1');
-            document.body.classList.remove('wizard-active'); hide('wizard');
-            const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
-            if (stockTab) showView('stock', stockTab);
-          }
-        } catch(e){}
-      });
-    } else {
-      const reason = qParams.get('reason') || 'unknown';
-      // Map raw Google/OAuth errors to friendly messages
-      const friendly = reason.includes('Bad Request') || reason.includes('invalid_grant')
-        ? 'Sign-in expired — please try connecting Google Drive again'
-        : reason === 'no_code'
-        ? 'Sign-in was cancelled'
-        : `Drive connection failed: ${reason}`;
-      toast(friendly);
-    }
-    return;
-  }
-
-  // ── Dropbox PKCE code flow (returns via query string from Worker) ──
-  const dropboxAuth = qParams.get('dropbox_auth');
-  if (dropboxAuth) {
-    history.replaceState(null, '', location.pathname);
-    if (dropboxAuth === 'success') {
-      fetch(`${WORKER_URL}/auth/dropbox-token`)
-        .then(r => r.json())
-        .then(data => {
-          if (data.access_token) {
-            dropboxToken     = data.access_token;
-            dropboxConnected = true;
-            try { sessionStorage.setItem('stockroom_dropbox_token', data.access_token); } catch(e){}
-            try { localStorage.setItem('stockroom_dropbox', JSON.stringify({ dropboxConnected })); } catch(e){}
-            updateSyncUI();
-            const wizardStep = localStorage.getItem('stockroom_wizard_step');
-            if (wizardStep === '2') { localStorage.removeItem('stockroom_wizard_step'); wizardNext(); }
-            syncDropbox().then(() => {
-              try {
-                const preAuthView = sessionStorage.getItem('stockroom_pre_auth_view');
-                sessionStorage.removeItem('stockroom_pre_auth_view');
-                if (preAuthView === 'settings') {
-                  const tab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Settings'));
-                  if (tab) showView('settings', tab);
-                } else {
-                  // Came from wizard — go to Stockroom
-                  localStorage.setItem('stockroom_seen', '1');
-                  document.body.classList.remove('wizard-active'); hide('wizard');
-                  const stockTab = [...document.querySelectorAll('.tab')].find(t => t.textContent.includes('Stockroom'));
-                  if (stockTab) showView('stock', stockTab);
-                }
-              } catch(e){}
-            });
-          }
-        })
-        .catch(e => { console.error('Dropbox token fetch failed:', e); toast('Dropbox connection failed — try again'); });
-    } else {
-      toast('Dropbox sign-in expired or was cancelled — please try again');
-    }
-    return;
-  }
 }
 
 // ── Drive sync via backend proxy ─────────────────────────
@@ -17040,25 +16919,6 @@ function _showAuthStep(email, usePasskey) {
   }
 }
 
-// Show passphrase section within auth step
-function showAuthPassphrase() {
-  const pk = document.getElementById('auth-passkey-section');
-  const pp = document.getElementById('auth-passphrase-section');
-  if (pk) pk.style.display = 'none';
-  if (pp) pp.style.display = 'block';
-  const errEl = document.getElementById('kv-login-error');
-  if (errEl) errEl.style.display = 'none';
-  setTimeout(() => { document.getElementById('kv-login-pass')?.focus(); }, 100);
-}
-
-// Show passkey section within auth step
-function showAuthPasskey() {
-  const pk = document.getElementById('auth-passkey-section');
-  const pp = document.getElementById('auth-passphrase-section');
-  if (pk) pk.style.display = 'block';
-  if (pp) pp.style.display = 'none';
-}
-
 // "Not you?" — back to email screen, clears remembered data
 function loginBackToEmail() {
   clearRememberedCookieData();
@@ -17071,14 +16931,6 @@ function loginBackToEmail() {
   const panel = document.getElementById('cookie-inline-panel');
   if (panel) panel.style.display = 'none';
 }
-
-// Legacy aliases
-function loginChangeUser() { loginBackToEmail(); }
-function showAuthScreen(email, usePasskey) { _showAuthStep(email, usePasskey); }
-function cookieConsentAccept() { try{localStorage.setItem(COOKIE_CONSENT_KEY,'granted');}catch(e){} }
-function cookieConsentDecline() { try{localStorage.setItem(COOKIE_CONSENT_KEY,'declined');}catch(e){} }
-function maybeShowCookieConsentBanner() { /* now handled inline on login screen */ }
-function applyLoginScreenState() { showKvLogin(); }
 
 // ═══════════════════════════════════════════════════════════
 
@@ -20603,16 +20455,6 @@ async function kvChangePassphrase(oldPass, newPass) {
   } catch(err) { toast('Could not change passphrase: ' + err.message); }
 }
 
-// ═══════════════════════════════════════════
-//  DROPBOX SYNC (kept for reference, disabled in KV build)
-// ═══════════════════════════════════════════
-// ── Dropbox — removed in KV build (stubbed to prevent reference errors) ──
-function connectDropbox()           { /* Dropbox removed — KV build */ }
-function generateCodeVerifier()     { return ''; }
-async function generateCodeChallenge() { return ''; }
-async function syncDropbox()        { /* Dropbox removed */ }
-async function uploadToDropbox()    { /* Dropbox removed */ }
-async function signOutDropbox()     { /* Dropbox removed */ }
 // ── Sync Queue — visual feedback for pending changes ──────
 // Shows a bottom bar while changes are queued/syncing.
 // Debounces rapid saves so we don't hammer the backend.
@@ -20713,11 +20555,6 @@ function updateSyncUI() {
   const el = document.getElementById('kv-account-email');
   if (el && _kvEmail) el.textContent = _kvEmail;
 }
-
-// Drive/Dropbox UI functions — stubbed as no-ops in KV build
-function updateDropboxUI() { /* Dropbox removed */ }
-async function signOutDrive() { /* Drive removed */ }
-function updateDriveUI()    { /* Drive removed */ }
 
 function renderSettingsForUser() {
   const settingsView = document.getElementById('view-settings');
@@ -23729,9 +23566,6 @@ function _initSettingsSidebarScroll() {
   const first = document.querySelector('.settings-nav-link');
   if (first) first.classList.add('active');
 }
-
-// Keep old name as alias for any stale references
-function toggleSettingsSection(bodyId, headerEl) { toggleSettings(bodyId, headerEl); }
 
 function toggleGroceryEditMode() {
   groceryEditMode = !groceryEditMode;
@@ -27172,10 +27006,6 @@ async function init() {
     }
   }
 
-  // Restore Dropbox state (disabled in KV build)
-
-  // KV build: no OAuth redirect handling needed
-  // handleOAuthRedirect(); // Drive OAuth — not used in KV build
   await loadShareState();
 
   // Check for ?join=CODE — show loading state immediately so user doesn't see normal wizard
@@ -28080,10 +27910,6 @@ async function completePendingJoin() {
     updateSyncPill('error');
   }
 }
-
-function showShareWizard(shareData) { showShareAuthGate(shareData); }
-async function acceptShareAndContinue() { await completePendingJoin(); }
-function showShareJoinConfirm(shareData) { toast(`✓ Joined ${shareData.ownerName || 'household'}'s STOCKROOM as ${shareData.type || 'guest'}`); }
 
 // ═══════════════════════════════════════════════════════════
 //  URL ACTION HANDLER — moved from scanner.js
