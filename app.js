@@ -157,6 +157,17 @@ function _resetDbHandle() {
 
 function _setActiveDbForUser(emailHash) {
   if (!emailHash || typeof emailHash !== 'string') return;
+  // Defence-in-depth: never flip the active DB to a user DB while in
+  // demo mode. The previous version of this code allowed it, which
+  // meant a kvRestoreSession or sign-in path firing during a demo
+  // session would route the next dbPut into the real user's IDB.
+  // _seedDemoData's writes would then overwrite the real account's
+  // data. See init()'s "skip kvRestoreSession in demo" guard for the
+  // primary defence; this is the safety net.
+  if (window._demoMode) {
+    console.warn('[_setActiveDbForUser] refused — demo mode is active');
+    return;
+  }
   const slug = emailHash.slice(0, 16);
   const next = `stockroom_u_${slug}`;
   if (_activeDbName === next) return;
@@ -27025,8 +27036,19 @@ async function init() {
   console.log('[DIAG] cookie_consent:   ', _diagConsent || 'ABSENT');
   console.log('[DIAG] key_fallback:     ', _diagFallback ? JSON.parse(_diagFallback) : 'ABSENT');
   console.log('[DIAG] session_key (ls): ', _diagLsKey   ? 'SET' : 'ABSENT');
-  const kvRestored = await kvRestoreSession();
-  console.log('[DIAG] kvRestored:', kvRestored, '| kvConnected:', kvConnected, '| _kvKey:', !!_kvKey);
+  // CRITICAL: refuse to restore the user's session while in demo mode.
+  // kvRestoreSession calls _setActiveDbForUser which flips _activeDbName
+  // from 'stockroom_demo' back to the user's per-user DB. If that's
+  // allowed to happen, _seedDemoData's dbPut calls — which fire later
+  // in the demo branch — will write the demo persona's items into the
+  // real user's IDB, destroying their data.
+  //
+  // Demo mode and signed-in mode are mutually exclusive within a single
+  // tab session. The kv_session in localStorage is left untouched, so
+  // navigating away from ?action=demo (or closing the tab and returning
+  // to /app) restores the user's session normally.
+  const kvRestored = window._demoMode ? false : await kvRestoreSession();
+  console.log('[DIAG] kvRestored:', kvRestored, '| kvConnected:', kvConnected, '| _kvKey:', !!_kvKey, '| demoMode:', !!window._demoMode);
 
   // ── Email-verification gate on session restore ─────────────────────────
   // Defends against the "Back-button bypass" path: user signed up, the OTP
@@ -27141,6 +27163,17 @@ async function init() {
     // real-account-notifications-in-demo leak. _seedDemoData below then
     // re-populates the data arrays from the persona definition.
     _resetInMemoryUserState();
+    // Belt-and-braces: refuse to seed if anything flipped _activeDbName
+    // away from stockroom_demo between init's initial set and here. The
+    // primary defence is in _setActiveDbForUser (now bails in demo mode)
+    // and init's gated kvRestoreSession call, but if a future code path
+    // ever introduces a third way to flip the DB, this catches it loudly
+    // instead of silently writing demo data into the real user's IDB.
+    if (_activeDbName !== 'stockroom_demo') {
+      console.error('[demo] DB context corrupted — _activeDbName is',
+        _activeDbName, '— re-flipping to stockroom_demo before seed');
+      await _setActiveDbForDemo();
+    }
     document.body.classList.remove('wizard-active');
     const wiz = document.getElementById('wizard');
     if (wiz) wiz.style.display = 'none';
