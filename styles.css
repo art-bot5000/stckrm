@@ -929,9 +929,18 @@
       overflow-y: auto;
     }
     .app-nav-logo {
-      padding: 20px 16px 16px;
+      /* Top strip height is shared with the omnibox-input-row so the
+         STCKRM logo and the search bar sit on the same horizontal axis.
+         If this ever needs to grow (e.g. taller profile chip), bump
+         --top-strip-h in one place. */
+      --top-strip-h: 52px;
+      min-height: var(--top-strip-h);
+      padding: 0 16px;
+      display: flex;
+      align-items: center;
       border-bottom: 1px solid var(--glass-border);
       margin-bottom: 8px;
+      box-sizing: border-box;
     }
     .app-nav-links {
       flex: 1;
@@ -5732,7 +5741,10 @@ body.omnibox-expanded {
   #omnibox-scrim {
     left: 220px;
   }
-  .omnibox-input-row { padding: 10px 36px; }
+  /* Match the sidebar's .app-nav-logo top-strip height so the search
+     bar's vertical centre lines up with the STCKRM logo. Flex centring
+     in .omnibox-input-row (already set) handles the rest. */
+  .omnibox-input-row { min-height: 52px; padding: 0 36px; box-sizing: border-box; }
   .omnibox-actions[data-layout="chips"] { padding: 12px 36px; }
   .omnibox-actions[data-layout="grid"]  { padding: 14px 36px; }
   .omnibox-actions[data-layout="list"]  { padding: 8px 0; }
