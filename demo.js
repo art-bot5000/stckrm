@@ -147,7 +147,7 @@ async function _switchDemoPersona(persona) {
   // DB is deleted and re-opened so the new persona seeds into a fresh
   // store. Local-storage flags written by some tabs (like grocery active
   // list) are also reset to defaults.
-  _setActiveDbForDemo();
+  await _setActiveDbForDemo();
   try { localStorage.removeItem('stockroom_active_grocery_list'); } catch(e) {}
   // Re-seed with the new persona
   await _seedDemoData(persona);

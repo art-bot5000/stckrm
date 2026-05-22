@@ -164,10 +164,27 @@ function _setActiveDbForUser(emailHash) {
   _resetDbHandle();
 }
 
-function _setActiveDbForDemo() {
+async function _setActiveDbForDemo() {
   _resetDbHandle();
   // Wipe any previous demo DB so each demo session starts fresh.
-  try { indexedDB.deleteDatabase('stockroom_demo'); } catch(e) {}
+  //
+  // indexedDB.deleteDatabase returns a request, not a Promise. The
+  // original implementation fire-and-forgot it, which meant a follow-up
+  // dbGet could race against an in-flight delete or land on a connection
+  // that was blocked by some other tab holding the DB open. Wrap it in
+  // a Promise so callers can await full completion before any further
+  // IDB activity. We resolve on success, onerror, AND onblocked so we
+  // never hang if another tab is holding the DB open — better to flip
+  // the active-DB name and proceed (the next open will create a fresh
+  // store anyway) than to deadlock the boot path.
+  await new Promise((resolve) => {
+    try {
+      const req = indexedDB.deleteDatabase('stockroom_demo');
+      req.onsuccess = () => resolve();
+      req.onerror   = () => resolve();
+      req.onblocked = () => resolve();
+    } catch (e) { resolve(); }
+  });
   _activeDbName = 'stockroom_demo';
 }
 
@@ -251,6 +268,12 @@ function _resetInMemoryUserState() {
   budgetAccounts   = [];
   incomeTemplates  = [];
   incomeEntries    = {};
+  // Cross-tenant leak fix: these two were previously left in place, which
+  // meant a tab that had loaded a user's notifications/history could
+  // surface them inside demo mode (the demo IDB starts empty, so the
+  // load was a no-op and the prior in-memory state survived).
+  notifications    = [];
+  _history         = [];
   settings = { threshold:20, country:'GB', email:'', emailInterval:7, emailStartDate:null, emailStartTime:'09:00', displayName:'', mfa:{ enabled:false, method:'email', totpSecret:null }, customTags:[], lastSynced:'' };
 }
 
@@ -1617,11 +1640,12 @@ async function loadHistory() {
   if (typeof dbGet !== 'function') return;
   try {
     const stored = await dbGet('history', 'history');
-    if (Array.isArray(stored)) {
-      _history = stored.slice(-HISTORY_CAP);
-    }
+    // Same fix as loadNotifications — clear on empty so a previous
+    // session's history can't bleed into a new profile or demo.
+    _history = Array.isArray(stored) ? stored.slice(-HISTORY_CAP) : [];
   } catch (e) {
     console.warn('[history] load failed', e);
+    _history = [];
   }
 }
 
@@ -2933,8 +2957,17 @@ let notifications = []; // global state, mirrors dbPut('notifications','notifica
 async function loadNotifications() {
   try {
     const stored = await dbGet('notifications', 'notifications');
-    if (Array.isArray(stored)) notifications = stored;
-  } catch(e) { /* fresh install — no store yet */ }
+    // Important: assign in both branches. If we only assign when stored is
+    // an array, an empty IDB store leaves stale in-memory state from a
+    // previous user/session — which is exactly how real-account
+    // notifications leaked into demo mode (the demo IDB has nothing, the
+    // load was a no-op, the previously-loaded array survived intact).
+    notifications = Array.isArray(stored) ? stored : [];
+  } catch(e) {
+    // Fresh install — no store yet. Still reset to empty so a previous
+    // tenant's data can't persist across a profile/demo switch.
+    notifications = [];
+  }
 }
 
 async function saveNotificationsLocal() {
@@ -26936,7 +26969,7 @@ async function init() {
   // in the right place. Demo mode (set by handleURLAction before init) is
   // routed to its own DB and wiped on entry.
   if (window._demoMode) {
-    _setActiveDbForDemo();
+    await _setActiveDbForDemo();
   } else {
     try {
       const raw = localStorage.getItem('stockroom_kv_session');
@@ -27098,6 +27131,16 @@ async function init() {
     // Demo mode — skip wizard, skip login, skip MFA. Seed in-memory data and
     // render straight into the app. Nothing persists past this tab session
     // because the dbGet/dbPut/dbDelete shim routes to in-memory Maps.
+    //
+    // CRITICAL: wipe in-memory state first. Earlier init code (loadProfile,
+    // loadReminders, loadNotifications, etc.) may have run a beat ago and
+    // populated globals from whatever DB was active at that instant. We've
+    // since flipped to the demo DB, but any global the load functions
+    // didn't overwrite (notifications, _history) would otherwise survive
+    // and surface inside the demo session. This is the fix for the
+    // real-account-notifications-in-demo leak. _seedDemoData below then
+    // re-populates the data arrays from the persona definition.
+    _resetInMemoryUserState();
     document.body.classList.remove('wizard-active');
     const wiz = document.getElementById('wizard');
     if (wiz) wiz.style.display = 'none';
