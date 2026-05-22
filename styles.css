@@ -6409,3 +6409,41 @@ html[data-theme="light"] .note-swatch[data-colour="#0e3020"] { background: #d3ec
 html[data-theme="light"] .note-swatch[data-colour="#0e2040"] { background: #d6e2f5 !important; }
 html[data-theme="light"] .note-swatch[data-colour="#2a1040"] { background: #e5d8f0 !important; }
 html[data-theme="light"] .note-swatch[data-colour="#0e3030"] { background: #d3ecec !important; }
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   DEMO BANNER — push sticky chrome below the banner, don't overlap
+   ═══════════════════════════════════════════════════════════════════
+   The demo banner is position:fixed; top:0; z-index:400 — so by default
+   the sticky app header (z-index:100, top:0) and the sticky omnibox
+   (top:56px mobile / top:0 desktop) end up sliding UNDER the banner as
+   the user scrolls. The page-level padding-top:38px already makes room
+   for the banner at the very top, but as soon as you scroll, those
+   sticky elements glue themselves to the viewport top, which is the
+   banner's territory.
+
+   Fix: when body has .has-demo-banner, bump every sticky top-anchored
+   element down by the banner offset so they stop at the bottom edge of
+   the banner instead of sliding behind it. Banner always visible, all
+   sticky chrome always visible below it. */
+body.has-demo-banner #app-header {
+  top: var(--demo-banner-offset, 38px) !important;
+}
+body.has-demo-banner .omnibox {
+  /* Mobile: header is 56px tall and stuck at top:38px under the banner,
+     so the omnibox sits at top:38+56 = 94px. */
+  top: calc(var(--demo-banner-offset, 38px) + 56px) !important;
+}
+body.has-demo-banner .omnibox[data-state="expanded"] {
+  top: calc(var(--demo-banner-offset, 38px) + 56px) !important;
+}
+/* Desktop: header is hidden, so the omnibox sticks directly under the
+   banner with no header gap. */
+@media (min-width: 900px) {
+  body.has-demo-banner .omnibox {
+    top: var(--demo-banner-offset, 38px) !important;
+  }
+  body.has-demo-banner .omnibox[data-state="expanded"] {
+    top: var(--demo-banner-offset, 38px) !important;
+  }
+}
