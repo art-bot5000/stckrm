@@ -20728,7 +20728,7 @@ async function trustThisDeviceWith(email, emailHash, verifier, key) {
     } catch(e) {}
     // Register on backend
     const name = getDeviceName();
-    postKV(`${WORKER_URL}/device/register`, { emailHash, verifier, deviceId, name, addedAt: new Date().toISOString() }).catch(() => {});
+    postKV(`${WORKER_URL}/device/register`, { emailHash, verifier, sessionToken: _kvSessionToken, deviceId, name, addedAt: new Date().toISOString() }).catch(() => {});
     toast('This device is now trusted ✓');
     loadTrustedDevices();
   } catch(e) {
@@ -20936,7 +20936,7 @@ async function kvRestoreSession() {
           } catch(e) {}
           fetch(`${WORKER_URL}/device/seen`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ emailHash, verifier, deviceId }),
+            body: JSON.stringify({ emailHash, verifier, sessionToken: _kvSessionToken, deviceId }),
           }).catch(() => {});
           return await restoreWith(wrappedKey, 'trusted-device-idb');
         }
@@ -27316,7 +27316,7 @@ async function recoverShareKeyWithOldKey(code, dataKey) {
 
   // 2. Fetch server backup and decrypt with the provided (old) key
   try {
-    const res = await postKV(`${WORKER_URL}/share/key/get`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, code });
+    const res = await postKV(`${WORKER_URL}/share/key/get`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code });
     if (!res.ok) return null;
     const { encryptedShareKey } = await res.json();
     if (!encryptedShareKey) return null;
@@ -27330,18 +27330,18 @@ async function recoverShareKeyWithOldKey(code, dataKey) {
 }
 
 async function backupShareKey(code, shareKey) {
-  if (!_kvKey || !_kvEmailHash || !_kvVerifier) return;
+  if (!_kvKey || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
   const raw        = await crypto.subtle.exportKey('raw', shareKey);
   const ciphertext = await kvEncrypt(_kvKey, btoa(String.fromCharCode(...new Uint8Array(raw))));
-  await postKV(`${WORKER_URL}/share/key/store`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, code, encryptedShareKey: ciphertext });
+  await postKV(`${WORKER_URL}/share/key/store`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code, encryptedShareKey: ciphertext });
 }
 
 // Recover share key from server — decrypts with owner's data key.
 // Returns a CryptoKey or null.
 async function recoverShareKey(code) {
-  if (!_kvKey || !_kvEmailHash || !_kvVerifier) return null;
+  if (!_kvKey || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return null;
   try {
-    const res = await postKV(`${WORKER_URL}/share/key/get`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, code });
+    const res = await postKV(`${WORKER_URL}/share/key/get`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code });
     if (!res.ok) return null;
     const { encryptedShareKey } = await res.json();
     if (!encryptedShareKey) return null;
@@ -27999,7 +27999,7 @@ window.shareDiag = async function(code) {
     try {
       const r = await fetch(`${WORKER_URL}/share/key/get`, {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ownerEmailHash:_kvEmailHash, verifier:_kvVerifier, code:c}),
+        body: JSON.stringify({ownerEmailHash:_kvEmailHash, verifier:_kvVerifier, sessionToken:_kvSessionToken, code:c}),
       });
       out.push(`share/key/get status: ${r.status}`);
       const d = await r.json();

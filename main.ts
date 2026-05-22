@@ -3705,10 +3705,12 @@ Deno.serve(async (request) => {
   // ── Device: register trusted device ─────────────────
   if (url.pathname === '/device/register' && request.method === 'POST') {
     try {
-      const { emailHash, verifier, deviceId, name, addedAt } = await request.json();
-      if (!emailHash || !verifier || !deviceId) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', emailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { emailHash, verifier, sessionToken, deviceId, name, addedAt } = await request.json();
+      if (!emailHash || !deviceId || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const authed = sessionToken
+        ? !!(await kvGet(['passkey_session', emailHash, sessionToken])).value
+        : verifier && (await kvGet(['user', emailHash, 'verifier'])).value === verifier;
+      if (!authed) return json({ error: 'Unauthorised' }, corsHeaders, 401);
       await kvSet(['device', emailHash, deviceId], JSON.stringify({
         deviceId, name: name || 'Unknown device',
         addedAt: addedAt || new Date().toISOString(),
@@ -3739,10 +3741,12 @@ Deno.serve(async (request) => {
   // ── Device: update last seen ──────────────────────────
   if (url.pathname === '/device/seen' && request.method === 'POST') {
     try {
-      const { emailHash, verifier, deviceId } = await request.json();
-      if (!emailHash || !verifier || !deviceId) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', emailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { emailHash, verifier, sessionToken, deviceId } = await request.json();
+      if (!emailHash || !deviceId || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const authed = sessionToken
+        ? !!(await kvGet(['passkey_session', emailHash, sessionToken])).value
+        : verifier && (await kvGet(['user', emailHash, 'verifier'])).value === verifier;
+      if (!authed) return json({ error: 'Unauthorised' }, corsHeaders, 401);
       const existing = await kvGet(['device', emailHash, deviceId]);
       if (existing.value) {
         const data = { ...JSON.parse(existing.value), lastSeen: new Date().toISOString() };
@@ -5715,8 +5719,10 @@ Deno.serve(async (request) => {
       if (!ownerEmailHash || (!verifier && !sessionToken) || !code || !encryptedShareKey) {
         return json({ error: 'Missing fields' }, corsHeaders, 400);
       }
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const authed = sessionToken
+        ? !!(await kvGet(['passkey_session', ownerEmailHash, sessionToken])).value
+        : verifier && (await kvGet(['user', ownerEmailHash, 'verifier'])).value === verifier;
+      if (!authed) return json({ error: sessionToken ? 'Session expired — sign in again' : 'Unauthorised' }, corsHeaders, 401);
       const share = await kvGet(['share', code.toUpperCase()]);
       if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);
       if (JSON.parse(share.value).ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
@@ -5728,10 +5734,12 @@ Deno.serve(async (request) => {
   // ── Share: get encrypted share key (owner recovery) ───
   if (url.pathname === '/share/key/get' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, code } = await request.json();
-      if (!ownerEmailHash || !verifier || !code) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken, code } = await request.json();
+      if (!ownerEmailHash || !code || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const authed = sessionToken
+        ? !!(await kvGet(['passkey_session', ownerEmailHash, sessionToken])).value
+        : verifier && (await kvGet(['user', ownerEmailHash, 'verifier'])).value === verifier;
+      if (!authed) return json({ error: sessionToken ? 'Session expired — sign in again' : 'Unauthorised' }, corsHeaders, 401);
       const encKey = await kvGet(['share_key', code.toUpperCase(), ownerEmailHash]);
       if (!encKey.value) return json({ error: 'No key stored for this share' }, corsHeaders, 404);
       return json({ ok: true, encryptedShareKey: encKey.value }, corsHeaders);
