@@ -15521,7 +15521,7 @@ async function clearAll() {
     if (kvConnected) kvSyncNow().catch(() => {});
     return;
   }
-  if (!confirm('This will permanently delete EVERYTHING:\n\n• Stockroom items & purchase history\n• Recently deleted bin\n• Notes (including secured ones)\n• Groceries, lists & departments\n• Reminders\n• Bills & budget (categories, transactions, accounts, income)\n• Custom tags\n• Shared household data\n\nThis cannot be undone. Are you sure?')) return;
+  if (!confirm('This will permanently delete EVERYTHING:\n\n• Stockroom items & purchase history\n• Recently deleted bin\n• Notes (including secured ones)\n• Groceries, lists & departments\n• Reminders\n• Bills & budget (categories, transactions, accounts, income)\n• Notifications inbox\n• Change history\n• Custom tags\n• Shared household data\n• Outbound shares (links you sent to others)\n• Alternate households (only "Home" / default remains)\n\nThis cannot be undone. Are you sure?')) return;
   requireReauth('Confirm your identity to clear all data.', _doClearAll, { passkeyAllowed: true });
 }
 
@@ -15599,6 +15599,33 @@ async function _doClearAll() {
   incomeTemplateDeletedIds.clear();
   incomeEntryDeletedIds.clear();
 
+  // Notifications inbox — in-memory array, IDB store, and bell badge.
+  // The original Clear All left these in place, so the user saw a stale
+  // unread count and the inbox panel still showed pre-clear notifications.
+  notifications = [];
+  try { await dbPut('notifications', 'notifications', []); } catch(e) {}
+  try { _renderNotificationBellBadge(); } catch(e) {}
+  // If the notifications panel is open, force it to re-render empty so
+  // the user sees the change immediately rather than on next open.
+  try {
+    if (document.getElementById('notif-panel')?.classList.contains('open')
+        && typeof _renderNotificationPanel === 'function') {
+      _renderNotificationPanel();
+    }
+  } catch(e) {}
+
+  // Change history (Phase-1 undo). In-memory array + IDB store. Without
+  // wiping this, the Recent Changes view would still list events that
+  // reference items/notes/etc that no longer exist.
+  _history = [];
+  try { await saveHistory(); } catch(e) {}
+
+  // Outbound-share permission cache. _shareTargets has already been
+  // server-deleted and emptied above; this is the per-household perms
+  // map that the sharing UI reads. Clearing it keeps the perms panel
+  // consistent with the now-empty share list.
+  _shareTargetPerms = {};
+
   // Custom user-defined tags — five-slot array. Reset to empty slots so the
   // UI stays consistent (existing code defaults to ['','','','',''] when
   // missing). User-facing settings like country/threshold/email schedule
@@ -15630,6 +15657,35 @@ async function _doClearAll() {
   try { await dbPut('groceryDeletedIds',     'groceryDeletedIds',     []); } catch(e) {}
   try { await dbPut('reminderDeletedIds',    'reminderDeletedIds',    []); } catch(e) {}
   try { await dbPut('groceryListDeletedIds', 'groceryListDeletedIds', []); } catch(e) {}
+
+  // Alternate households — keep only the active 'default' household and
+  // tombstone every other key so the sync merge doesn't re-create them
+  // from another device's cached profile blob. Pete's typical setup is a
+  // single household so this is usually a no-op; multi-household users
+  // explicitly opted into Clear All knowing it nukes alternates.
+  try {
+    const profiles = await getProfiles();
+    const keysToRemove = Object.keys(profiles).filter(k => k !== 'default');
+    if (keysToRemove.length > 0) {
+      for (const k of keysToRemove) {
+        delete profiles[k];
+        _addDeletedHousehold(k);
+      }
+      await saveProfiles(profiles);
+    }
+    // Always switch back to the default household. If the user was on an
+    // alternate, that profile no longer exists; switching is the only safe
+    // landing.
+    if (activeProfile !== 'default') {
+      try { localStorage.setItem('stockroom_active_profile', 'default'); } catch(e) {}
+      activeProfile = 'default';
+    }
+    // Re-render the household list in Settings so the cleared alternates
+    // disappear from the UI immediately.
+    if (typeof renderSettingsHouseholdList === 'function') {
+      try { renderSettingsHouseholdList(); } catch(e) {}
+    }
+  } catch(e) { console.warn('clearAll: alternate households wipe failed', e?.message || e); }
 
   // Bump lastSynced so the now-empty state is the authoritative remote.
   // Same rationale as the import path — without this, another device of
