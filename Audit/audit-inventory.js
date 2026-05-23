@@ -130,7 +130,11 @@ function classify(body, p) {
   // Each one is here because the data it returns is either public or
   // non-sensitive (no user data, no account existence info).
   const PUBLIC_BY_DESIGN = new Set([
-    '/referral/validate',  // checks a referral code is valid before signup
+    '/referral/validate',     // checks a referral code is valid before signup
+    '/user/email-verified',   // pre-auth check used by session-restore guard;
+                              // returns verified:true for both no-account AND
+                              // verified-account so the response cannot be
+                              // used to enumerate accounts. See main.ts handler.
   ]);
   if (PUBLIC_BY_DESIGN.has(p)) {
     return { pattern: 'public', evidence: 'public-by-design (whitelisted in classifier)' };
