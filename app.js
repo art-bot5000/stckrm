@@ -26879,10 +26879,16 @@ async function getHouseholdUserId() {
 // ── SSE connection ────────────────────────────────────────
 async function connectPresence() {
   if (!WORKER_URL || !_householdEnabled) return;
+  if (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
   disconnectPresence(); // close any existing
 
   const userId = await getHouseholdUserId();
-  const url    = `${WORKER_URL}/presence-stream?userId=${encodeURIComponent(userId)}`;
+  // Auth via query string — EventSource cannot send POST bodies or custom
+  // headers. The server scopes presence to the authenticated user.
+  const params = new URLSearchParams({ emailHash: _kvEmailHash, userId });
+  if (_kvSessionToken) params.set('sessionToken', _kvSessionToken);
+  else if (_kvVerifier) params.set('verifier', _kvVerifier);
+  const url = `${WORKER_URL}/presence-stream?${params.toString()}`;
 
   try {
     _presenceSSE = new EventSource(url);
@@ -26933,6 +26939,7 @@ function disconnectPresence() {
 
 async function pushPresence() {
   if (!WORKER_URL || !_householdEnabled) return;
+  if (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
   const name   = _householdName || settings.email?.split('@')[0] || 'You';
   const initials = name.slice(0,2).toUpperCase();
   try {
@@ -26940,12 +26947,15 @@ async function pushPresence() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userId:   await getHouseholdUserId(),
+        emailHash:    _kvEmailHash,
+        verifier:     _kvVerifier,
+        sessionToken: _kvSessionToken,
+        userId:       await getHouseholdUserId(),
         name,
         initials,
-        colour:   _householdColour,
-        view:     _currentViewName,
-        ts:       new Date().toISOString(),
+        colour:       _householdColour,
+        view:         _currentViewName,
+        ts:           new Date().toISOString(),
       }),
     });
   } catch(e) { /* offline — ignore */ }
