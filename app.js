@@ -2311,7 +2311,16 @@ async function checkKVStatus() {
   if (!WORKER_URL) { if (status) status.textContent = '✗ No backend URL configured'; return; }
   if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
   try {
-    const res  = await fetch(`${WORKER_URL}/debug-schedule`);
+    const res  = await fetch(`${WORKER_URL}/debug-schedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        emailHash:    _kvEmailHash,
+        verifier:     _kvVerifier,
+        sessionToken: _kvSessionToken,
+        household:    activeProfile,
+      }),
+    });
     const data = await res.json();
     // Deno KV backend: no Drive token needed — check schedule + kvSnapshot
     const hasSchedule = data.schedule && data.schedule !== '✗ missing';
@@ -2367,6 +2376,7 @@ async function repushToServer() {
 
 async function pushScheduleToWorker() {
   if (!WORKER_URL || !settings.email || !settings.emailStartDate) return;
+  if (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
   try {
     const urgent   = getItemsDueWithin(7);
     const upcoming = getItemsDueWithin(30).filter(i => i.daysLeft > 7);
@@ -2374,8 +2384,9 @@ async function pushScheduleToWorker() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email:        settings.email,
-        emailHash:    _kvEmailHash || null,
+        emailHash:    _kvEmailHash,
+        verifier:     _kvVerifier,
+        sessionToken: _kvSessionToken,
         startDate:    settings.emailStartDate,
         startTime:    settings.emailStartTime || '09:00',
         intervalDays: settings.emailInterval ?? 30,
@@ -2386,7 +2397,16 @@ async function pushScheduleToWorker() {
     });
     // Trigger immediate check so schedule is active right away
     // without waiting up to an hour for the cron
-    fetch(`${WORKER_URL}/check-now`, { method: 'POST' }).catch(() => {});
+    fetch(`${WORKER_URL}/check-now`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        emailHash:    _kvEmailHash,
+        verifier:     _kvVerifier,
+        sessionToken: _kvSessionToken,
+        household:    activeProfile === 'default' ? null : activeProfile,
+      }),
+    }).catch(() => {});
   } catch(e) {
     console.warn('Could not push schedule to Worker:', e.message);
   }
@@ -2394,6 +2414,7 @@ async function pushScheduleToWorker() {
 
 async function pushItemsToWorker() {
   if (!WORKER_URL || !settings.email) return;
+  if (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
   try {
     const urgent   = getItemsDueWithin(7);
     const upcoming = getItemsDueWithin(30).filter(i => i.daysLeft > 7);
@@ -2402,8 +2423,9 @@ async function pushItemsToWorker() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email:        settings.email,
-        emailHash:    _kvEmailHash || null,
+        emailHash:    _kvEmailHash,
+        verifier:     _kvVerifier,
+        sessionToken: _kvSessionToken,
         startDate:    settings.emailStartDate,
         startTime:    settings.emailStartTime || '09:00',
         intervalDays: settings.emailInterval ?? 30,
@@ -2459,11 +2481,16 @@ function updateLastSentUI() {
 async function resetLastSent() {
   settings.emailLastSent = null;
   await _saveSettings();
-  if (WORKER_URL && settings.email) {
+  if (WORKER_URL && settings.email && _kvEmailHash && (_kvVerifier || _kvSessionToken)) {
     fetch(`${WORKER_URL}/reset-schedule`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: settings.email }),
+      body: JSON.stringify({
+        emailHash:    _kvEmailHash,
+        verifier:     _kvVerifier,
+        sessionToken: _kvSessionToken,
+        household:    activeProfile === 'default' ? null : activeProfile,
+      }),
     }).catch(() => {});
   }
   updateLastSentUI();
@@ -2486,10 +2513,16 @@ async function handleUnsubscribe() {
     await _saveSettings();
 
     // Clear schedule on Worker too
-    if (WORKER_URL) {
+    if (WORKER_URL && _kvEmailHash && (_kvVerifier || _kvSessionToken)) {
       fetch(`${WORKER_URL}/unsubscribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          emailHash:    _kvEmailHash,
+          verifier:     _kvVerifier,
+          sessionToken: _kvSessionToken,
+          household:    activeProfile === 'default' ? null : activeProfile,
+        }),
       }).catch(() => {});
     }
 
@@ -2542,11 +2575,25 @@ async function sendReminderEmail(manual = true) {
     if (statusEl) statusEl.style.display = 'none';
   }
 
+  if (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) {
+    if (manual) toast('Sign in first to send reminders');
+    return;
+  }
+
   try {
     const res = await fetch(`${WORKER_URL}/send-reminder`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, urgent, upcoming, sns: snsPayload, manual }),
+      body: JSON.stringify({
+        emailHash:    _kvEmailHash,
+        verifier:     _kvVerifier,
+        sessionToken: _kvSessionToken,
+        household:    activeProfile === 'default' ? null : activeProfile,
+        urgent,
+        upcoming,
+        sns:          snsPayload,
+        manual,
+      }),
     });
     const data = await res.json();
     if (res.ok) {
