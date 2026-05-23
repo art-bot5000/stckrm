@@ -8566,7 +8566,7 @@ async function checkCloudAhead() {
     if (_shareState) {
       remoteModified = await proxyGetModifiedTime();
     } else if (kvConnected) {
-      const res = await postKV(`${WORKER_URL}/data/modified`, {emailHash: _kvEmailHash, verifier: _kvVerifier, household: activeProfile});
+      const res = await postKV(`${WORKER_URL}/data/modified`, {emailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, household: activeProfile});
       if (res.ok) remoteModified = (await res.json()).modifiedTime;
     }
 
