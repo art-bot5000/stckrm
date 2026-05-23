@@ -4331,25 +4331,6 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
-  if (url.pathname === '/debug-kv' && request.method === 'GET') {
-    // Test KV read with explicit timeout
-    const kvReadWithTimeout = async (key) => {
-      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('KV read timeout')), 5000));
-      return Promise.race([kv.get(key), timeout]);
-    };
-    try {
-      const health = await kvReadWithTimeout(['_health']);
-      const shareCount = { n: 0 };
-      try {
-        const entries = kv.list({ prefix: ['share'] });
-        for await (const _ of entries) shareCount.n++;
-      } catch(e) { /* ok */ }
-      return json({ ok: true, kvReads: 'working', health: health.value, shareTargets: shareCount.n, ts: new Date().toISOString() }, corsHeaders);
-    } catch(e) {
-      return json({ ok: false, error: e.message, ts: new Date().toISOString() }, corsHeaders, 500);
-    }
-  }
-
   // ═══════════════════════════════════════════════════════
   //  KEY ENVELOPE SYSTEM
   //  The DATA KEY is a random 256-bit AES key that encrypts
@@ -5558,21 +5539,6 @@ Deno.serve(async (request) => {
     }
   }
 
-  // ── Debug: inspect a user's KV state ─────────────────
-  if (url.pathname === '/debug-user' && request.method === 'POST') {
-    try {
-      const { emailHash } = await request.json();
-      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);
-      const hasVerifier = !!(await kvGet(['user', emailHash, 'verifier'])).value;
-      const hasData     = !!(await kvGet(['user', emailHash, 'data', 'default'])).value;
-      const created     = (await kvGet(['user', emailHash, 'created'])).value;
-      const modified    = (await kvGet(['user', emailHash, 'modified', 'default'])).value;
-      return json({ emailHash, hasVerifier, hasData, created, modified }, corsHeaders);
-    } catch(err) {
-      return json({ error: err.message }, corsHeaders, 500);
-    }
-  }
-
   // ── Data: push (store encrypted blob) ────────────────
   if (url.pathname === '/data/push' && request.method === 'POST') {
     try {
@@ -5694,7 +5660,7 @@ Deno.serve(async (request) => {
       }
       return json({ modifiedTime: modifiedVal }, corsHeaders);
     } catch(err) {
-      return json({ modifiedTime }, corsHeaders);
+      return json({ error: (err as Error).message }, corsHeaders, 500);
     }
   }
 
@@ -6449,18 +6415,6 @@ Deno.serve(async (request) => {
       if (!userId) return json({ error: 'Missing userId' }, corsHeaders, 400);
       await kvSet(['presence', userId], JSON.stringify({ userId, name, initials, colour, view, ts: new Date().toISOString() }), { expireIn: 5 * 60 * 1000 });
       return json({ ok: true }, corsHeaders);
-    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
-  }
-
-  // ── Presence: list active users ───────────────────────
-  if (url.pathname === '/presence-list' && request.method === 'GET') {
-    try {
-      const users = [];
-      const entries = kv.list({ prefix: ['presence'] });
-      for await (const entry of entries) {
-        try { users.push(JSON.parse(entry.value)); } catch(e) {}
-      }
-      return json({ users }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 

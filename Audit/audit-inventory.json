@@ -1,0 +1,1132 @@
+[
+  {
+    "path": "/ping",
+    "method": "ANY",
+    "startLine": 3090,
+    "endLine": 3092,
+    "pattern": "public",
+    "evidence": "health endpoint (no data returned)",
+    "bodySnippet": "  if (url.pathname === '/ping') {\r\n    return json({ ok: true, ts: new Date().toISOString() }, corsHeaders);\r\n  }\r"
+  },
+  {
+    "path": "/billing/status",
+    "method": "POST",
+    "startLine": 3097,
+    "endLine": 3105,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/billing/status' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);\r\n      if (_authFail) return _authFail;\r\n      const status = await getBillingStatusForUser(emailHash);\r\n      return json(status, corsHeaders);\r\n    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/billing/pending-notifications",
+    "method": "POST",
+    "startLine": 3112,
+    "endLine": 3120,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/billing/pending-notifications' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);\r\n      if (_authFail) return _authFail;\r\n      const items = await listBillingNotifications(emailHash);\r\n      return json({ items }, corsHeaders);\r\n    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/billing/ack-notifications",
+    "method": "POST",
+    "startLine": 3126,
+    "endLine": 3135,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/billing/ack-notifications' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, ids } = await request.json();\r\n      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);\r\n      if (_authFail) return _authFail;\r\n      if (!Array.isArray(ids)) return json({ error: 'ids must be an array' }, corsHeaders, 400);\r\n      const deleted = await ackBillingNotifications(emailHash, ids);\r\n      return json({ ok: true, deleted }, corsHeaders);\r\n    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/push/config",
+    "method": "GET",
+    "startLine": 3143,
+    "endLine": 3148,
+    "pattern": "public",
+    "evidence": "explicit \"no auth / public\" comment near handler",
+    "bodySnippet": "  if (url.pathname === '/push/config' && request.method === 'GET') {\r\n    return json({\r\n      configured: vapidConfigured(),\r\n      publicKey:  VAPID_CFG.publicKey || null,\r\n    }, corsHeaders);\r\n  }\r"
+  },
+  {
+    "path": "/push/subscribe",
+    "method": "POST",
+    "startLine": 3154,
+    "endLine": 3181,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/push/subscribe' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, endpoint, p256dhB64, authB64, deviceId, uaLabel } = await request.json();\r\n      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);\r\n      if (_authFail) return _authFail;\r\n      if (typeof endpoint !== 'string' || !endpoint.startsWith('https://')) {\r\n        return json({ error: 'endpoint required' }, corsHeaders, 400);\r\n      }\r\n      if (typeof p256dhB64 !== 'string' || typeof authB64 !== 'string') {\r\n        return json({ error: 'keys required' }, corsHeaders, 400);\r\n      }\r\n      if (typeof deviceId !== 'string' || !deviceId) {\r\n        return json({ error: 'deviceId required' }, corsHeaders, 400);\r\n      }\r\n      const sub: PushSubscriptionRecord = {\r\n        endpoint,\r\n        p256dhB64,\r\n        authB64,\r\n        deviceId,\r\n        uaLabel:   typeof uaLabel === 'string' ? uaLabel : undefined,\r\n        createdAt: Date.now(),\r\n      };\r\n      await setPushSubscription(emailHash, sub);\r\n      await clearPushFailures(emailHash, deviceId);\r\n      console.log(`[push] subscribed ${emailHash.slice(0,8)} device=${deviceId.slice(0,8)}`);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/push/unsubscribe",
+    "method": "POST",
+    "startLine": 3184,
+    "endLine": 3196,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/push/unsubscribe' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, deviceId } = await request.json();\r\n      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);\r\n      if (_authFail) return _authFail;\r\n      if (typeof deviceId !== 'string' || !deviceId) {\r\n        return json({ error: 'deviceId required' }, corsHeaders, 400);\r\n      }\r\n      await deletePushSubscription(emailHash, deviceId);\r\n      console.log(`[push] unsubscribed ${emailHash.slice(0,8)} device=${deviceId.slice(0,8)}`);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/push/schedule",
+    "method": "POST",
+    "startLine": 3203,
+    "endLine": 3239,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/push/schedule' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, dueAt, sourceRef, ciphertextB64, fallbackTitle } = await request.json();\r\n      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);\r\n      if (_authFail) return _authFail;\r\n      if (typeof dueAt !== 'number' || !Number.isFinite(dueAt)) {\r\n        return json({ error: 'dueAt required (ms timestamp)' }, corsHeaders, 400);\r\n      }\r\n      if (typeof sourceRef !== 'string' || !sourceRef) {\r\n        return json({ error: 'sourceRef required' }, corsHeaders, 400);\r\n      }\r\n      if (typeof ciphertextB64 !== 'string' || !ciphertextB64) {\r\n        return json({ error: 'ciphertextB64 required' }, corsHeaders, 400);\r\n      }\r\n      // Cap the queue depth per user to defend against runaway clients.\r\n      // 1000 future payloads is comfortably above any reasonable real\r\n      // usage (Stockroom users have dozens of reminders, not thousands).\r\n      let queueSize = 0;\r\n      const sizeIter = kv.list({ prefix: ['push_queue', emailHash] });\r\n      for await (const _entry of sizeIter) {\r\n        queueSize++;\r\n        if (queueSize >= 1000) break;\r\n      }\r\n      if (queueSize >= 1000) {\r\n        return json({ error: 'queue full' }, corsHeaders, 429);\r\n      }\r\n      const payload: ScheduledPushPayload = {\r\n        id:            crypto.randomUUID(),\r\n        dueAt,\r\n        sourceRef,\r"
+  },
+  {
+    "path": "/push/cancel",
+    "method": "POST",
+    "startLine": 3244,
+    "endLine": 3255,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/push/cancel' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, sourceRef } = await request.json();\r\n      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);\r\n      if (_authFail) return _authFail;\r\n      if (typeof sourceRef !== 'string' || !sourceRef) {\r\n        return json({ error: 'sourceRef required' }, corsHeaders, 400);\r\n      }\r\n      const removed = await cancelPushPayloadBySourceRef(emailHash, sourceRef);\r\n      return json({ ok: true, removed }, corsHeaders);\r\n    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/push/dispatch",
+    "method": "POST",
+    "startLine": 3261,
+    "endLine": 3275,
+    "pattern": "dispatch-secret",
+    "evidence": "PUSH_DISPATCH_SECRET bearer",
+    "bodySnippet": "  if (url.pathname === '/push/dispatch' && request.method === 'POST') {\r\n    try {\r\n      const expected = Deno.env.get('PUSH_DISPATCH_SECRET') || '';\r\n      const got = request.headers.get('X-Dispatch-Secret') || '';\r\n      if (!expected || got !== expected) {\r\n        return json({ error: 'unauthorized' }, corsHeaders, 401);\r\n      }\r\n      const stats = await runPushDispatch();\r\n      console.log(`[push-dispatch] users=${stats.users} payloads=${stats.payloads} pushes=${stats.pushes} failures=${stats.failures} unsubscribed=${stats.unsubscribed}`);\r\n      return json({ ok: true, ...stats }, corsHeaders);\r\n    } catch(err) {\r\n      console.error('[push-dispatch] error:', (err as Error).message);\r\n      return json({ error: (err as Error).message }, corsHeaders, 500);\r\n    }\r\n  }\r"
+  },
+  {
+    "path": "/push/self-test",
+    "method": "POST",
+    "startLine": 3279,
+    "endLine": 3307,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/push/self-test' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);\r\n      if (_authFail) return _authFail;\r\n      const subs = await listPushSubscriptions(emailHash);\r\n      if (subs.length === 0) {\r\n        return json({ ok: false, error: 'No subscriptions on this account' }, corsHeaders);\r\n      }\r\n      // Build a tiny test payload — no real ciphertext, just the fallback\r\n      // path. SW will show fallbackTitle directly.\r\n      const body = _buildPushBody({\r\n        id: 'self-test',\r\n        dueAt: Date.now(),\r\n        sourceRef: 'self-test:' + Date.now(),\r\n        ciphertextB64: '',\r\n        fallbackTitle: 'Stockroom push test — working ✓',\r\n      });\r\n      let pushed = 0, failed = 0;\r\n      for (const sub of subs) {\r\n        const ct = await _encryptWebPushBody(body, b64UrlDecode(sub.p256dhB64), b64UrlDecode(sub.authB64));\r\n        const res = await sendPushToSubscription(sub, ct);\r\n        if (res.ok) pushed++; else failed++;\r\n      }\r\n      return json({ ok: true, pushed, failed, subs: subs.length }, corsHeaders);\r\n    } catch(err) {\r\n      return json({ error: (err as Error).message }, corsHeaders, 500);\r\n    }\r\n  }\r"
+  },
+  {
+    "path": "/billing/checkout",
+    "method": "POST",
+    "startLine": 3313,
+    "endLine": 3392,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/billing/checkout' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, promoCode } = await request.json();\r\n      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);\r\n      if (_authFail) return _authFail;\r\n      if (!stripeConfigured() || !STRIPE_CFG.priceId) {\r\n        return json({ error: 'Billing not configured' }, corsHeaders, 503);\r\n      }\r\n      // Ensure the user has a Stripe customer\r\n      const customerId = await ensureStripeCustomer(emailHash);\r\n      if (!customerId) return json({ error: 'Could not create Stripe customer' }, corsHeaders, 502);\r\n\r\n      // Build the success/cancel URLs. APP_URL points at the PWA hostname.\r\n      const appUrl = (Deno.env.get('APP_URL') || 'https://app.stckrm.com').replace(/\\/$/, '');\r\n      const successUrl = `${appUrl}/?billing=success&session_id={CHECKOUT_SESSION_ID}`;\r\n      const cancelUrl  = `${appUrl}/?billing=cancel`;\r\n\r\n      const params: Record<string, string | number | boolean> = {\r\n        'mode':                          'subscription',\r\n        'customer':                      customerId,\r\n        'client_reference_id':           emailHash, // for idempotent webhook lookup\r\n        'line_items[0][price]':          STRIPE_CFG.priceId,\r\n        'line_items[0][quantity]':       1,\r\n        'success_url':                   successUrl,\r\n        'cancel_url':                    cancelUrl,\r\n        'allow_promotion_codes':         true,\r\n        // We do NOT set subscription_data[trial_period_days] here — the\r\n        // hybrid trial model means by the time a user clicks Upgrade,\r\n        // their local trial may have run out. If they're upgrading early\r\n        // we don't want a second 30-day trial on top. If they want a\r"
+  },
+  {
+    "path": "/billing/portal",
+    "method": "POST",
+    "startLine": 3396,
+    "endLine": 3415,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/billing/portal' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);\r\n      if (_authFail) return _authFail;\r\n      if (!stripeConfigured()) return json({ error: 'Billing not configured' }, corsHeaders, 503);\r\n      const acct = await getBillingAccount(emailHash);\r\n      if (!acct?.stripeCustomerId) return json({ error: 'No billing customer found' }, corsHeaders, 404);\r\n      const appUrl = (Deno.env.get('APP_URL') || 'https://app.stckrm.com').replace(/\\/$/, '');\r\n      const params: Record<string, string> = {\r\n        customer:   acct.stripeCustomerId,\r\n        return_url: `${appUrl}/?billing=portal-return`,\r\n      };\r\n      const portal = await stripeFetch('/v1/billing_portal/sessions', 'POST', params);\r\n      return json({ url: portal.url }, corsHeaders);\r\n    } catch(err) {\r\n      console.error(`[billing/portal] error:`, (err as Error).message);\r\n      return json({ error: (err as Error).message }, corsHeaders, 500);\r\n    }\r\n  }\r"
+  },
+  {
+    "path": "/billing/apply-promo",
+    "method": "POST",
+    "startLine": 3421,
+    "endLine": 3444,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/billing/apply-promo' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, code } = await request.json();\r\n      if (!code) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);\r\n      if (_authFail) return _authFail;\r\n      if (!stripeConfigured()) return json({ error: 'Billing not configured' }, corsHeaders, 503);\r\n      const lookup = await stripeFetch(`/v1/promotion_codes`, 'GET', { code, active: 'true', limit: 1 });\r\n      const pc = lookup?.data?.[0];\r\n      if (!pc) return json({ valid: false, reason: 'not_found' }, corsHeaders);\r\n      const coupon = pc.coupon || {};\r\n      return json({\r\n        valid:       true,\r\n        code:        pc.code,\r\n        percentOff:  coupon.percent_off ?? null,\r\n        amountOff:   coupon.amount_off ?? null,\r\n        currency:    coupon.currency ?? null,\r\n        duration:    coupon.duration ?? null,           // 'forever', 'once', 'repeating'\r\n        durationInMonths: coupon.duration_in_months ?? null,\r\n      }, corsHeaders);\r\n    } catch(err) {\r\n      return json({ error: (err as Error).message }, corsHeaders, 500);\r\n    }\r\n  }\r"
+  },
+  {
+    "path": "/billing/cancel",
+    "method": "POST",
+    "startLine": 3449,
+    "endLine": 3468,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/billing/cancel' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);\r\n      if (_authFail) return _authFail;\r\n      if (!stripeConfigured()) return json({ error: 'Billing not configured' }, corsHeaders, 503);\r\n      const acct = await getBillingAccount(emailHash);\r\n      if (!acct?.stripeSubscriptionId) return json({ error: 'No active subscription' }, corsHeaders, 404);\r\n      const updated = await stripeFetch(`/v1/subscriptions/${acct.stripeSubscriptionId}`, 'POST', {\r\n        cancel_at_period_end: 'true',\r\n      });\r\n      // Mirror locally — the webhook will also do this but UI should reflect\r\n      // immediately\r\n      acct.cancelAtPeriodEnd = true;\r\n      await setBillingAccount(emailHash, acct);\r\n      return json({ ok: true, currentPeriodEnd: updated.current_period_end }, corsHeaders);\r\n    } catch(err) {\r\n      return json({ error: (err as Error).message }, corsHeaders, 500);\r\n    }\r\n  }\r"
+  },
+  {
+    "path": "/billing/resume",
+    "method": "POST",
+    "startLine": 3471,
+    "endLine": 3488,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/billing/resume' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);\r\n      if (_authFail) return _authFail;\r\n      if (!stripeConfigured()) return json({ error: 'Billing not configured' }, corsHeaders, 503);\r\n      const acct = await getBillingAccount(emailHash);\r\n      if (!acct?.stripeSubscriptionId) return json({ error: 'No subscription' }, corsHeaders, 404);\r\n      await stripeFetch(`/v1/subscriptions/${acct.stripeSubscriptionId}`, 'POST', {\r\n        cancel_at_period_end: 'false',\r\n      });\r\n      acct.cancelAtPeriodEnd = false;\r\n      await setBillingAccount(emailHash, acct);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) {\r\n      return json({ error: (err as Error).message }, corsHeaders, 500);\r\n    }\r\n  }\r"
+  },
+  {
+    "path": "/referral/code",
+    "method": "POST",
+    "startLine": 3494,
+    "endLine": 3536,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/referral/code' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);\r\n      if (_authFail) return _authFail;\r\n      const emailRow = await kvGet(['user', emailHash, 'email']);\r\n      const plaintextEmail = emailRow.value ? String(emailRow.value) : undefined;\r\n      const record = await ensureReferralCode(emailHash, plaintextEmail);\r\n      const cap = REFERRAL_LIFETIME_CAP_MONTHS;\r\n      // Determine current eligibility — drives whether the UI shows the\r\n      // share controls or a 'upgrade to start referring' message.\r\n      const myAcct = await getBillingAccount(emailHash);\r\n      const eligible = isReferrerEligible(myAcct);\r\n      let ineligibleReason: string | null = null;\r\n      if (!eligible) {\r\n        if (!myAcct)                         ineligibleReason = 'no_billing_account';\r\n        else if (!myAcct.cardOnFile)         ineligibleReason = 'no_card_on_file';\r\n        else if (myAcct.status === 'free')   ineligibleReason = 'free_tier';\r\n        else                                 ineligibleReason = 'not_active';\r\n      }\r\n      return json({\r\n        ok:                    true,\r\n        code:                  record.code,\r\n        createdAt:             record.createdAt,\r\n        signupCount:           record.signupCount,\r\n        convertedCount:        record.convertedCount,\r\n        qualifiedCount:        record.qualifiedCount,\r\n        lifetimeCreditsMonths: record.lifetimeCreditsMonths,\r\n        lifetimeCapMonths:     cap,\r\n        capReached:            record.lifetimeCreditsMonths >= cap,\r"
+  },
+  {
+    "path": "/referral/list",
+    "method": "POST",
+    "startLine": 3543,
+    "endLine": 3574,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/referral/list' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);\r\n      if (_authFail) return _authFail;\r\n      // Walk all referral:signup:* entries and collect those where\r\n      // referrerHash matches. This is O(N) over all signups but N is small\r\n      // and we don't need a reverse index for this rare-ish query.\r\n      const list: any[] = [];\r\n      const iter = kv.list({ prefix: ['referral', 'signup'] });\r\n      for await (const entry of iter) {\r\n        try {\r\n          const rec = JSON.parse(String(entry.value)) as ReferralSignupRecord;\r\n          if (rec.referrerHash !== emailHash) continue;\r\n          const refereeHash = String((entry.key as any[])[2]);\r\n          list.push({\r\n            refereeRef:    refereeHash.slice(0, 6),\r\n            signedUpAt:    rec.signedUpAt,\r\n            firstPaymentAt: rec.firstPaymentAt,\r\n            qualifiedAt:   rec.qualifiedAt,\r\n            status:        rec.status,\r\n            rejectionReason: rec.rejectionReason,\r\n          });\r\n        } catch (_) {}\r\n      }\r\n      // Sort newest first\r\n      list.sort((a, b) => (b.signedUpAt || 0) - (a.signedUpAt || 0));\r\n      return json({ ok: true, referrals: list }, corsHeaders);\r\n    } catch (err) {\r\n      return json({ error: (err as Error).message }, corsHeaders, 500);\r"
+  },
+  {
+    "path": "/referral/validate",
+    "method": "POST",
+    "startLine": 3580,
+    "endLine": 3593,
+    "pattern": "public",
+    "evidence": "public-by-design (whitelisted in classifier)",
+    "bodySnippet": "  if (url.pathname === '/referral/validate' && request.method === 'POST') {\r\n    try {\r\n      const { code } = await request.json();\r\n      if (!code || typeof code !== 'string') return json({ valid: false, reason: 'missing' }, corsHeaders);\r\n      const referrerHash = await getReferrerByCode(code);\r\n      if (!referrerHash) return json({ valid: false, reason: 'not_found' }, corsHeaders);\r\n      return json({\r\n        valid:           true,\r\n        rewardForReferee:`${REFEREE_DISCOUNT_PERCENT}% off your first ${REFEREE_DISCOUNT_MONTHS} paid months`,\r\n      }, corsHeaders);\r\n    } catch (err) {\r\n      return json({ error: (err as Error).message }, corsHeaders, 500);\r\n    }\r\n  }\r"
+  },
+  {
+    "path": "/webhook/stripe",
+    "method": "POST",
+    "startLine": 3602,
+    "endLine": 3645,
+    "pattern": "webhook-sig",
+    "evidence": "Stripe signature verification",
+    "bodySnippet": "  if (url.pathname === '/webhook/stripe' && request.method === 'POST') {\r\n    if (!stripeConfigured()) {\r\n      console.error('[stripe-webhook] received event but Stripe not configured');\r\n      // Return 200 anyway — Stripe will keep retrying otherwise, and\r\n      // an unconfigured server can't do anything useful with retries.\r\n      return new Response('not configured', { status: 200 });\r\n    }\r\n    const sigHeader = request.headers.get('Stripe-Signature');\r\n    let payload: string;\r\n    try { payload = await request.text(); }\r\n    catch (err) {\r\n      console.error('[stripe-webhook] could not read body:', (err as Error).message);\r\n      return new Response('bad request', { status: 400 });\r\n    }\r\n    const valid = await verifyStripeSignature(payload, sigHeader);\r\n    if (!valid) {\r\n      console.warn('[stripe-webhook] signature verification failed');\r\n      return new Response('bad signature', { status: 400 });\r\n    }\r\n    let event: any;\r\n    try { event = JSON.parse(payload); }\r\n    catch {\r\n      return new Response('bad json', { status: 400 });\r\n    }\r\n    const eventId: string = event?.id || '';\r\n    if (!eventId) return new Response('missing event id', { status: 400 });\r\n\r\n    // Idempotency check — skip if we've already processed this event.id\r\n    if (await _isEventProcessed(eventId)) {\r\n      console.log(`[stripe-webhook] skipping duplicate ${event.type} ${eventId}`);\r"
+  },
+  {
+    "path": "/user/delete",
+    "method": "POST",
+    "startLine": 3648,
+    "endLine": 3666,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/user/delete' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      if (!emailHash) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      // Accept passphrase verifier OR passkey session token\r\n      if (sessionToken) {\r\n        const session = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else if (verifier) {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n      }\r\n      await _deleteAllUserData(kv, emailHash);\r\n      console.log(`User self-deleted account: ${emailHash}`);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/user/snapshots/list",
+    "method": "POST",
+    "startLine": 3672,
+    "endLine": 3695,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/user/snapshots/list' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      if (!emailHash) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (!await verifyUserAuth(emailHash, verifier, sessionToken)) {\r\n        return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      if (!r2Configured()) {\r\n        return json({ ok: true, configured: false, snapshots: [] }, corsHeaders);\r\n      }\r\n      // Just list everything; the snapshots include all users' data, but the\r\n      // user can only download their own portion via the extract endpoint.\r\n      const all = await listR2Snapshots('');\r\n      // Most recent first, capped to a reasonable number of entries\r\n      const snapshots = all.slice(-200).reverse().map(s => ({\r\n        key:          s.key,\r\n        size:         s.size,\r\n        lastModified: s.lastModified,\r\n        // Approximate \"yours\" size — we don't actually know without fetching.\r\n        // Frontend will display total snapshot size and explain it's an upper bound.\r\n      }));\r\n      return json({ ok: true, configured: true, snapshots }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/user/snapshots/extract",
+    "method": "POST",
+    "startLine": 3700,
+    "endLine": 3718,
+    "pattern": "user-auth",
+    "evidence": "requireUserAuth / verifyUserAuth helper",
+    "bodySnippet": "  if (url.pathname === '/user/snapshots/extract' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, snapshotKey } = await request.json();\r\n      if (!emailHash || !snapshotKey) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (!await verifyUserAuth(emailHash, verifier, sessionToken)) {\r\n        return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      if (typeof snapshotKey !== 'string' || snapshotKey.length > 200) {\r\n        return json({ error: 'Invalid snapshotKey' }, corsHeaders, 400);\r\n      }\r\n      const result = await extractUserDataFromSnapshot(snapshotKey, emailHash);\r\n      if (!result.ok) return json({ error: result.error }, corsHeaders, 500);\r\n      return json({\r\n        ok:      true,\r\n        meta:    result.meta,\r\n        entries: result.entries,\r\n      }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/device/register",
+    "method": "POST",
+    "startLine": 3721,
+    "endLine": 3736,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/device/register' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, deviceId, name, addedAt } = await request.json();\r\n      if (!emailHash || !deviceId || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      const authed = sessionToken\r\n        ? !!(await kvGet(['passkey_session', emailHash, sessionToken])).value\r\n        : verifier && (await kvGet(['user', emailHash, 'verifier'])).value === verifier;\r\n      if (!authed) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      await kvSet(['device', emailHash, deviceId], JSON.stringify({\r\n        deviceId, name: name || 'Unknown device',\r\n        addedAt: addedAt || new Date().toISOString(),\r\n        lastSeen: new Date().toISOString(),\r\n      }));\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/device/list",
+    "method": "POST",
+    "startLine": 3739,
+    "endLine": 3754,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/device/list' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      if (!emailHash) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      const authed = sessionToken\r\n        ? !!(await kvGet(['passkey_session', emailHash, sessionToken])).value\r\n        : verifier && (await kvGet(['user', emailHash, 'verifier'])).value === verifier;\r\n      if (!authed) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      const devices = [];\r\n      const entries = kv.list({ prefix: ['device', emailHash] });\r\n      for await (const entry of entries) {\r\n        try { devices.push(JSON.parse(entry.value as string)); } catch(e) {}\r\n      }\r\n      return json({ devices }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/device/seen",
+    "method": "POST",
+    "startLine": 3757,
+    "endLine": 3772,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/device/seen' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, deviceId } = await request.json();\r\n      if (!emailHash || !deviceId || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      const authed = sessionToken\r\n        ? !!(await kvGet(['passkey_session', emailHash, sessionToken])).value\r\n        : verifier && (await kvGet(['user', emailHash, 'verifier'])).value === verifier;\r\n      if (!authed) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      const existing = await kvGet(['device', emailHash, deviceId]);\r\n      if (existing.value) {\r\n        const data = { ...JSON.parse(existing.value), lastSeen: new Date().toISOString() };\r\n        await kvSet(['device', emailHash, deviceId], JSON.stringify(data));\r\n      }\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/device/remove",
+    "method": "POST",
+    "startLine": 3775,
+    "endLine": 3786,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/device/remove' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, deviceId } = await request.json();\r\n      if (!emailHash || !deviceId) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      const authed = sessionToken\r\n        ? !!(await kvGet(['passkey_session', emailHash, sessionToken])).value\r\n        : verifier && (await kvGet(['user', emailHash, 'verifier'])).value === verifier;\r\n      if (!authed) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      await kvDel(['device', emailHash, deviceId]);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/device/clear-all",
+    "method": "POST",
+    "startLine": 3789,
+    "endLine": 3801,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/device/clear-all' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      if (!emailHash) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      const authed = sessionToken\r\n        ? !!(await kvGet(['passkey_session', emailHash, sessionToken])).value\r\n        : verifier && (await kvGet(['user', emailHash, 'verifier'])).value === verifier;\r\n      if (!authed) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      const entries = kv.list({ prefix: ['device', emailHash] });\r\n      for await (const entry of entries) await kv.delete(entry.key);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/email/verify/send",
+    "method": "POST",
+    "startLine": 3814,
+    "endLine": 3864,
+    "pattern": "otp-flow",
+    "evidence": "OTP send/verify (auth is the OTP itself)",
+    "bodySnippet": "  if (url.pathname === '/email/verify/send' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, email } = await request.json();\r\n      if (!emailHash || !email) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      // Confirm account exists\r\n      const existing = await kvGet(['user', emailHash, 'verifier']);\r\n      if (!existing.value) return json({ error: 'Account not found' }, corsHeaders, 404);\r\n      // Already verified — no need to re-send\r\n      const alreadyVerified = await kvGet(['user', emailHash, 'email_verified']);\r\n      if (alreadyVerified.value) return json({ ok: true, alreadyVerified: true }, corsHeaders);\r\n      // Rate limit — 1 OTP per 60 seconds\r\n      const last = await kvGet(['email_verify_otp', emailHash]);\r\n      if (last.value) {\r\n        const sentAt = JSON.parse(last.value).sentAt;\r\n        if (Date.now() - new Date(sentAt).getTime() < 60_000) {\r\n          return json({ error: 'Please wait before requesting another code' }, corsHeaders, 429);\r\n        }\r\n      }\r\n      if (!env.RESEND_API_KEY) return json({ error: 'Email not configured' }, corsHeaders, 500);\r\n      const otp = Array.from(crypto.getRandomValues(new Uint8Array(6)))\r\n        .map(b => String(b % 10)).join('');\r\n      await kvSet(['email_verify_otp', emailHash], JSON.stringify({\r\n        otp, email, sentAt: new Date().toISOString(), attempts: 0,\r\n      }), { expireIn: 5 * 60 * 1000 });\r\n      // Store email for future notifications\r\n      await kvSet(['user', emailHash, 'email'], email);\r\n      const html = `<!DOCTYPE html><html><body style=\"font-family:-apple-system,sans-serif;background:#f5f5f5;padding:32px\">\r\n        <div style=\"max-width:480px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)\">\r\n          <div style=\"background:#111;padding:20px 24px;display:flex;align-items:center;gap:10px\">\r\n            <svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#e8a838\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z\"/><path d=\"M12 22V12\"/><polyline points=\"3.29 7 12 12 20.71 7\"/><path d=\"m7.5 4.27 9 5.15\"/></svg>\r"
+  },
+  {
+    "path": "/email/verify/check",
+    "method": "POST",
+    "startLine": 3866,
+    "endLine": 3887,
+    "pattern": "otp-flow",
+    "evidence": "OTP send/verify (auth is the OTP itself)",
+    "bodySnippet": "  if (url.pathname === '/email/verify/check' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, otp } = await request.json();\r\n      if (!emailHash || !otp) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      const stored = await kvGet(['email_verify_otp', emailHash]);\r\n      if (!stored.value) return json({ error: 'Code expired — request a new one' }, corsHeaders, 400);\r\n      const data = JSON.parse(stored.value);\r\n      if (data.attempts >= 5) {\r\n        await kvDel(['email_verify_otp', emailHash]);\r\n        return json({ error: 'Too many attempts — request a new code' }, corsHeaders, 400);\r\n      }\r\n      if (data.otp !== String(otp).trim()) {\r\n        data.attempts = (data.attempts || 0) + 1;\r\n        await kvSet(['email_verify_otp', emailHash], JSON.stringify(data), { expireIn: 5 * 60 * 1000 });\r\n        const left = 5 - data.attempts;\r\n        return json({ error: `Incorrect code — ${left} attempt${left !== 1 ? 's' : ''} remaining` }, corsHeaders, 400);\r\n      }\r\n      await kvDel(['email_verify_otp', emailHash]);\r\n      await kvSet(['user', emailHash, 'email_verified'], new Date().toISOString());\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/user/email-verified",
+    "method": "POST",
+    "startLine": 3899,
+    "endLine": 3913,
+    "pattern": "unclassified",
+    "evidence": "partial auth: verifier-only (no session path) — RECURRING AUTH-GAP PATTERN",
+    "bodySnippet": "  if (url.pathname === '/user/email-verified' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash } = await request.json();\r\n      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);\r\n      const verifierRow = await kvGet(['user', emailHash, 'verifier']);\r\n      if (!verifierRow.value) return json({ exists: false, verified: false }, corsHeaders);\r\n      const verified = await kvGet(['user', emailHash, 'email_verified']);\r\n      const emailRow = await kvGet(['user', emailHash, 'email']);\r\n      return json({\r\n        exists: true,\r\n        verified: !!verified.value,\r\n        email: emailRow.value || null,\r\n      }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r",
+    "severity": "account-enum"
+  },
+  {
+    "path": "/recovery/request",
+    "method": "POST",
+    "startLine": 3916,
+    "endLine": 3973,
+    "pattern": "otp-flow",
+    "evidence": "OTP send/verify (auth is the OTP itself)",
+    "bodySnippet": "  if (url.pathname === '/recovery/request' && request.method === 'POST') {\r\n    try {\r\n      const { email } = await request.json();\r\n      if (!email) return json({ error: 'Missing email' }, corsHeaders, 400);\r\n      const emailHash = await hashEmail(email);\r\n\r\n      // Check user exists\r\n      const existing = await kvGet(['user', emailHash, 'verifier']);\r\n      if (!existing.value) return json({ error: 'No account found for this email' }, corsHeaders, 404);\r\n\r\n      // Rate limit — max one OTP per 60 seconds\r\n      const lastOtp = await kvGet(['recovery_otp', emailHash]);\r\n      if (lastOtp.value) {\r\n        const sent = JSON.parse(lastOtp.value).sentAt;\r\n        if (Date.now() - new Date(sent).getTime() < 60000) {\r\n          return json({ error: 'Please wait 60 seconds before requesting another code' }, corsHeaders, 429);\r\n        }\r\n      }\r\n\r\n      // Generate 6-digit OTP\r\n      const otp = String(Math.floor(100000 + crypto.getRandomValues(new Uint8Array(1))[0] / 255 * 899999)).padStart(6, '0');\r\n\r\n      // Store OTP with 5-minute TTL\r\n      await kvSet(['recovery_otp', emailHash], JSON.stringify({\r\n        otp, sentAt: new Date().toISOString(), attempts: 0\r\n      }), { expireIn: 5 * 60 * 1000 });\r\n\r\n      // Send email via Resend\r\n      if (!env.RESEND_API_KEY) return json({ error: 'Email not configured' }, corsHeaders, 500);\r\n      const html = `<!DOCTYPE html><html><body style=\"font-family:-apple-system,sans-serif;background:#f5f5f5;padding:32px\">\r"
+  },
+  {
+    "path": "/recovery/verify",
+    "method": "POST",
+    "startLine": 3976,
+    "endLine": 4011,
+    "pattern": "recovery-token",
+    "evidence": "recovery token check",
+    "bodySnippet": "  if (url.pathname === '/recovery/verify' && request.method === 'POST') {\r\n    try {\r\n      const { email, otp } = await request.json();\r\n      if (!email || !otp) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      const emailHash = await hashEmail(email);\r\n\r\n      const stored = await kvGet(['recovery_otp', emailHash]);\r\n      if (!stored.value) return json({ error: 'Code expired — request a new one' }, corsHeaders, 400);\r\n\r\n      const data = JSON.parse(stored.value);\r\n\r\n      // Max 5 attempts\r\n      if (data.attempts >= 5) {\r\n        await kvDel(['recovery_otp', emailHash]);\r\n        return json({ error: 'Too many attempts — request a new code' }, corsHeaders, 400);\r\n      }\r\n\r\n      if (data.otp !== otp.trim()) {\r\n        // Increment attempts\r\n        data.attempts = (data.attempts || 0) + 1;\r\n        await kvSet(['recovery_otp', emailHash], JSON.stringify(data), { expireIn: 5 * 60 * 1000 });\r\n        const remaining = 5 - data.attempts;\r\n        return json({ error: `Incorrect code — ${remaining} attempt${remaining !== 1 ? 's' : ''} remaining` }, corsHeaders, 400);\r\n      }\r\n\r\n      // OTP correct — delete it and issue a one-time recovery token\r\n      await kvDel(['recovery_otp', emailHash]);\r\n      const recoveryToken = Array.from(crypto.getRandomValues(new Uint8Array(32)))\r\n        .map(b => b.toString(16).padStart(2,'0')).join('');\r\n      await kvSet(['recovery_token', emailHash], JSON.stringify({\r"
+  },
+  {
+    "path": "/passkey/register/begin",
+    "method": "POST",
+    "startLine": 4021,
+    "endLine": 4054,
+    "pattern": "auth-establishment",
+    "evidence": "pre-auth endpoint (auth flow itself); returns challenge/token, never user data",
+    "bodySnippet": "  if (url.pathname === '/passkey/register/begin' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, email } = await request.json();\r\n      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);\r\n      // Generate a random challenge\r\n      const challenge = crypto.getRandomValues(new Uint8Array(32));\r\n      // Use base64url (no padding) to match what browsers return in clientDataJSON\r\n      const challengeB64url = btoa(String.fromCharCode(...challenge)).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');\r\n      await kvSet(['passkey_challenge', emailHash, 'register'], challengeB64url, { expireIn: 5 * 60 * 1000 });\r\n      return json({\r\n        challenge: challengeB64url,\r\n        rp: {\r\n          name: 'STOCKROOM',\r\n          id: new URL(request.headers.get(\"Origin\") || env.APP_URL || \"https://stckrm.fly.dev\").hostname,\r\n        },\r\n        user: {\r\n          id: emailHash,\r\n          name: email || emailHash,\r\n          displayName: email ? email.split('@')[0] : emailHash.slice(0, 8),\r\n        },\r\n        pubKeyCredParams: [\r\n          { type: 'public-key', alg: -7  },  // ES256\r\n          { type: 'public-key', alg: -257 }, // RS256 fallback\r\n        ],\r\n        timeout: 60000,\r\n        attestation: 'none',\r\n        authenticatorSelection: {\r\n          authenticatorAttachment: 'platform', // device biometrics only\r\n          userVerification: 'required',\r\n          residentKey: 'preferred',\r"
+  },
+  {
+    "path": "/passkey/register/finish",
+    "method": "POST",
+    "startLine": 4057,
+    "endLine": 4119,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/passkey/register/finish' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, credentialId, publicKey, clientDataJSON, attestationObject, deviceName } = await request.json();\r\n      if (!emailHash || !credentialId || !publicKey || !clientDataJSON) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n\r\n      // Verify challenge\r\n      const storedChallenge = await kvGet(['passkey_challenge', emailHash, 'register']);\r\n      if (!storedChallenge.value) return json({ error: 'Challenge expired — try again' }, corsHeaders, 400);\r\n\r\n      // Verify clientDataJSON contains expected challenge and origin\r\n      // Decode clientDataJSON — it may be base64url or base64\r\n      const clientDataDecoded = atob(clientDataJSON.replace(/-/g,'+').replace(/_/g,'/').replace(/\\s/g,''));\r\n      const clientData = JSON.parse(clientDataDecoded);\r\n      // Normalise both challenges to base64url without padding for comparison\r\n      const toB64url = (s) => s.replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');\r\n      const storedB64url   = toB64url(storedChallenge.value);\r\n      const receivedB64url = toB64url(clientData.challenge || '');\r\n      console.log('Challenge stored:', storedB64url.slice(0,16), 'received:', receivedB64url.slice(0,16));\r\n      if (storedB64url !== receivedB64url) {\r\n        return json({ error: 'Challenge mismatch', stored: storedB64url.slice(0,8), received: receivedB64url.slice(0,8) }, corsHeaders, 400);\r\n      }\r\n      const requestOrigin  = request.headers.get('Origin') || '';\r\n      const configOrigin   = (env.APP_URL || '').replace(/\\/$/, '');\r\n      const expectedOrigin = requestOrigin || configOrigin;\r\n      if (expectedOrigin && clientData.origin !== expectedOrigin) {\r\n        console.warn('Origin mismatch:', clientData.origin, 'vs', expectedOrigin);\r\n        // Warn only — browser enforces rpId separately\r\n      }\r\n\r\n      // Store credential\r"
+  },
+  {
+    "path": "/passkey/auth/begin",
+    "method": "POST",
+    "startLine": 4122,
+    "endLine": 4151,
+    "pattern": "auth-establishment",
+    "evidence": "pre-auth endpoint (auth flow itself); returns challenge/token, never user data",
+    "bodySnippet": "  if (url.pathname === '/passkey/auth/begin' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash } = await request.json();\r\n      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);\r\n\r\n      // Load stored credentials for this user\r\n      const credentials = [];\r\n      const entries = kv.list({ prefix: ['passkey', emailHash] });\r\n      for await (const entry of entries) {\r\n        try {\r\n          const cred = JSON.parse(entry.value);\r\n          credentials.push({ type: 'public-key', id: cred.credentialId });\r\n        } catch(e) {}\r\n      }\r\n      if (!credentials.length) return json({ error: 'No passkeys registered for this account' }, corsHeaders, 404);\r\n\r\n      // Generate challenge\r\n      const challenge = crypto.getRandomValues(new Uint8Array(32));\r\n      const challengeB64url = btoa(String.fromCharCode(...challenge)).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');\r\n      await kvSet(['passkey_challenge', emailHash, 'auth'], challengeB64url, { expireIn: 5 * 60 * 1000 });\r\n\r\n      return json({\r\n        challenge: challengeB64url,\r\n        rpId: new URL(request.headers.get(\"Origin\") || env.APP_URL || \"https://stckrm.fly.dev\").hostname,\r\n        allowCredentials: credentials,\r\n        userVerification: 'required',\r\n        timeout: 60000,\r\n      }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/passkey/auth/finish",
+    "method": "POST",
+    "startLine": 4154,
+    "endLine": 4273,
+    "pattern": "auth-establishment",
+    "evidence": "pre-auth endpoint (auth flow itself); returns challenge/token, never user data",
+    "bodySnippet": "  if (url.pathname === '/passkey/auth/finish' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, credentialId, clientDataJSON, authenticatorData, signature } = await request.json();\r\n      if (!emailHash || !credentialId || !clientDataJSON || !authenticatorData) {\r\n        return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      }\r\n\r\n      // Verify challenge\r\n      const storedChallenge = await kvGet(['passkey_challenge', emailHash, 'auth']);\r\n      if (!storedChallenge.value) return json({ error: 'Challenge expired — try again' }, corsHeaders, 400);\r\n\r\n      const clientData2 = JSON.parse(atob(clientDataJSON.replace(/-/g,'+').replace(/_/g,'/').replace(/\\s/g,'')));\r\n      const toB64url2 = (s) => s.replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');\r\n      if (toB64url2(clientData2.challenge || '') !== toB64url2(storedChallenge.value)) {\r\n        return json({ error: 'Challenge mismatch' }, corsHeaders, 400);\r\n      }\r\n      const clientData = clientData2;\r\n\r\n      // Load stored credential\r\n      const stored = await kvGet(['passkey', emailHash, credentialId]);\r\n      if (!stored.value) return json({ error: 'Credential not found' }, corsHeaders, 404);\r\n      const credData = JSON.parse(stored.value);\r\n\r\n      // ── Signature verification ────────────────────────\r\n      // WebAuthn signatures are DER-encoded ECDSA. Web Crypto needs\r\n      // raw IEEE P1363 format (64 bytes: 32 bytes r + 32 bytes s).\r\n      try {\r\n        // 1. Decode authenticator data\r\n        const authDataBytes = Uint8Array.from(\r\n          atob(authenticatorData.replace(/-/g,'+').replace(/_/g,'/')), c => c.charCodeAt(0)\r"
+  },
+  {
+    "path": "/passkey/verify-session",
+    "method": "POST",
+    "startLine": 4277,
+    "endLine": 4287,
+    "pattern": "auth-establishment",
+    "evidence": "pre-auth endpoint (auth flow itself); returns challenge/token, never user data",
+    "bodySnippet": "  if (url.pathname === '/passkey/verify-session' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, sessionToken } = await request.json();\r\n      if (!emailHash || !sessionToken) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      const stored = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n      if (!stored.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      // Extend session by another 24h on activity\r\n      await kvSet(['passkey_session', emailHash, sessionToken], stored.value, { expireIn: 24 * 60 * 60 * 1000 });\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/passkey/list",
+    "method": "POST",
+    "startLine": 4290,
+    "endLine": 4315,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/passkey/list' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, sessionToken, verifier } = await request.json();\r\n      if (!emailHash || (!sessionToken && !verifier)) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      // Accept passkey session OR passphrase verifier — the recurring\r\n      // auth-gap pattern. A user signed in via passphrase on a device\r\n      // that never registered a passkey still has a legitimate need\r\n      // to view (and add to) their passkey list.\r\n      if (sessionToken) {\r\n        const session = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!session.value) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const credentials = [];\r\n      const entries = kv.list({ prefix: ['passkey', emailHash] });\r\n      for await (const entry of entries) {\r\n        try {\r\n          const cred = JSON.parse(entry.value);\r\n          credentials.push({ credentialId: cred.credentialId, deviceName: cred.deviceName, createdAt: cred.createdAt, lastUsed: cred.lastUsed });\r\n        } catch(e) {}\r\n      }\r\n      return json({ credentials }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/passkey/remove",
+    "method": "POST",
+    "startLine": 4318,
+    "endLine": 4332,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/passkey/remove' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, sessionToken, verifier, credentialId } = await request.json();\r\n      if (!emailHash || !credentialId || (!sessionToken && !verifier)) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (sessionToken) {\r\n        const session = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!session.value) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      await kvDel(['passkey', emailHash, credentialId]);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/debug-kv",
+    "method": "GET",
+    "startLine": 4334,
+    "endLine": 4351,
+    "pattern": "unclassified",
+    "evidence": "no recognised auth pattern in handler body",
+    "bodySnippet": "  if (url.pathname === '/debug-kv' && request.method === 'GET') {\r\n    // Test KV read with explicit timeout\r\n    const kvReadWithTimeout = async (key) => {\r\n      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('KV read timeout')), 5000));\r\n      return Promise.race([kv.get(key), timeout]);\r\n    };\r\n    try {\r\n      const health = await kvReadWithTimeout(['_health']);\r\n      const shareCount = { n: 0 };\r\n      try {\r\n        const entries = kv.list({ prefix: ['share'] });\r\n        for await (const _ of entries) shareCount.n++;\r\n      } catch(e) { /* ok */ }\r\n      return json({ ok: true, kvReads: 'working', health: health.value, shareTargets: shareCount.n, ts: new Date().toISOString() }, corsHeaders);\r\n    } catch(e) {\r\n      return json({ ok: false, error: e.message, ts: new Date().toISOString() }, corsHeaders, 500);\r\n    }\r\n  }\r",
+    "severity": "metadata-leak"
+  },
+  {
+    "path": "/key/store",
+    "method": "POST",
+    "startLine": 4366,
+    "endLine": 4402,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/key/store' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, salt, passphraseEnvelope, recoveryEnvelopes, kdfSalt } = await request.json();\r\n      if (!emailHash || !salt) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      // Accept passkey sessionToken OR passphrase verifier\r\n      if (sessionToken) {\r\n        const session = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else if (verifier) {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n      }\r\n\r\n      // Store passphrase envelope and wrap salt (passkey-only accounts omit the envelope)\r\n      await kvSet(['user', emailHash, 'key_salt'], salt);\r\n      if (passphraseEnvelope) {\r\n        await kvSet(['user', emailHash, 'key_envelope_passphrase'], passphraseEnvelope);\r\n      }\r\n\r\n      // v2 envelope architecture is the only supported format. kdfSalt\r\n      // is required — it's the random per-user salt used for PBKDF2.\r\n      if (!kdfSalt) return json({ error: 'kdfSalt required (v2 only)' }, corsHeaders, 400);\r\n      await kvSet(['user', emailHash, 'kdf_salt'], kdfSalt);\r\n\r\n      // Store recovery code envelopes (up to 10)\r\n      if (recoveryEnvelopes && Array.isArray(recoveryEnvelopes)) {\r\n        for (let i = 0; i < Math.min(recoveryEnvelopes.length, 10); i++) {\r\n          await kvSet(['user', emailHash, 'recovery', String(i)], recoveryEnvelopes[i]);\r"
+  },
+  {
+    "path": "/key/get",
+    "method": "POST",
+    "startLine": 4407,
+    "endLine": 4441,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/key/get' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);\r\n\r\n      // Accept passphrase verifier or passkey session token\r\n      if (sessionToken) {\r\n        const session = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else if (verifier) {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n      }\r\n\r\n      const salt     = await kvGet(['user', emailHash, 'key_salt']);\r\n      const envelope = await kvGet(['user', emailHash, 'key_envelope_passphrase']);\r\n      const kdfSalt  = await kvGet(['user', emailHash, 'kdf_salt']);\r\n\r\n      // Passkey-only accounts have no passphrase envelope but may still\r\n      // call /key/get during a probe — return what we have. The client\r\n      // distinguishes by checking `envelope` itself.\r\n      if (!salt.value || !envelope.value || !kdfSalt.value) {\r\n        return json({ ok: true, envelope: null, salt: null, kdfSalt: null }, corsHeaders);\r\n      }\r\n\r\n      return json({\r\n        ok: true,\r\n        salt:    salt.value,\r"
+  },
+  {
+    "path": "/key/passkey-prf-store",
+    "method": "POST",
+    "startLine": 4457,
+    "endLine": 4475,
+    "pattern": "user-auth",
+    "evidence": "session-token only (passkey-specific feature, no verifier path needed)",
+    "bodySnippet": "  if (url.pathname === '/key/passkey-prf-store' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, sessionToken, credentialId, prfEnvelope, deviceBound } = await request.json();\r\n      if (!emailHash || !sessionToken || !credentialId || !prfEnvelope) {\r\n        return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      }\r\n      const session = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n      if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      const cred = await kvGet(['passkey', emailHash, credentialId]);\r\n      if (!cred.value) return json({ error: 'Credential not found' }, corsHeaders, 404);\r\n      // Store envelope — the server cannot unwrap this (no server secret involved)\r\n      await kvSet(['passkey_prf_envelope', emailHash, credentialId], JSON.stringify({\r\n        prfEnvelope,\r\n        deviceBound: !!deviceBound,\r\n        storedAt: new Date().toISOString(),\r\n      }));\r\n      return json({ ok: true, method: deviceBound ? 'device-bound' : 'prf' }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/key/passkey-prf-get",
+    "method": "POST",
+    "startLine": 4480,
+    "endLine": 4493,
+    "pattern": "user-auth",
+    "evidence": "session-token only (passkey-specific feature, no verifier path needed)",
+    "bodySnippet": "  if (url.pathname === '/key/passkey-prf-get' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, sessionToken, credentialId } = await request.json();\r\n      if (!emailHash || !sessionToken || !credentialId) {\r\n        return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      }\r\n      const session = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n      if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      const stored = await kvGet(['passkey_prf_envelope', emailHash, credentialId]);\r\n      if (!stored.value) return json({ error: 'No envelope stored — passphrase required' }, corsHeaders, 404);\r\n      const { prfEnvelope, deviceBound } = JSON.parse(stored.value as string);\r\n      return json({ ok: true, prfEnvelope, deviceBound: !!deviceBound }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/key/update-passphrase",
+    "method": "POST",
+    "startLine": 4500,
+    "endLine": 4524,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/key/update-passphrase' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, newVerifier, newSalt, newEnvelope, newKdfSalt } = await request.json();\r\n      if (!emailHash || !newVerifier || !newSalt || !newEnvelope || !newKdfSalt) {\r\n        return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      }\r\n\r\n      // Verify current auth\r\n      if (sessionToken) {\r\n        const session = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else if (verifier) {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n      }\r\n\r\n      await kvSet(['user', emailHash, 'verifier'],                 newVerifier);\r\n      await kvSet(['user', emailHash, 'key_salt'],                 newSalt);\r\n      await kvSet(['user', emailHash, 'key_envelope_passphrase'],  newEnvelope);\r\n      await kvSet(['user', emailHash, 'kdf_salt'],                 newKdfSalt);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/key/update-recovery",
+    "method": "POST",
+    "startLine": 4528,
+    "endLine": 4556,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/key/update-recovery' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, recoveryEnvelopes } = await request.json();\r\n      if (!emailHash || !recoveryEnvelopes) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n\r\n      if (sessionToken) {\r\n        const session = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else if (verifier) {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n      }\r\n\r\n      // Clear old recovery slots\r\n      for (let i = 0; i < 10; i++) {\r\n        await kvDel(['user', emailHash, 'recovery', String(i)]);\r\n        await kvDel(['user', emailHash, 'recovery_used', String(i)]);\r\n      }\r\n      // Store new envelopes\r\n      for (let i = 0; i < Math.min(recoveryEnvelopes.length, 10); i++) {\r\n        await kvSet(['user', emailHash, 'recovery', String(i)], recoveryEnvelopes[i]);\r\n        await kvSet(['user', emailHash, 'recovery_used', String(i)], 'false');\r\n      }\r\n      await kvSet(['user', emailHash, 'recovery_count'], String(recoveryEnvelopes.length));\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/otp/send",
+    "method": "POST",
+    "startLine": 4692,
+    "endLine": 4730,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/otp/send' && request.method === 'POST') {\r\n    try {\r\n      const { adminSecret } = await request.json();\r\n      if (!adminSecret || adminSecret !== Deno.env.get('ADMIN_SECRET')) {\r\n        return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      if (!env.RESEND_API_KEY) return json({ error: 'Email not configured' }, corsHeaders, 500);\r\n      // Rate limit — 1 OTP per 60 seconds\r\n      const lastSent = await kvGet(['admin_otp_sent']);\r\n      if (lastSent.value && Date.now() - Number(lastSent.value) < 60_000) {\r\n        return json({ error: 'Please wait before requesting another code' }, corsHeaders, 429);\r\n      }\r\n      const otp = Array.from(crypto.getRandomValues(new Uint8Array(6)))\r\n        .map(b => String(b % 10)).join('');\r\n      await kvSet(['admin_otp'], otp, { expireIn: 10 * 60 * 1000 });\r\n      await kvSet(['admin_otp_sent'], String(Date.now()), { expireIn: 60 * 1000 });\r\n      // Reset per-OTP attempt counter for the freshly-issued OTP\r\n      await kvSet(['admin_otp_attempts'], '0', { expireIn: 10 * 60 * 1000 });\r\n      const html = `<!DOCTYPE html><html><body style=\"font-family:-apple-system,sans-serif;max-width:480px;margin:32px auto;color:#333\">\r\n        <div style=\"background:#111;padding:20px 24px;border-radius:12px 12px 0 0;display:flex;align-items:center;gap:10px\">\r\n          <svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#e8a838\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z\"/><path d=\"M12 22V12\"/><polyline points=\"3.29 7 12 12 20.71 7\"/><path d=\"m7.5 4.27 9 5.15\"/></svg>\r\n          <span style=\"color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px\">STOCKROOM</span>\r\n        </div>\r\n        <div style=\"background:#fff;border:1px solid #e5e7eb;border-top:none;padding:24px 28px;border-radius:0 0 12px 12px\">\r\n          <h2 style=\"margin:0 0 12px;font-size:18px\">Admin sign-in code</h2>\r\n          <p style=\"color:#666;margin:0 0 20px;font-size:14px\">Your one-time code (valid 10 minutes):</p>\r\n          <div style=\"font-size:36px;font-weight:800;letter-spacing:8px;font-family:monospace;color:#111;text-align:center;padding:16px;background:#f5f5f5;border-radius:8px;margin-bottom:20px\">${otp}</div>\r\n          <p style=\"color:#999;font-size:12px\">If you didn't request this, someone has your ADMIN_SECRET — change it immediately.</p>\r\n        </div></body></html>`;\r\n      const r = await fetch('https://api.resend.com/emails', {\r"
+  },
+  {
+    "path": "/admin/otp/verify",
+    "method": "POST",
+    "startLine": 4732,
+    "endLine": 4817,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/otp/verify' && request.method === 'POST') {\r\n    try {\r\n      const { adminSecret, otp } = await request.json();\r\n      const ip = _getClientIp(request);\r\n      const userAgent = request.headers.get('User-Agent') || 'unknown';\r\n\r\n      // 1. Per-IP rate limit on verify attempts — closes the brute-force window\r\n      const rl = await _checkVerifyRateLimit(ip);\r\n      if (!rl.ok) {\r\n        await _writeAuditLog({ action: '/admin/otp/verify', outcome: 'denied', ip, userAgent, details: 'rate-limited' });\r\n        return json({ error: 'Too many attempts — try again in a minute' }, { ...corsHeaders, 'Retry-After': String(rl.retryAfterSec || 60) }, 429);\r\n      }\r\n\r\n      if (!adminSecret || adminSecret !== Deno.env.get('ADMIN_SECRET')) {\r\n        await _writeAuditLog({ action: '/admin/otp/verify', outcome: 'denied', ip, userAgent, details: 'bad-secret' });\r\n        return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      if (!otp) return json({ error: 'Missing OTP' }, corsHeaders, 400);\r\n\r\n      // 2. Per-OTP attempt counter — invalidate after 5 wrong tries\r\n      const attemptsRec = await kvGet(['admin_otp_attempts']);\r\n      const attempts    = attemptsRec.value ? parseInt(String(attemptsRec.value), 10) : 0;\r\n      const stored      = await kvGet(['admin_otp']);\r\n\r\n      if (!stored.value) {\r\n        return json({ error: 'Invalid or expired code' }, corsHeaders, 401);\r\n      }\r\n\r\n      if (stored.value !== String(otp).trim()) {\r\n        const newAttempts = attempts + 1;\r"
+  },
+  {
+    "path": "/admin/revoke-all-sessions",
+    "method": "POST",
+    "startLine": 4822,
+    "endLine": 4853,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/revoke-all-sessions' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });\r\n      let revoked = 0;\r\n      const iter = kv.list({ prefix: ['admin_session'] });\r\n      for await (const entry of iter) {\r\n        try { await kv.delete(entry.key); revoked++; } catch(_) {}\r\n      }\r\n      const ip = _getClientIp(request);\r\n      console.log(`Admin: ${revoked} session(s) revoked from ${ip}`);\r\n      _sendAdminAlertEmail(\r\n        '🔒 STOCKROOM admin sessions revoked',\r\n        _renderAdminAlertEmail({\r\n          headerColour: '#e8a838',\r\n          title: '🔒 All admin sessions revoked',\r\n          subtitle: 'A revoke-all-sessions action was performed.',\r\n          rows: [\r\n            ['When',       new Date().toUTCString()],\r\n            ['Source IP',  ip],\r\n            ['Sessions revoked', String(revoked)],\r\n          ],\r\n        })\r\n      ).catch(() => {});\r\n      return json({ ok: true, revoked }, corsHeaders);\r"
+  },
+  {
+    "path": "/admin/sessions",
+    "method": "POST",
+    "startLine": 4858,
+    "endLine": 4885,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/sessions' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });\r\n\r\n      const sessions: Array<{ tokenPrefix: string; ip: string; userAgent: string; createdAt: number; current: boolean }> = [];\r\n      const iter = kv.list({ prefix: ['admin_session'] });\r\n      for await (const entry of iter) {\r\n        const token = (entry.key as string[])[1];\r\n        let meta: { ip?: string; userAgent?: string; createdAt?: number } = {};\r\n        try { meta = JSON.parse(String(entry.value)); } catch (_) { /* legacy '1' value */ }\r\n        sessions.push({\r\n          tokenPrefix: token.slice(0, 8),\r\n          ip:          meta.ip || 'unknown',\r\n          userAgent:   meta.userAgent || 'unknown',\r\n          createdAt:   meta.createdAt || 0,\r\n          current:     token === body.adminToken,\r\n        });\r\n      }\r\n      sessions.sort((a, b) => b.createdAt - a.createdAt);\r\n      return json({ ok: true, sessions }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/revoke-session",
+    "method": "POST",
+    "startLine": 4888,
+    "endLine": 4914,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/revoke-session' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const { tokenPrefix } = body;\r\n      if (!tokenPrefix || typeof tokenPrefix !== 'string' || tokenPrefix.length < 6) {\r\n        return json({ error: 'Invalid tokenPrefix' }, corsHeaders, 400);\r\n      }\r\n      // Find matching session and delete it\r\n      let deleted = false;\r\n      const iter = kv.list({ prefix: ['admin_session'] });\r\n      for await (const entry of iter) {\r\n        const token = (entry.key as string[])[1];\r\n        if (token.startsWith(tokenPrefix)) {\r\n          await kv.delete(entry.key);\r\n          deleted = true;\r\n          break;\r\n        }\r\n      }\r\n      await _writeAuditLog({ action: url.pathname, outcome: deleted ? 'success' : 'failure', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `prefix=${tokenPrefix} deleted=${deleted}` });\r\n      return json({ ok: deleted, deleted }, corsHeaders, deleted ? 200 : 404);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/audit-log",
+    "method": "POST",
+    "startLine": 4918,
+    "endLine": 4941,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/audit-log' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      // Note: not writing a success audit log here, since reading the log is\r\n      // a meta-action that would create noise on every refresh. The denied\r\n      // case is logged so we still see attempts to read the log without auth.\r\n\r\n      const limit = Math.min(parseInt(String(body.limit || '100'), 10) || 100, 200);\r\n      const entries: Array<{ ts: string; action: string; outcome: string; ip: string; ua: string; details?: string }> = [];\r\n      const iter = kv.list({ prefix: ['audit_log'] }, { reverse: true, limit });\r\n      for await (const entry of iter) {\r\n        try {\r\n          const v = JSON.parse(String(entry.value));\r\n          entries.push(v);\r\n        } catch (_) { /* skip malformed entries */ }\r\n      }\r\n      return json({ ok: true, entries }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/crypto-status",
+    "method": "POST",
+    "startLine": 4946,
+    "endLine": 4969,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/crypto-status' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });\r\n      let total = 0;\r\n      const iter = kv.list({ prefix: ['user'] });\r\n      for await (const entry of iter) {\r\n        const key = entry.key as string[];\r\n        if (key[2] === 'verifier') total++;\r\n      }\r\n      return json({\r\n        ok: true,\r\n        v1: 0,\r\n        v2: total,\r\n        unknown: 0,\r\n        total,\r\n      }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/list-accounts",
+    "method": "POST",
+    "startLine": 4972,
+    "endLine": 5011,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/list-accounts' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });\r\n      const accounts: { emailHash: string; email: string | null; created: string | null; cryptoVersion: string; migrated: string | null }[] = [];\r\n      const iter = kv.list({ prefix: ['user'] });\r\n      const seen = new Set<string>();\r\n      for await (const entry of iter) {\r\n        const key = entry.key as string[];\r\n        if (key[2] !== 'verifier') continue;\r\n        const emailHash = key[1];\r\n        if (seen.has(emailHash)) continue;\r\n        seen.add(emailHash);\r\n        const [emailR, createdR, pendingDelR, deactivationR] = await Promise.all([\r\n          kvGet(['user', emailHash, 'email']),\r\n          kvGet(['user', emailHash, 'created']),\r\n          kvGet(['user', emailHash, 'pending_deletion']),\r\n          kvGet(['deactivation', emailHash]),\r\n        ]);\r\n        accounts.push({\r\n          emailHash,\r\n          email:          emailR.value   as string | null || null,\r\n          created:        createdR.value as string | null || null,\r\n          // All accounts are v2 — kept in the response shape for the\r\n          // existing admin.html badge column (always shows v2 ✓).\r"
+  },
+  {
+    "path": "/admin/delete-account",
+    "method": "POST",
+    "startLine": 5014,
+    "endLine": 5031,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/delete-account' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const { emailHash } = body;\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });\r\n      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);\r\n      const existing = await kvGet(['user', emailHash, 'verifier']);\r\n      if (!existing.value) return json({ error: 'Account not found' }, corsHeaders, 404);\r\n      await _deleteAllUserData(kv, emailHash);\r\n      console.log('ADMIN deleted account: ' + emailHash);\r\n      return json({ ok: true, deleted: emailHash }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/r2/status",
+    "method": "POST",
+    "startLine": 5034,
+    "endLine": 5080,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/r2/status' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });\r\n      if (!r2Configured()) {\r\n        return json({ ok: true, configured: false, missing: [\r\n          R2_CFG.accountId ? null : 'R2_ACCOUNT_ID',\r\n          R2_CFG.accessKey ? null : 'R2_ACCESS_KEY_ID',\r\n          R2_CFG.secretKey ? null : 'R2_SECRET_ACCESS_KEY',\r\n          R2_CFG.bucket    ? null : 'R2_BUCKET_NAME',\r\n        ].filter(Boolean) }, corsHeaders);\r\n      }\r\n      const all = await listR2Snapshots('');\r\n      const auto    = all.filter(s => s.key.startsWith('auto/'));\r\n      const manual  = all.filter(s => s.key.startsWith('manual/'));\r\n      const preR    = all.filter(s => s.key.startsWith('pre-restore/'));\r\n      const userBackups = all.filter(s => s.key.startsWith('user-backup/'));\r\n      // Per-user totals: count distinct emailHash directories under user-backup/\r\n      const userHashes = new Set<string>();\r\n      for (const s of userBackups) {\r\n        const parts = s.key.split('/');\r\n        if (parts.length >= 2 && parts[0] === 'user-backup') userHashes.add(parts[1]);\r\n      }\r\n      const totalSize = all.reduce((sum, s) => sum + s.size, 0);\r\n      const lastAuto    = auto.at(-1);\r"
+  },
+  {
+    "path": "/admin/r2/list",
+    "method": "POST",
+    "startLine": 5083,
+    "endLine": 5097,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/r2/list' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });\r\n      const prefix = (body.prefix || '').toString();\r\n      const all = await listR2Snapshots(prefix);\r\n      // Most recent first, capped to 200 entries to keep responses small\r\n      return json({ ok: true, snapshots: all.slice(-200).reverse() }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/r2/backup-now",
+    "method": "POST",
+    "startLine": 5100,
+    "endLine": 5112,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/r2/backup-now' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });\r\n      const result = await backupKVToR2('manual');\r\n      return json(result, corsHeaders, result.ok ? 200 : 500);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/r2/prune",
+    "method": "POST",
+    "startLine": 5115,
+    "endLine": 5127,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/r2/prune' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });\r\n      const result = await pruneR2Snapshots();\r\n      return json({ ok: true, ...result }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/r2/restore",
+    "method": "POST",
+    "startLine": 5132,
+    "endLine": 5150,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/r2/restore' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });\r\n      const { snapshotKey, confirm } = body;\r\n      if (confirm !== 'RESTORE') return json({ error: 'Confirmation phrase missing — body.confirm must equal \"RESTORE\"' }, corsHeaders, 400);\r\n      if (!snapshotKey || typeof snapshotKey !== 'string') return json({ error: 'Missing snapshotKey' }, corsHeaders, 400);\r\n      console.warn(`ADMIN R2 RESTORE initiated from snapshot: ${snapshotKey}`);\r\n      const result = await restoreFromR2Snapshot(snapshotKey);\r\n      if (!result.ok) return json({ error: result.error }, corsHeaders, 500);\r\n      console.warn(`ADMIN R2 RESTORE complete: ${result.restored} entries; safety snapshot at ${result.preRestoreKey}`);\r\n      return json(result, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/r2/send-heartbeat",
+    "method": "POST",
+    "startLine": 5153,
+    "endLine": 5165,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/r2/send-heartbeat' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });\r\n      const result = await sendBackupHeartbeatEmail();\r\n      return json(result, corsHeaders, result.ok ? 200 : 500);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/user/backup",
+    "method": "POST",
+    "startLine": 5171,
+    "endLine": 5187,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/user/backup' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const emailHash = (body.emailHash || '').toString();\r\n      const label     = (body.label || 'manual').toString();\r\n      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);\r\n      if (!/^[a-f0-9]{16,128}$/i.test(emailHash)) return json({ error: 'emailHash must be hex' }, corsHeaders, 400);\r\n      const result = await backupUserToR2(emailHash, label);\r\n      await _writeAuditLog({ action: url.pathname, outcome: result.ok ? 'success' : 'error', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `emailHash=${emailHash.slice(0,8)} entries=${result.entries||0}` });\r\n      return json(result, corsHeaders, result.ok ? 200 : 500);\r\n    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/user/list-backups",
+    "method": "POST",
+    "startLine": 5191,
+    "endLine": 5206,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/user/list-backups' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const emailHash = (body.emailHash || '').toString();\r\n      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);\r\n      if (!/^[a-f0-9]{16,128}$/i.test(emailHash)) return json({ error: 'emailHash must be hex' }, corsHeaders, 400);\r\n      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `emailHash=${emailHash.slice(0,8)}` });\r\n      const all = await listR2Snapshots(`user-backup/${emailHash}/`);\r\n      return json({ ok: true, snapshots: all.slice(-100).reverse() }, corsHeaders);\r\n    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/user/restore",
+    "method": "POST",
+    "startLine": 5212,
+    "endLine": 5234,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/user/restore' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const emailHash   = (body.emailHash   || '').toString();\r\n      const snapshotKey = (body.snapshotKey || '').toString();\r\n      const confirm     = body.confirm;\r\n      if (confirm !== 'RESTORE') return json({ error: 'Confirmation phrase missing — body.confirm must equal \"RESTORE\"' }, corsHeaders, 400);\r\n      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);\r\n      if (!snapshotKey) return json({ error: 'Missing snapshotKey' }, corsHeaders, 400);\r\n      if (!/^[a-f0-9]{16,128}$/i.test(emailHash)) return json({ error: 'emailHash must be hex' }, corsHeaders, 400);\r\n      console.warn(`ADMIN USER RESTORE initiated for ${emailHash.slice(0,8)} from snapshot: ${snapshotKey}`);\r\n      const result = await restoreUserFromR2Snapshot(emailHash, snapshotKey);\r\n      await _writeAuditLog({ action: url.pathname, outcome: result.ok ? 'success' : 'error', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `emailHash=${emailHash.slice(0,8)} key=${snapshotKey} restored=${result.restored||0}${result.error ? ' err='+result.error : ''}` });\r\n      if (!result.ok) return json({ error: result.error }, corsHeaders, 500);\r\n      console.warn(`ADMIN USER RESTORE complete: ${result.restored} entries; safety snapshot at ${result.preRestoreKey}`);\r\n      return json(result, corsHeaders);\r\n    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/billing/get",
+    "method": "POST",
+    "startLine": 5237,
+    "endLine": 5252,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/billing/get' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const emailHash = (body.emailHash || '').toString();\r\n      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);\r\n      if (!/^[a-f0-9]{16,128}$/i.test(emailHash)) return json({ error: 'emailHash must be hex' }, corsHeaders, 400);\r\n      const acct = await getBillingAccount(emailHash);\r\n      const stripeConfiguredFlag = stripeConfigured();\r\n      return json({ ok: true, account: acct, stripeConfigured: stripeConfiguredFlag }, corsHeaders);\r\n    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/billing/set-grandfather",
+    "method": "POST",
+    "startLine": 5256,
+    "endLine": 5278,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/billing/set-grandfather' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const emailHash = (body.emailHash || '').toString();\r\n      const grandfathered = body.grandfathered === true;\r\n      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);\r\n      if (!/^[a-f0-9]{16,128}$/i.test(emailHash)) return json({ error: 'emailHash must be hex' }, corsHeaders, 400);\r\n      const acct = await ensureBillingAccount(emailHash);\r\n      acct.grandfathered = grandfathered;\r\n      // When grandfathering, set status accordingly. When un-grandfathering,\r\n      // fall back to whatever Stripe-driven status is appropriate (or 'none').\r\n      if (grandfathered) acct.status = 'grandfathered';\r\n      else if (acct.status === 'grandfathered') acct.status = 'none';\r\n      await setBillingAccount(emailHash, acct);\r\n      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `emailHash=${emailHash.slice(0,8)} grandfathered=${grandfathered}` });\r\n      return json({ ok: true, account: acct }, corsHeaders);\r\n    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/billing/set-grace",
+    "method": "POST",
+    "startLine": 5283,
+    "endLine": 5307,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/billing/set-grace' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const emailHash = (body.emailHash || '').toString();\r\n      const graceUntilRaw = body.graceUntil;\r\n      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);\r\n      if (!/^[a-f0-9]{16,128}$/i.test(emailHash)) return json({ error: 'emailHash must be hex' }, corsHeaders, 400);\r\n      const acct = await ensureBillingAccount(emailHash);\r\n      if (graceUntilRaw === null || graceUntilRaw === 0 || graceUntilRaw === undefined) {\r\n        delete acct.graceUntil;\r\n      } else {\r\n        const ts = parseInt(String(graceUntilRaw), 10);\r\n        if (!Number.isFinite(ts) || ts < 0) return json({ error: 'graceUntil must be a positive unix seconds value or null' }, corsHeaders, 400);\r\n        acct.graceUntil = ts;\r\n      }\r\n      await setBillingAccount(emailHash, acct);\r\n      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `emailHash=${emailHash.slice(0,8)} graceUntil=${acct.graceUntil ?? 'cleared'}` });\r\n      return json({ ok: true, account: acct }, corsHeaders);\r\n    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/admin/billing/run-migration",
+    "method": "POST",
+    "startLine": 5313,
+    "endLine": 5327,
+    "pattern": "admin-auth",
+    "evidence": "verifyAdminRequest / adminToken / ADMIN_SECRET",
+    "bodySnippet": "  if (url.pathname === '/admin/billing/run-migration' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const _adminAuth = await verifyAdminRequest(body, request);\r\n      if (!_adminAuth.ok) {\r\n        await _writeAuditLog({ action: url.pathname, outcome: 'denied', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown', details: `reason=${_adminAuth.reason}` });\r\n        return json({ error: _adminAuth.reason === 'ip-mismatch' ? 'Session IP changed — please sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      // Clear the marker so runBillingMigration() executes fully\r\n      try { await kvDel(['_billing_migration_v1', 'done']); } catch (_) {}\r\n      await runBillingMigration();\r\n      await _writeAuditLog({ action: url.pathname, outcome: 'success', ip: _getClientIp(request), userAgent: request.headers.get('User-Agent') || 'unknown' });\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/key/recover",
+    "method": "POST",
+    "startLine": 5332,
+    "endLine": 5373,
+    "pattern": "recovery-token",
+    "evidence": "recovery token check",
+    "bodySnippet": "  if (url.pathname === '/key/recover' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, codeHash } = await request.json();\r\n      if (!emailHash || !codeHash) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n\r\n      const count = await kvGet(['user', emailHash, 'recovery_count']);\r\n      const total = parseInt(count.value || '10');\r\n\r\n      // Find matching recovery slot by code hash\r\n      let matchSlot = -1;\r\n      let envelope  = null;\r\n      for (let i = 0; i < total; i++) {\r\n        const usedFlag = await kvGet(['user', emailHash, 'recovery_used', String(i)]);\r\n        if (usedFlag.value === 'true') continue;\r\n        const storedEnv = await kvGet(['user', emailHash, 'recovery', String(i)]);\r\n        if (!storedEnv.value) continue;\r\n        // Each envelope stores its own code hash for matching\r\n        const parsed = JSON.parse(storedEnv.value);\r\n        if (parsed.codeHash === codeHash) {\r\n          matchSlot = i;\r\n          envelope  = parsed.envelope;\r\n          break;\r\n        }\r\n      }\r\n\r\n      if (matchSlot === -1) {\r\n        return json({ error: 'Invalid recovery code' }, corsHeaders, 401);\r\n      }\r\n\r\n      // Mark slot as used — one-time use\r"
+  },
+  {
+    "path": "/recovery/reset",
+    "method": "POST",
+    "startLine": 5376,
+    "endLine": 5403,
+    "pattern": "recovery-token",
+    "evidence": "recovery token check",
+    "bodySnippet": "  if (url.pathname === '/recovery/reset' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, recoveryToken, newVerifier, newSalt, newEnvelope, newKdfSalt } = await request.json();\r\n      if (!emailHash || !recoveryToken || !newVerifier || !newSalt || !newEnvelope || !newKdfSalt) {\r\n        return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      }\r\n      const stored = await kvGet(['recovery_token', emailHash]);\r\n      if (!stored.value) return json({ error: 'Recovery session expired' }, corsHeaders, 400);\r\n      const tokenData = JSON.parse(stored.value);\r\n      if (tokenData.token !== recoveryToken) return json({ error: 'Invalid recovery token' }, corsHeaders, 401);\r\n\r\n      // Update verifier and passphrase envelope with new passphrase\r\n      await kvSet(['user', emailHash, 'verifier'],                newVerifier);\r\n      await kvSet(['user', emailHash, 'key_salt'],                newSalt);\r\n      await kvSet(['user', emailHash, 'key_envelope_passphrase'], newEnvelope);\r\n      await kvSet(['user', emailHash, 'kdf_salt'],                newKdfSalt);\r\n      await kvDel(['recovery_token', emailHash]);\r\n\r\n      // Issue session token\r\n      const sessionToken = Array.from(crypto.getRandomValues(new Uint8Array(32)))\r\n        .map(b => b.toString(16).padStart(2,'0')).join('');\r\n      await kvSet(['passkey_session', emailHash, sessionToken], JSON.stringify({\r\n        issuedAt: new Date().toISOString(), method: 'recovery'\r\n      }), { expireIn: 24 * 60 * 60 * 1000 });\r\n\r\n      return json({ ok: true, sessionToken }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/user/register",
+    "method": "POST",
+    "startLine": 5409,
+    "endLine": 5491,
+    "pattern": "auth-establishment",
+    "evidence": "pre-auth endpoint (auth flow itself); returns challenge/token, never user data",
+    "bodySnippet": "  if (url.pathname === '/user/register' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, email, referralCode } = await request.json();\r\n      if (!emailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      const existing = await kvGet(['user', emailHash, 'verifier']);\r\n      if (existing.value) {\r\n        if (existing.value === verifier) return json({ ok: true, existing: true }, corsHeaders);\r\n        return json({ error: 'Email already registered with a different passphrase' }, corsHeaders, 409);\r\n      }\r\n      const now = new Date();\r\n      await kvSet(['user', emailHash, 'verifier'], verifier);\r\n      await kvSet(['user', emailHash, 'created'], now.toISOString());\r\n      // Store plaintext email (hashed separately) so we can address\r\n      // operational emails like account-deletion confirmations.\r\n      if (email) await kvSet(['user', emailHash, 'email'], email);\r\n\r\n      // Defensively clear any residual email_verified flag and pending\r\n      // verification OTP from a previous account life. _deleteAllUserData\r\n      // already covers these via prefix scan, but a fresh registration is\r\n      // the canonical \"new identity\" event — verification status from a\r\n      // prior signup must not carry over. Without this, a deleted-then-\r\n      // recreated account could skip the OTP step entirely (and thence\r\n      // join shares) because /email/verify/send returns alreadyVerified\r\n      // and /user/verify allows sign-in.\r\n      await kvDel(['user', emailHash, 'email_verified']);\r\n      await kvDel(['email_verify_otp', emailHash]);\r\n\r\n      // ── Billing: create or refresh the billing record ──\r\n      // For new signups, we initialise a 30-day local trial (hybrid model\r\n      // per spec: track trial in our KV, do NOT create a Stripe sub yet —\r"
+  },
+  {
+    "path": "/user/verify",
+    "method": "POST",
+    "startLine": 5493,
+    "endLine": 5559,
+    "pattern": "auth-establishment",
+    "evidence": "pre-auth endpoint (auth flow itself); returns challenge/token, never user data",
+    "bodySnippet": "  if (url.pathname === '/user/verify' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier } = await request.json();\r\n      if (!emailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n\r\n      // ── Rate limiting: max 5 attempts per 15 minutes per emailHash ──\r\n      const rlKey  = ['rate_limit', 'login', emailHash];\r\n      const WINDOW = 15 * 60 * 1000; // 15 minutes\r\n      const MAX    = 5;\r\n      const now    = Date.now();\r\n\r\n      const rlRaw  = await kvGet(rlKey);\r\n      const rl     = rlRaw.value ? JSON.parse(rlRaw.value) : { attempts: [], lockedUntil: 0 };\r\n\r\n      if (rl.lockedUntil && now < rl.lockedUntil) {\r\n        const retryAfter = Math.ceil((rl.lockedUntil - now) / 1000);\r\n        return json({ error: 'Too many attempts — try again later', retryAfter, lockedUntil: rl.lockedUntil }, corsHeaders, 429);\r\n      }\r\n\r\n      // Prune old attempts outside window\r\n      rl.attempts = (rl.attempts || []).filter((t: number) => now - t < WINDOW);\r\n\r\n      const stored = await kvGet(['user', emailHash, 'verifier']);\r\n      if (!stored.value) return json({ error: 'User not found' }, corsHeaders, 404);\r\n\r\n      if (stored.value !== verifier) {\r\n        rl.attempts.push(now);\r\n        if (rl.attempts.length >= MAX) {\r\n          rl.lockedUntil = now + WINDOW;\r\n          rl.attempts    = [];\r"
+  },
+  {
+    "path": "/debug-user",
+    "method": "POST",
+    "startLine": 5562,
+    "endLine": 5574,
+    "pattern": "unclassified",
+    "evidence": "partial auth: verifier-only (no session path) — RECURRING AUTH-GAP PATTERN",
+    "bodySnippet": "  if (url.pathname === '/debug-user' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash } = await request.json();\r\n      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);\r\n      const hasVerifier = !!(await kvGet(['user', emailHash, 'verifier'])).value;\r\n      const hasData     = !!(await kvGet(['user', emailHash, 'data', 'default'])).value;\r\n      const created     = (await kvGet(['user', emailHash, 'created'])).value;\r\n      const modified    = (await kvGet(['user', emailHash, 'modified', 'default'])).value;\r\n      return json({ emailHash, hasVerifier, hasData, created, modified }, corsHeaders);\r\n    } catch(err) {\r\n      return json({ error: err.message }, corsHeaders, 500);\r\n    }\r\n  }\r",
+    "severity": "account-enum"
+  },
+  {
+    "path": "/data/push",
+    "method": "POST",
+    "startLine": 5577,
+    "endLine": 5611,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/data/push' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, household, ciphertext } = await request.json();\r\n      if (!emailHash || (!verifier && !sessionToken) || !ciphertext) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      // Accept either passphrase verifier or passkey session token\r\n      if (sessionToken) {\r\n        const session = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!session.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);\r\n        // Extend session\r\n        await kvSet(['passkey_session', emailHash, sessionToken], session.value, { expireIn: 24 * 60 * 60 * 1000 });\r\n      } else {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value) return json({ error: 'User not found — register first' }, corsHeaders, 401);\r\n        if (stored.value !== verifier) return json({ error: 'Unauthorised — verifier mismatch' }, corsHeaders, 401);\r\n      }\r\n      // ── Free-tier blob size gate ──\r\n      // The blob is encrypted client-side, so we can't enforce per-feature\r\n      // limits server-side (item count, photo presence). What we CAN do is\r\n      // enforce a total size cap, which catches photo uploads (which blow\r\n      // up blob size) and prevents abuse. Client should already be hiding\r\n      // over-limit items, but this is a defence-in-depth check.\r\n      const blobBytes = typeof ciphertext === 'string' ? ciphertext.length : 0;\r\n      const gate = await gateFeature(emailHash, 'blobsize', blobBytes);\r\n      if (!gate.ok) {\r\n        return json({ error: 'Free tier size limit exceeded', reason: gate.reason, limit: FREE_TIER.BLOB_SIZE_BYTES }, corsHeaders, gate.status);\r\n      }\r\n      const hKey = household && household !== 'default' ? household : 'default';\r\n      await kvSetLarge(['user', emailHash, 'data', hKey], ciphertext);\r\n      await kvSet(['user', emailHash, 'modified', hKey], new Date().toISOString());\r\n      await markUserDirty(emailHash);\r"
+  },
+  {
+    "path": "/data/pull",
+    "method": "POST",
+    "startLine": 5614,
+    "endLine": 5673,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/data/pull' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, household, shareCode } = await request.json();\r\n      const hKey = household || 'default';\r\n\r\n      // Owner pull — accept verifier or session token\r\n      if (emailHash && (verifier || sessionToken)) {\r\n        if (sessionToken) {\r\n          const session = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n          if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n          await kvSet(['passkey_session', emailHash, sessionToken], session.value, { expireIn: 24 * 60 * 60 * 1000 });\r\n        } else {\r\n          const stored = await kvGet(['user', emailHash, 'verifier']);\r\n          if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n        }\r\n        const data     = await kvGetLarge(['user', emailHash, 'data', hKey]);\r\n        const modified = await kvGet(['user', emailHash, 'modified', hKey]);\r\n        // Check for an admin-set force-remote flag (set by restoreUserFromR2Snapshot).\r\n        // When present, the client takes the server's data wholesale on this sync,\r\n        // bypassing the per-item updatedAt LWW merge that otherwise silently\r\n        // undoes restores. Client must ack via /data/force-remote/ack to clear it.\r\n        let forceRemote = false;\r\n        let forceRemoteMeta: { at?: string; sourceKey?: string } | null = null;\r\n        try {\r\n          const flag = await kvGet(['kv_force_remote', emailHash]);\r\n          if (flag.value) {\r\n            forceRemote = true;\r\n            try { forceRemoteMeta = JSON.parse(String(flag.value)); } catch (_) {}\r\n          }\r\n        } catch (_) {}\r"
+  },
+  {
+    "path": "/data/modified",
+    "method": "POST",
+    "startLine": 5676,
+    "endLine": 5699,
+    "pattern": "unclassified",
+    "evidence": "partial auth: verifier-only (no session path) — RECURRING AUTH-GAP PATTERN",
+    "bodySnippet": "  if (url.pathname === '/data/modified' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, household, shareCode } = await request.json();\r\n      const hKey = household || 'default';\r\n      let modifiedVal = null;\r\n      if (emailHash && verifier) {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (stored.value && stored.value === verifier) {\r\n          const m = await kvGet(['user', emailHash, 'modified', hKey]);\r\n          modifiedVal = m.value;\r\n        }\r\n      } else if (shareCode) {\r\n        const r = await kvGet(['share', shareCode.toUpperCase()]);\r\n        if (r.value) {\r\n          const target = JSON.parse(r.value);\r\n          const m = await kvGet(['user', target.ownerEmailHash, 'modified', hKey]);\r\n          modifiedVal = m.value;\r\n        }\r\n      }\r\n      return json({ modifiedTime: modifiedVal }, corsHeaders);\r\n    } catch(err) {\r\n      return json({ modifiedTime }, corsHeaders);\r\n    }\r\n  }\r",
+    "severity": "metadata-leak"
+  },
+  {
+    "path": "/data/force-remote/ack",
+    "method": "POST",
+    "startLine": 5707,
+    "endLine": 5725,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/data/force-remote/ack' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      if (!emailHash || (!verifier && !sessionToken)) {\r\n        return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n      }\r\n      if (sessionToken) {\r\n        const session = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      try { await kv.delete(['kv_force_remote', emailHash]); } catch (_) {}\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) {\r\n      return json({ error: (err as Error).message }, corsHeaders, 500);\r\n    }\r\n  }\r"
+  },
+  {
+    "path": "/share/create",
+    "method": "POST",
+    "startLine": 5728,
+    "endLine": 5768,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/create' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const { ownerEmailHash, verifier, sessionToken, name, type, ownerName, households, householdNames, colour, shareManagement, guestEmail, pendingInvite } = body;\r\n      if (!ownerEmailHash || (!verifier && !sessionToken) || !name || !households) return json({ error: 'Missing required fields' }, corsHeaders, 400);\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);\r\n      } else {\r\n        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const code = Array.from(crypto.getRandomValues(new Uint8Array(4)))\r\n        .map(b => b.toString(36).padStart(2,'0')).join('').toUpperCase().slice(0,6);\r\n      // Validate shareManagement; default to 'none' if absent or invalid.\r\n      const mgmt = ['none','view','edit'].includes(shareManagement) ? shareManagement : 'none';\r\n      // pendingInvite is set by the client when the guest doesn't have an\r\n      // ECDH public key yet (i.e. no STOCKROOM account at create time).\r\n      // It's a hint for the owner UI (\"awaiting signup\") and lets us\r\n      // recognise a sign-up-via-link flow on the server side. The actual\r\n      // ECDH key wrapping happens later via the existing rewrap queue.\r\n      const validPending = pendingInvite && typeof pendingInvite === 'object'\r\n        && typeof pendingInvite.guestEmailHash === 'string'\r\n        ? { guestEmailHash: pendingInvite.guestEmailHash, guestEmail: pendingInvite.guestEmail || null }\r\n        : null;\r\n      const target = {\r\n        name, type: type||'guest', ownerName: ownerName||'Owner', ownerEmailHash,\r\n        households, householdNames: householdNames||{}, colour: colour||'#e8a838',\r\n        shareManagement: mgmt,\r\n        ...(typeof guestEmail === 'string' && guestEmail ? { guestEmail } : {}),\r"
+  },
+  {
+    "path": "/share/key/store",
+    "method": "POST",
+    "startLine": 5774,
+    "endLine": 5790,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/key/store' && request.method === 'POST') {\r\n    try {\r\n      const { ownerEmailHash, verifier, sessionToken, code, encryptedShareKey } = await request.json();\r\n      if (!ownerEmailHash || (!verifier && !sessionToken) || !code || !encryptedShareKey) {\r\n        return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      }\r\n      const authed = sessionToken\r\n        ? !!(await kvGet(['passkey_session', ownerEmailHash, sessionToken])).value\r\n        : verifier && (await kvGet(['user', ownerEmailHash, 'verifier'])).value === verifier;\r\n      if (!authed) return json({ error: sessionToken ? 'Session expired — sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      const share = await kvGet(['share', code.toUpperCase()]);\r\n      if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);\r\n      if (JSON.parse(share.value).ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);\r\n      await kvSet(['share_key', code.toUpperCase(), ownerEmailHash], encryptedShareKey);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/share/key/get",
+    "method": "POST",
+    "startLine": 5793,
+    "endLine": 5805,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/key/get' && request.method === 'POST') {\r\n    try {\r\n      const { ownerEmailHash, verifier, sessionToken, code } = await request.json();\r\n      if (!ownerEmailHash || !code || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      const authed = sessionToken\r\n        ? !!(await kvGet(['passkey_session', ownerEmailHash, sessionToken])).value\r\n        : verifier && (await kvGet(['user', ownerEmailHash, 'verifier'])).value === verifier;\r\n      if (!authed) return json({ error: sessionToken ? 'Session expired — sign in again' : 'Unauthorised' }, corsHeaders, 401);\r\n      const encKey = await kvGet(['share_key', code.toUpperCase(), ownerEmailHash]);\r\n      if (!encKey.value) return json({ error: 'No key stored for this share' }, corsHeaders, 404);\r\n      return json({ ok: true, encryptedShareKey: encKey.value }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/user/share-envelope/store",
+    "method": "POST",
+    "startLine": 5819,
+    "endLine": 5847,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/user/share-envelope/store' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, code, envelope } = await request.json();\r\n      if (!emailHash || (!verifier && !sessionToken) || !code || !envelope) {\r\n        return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      }\r\n      // Auth — accept either passphrase verifier or session token.\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      // Optional sanity check: the guest must actually be a member of\r\n      // this share. Without this we'd accept envelope writes from any\r\n      // authenticated user — not a security hole (the envelope is just\r\n      // their own ciphertext) but rejecting non-members keeps the data\r\n      // model tidy and surfaces logic errors early.\r\n      const share = await kvGet(['share', code.toUpperCase()]);\r\n      if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);\r\n      const target = JSON.parse(share.value);\r\n      if (!target.members?.includes(emailHash)) {\r\n        return json({ error: 'Not a member of this share' }, corsHeaders, 403);\r\n      }\r\n      await kvSet(['user', emailHash, 'share_envelope', code.toUpperCase()], envelope);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/user/share-envelope/get",
+    "method": "POST",
+    "startLine": 5853,
+    "endLine": 5870,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/user/share-envelope/get' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, code } = await request.json();\r\n      if (!emailHash || (!verifier && !sessionToken) || !code) {\r\n        return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      }\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const env = await kvGet(['user', emailHash, 'share_envelope', code.toUpperCase()]);\r\n      if (!env.value) return json({ ok: true, envelope: null }, corsHeaders);\r\n      return json({ ok: true, envelope: env.value }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/user/share-envelope/delete",
+    "method": "POST",
+    "startLine": 5876,
+    "endLine": 5892,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/user/share-envelope/delete' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, code } = await request.json();\r\n      if (!emailHash || (!verifier && !sessionToken) || !code) {\r\n        return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      }\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      await kvDel(['user', emailHash, 'share_envelope', code.toUpperCase()]);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/share/list",
+    "method": "POST",
+    "startLine": 5898,
+    "endLine": 5920,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/list' && request.method === 'POST') {\r\n    try {\r\n      const { ownerEmailHash, verifier, sessionToken } = await request.json();\r\n      if (!ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);\r\n      } else {\r\n        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const targets = [];\r\n      const entries = kv.list({ prefix: ['share'] });\r\n      for await (const entry of entries) {\r\n        if (entry.key.length !== 2) continue; // skip share_data entries\r\n        try {\r\n          const data = JSON.parse(entry.value);\r\n          if (data.ownerEmailHash === ownerEmailHash) targets.push({ code: entry.key[1], ...data });\r\n        } catch(e) {}\r\n      }\r\n      return json({ targets }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/share/memberships",
+    "method": "POST",
+    "startLine": 5934,
+    "endLine": 5962,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/memberships' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      if (!emailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);\r\n      } else {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const memberships = [];\r\n      const entries = kv.list({ prefix: ['share'] });\r\n      for await (const entry of entries) {\r\n        if (entry.key.length !== 2) continue; // skip share_data entries\r\n        try {\r\n          const data = JSON.parse(entry.value);\r\n          if (data.ownerEmailHash === emailHash) continue; // they own it, not a member\r\n          if (!Array.isArray(data.members) || !data.members.includes(emailHash)) continue;\r\n          // Strip the members list — privacy. Other shape fields are\r\n          // already public knowledge to legitimate members (the share\r\n          // metadata is what /share/join returns to anyone with the code).\r\n          const { members, ...publicShape } = data;\r\n          memberships.push({ code: entry.key[1], ...publicShape });\r\n        } catch(e) {}\r\n      }\r\n      return json({ memberships }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/share/join",
+    "method": "POST",
+    "startLine": 5965,
+    "endLine": 6049,
+    "pattern": "auth-establishment",
+    "evidence": "pre-auth endpoint (auth flow itself); returns challenge/token, never user data",
+    "bodySnippet": "  if (url.pathname === '/share/join' && request.method === 'POST') {\r\n    try {\r\n      const { code, guestEmailHash, guestVerifier, guestSessionToken } = await request.json();\r\n      if (!code) return json({ error: 'Missing code' }, corsHeaders, 400);\r\n      const r = await kvGet(['share', code.toUpperCase()]);\r\n      if (!r.value) return json({ error: 'Invalid invite link' }, corsHeaders, 404);\r\n      const target = JSON.parse(r.value);\r\n      const isExistingMember = guestEmailHash && target.members?.includes(guestEmailHash);\r\n      if (!isExistingMember) {\r\n        const expiresAt = target.expiresAt ? new Date(target.expiresAt).getTime() : Infinity;\r\n        if (Date.now() > expiresAt) return json({ error: 'This invite link has expired. Ask the owner for a new link.' }, corsHeaders, 410);\r\n      }\r\n      // No credentials at all — return metadata so UI can prompt sign-in.\r\n      // Include `pendingInvite` so the share-gate can pre-fill the email\r\n      // for guests who don't have an account yet (the link was created\r\n      // for a specific address and signing up with that address gives\r\n      // them direct access without an owner-side rewrap roundtrip).\r\n      if (!guestEmailHash || (!guestVerifier && !guestSessionToken)) {\r\n        return json({\r\n          ok: false, requiresAuth: true,\r\n          ownerName: target.ownerName, name: target.name, type: target.type,\r\n          ownerEmailHash: target.ownerEmailHash,\r\n          householdNames: target.householdNames, households: target.households,\r\n          ...(target.pendingInvite ? { pendingInvite: target.pendingInvite } : {}),\r\n        }, corsHeaders);\r\n      }\r\n      // Authenticate: accept passkey sessionToken OR passphrase verifier\r\n      if (guestSessionToken) {\r\n        const sess = await kvGet(['passkey_session', guestEmailHash, guestSessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);\r"
+  },
+  {
+    "path": "/share/data/push",
+    "method": "POST",
+    "startLine": 6052,
+    "endLine": 6078,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/data/push' && request.method === 'POST') {\r\n    try {\r\n      const { ownerEmailHash, verifier, sessionToken, code, household, ciphertext } = await request.json();\r\n      if (!ownerEmailHash || (!verifier && !sessionToken) || !code || !ciphertext) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      // Accept either passphrase verifier or session token (passkey login)\r\n      if (sessionToken) {\r\n        const sessStored = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);\r\n        if (!sessStored.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);\r\n      } else {\r\n        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const share = await kvGet(['share', code.toUpperCase()]);\r\n      if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);\r\n      if (JSON.parse(share.value).ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);\r\n      const hKey = household && household !== 'default' ? household : 'default';\r\n      await kvSetLarge(['share_data', code.toUpperCase(), hKey], ciphertext);\r\n      await kvSet(['share_data', code.toUpperCase(), `${hKey}_modified`], new Date().toISOString());\r\n      // Mark the writer as the owner — guests pulling this blob can use\r\n      // this to skip merging their own writes back as if they were owner edits.\r\n      await kvSet(['share_data', code.toUpperCase(), `${hKey}_writer`], JSON.stringify({ kind: 'owner', emailHash: ownerEmailHash, at: new Date().toISOString() }));\r\n      // Share data lives under the owner's emailHash conceptually — mark the\r\n      // owner dirty so the per-user backup captures the new ciphertext.\r\n      await markUserDirty(ownerEmailHash);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/share/data/push-guest",
+    "method": "POST",
+    "startLine": 6090,
+    "endLine": 6134,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/data/push-guest' && request.method === 'POST') {\r\n    try {\r\n      const { guestEmailHash, guestVerifier, guestSessionToken, code, household, ciphertext } = await request.json();\r\n      if (!code || !guestEmailHash || (!guestVerifier && !guestSessionToken) || !ciphertext) {\r\n        return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      }\r\n      if (guestSessionToken) {\r\n        const sessStored = await kvGet(['passkey_session', guestEmailHash, guestSessionToken]);\r\n        if (!sessStored.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);\r\n      } else {\r\n        const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);\r\n        if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      // Email-verification gate (see /share/join, /share/data/pull)\r\n      const guestVerifiedPush = await kvGet(['user', guestEmailHash, 'email_verified']);\r\n      if (!guestVerifiedPush.value) {\r\n        return json({ error: 'Email verification required', requiresEmailVerification: true }, corsHeaders, 403);\r\n      }\r\n      const revoked = await kvGet(['share_revoked', code.toUpperCase(), guestEmailHash]);\r\n      if (revoked.value) return json({ error: 'Access revoked', revoked: true }, corsHeaders, 403);\r\n      const share = await kvGet(['share', code.toUpperCase()]);\r\n      if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);\r\n      const target = JSON.parse(share.value);\r\n      if (!target.members?.includes(guestEmailHash)) return json({ error: 'Not a member of this share' }, corsHeaders, 403);\r\n      const hKey  = household && household !== 'default' ? household : 'default';\r\n      const perms = target.households?.[hKey];\r\n      if (!perms) return json({ error: 'No access to this household' }, corsHeaders, 403);\r\n      // Require at least one rw section on this household. A read-only\r\n      // guest must not be able to overwrite the share blob.\r\n      const hasAnyRw = Object.values(perms).some(p => p === 'rw');\r"
+  },
+  {
+    "path": "/share/data/pull",
+    "method": "POST",
+    "startLine": 6137,
+    "endLine": 6199,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/data/pull' && request.method === 'POST') {\r\n    try {\r\n      const { guestEmailHash, guestVerifier, guestSessionToken, code, household } = await request.json();\r\n      if (!code || !guestEmailHash || (!guestVerifier && !guestSessionToken)) return json({ error: 'Authentication required' }, corsHeaders, 401);\r\n      // Accept either passphrase verifier or session token (passkey login)\r\n      if (guestSessionToken) {\r\n        const sessStored = await kvGet(['passkey_session', guestEmailHash, guestSessionToken]);\r\n        if (!sessStored.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);\r\n      } else {\r\n        const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);\r\n        if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      // Email verification gate — also enforced at /share/join, but\r\n      // re-checked here so that a guest who joined before the gate was\r\n      // added (legacy data) can't keep pulling shared data without\r\n      // verifying. Defence in depth.\r\n      const guestVerifiedPull = await kvGet(['user', guestEmailHash, 'email_verified']);\r\n      if (!guestVerifiedPull.value) {\r\n        return json({ error: 'Email verification required', requiresEmailVerification: true }, corsHeaders, 403);\r\n      }\r\n      // Check eviction marker first — short-circuits before share record fetch\r\n      // so a removed guest gets a clear, fast response and the client can\r\n      // self-clean its share state.\r\n      const revoked = await kvGet(['share_revoked', code.toUpperCase(), guestEmailHash]);\r\n      if (revoked.value) return json({ error: 'Access revoked', revoked: true }, corsHeaders, 403);\r\n      const share = await kvGet(['share', code.toUpperCase()]);\r\n      if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);\r\n      const target = JSON.parse(share.value);\r\n      if (!target.members?.includes(guestEmailHash)) return json({ error: 'Not a member of this share' }, corsHeaders, 403);\r\n      const hKey     = household && household !== 'default' ? household : 'default';\r"
+  },
+  {
+    "path": "/share/data/pull-owner",
+    "method": "POST",
+    "startLine": 6207,
+    "endLine": 6235,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/data/pull-owner' && request.method === 'POST') {\r\n    try {\r\n      const { ownerEmailHash, verifier, sessionToken, code, household } = await request.json();\r\n      if (!ownerEmailHash || (!verifier && !sessionToken) || !code) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);\r\n      } else {\r\n        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const share = await kvGet(['share', code.toUpperCase()]);\r\n      if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);\r\n      const target = JSON.parse(share.value);\r\n      if (target.ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);\r\n      const hKey     = household && household !== 'default' ? household : 'default';\r\n      const data     = await kvGetLarge(['share_data', code.toUpperCase(), hKey]);\r\n      const modified = await kvGet(['share_data', code.toUpperCase(), `${hKey}_modified`]);\r\n      const writerR  = await kvGet(['share_data', code.toUpperCase(), `${hKey}_writer`]);\r\n      let writer = null;\r\n      try { writer = writerR.value ? JSON.parse(writerR.value) : null; } catch(_e) { writer = null; }\r\n      return json({\r\n        ciphertext: data.value||null,\r\n        modified: modified.value||null,\r\n        writer,\r\n        householdNames: target.householdNames,\r\n      }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/share/tips",
+    "method": "POST",
+    "startLine": 6249,
+    "endLine": 6304,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/tips' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, codes } = await request.json();\r\n      if (!emailHash || (!verifier && !sessionToken) || !Array.isArray(codes) || !codes.length) {\r\n        return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      }\r\n      // Auth — accept either passphrase verifier or session token.\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      // Email-verification gate — same as /share/data/pull et al.\r\n      // Without this an unverified attacker could still poll for\r\n      // existence of shares, which leaks low-grade info. Cheap to\r\n      // gate.\r\n      const verifiedRow = await kvGet(['user', emailHash, 'email_verified']);\r\n      if (!verifiedRow.value) {\r\n        return json({ error: 'Email verification required', requiresEmailVerification: true }, corsHeaders, 403);\r\n      }\r\n      // Cap codes at 20 to bound work per request. A normal user is\r\n      // a member of one share or owner of a handful — well under 20.\r\n      const requestedCodes = codes.slice(0, 20).map(c => String(c).toUpperCase());\r\n      const tips = {};\r\n      for (const code of requestedCodes) {\r\n        const shareRow = await kvGet(['share', code]);\r\n        if (!shareRow.value) continue;\r\n        let target;\r"
+  },
+  {
+    "path": "/share/data/modified",
+    "method": "POST",
+    "startLine": 6307,
+    "endLine": 6317,
+    "pattern": "unclassified",
+    "evidence": "partial auth: verifier-only (no session path) — RECURRING AUTH-GAP PATTERN",
+    "bodySnippet": "  if (url.pathname === '/share/data/modified' && request.method === 'POST') {\r\n    try {\r\n      const { guestEmailHash, guestVerifier, code, household } = await request.json();\r\n      if (!code || !guestEmailHash || !guestVerifier) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);\r\n      if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      const hKey    = household && household !== 'default' ? household : 'default';\r\n      const modified = await kvGet(['share_data', code.toUpperCase(), `${hKey}_modified`]);\r\n      return json({ modifiedTime: modified.value||null }, corsHeaders);\r\n    } catch(err) { return json({ modifiedTime: null }, corsHeaders); }\r\n  }\r",
+    "severity": "metadata-leak"
+  },
+  {
+    "path": "/share/update",
+    "method": "POST",
+    "startLine": 6320,
+    "endLine": 6347,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/update' && request.method === 'POST') {\r\n    try {\r\n      const { ownerEmailHash, verifier, sessionToken, code, name, type, colour, households, shareManagement } = await request.json();\r\n      if (!code || !ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else {\r\n        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const r = await kvGet(['share', code.toUpperCase()]);\r\n      if (!r.value) return json({ error: 'Not found' }, corsHeaders, 404);\r\n      const existing = JSON.parse(r.value);\r\n      if (existing.ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);\r\n      // shareManagement is a string ('none' | 'view' | 'edit'); accept it\r\n      // explicitly so we don't merge in undefined and clobber existing.\r\n      const validMgmt = ['none','view','edit'].includes(shareManagement) ? shareManagement : null;\r\n      const updated = {\r\n        ...existing,\r\n        ...(name&&{name}), ...(type&&{type}), ...(colour&&{colour}),\r\n        ...(households&&{households}),\r\n        ...(validMgmt!==null && { shareManagement: validMgmt }),\r\n      };\r\n      await kvSet(['share', code.toUpperCase()], JSON.stringify(updated));\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/share/delete",
+    "method": "POST",
+    "startLine": 6352,
+    "endLine": 6375,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/delete' && request.method === 'POST') {\r\n    try {\r\n      const { ownerEmailHash, verifier, sessionToken, code } = await request.json();\r\n      if (!code || !ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);\r\n      } else {\r\n        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const r = await kvGet(['share', code.toUpperCase()]);\r\n      if (r.value && JSON.parse(r.value).ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);\r\n      await kvDel(['share', code.toUpperCase()]);\r\n      const dataEntries = kv.list({ prefix: ['share_data', code.toUpperCase()] });\r\n      for await (const entry of dataEntries) await kvDel(entry.key);\r\n      // Clean up ECDH-wrapped keys for all guests\r\n      const ecdhEntries = kv.list({ prefix: ['share_ecdh_key', code.toUpperCase()] });\r\n      for await (const entry of ecdhEntries) await kvDel(entry.key);\r\n      // Clean up legacy symmetric key backup if present\r\n      await kvDel(['share_key', code.toUpperCase(), ownerEmailHash]);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/share/member/remove",
+    "method": "POST",
+    "startLine": 6383,
+    "endLine": 6419,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/member/remove' && request.method === 'POST') {\r\n    try {\r\n      const { ownerEmailHash, verifier, sessionToken, code, guestEmailHash } = await request.json();\r\n      if (!code || !ownerEmailHash || (!verifier && !sessionToken) || !guestEmailHash) {\r\n        return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      }\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);\r\n      } else {\r\n        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const r = await kvGet(['share', code.toUpperCase()]);\r\n      if (!r.value) return json({ error: 'Not found' }, corsHeaders, 404);\r\n      const target = JSON.parse(r.value);\r\n      if (target.ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);\r\n      // Drop from members list\r\n      target.members = (target.members || []).filter((m: string) => m !== guestEmailHash);\r\n      // Drop activity record for this member\r\n      if (target.memberDetails && typeof target.memberDetails === 'object') {\r\n        delete target.memberDetails[guestEmailHash];\r\n      }\r\n      await kvSet(['share', code.toUpperCase()], JSON.stringify(target));\r\n      // Drop the ECDH-wrapped key so the guest can't decrypt new pushes\r\n      await kvDel(['share_ecdh_key', code.toUpperCase(), guestEmailHash]);\r\n      // Write a short-lived revocation marker that the guest's next /pull\r\n      // can read to know they were evicted (so the client can self-clean).\r\n      // 7 day TTL is enough for any realistic resync window.\r\n      await kvSet(\r"
+  },
+  {
+    "path": "/share/refresh",
+    "method": "POST",
+    "startLine": 6422,
+    "endLine": 6443,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/refresh' && request.method === 'POST') {\r\n    try {\r\n      const { ownerEmailHash, verifier, sessionToken, code } = await request.json();\r\n      if (!code || !ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);\r\n      } else {\r\n        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      }\r\n      const r = await kvGet(['share', code.toUpperCase()]);\r\n      if (!r.value) return json({ error: 'Not found' }, corsHeaders, 404);\r\n      const existing = JSON.parse(r.value);\r\n      if (existing.ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);\r\n      // Match the original 1-hour window from /share/create — refresh\r\n      // gives the link a fresh hour, not a different duration.\r\n      existing.expiresAt = new Date(Date.now() + 60*60*1000).toISOString();\r\n      await kvSet(['share', code.toUpperCase()], JSON.stringify(existing));\r\n      return json({ ok: true, expiresAt: existing.expiresAt }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/presence-update",
+    "method": "POST",
+    "startLine": 6446,
+    "endLine": 6453,
+    "pattern": "unclassified",
+    "evidence": "no recognised auth pattern in handler body",
+    "bodySnippet": "  if (url.pathname === '/presence-update' && request.method === 'POST') {\r\n    try {\r\n      const { userId, name, initials, colour, view } = await request.json();\r\n      if (!userId) return json({ error: 'Missing userId' }, corsHeaders, 400);\r\n      await kvSet(['presence', userId], JSON.stringify({ userId, name, initials, colour, view, ts: new Date().toISOString() }), { expireIn: 5 * 60 * 1000 });\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r",
+    "severity": "data-mutation"
+  },
+  {
+    "path": "/presence-list",
+    "method": "GET",
+    "startLine": 6456,
+    "endLine": 6465,
+    "pattern": "unclassified",
+    "evidence": "no recognised auth pattern in handler body",
+    "bodySnippet": "  if (url.pathname === '/presence-list' && request.method === 'GET') {\r\n    try {\r\n      const users = [];\r\n      const entries = kv.list({ prefix: ['presence'] });\r\n      for await (const entry of entries) {\r\n        try { users.push(JSON.parse(entry.value)); } catch(e) {}\r\n      }\r\n      return json({ users }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r",
+    "severity": "metadata-leak"
+  },
+  {
+    "path": "/presence-stream",
+    "method": "GET",
+    "startLine": 6468,
+    "endLine": 6488,
+    "pattern": "unclassified",
+    "evidence": "no recognised auth pattern in handler body",
+    "bodySnippet": "  if (url.pathname === '/presence-stream' && request.method === 'GET') {\r\n    const stream = new ReadableStream({\r\n      start(controller) {\r\n        const send = (data) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\\n\\n`));\r\n        const interval = setInterval(async () => {\r\n          try {\r\n            const users = [];\r\n            const entries = kv.list({ prefix: ['presence'] });\r\n            for await (const entry of entries) {\r\n              try { users.push(JSON.parse(entry.value)); } catch(e) {}\r\n            }\r\n            send({ users });\r\n          } catch(e) {}\r\n        }, 5000);\r\n        setTimeout(() => { clearInterval(interval); controller.close(); }, 5 * 60 * 1000);\r\n      }\r\n    });\r\n    return new Response(stream, {\r\n      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Access-Control-Allow-Origin': '*' }\r\n    });\r\n  }\r",
+    "severity": "metadata-leak"
+  },
+  {
+    "path": "/set-schedule",
+    "method": "POST",
+    "startLine": 6491,
+    "endLine": 6516,
+    "pattern": "unclassified",
+    "evidence": "no recognised auth pattern in handler body",
+    "bodySnippet": "  if (url.pathname === '/set-schedule' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const { email, emailHash, startDate, startTime, intervalDays, household, urgent = [], upcoming = [] } = body;\r\n      if (!email || !startDate) return json({ error: 'Missing email or startDate' }, corsHeaders, 400);\r\n      const sfx     = household && household !== 'default' ? `:${household}` : '';\r\n      const ehash   = emailHash || await hashEmail(email);\r\n      // ── Free-tier email gate ──\r\n      // Per spec, emails for free-tier users are 'silently dropped'. We\r\n      // return ok=true but skip persisting the schedule. The next time the\r\n      // user upgrades and re-saves, the schedule will be re-created. We\r\n      // also delete any pre-existing schedule so we don't keep emailing a\r\n      // free-tier user from a stale schedule.\r\n      const gate = await gateFeature(ehash, 'emails');\r\n      if (!gate.ok) {\r\n        try { await kvDel([`schedule${sfx}`]); } catch (_) {}\r\n        try { await kvDel([`user_items${sfx}`]); } catch (_) {}\r\n        return json({ ok: true, skipped: 'free_tier' }, corsHeaders);\r\n      }\r\n      await kvSet([`schedule${sfx}`], JSON.stringify({ startDate, startTime: startTime||'09:00', intervalDays: intervalDays??30, email, emailHash: ehash }));\r\n      if (urgent.length || upcoming.length) await kvSet([`user_items${sfx}`], JSON.stringify({ urgent, upcoming }));\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) {\r\n      return json({ error: err.message }, corsHeaders, 500);\r\n    }\r\n  }\r",
+    "severity": "data-mutation"
+  },
+  {
+    "path": "/reset-schedule",
+    "method": "POST",
+    "startLine": 6519,
+    "endLine": 6527,
+    "pattern": "unclassified",
+    "evidence": "no recognised auth pattern in handler body",
+    "bodySnippet": "  if (url.pathname === '/reset-schedule' && request.method === 'POST') {\r\n    try {\r\n      const body      = await request.json().catch(() => ({}));\r\n      const household = body.household || null;\r\n      const key       = household && household !== 'default' ? `last_sent:${household}` : 'last_sent';\r\n      await kvDel([key]);\r\n    } catch(e) { /* ok */ }\r\n    return json({ ok: true }, corsHeaders);\r\n  }\r",
+    "severity": "data-mutation"
+  },
+  {
+    "path": "/unsubscribe",
+    "method": "POST",
+    "startLine": 6530,
+    "endLine": 6540,
+    "pattern": "unclassified",
+    "evidence": "no recognised auth pattern in handler body",
+    "bodySnippet": "  if (url.pathname === '/unsubscribe' && request.method === 'POST') {\r\n    try {\r\n      const body      = await request.json().catch(() => ({}));\r\n      const household = body.household || null;\r\n      const sfx       = household && household !== 'default' ? `:${household}` : '';\r\n      await kvDel([`schedule${sfx}`]);\r\n      await kvDel([`last_sent${sfx}`]);\r\n      await kvDel([`user_items${sfx}`]);\r\n    } catch(e) { /* ok */ }\r\n    return json({ ok: true }, corsHeaders);\r\n  }\r",
+    "severity": "data-mutation"
+  },
+  {
+    "path": "/send-reminder",
+    "method": "POST",
+    "startLine": 6543,
+    "endLine": 6555,
+    "pattern": "unclassified",
+    "evidence": "no recognised auth pattern in handler body",
+    "bodySnippet": "  if (url.pathname === '/send-reminder' && request.method === 'POST') {\r\n    try {\r\n      const body = await request.json();\r\n      const { email, urgent = [], upcoming = [], manual = false } = body;\r\n      if (!email) return json({ error: 'Missing email' }, corsHeaders, 400);\r\n      const result = await sendEmail(email, urgent, upcoming);\r\n      if (!result.ok) return json({ error: result.error }, corsHeaders, 500);\r\n      if (!manual) await kvSet(['last_sent'], new Date().toISOString());\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) {\r\n      return json({ error: err.message }, corsHeaders, 500);\r\n    }\r\n  }\r",
+    "severity": "email-abuse"
+  },
+  {
+    "path": "/debug-schedule",
+    "method": "GET",
+    "startLine": 6558,
+    "endLine": 6578,
+    "pattern": "unclassified",
+    "evidence": "no recognised auth pattern in handler body",
+    "bodySnippet": "  if (url.pathname === '/debug-schedule' && request.method === 'GET') {\r\n    const schedRaw  = await kvGet(['schedule']);\r\n    const lastSent  = await kvGet(['last_sent']);\r\n    const hasItems  = !!(await kvGet(['user_items'])).value;\r\n    const schedule  = schedRaw.value ? JSON.parse(schedRaw.value) : null;\r\n    const now       = new Date();\r\n    let nextSend    = null;\r\n    if (schedule && !lastSent.value) {\r\n      nextSend = `${schedule.startDate}T${schedule.startTime||'09:00'} UK time`;\r\n    } else if (schedule && lastSent.value) {\r\n      nextSend = new Date(new Date(lastSent.value).getTime() + schedule.intervalDays * 86400000).toISOString();\r\n    }\r\n    return json({\r\n      now:      now.toISOString(),\r\n      storage:  'Deno KV (no Drive)',\r\n      schedule: schedule || '✗ missing',\r\n      lastSent: lastSent.value || 'never',\r\n      nextSend,\r\n      kvSnapshot: hasItems ? '✓' : '✗',\r\n    }, corsHeaders);\r\n  }\r",
+    "severity": "metadata-leak"
+  },
+  {
+    "path": "/check-now",
+    "method": "POST",
+    "startLine": 6583,
+    "endLine": 6590,
+    "pattern": "unclassified",
+    "evidence": "no recognised auth pattern in handler body",
+    "bodySnippet": "  if (url.pathname === '/check-now' && request.method === 'POST') {\r\n    try {\r\n      await cronCheck();\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) {\r\n      return json({ error: err.message }, corsHeaders, 500);\r\n    }\r\n  }\r",
+    "severity": "service-abuse"
+  },
+  {
+    "path": "/user/ecdh-pubkey/store",
+    "method": "POST",
+    "startLine": 6593,
+    "endLine": 6602,
+    "pattern": "auth-establishment",
+    "evidence": "pre-auth endpoint (auth flow itself); returns challenge/token, never user data",
+    "bodySnippet": "  if (url.pathname === '/user/ecdh-pubkey/store' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, publicKeyJwk } = await request.json();\r\n      if (!emailHash || !publicKeyJwk) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      const user = await kvGet(['user', emailHash, 'verifier']);\r\n      if (!user.value) return json({ error: 'Account not found' }, corsHeaders, 404);\r\n      await kvSet(['user', emailHash, 'ecdh_public_key'], JSON.stringify(publicKeyJwk));\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/user/ecdh-pubkey/get",
+    "method": "POST",
+    "startLine": 6605,
+    "endLine": 6613,
+    "pattern": "auth-establishment",
+    "evidence": "pre-auth endpoint (auth flow itself); returns challenge/token, never user data",
+    "bodySnippet": "  if (url.pathname === '/user/ecdh-pubkey/get' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash } = await request.json();\r\n      if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);\r\n      const stored = await kvGet(['user', emailHash, 'ecdh_public_key']);\r\n      if (!stored.value) return json({ error: 'No ECDH key registered for this account' }, corsHeaders, 404);\r\n      return json({ ok: true, publicKeyJwk: JSON.parse(stored.value) }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/share/ecdh-key/store",
+    "method": "POST",
+    "startLine": 6617,
+    "endLine": 6643,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/ecdh-key/store' && request.method === 'POST') {\r\n    try {\r\n      const { ownerEmailHash, verifier, sessionToken, code, guestEmailHash, wrappedKey, ownerPublicKeyJwk } = await request.json();\r\n      if (!ownerEmailHash || !code || !guestEmailHash || !wrappedKey || !ownerPublicKeyJwk) {\r\n        return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      }\r\n      if (sessionToken) {\r\n        const session = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);\r\n        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else if (verifier) {\r\n        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n      }\r\n      const share = await kvGet(['share', code.toUpperCase()]);\r\n      if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);\r\n      if (JSON.parse(share.value).ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);\r\n      await kvSet(\r\n        ['share_ecdh_key', code.toUpperCase(), guestEmailHash],\r\n        JSON.stringify({ wrappedKey, ownerPublicKeyJwk })\r\n      );\r\n      // Clear any pending rewrap request now that it's been fulfilled\r\n      await kv.delete(['share_rewrap_request', code.toUpperCase(), guestEmailHash]);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/share/send-email",
+    "method": "POST",
+    "startLine": 6649,
+    "endLine": 6714,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/send-email' && request.method === 'POST') {\r\n    try {\r\n      const { ownerEmailHash, verifier, sessionToken, guestEmail, code, name, type, households, isUpdate, inviteLink, ownerName } = await request.json();\r\n      if (!ownerEmailHash || !guestEmail || !code) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (!env.RESEND_API_KEY) return json({ error: 'Email not configured' }, corsHeaders, 503);\r\n\r\n      // Auth\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else if (verifier) {\r\n        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n      }\r\n\r\n      // Build readable permissions summary\r\n      const permLines = Object.entries(households || {}).map(([hKey, perms]: [string, any]) => {\r\n        const sections = Object.entries(perms)\r\n          .filter(([, v]) => v && v !== 'none')\r\n          .map(([k, v]) => `${k} (${v === 'rw' ? 'read/write' : 'read only'})`);\r\n        return sections.length ? `<li><strong>${hKey}</strong>: ${sections.join(', ')}</li>` : '';\r\n      }).filter(Boolean).join('');\r\n\r\n      const expiresNote = isUpdate\r\n        ? `<p>Your permissions for the <strong>${ownerName}</strong> STOCKROOM household have been updated.</p>`\r\n        : `<p>You've been invited to access the <strong>${ownerName}</strong> STOCKROOM household${name ? ` as <strong>${name}</strong>` : ''}.</p>`;\r\n\r\n      const linkSection = !isUpdate && inviteLink ? `\r"
+  },
+  {
+    "path": "/share/ecdh-key/request-rewrap",
+    "method": "POST",
+    "startLine": 6717,
+    "endLine": 6738,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/ecdh-key/request-rewrap' && request.method === 'POST') {\r\n    try {\r\n      const { guestEmailHash, verifier, sessionToken, code } = await request.json();\r\n      if (!guestEmailHash || !code) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', guestEmailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else if (verifier) {\r\n        const stored = await kvGet(['user', guestEmailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n      }\r\n      // Store guest's current public key alongside the request so owner can wrap without a separate fetch\r\n      const guestPubKey = await kvGet(['user', guestEmailHash, 'ecdh_public_key']);\r\n      await kvSet(\r\n        ['share_rewrap_request', code.toUpperCase(), guestEmailHash],\r\n        JSON.stringify({ guestEmailHash, requestedAt: new Date().toISOString(), guestPublicKeyJwk: guestPubKey.value ? JSON.parse(guestPubKey.value) : null })\r\n      );\r\n      return json({ ok: true, message: 'Re-wrap requested — owner will complete on next sync' }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/share/ecdh-key/pending-rewraps",
+    "method": "POST",
+    "startLine": 6741,
+    "endLine": 6767,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/ecdh-key/pending-rewraps' && request.method === 'POST') {\r\n    try {\r\n      const { ownerEmailHash, verifier, sessionToken, code } = await request.json();\r\n      if (!ownerEmailHash || !code) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else if (verifier) {\r\n        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n      }\r\n      const share = await kvGet(['share', code.toUpperCase()]);\r\n      if (!share.value || JSON.parse(share.value).ownerEmailHash !== ownerEmailHash) {\r\n        return json({ error: 'Forbidden' }, corsHeaders, 403);\r\n      }\r\n      // List all pending rewrap requests for this share code\r\n      const prefix = ['share_rewrap_request', code.toUpperCase()];\r\n      const entries = await kv.list({ prefix });\r\n      const requests: { guestEmailHash: string; guestPublicKeyJwk: any }[] = [];\r\n      for await (const entry of entries) {\r\n        try { requests.push(JSON.parse(entry.value as string)); } catch(e) {}\r\n      }\r\n      return json({ ok: true, requests }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/share/ecdh-key/get",
+    "method": "POST",
+    "startLine": 6770,
+    "endLine": 6788,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/share/ecdh-key/get' && request.method === 'POST') {\r\n    try {\r\n      const { guestEmailHash, verifier, sessionToken, code } = await request.json();\r\n      if (!guestEmailHash || !code) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      // Auth: verifier or sessionToken\r\n      if (sessionToken) {\r\n        const session = await kvGet(['passkey_session', guestEmailHash, sessionToken]);\r\n        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else if (verifier) {\r\n        const stored = await kvGet(['user', guestEmailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n      }\r\n      const stored = await kvGet(['share_ecdh_key', code.toUpperCase(), guestEmailHash]);\r\n      if (!stored.value) return json({ error: 'No ECDH key found for this share' }, corsHeaders, 404);\r\n      return json({ ok: true, ...JSON.parse(stored.value) }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/mfa/otp/send",
+    "method": "POST",
+    "startLine": 6791,
+    "endLine": 6847,
+    "pattern": "otp-flow",
+    "evidence": "OTP send/verify (auth is the OTP itself)",
+    "bodySnippet": "  if (url.pathname === '/mfa/otp/send' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, email, verifier, sessionToken } = await request.json();\r\n      if (!emailHash) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      // Accept verifier OR sessionToken\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired — please sign in again' }, corsHeaders, 401);\r\n      } else if (verifier) {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n      }\r\n      // Rate limit: 1 OTP per 30 seconds (shorter than notes OTP for login UX)\r\n      const last = await kvGet(['mfa_otp', emailHash]);\r\n      if (last.value) {\r\n        const d = JSON.parse(last.value as string);\r\n        if (Date.now() - new Date(d.sentAt).getTime() < 30000) {\r\n          return json({ error: 'Please wait 30 seconds before requesting another code' }, corsHeaders, 429);\r\n        }\r\n      }\r\n      // Look up stored email — fall back to body param (sent by client for new devices)\r\n      const emailRec = await kvGet(['user', emailHash, 'email']);\r\n      const emailAddr = (emailRec.value as string) || email || '';\r\n      if (!emailAddr) return json({ error: 'No email address on record for this account' }, corsHeaders, 400);\r\n      if (!env.RESEND_API_KEY) return json({ error: 'Email service not configured' }, corsHeaders, 500);\r\n      const otp = Array.from(crypto.getRandomValues(new Uint8Array(6))).map(b => b % 10).join('');\r\n      await kvSet(['mfa_otp', emailHash], JSON.stringify({ otp, sentAt: new Date().toISOString(), attempts: 0 }), { expireIn: 5 * 60 * 1000 });\r\n      const html = `<!DOCTYPE html><html><body style=\"font-family:-apple-system,sans-serif;background:#f5f5f5;padding:32px\">\r"
+  },
+  {
+    "path": "/mfa/otp/verify",
+    "method": "POST",
+    "startLine": 6850,
+    "endLine": 6869,
+    "pattern": "otp-flow",
+    "evidence": "OTP send/verify (auth is the OTP itself)",
+    "bodySnippet": "  if (url.pathname === '/mfa/otp/verify' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, otp } = await request.json();\r\n      if (!emailHash || !otp) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      const stored = await kvGet(['mfa_otp', emailHash]);\r\n      if (!stored.value) return json({ error: 'Code expired — request a new one' }, corsHeaders, 410);\r\n      const data = JSON.parse(stored.value as string);\r\n      data.attempts = (data.attempts || 0) + 1;\r\n      if (data.attempts > 5) {\r\n        await kvDel(['mfa_otp', emailHash]);\r\n        return json({ error: 'Too many attempts — request a new code' }, corsHeaders, 429);\r\n      }\r\n      if (String(data.otp) !== String(otp).trim()) {\r\n        await kvSet(['mfa_otp', emailHash], JSON.stringify(data), { expireIn: 5 * 60 * 1000 });\r\n        return json({ error: 'Incorrect code' }, corsHeaders, 401);\r\n      }\r\n      await kvDel(['mfa_otp', emailHash]);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/note/body/push",
+    "method": "POST",
+    "startLine": 6872,
+    "endLine": 6902,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/note/body/push' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, noteId, ciphertext } = await request.json();\r\n      if (!emailHash || !noteId) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else if (verifier) {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n      }\r\n      // ── Free-tier feature gate: notes mode ──\r\n      // Allow deletes through (so users can clean up old notes when\r\n      // downgrading) but block creation/update of note bodies.\r\n      if (ciphertext) {\r\n        const gate = await gateFeature(emailHash, 'notes');\r\n        if (!gate.ok) {\r\n          return json({ error: 'Notes require upgrade', reason: gate.reason }, corsHeaders, gate.status);\r\n        }\r\n      }\r\n      if (ciphertext) {\r\n        await kvSet(['note_body', emailHash, noteId], ciphertext);\r\n      } else {\r\n        await kvDel(['note_body', emailHash, noteId]);\r\n      }\r\n      await markUserDirty(emailHash);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r"
+  },
+  {
+    "path": "/note/body/pull",
+    "method": "POST",
+    "startLine": 6905,
+    "endLine": 6922,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/note/body/pull' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, noteId } = await request.json();\r\n      if (!emailHash || !noteId) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else if (verifier) {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n      }\r\n      const data = await kvGet(['note_body', emailHash, noteId]);\r\n      if (!data.value) return json({ error: 'Note body not found' }, corsHeaders, 404);\r\n      return json({ ciphertext: data.value }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/note/body/delete",
+    "method": "POST",
+    "startLine": 6925,
+    "endLine": 6942,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/note/body/delete' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken, noteId } = await request.json();\r\n      if (!emailHash || !noteId) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else if (verifier) {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n      }\r\n      await kvDel(['note_body', emailHash, noteId]);\r\n      await markUserDirty(emailHash);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/note/otp/send",
+    "method": "POST",
+    "startLine": 6945,
+    "endLine": 6995,
+    "pattern": "otp-flow",
+    "evidence": "OTP send/verify (auth is the OTP itself)",
+    "bodySnippet": "  if (url.pathname === '/note/otp/send' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      if (!emailHash) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else if (verifier) {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else {\r\n        return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n      }\r\n      // Rate limit: 1 OTP per 60 seconds\r\n      const last = await kvGet(['notes_otp', emailHash]);\r\n      if (last.value) {\r\n        const d = JSON.parse(last.value);\r\n        if (Date.now() - new Date(d.sentAt).getTime() < 60000) {\r\n          return json({ error: 'Please wait 60 seconds before requesting another code' }, corsHeaders, 429);\r\n        }\r\n      }\r\n      // Look up email address\r\n      const emailRec = await kvGet(['user', emailHash, 'email']);\r\n      const emailAddr = emailRec.value || '';\r\n      if (!emailAddr || !env.RESEND_API_KEY) return json({ error: 'Email not configured' }, corsHeaders, 500);\r\n      const otp = Array.from(crypto.getRandomValues(new Uint8Array(6))).map(b => b % 10).join('');\r\n      await kvSet(['notes_otp', emailHash], JSON.stringify({ otp, sentAt: new Date().toISOString(), attempts: 0 }), { expireIn: 5 * 60 * 1000 });\r\n      const html = `<!DOCTYPE html><html><body style=\"font-family:-apple-system,sans-serif;background:#f5f5f5;padding:32px\">\r\n        <div style=\"max-width:480px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)\">\r\n          <div style=\"background:#111;padding:20px 28px;display:flex;align-items:center;gap:12px\">\r"
+  },
+  {
+    "path": "/note/otp/verify",
+    "method": "POST",
+    "startLine": 6998,
+    "endLine": 7020,
+    "pattern": "otp-flow",
+    "evidence": "OTP send/verify (auth is the OTP itself)",
+    "bodySnippet": "  if (url.pathname === '/note/otp/verify' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, otp } = await request.json();\r\n      if (!emailHash || !otp) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      const stored = await kvGet(['notes_otp', emailHash]);\r\n      if (!stored.value) return json({ error: 'Code expired — request a new one' }, corsHeaders, 410);\r\n      const data = JSON.parse(stored.value);\r\n      data.attempts = (data.attempts || 0) + 1;\r\n      if (data.attempts > 5) {\r\n        await kvDel(['notes_otp', emailHash]);\r\n        return json({ error: 'Too many attempts — request a new code' }, corsHeaders, 429);\r\n      }\r\n      if (String(data.otp) !== String(otp).trim()) {\r\n        await kvSet(['notes_otp', emailHash], JSON.stringify(data), { expireIn: 5 * 60 * 1000 });\r\n        return json({ error: 'Incorrect code' }, corsHeaders, 401);\r\n      }\r\n      await kvDel(['notes_otp', emailHash]);\r\n      // Issue a short-lived notes session token (30 min)\r\n      const notesToken = Array.from(crypto.getRandomValues(new Uint8Array(24))).map(b => b.toString(16).padStart(2,'0')).join('');\r\n      await kvSet(['notes_session', emailHash, notesToken], '1', { expireIn: 30 * 60 * 1000 });\r\n      return json({ ok: true, notesToken }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/user/deactivate",
+    "method": "POST",
+    "startLine": 7023,
+    "endLine": 7068,
+    "pattern": "user-auth",
+    "evidence": "inline emailHash+verifier|sessionToken KV check",
+    "bodySnippet": "  if (url.pathname === '/user/deactivate' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier, sessionToken } = await request.json();\r\n      if (!emailHash) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      if (sessionToken) {\r\n        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);\r\n        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);\r\n      } else if (verifier) {\r\n        const stored = await kvGet(['user', emailHash, 'verifier']);\r\n        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);\r\n      } else return json({ error: 'Missing credentials' }, corsHeaders, 400);\r\n\r\n      const emailRec = await kvGet(['user', emailHash, 'email']);\r\n      const emailAddr = emailRec.value || '';\r\n      const deactivatedAt = new Date().toISOString();\r\n      // Generate reactivation token\r\n      const reactivateToken = Array.from(crypto.getRandomValues(new Uint8Array(24))).map(b => b.toString(16).padStart(2,'0')).join('');\r\n      await kvSet(['deactivation', emailHash], JSON.stringify({\r\n        deactivatedAt, reactivateToken, remindSent: false, warningSent: false, markedForDeletion: false\r\n      }));\r\n      await kvSet(['deactivation_reactivate', reactivateToken], emailHash, { expireIn: 120 * 24 * 60 * 60 * 1000 });\r\n\r\n      const appUrl = env.APP_URL || 'https://stckrm.fly.dev';\r\n      if (emailAddr && env.RESEND_API_KEY) {\r\n        const html = `<!DOCTYPE html><html><body style=\"font-family:-apple-system,sans-serif;background:#f5f5f5;padding:32px\">\r\n          <div style=\"max-width:500px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden\">\r\n            <div style=\"background:#111;padding:20px 28px\"><div style=\"color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px\">STOCKROOM</div></div>\r\n            <div style=\"padding:28px\">\r\n              <h2 style=\"margin:0 0 12px;color:#111\">Your account has been deactivated</h2>\r\n              <p style=\"color:#555;margin:0 0 20px;font-size:14px;line-height:1.6\">Your STOCKROOM account has been deactivated. Your data is preserved for up to 3 months.</p>\r"
+  },
+  {
+    "path": "/user/reactivate",
+    "method": "POST",
+    "startLine": 7071,
+    "endLine": 7082,
+    "pattern": "auth-establishment",
+    "evidence": "pre-auth endpoint (auth flow itself); returns challenge/token, never user data",
+    "bodySnippet": "  if (url.pathname === '/user/reactivate' && request.method === 'POST') {\r\n    try {\r\n      const { token } = await request.json();\r\n      if (!token) return json({ error: 'Missing token' }, corsHeaders, 400);\r\n      const emailHashRec = await kvGet(['deactivation_reactivate', token]);\r\n      if (!emailHashRec.value) return json({ error: 'Invalid or expired reactivation link' }, corsHeaders, 410);\r\n      const emailHash = emailHashRec.value as string;\r\n      await kvDel(['deactivation', emailHash]);\r\n      await kvDel(['deactivation_reactivate', token]);\r\n      return json({ ok: true }, corsHeaders);\r\n    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }\r\n  }\r"
+  },
+  {
+    "path": "/user/delete-confirm-send",
+    "method": "POST",
+    "startLine": 7085,
+    "endLine": 7118,
+    "pattern": "otp-flow",
+    "evidence": "OTP send/verify (auth is the OTP itself)",
+    "bodySnippet": "  if (url.pathname === '/user/delete-confirm-send' && request.method === 'POST') {\r\n    try {\r\n      const { emailHash, verifier } = await request.json();\r\n      if (!emailHash || !verifier) return json({ error: 'Missing fields' }, corsHeaders, 400);\r\n      const stored = await kvGet(['user', emailHash, 'verifier']);\r\n      if (!stored.value || stored.value !== verifier) return json({ error: 'Incorrect passphrase' }, corsHeaders, 401);\r\n      const emailRec = await kvGet(['user', emailHash, 'email']);\r\n      const emailAddr = emailRec.value || '';\r\n      if (!emailAddr) return json({ error: 'No email address on record' }, corsHeaders, 400);\r\n      // Generate delete token (24h TTL)\r\n      const deleteToken = Array.from(crypto.getRandomValues(new Uint8Array(24))).map(b => b.toString(16).padStart(2,'0')).join('');\r\n      await kvSet(['delete_token', emailHash], deleteToken, { expireIn: 24 * 60 * 60 * 1000 });\r\n      const appUrl = env.APP_URL || 'https://stckrm.fly.dev';\r\n      const html = `<!DOCTYPE html><html><body style=\"font-family:-apple-system,sans-serif;background:#f5f5f5;padding:32px\">\r\n        <div style=\"max-width:500px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden\">\r\n          <div style=\"background:#111;padding:20px 28px\"><div style=\"color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px\">STOCKROOM</div></div>\r\n          <div style=\"padding:28px\">\r\n            <h2 style=\"margin:0 0 12px;color:#e05c5c;display:flex;align-items:center;gap:8px\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"#e05c5c\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\"/><path d=\"M12 9v4\"/><path d=\"M12 17h.01\"/></svg> Final warning — account deletion</h2>\r\n            <p style=\"color:#555;margin:0 0 16px;font-size:14px;line-height:1.6\">You have requested permanent deletion of your STOCKROOM account. <strong>This cannot be undone.</strong> All your data will be permanently erased.</p>\r\n            <p style=\"color:#555;margin:0 0 20px;font-size:14px;line-height:1.6\">This link expires in 24 hours. If you change your mind, simply ignore this email.</p>\r\n            <a href=\"${appUrl}?delete_token=${deleteToken}\" style=\"display:inline-block;background:#e05c5c;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px\">Delete Account Permanently</a>\r\n            <p style=\"color:#999;margin:20px 0 0;font-size:12px\">If you did not request this, your account is safe — ignore this email.</p>\r\n          </div>\r\n        </div>\r\n      </body></html>`;\r\n      if (!env.RESEND_API_KEY) return json({ error: 'Email not configured' }, corsHeaders, 500);\r\n      await fetch('https://api.resend.com/emails', {\r\n        method: 'POST',\r\n        headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },\r\n        body: JSON.stringify({ from: env.FROM_EMAIL, to: [emailAddr], subject: 'STOCKROOM account deletion — final warning', html }),\r"
+  },
+  {
+    "path": "/user/delete-execute",
+    "method": "POST",
+    "startLine": 7121,
+    "endLine": 7154,
+    "pattern": "delete-token",
+    "evidence": "single-use email-delivered deletion token",
+    "bodySnippet": "  if (url.pathname === '/user/delete-execute' && request.method === 'POST') {\r\n    try {\r\n      const { token } = await request.json();\r\n      if (!token) return json({ error: 'Missing token' }, corsHeaders, 400);\r\n      // Find which user this token belongs to\r\n      const iter = kv.list({ prefix: ['delete_token'] });\r\n      let targetEmailHash = '';\r\n      for await (const entry of iter) {\r\n        if (entry.value === token) { targetEmailHash = entry.key[1] as string; break; }\r\n      }\r\n      if (!targetEmailHash) return json({ error: 'Invalid or expired deletion link' }, corsHeaders, 410);\r\n      // Get email before deleting\r\n      const emailRec = await kvGet(['user', targetEmailHash, 'email']);\r\n      const emailAddr = emailRec.value || '';\r\n      await _deleteAllUserData(kv, targetEmailHash);\r\n      // Send farewell email\r\n      if (emailAddr && env.RESEND_API_KEY) {\r\n        const html = `<!DOCTYPE html><html><body style=\"font-family:-apple-system,sans-serif;background:#f5f5f5;padding:32px\">\r\n          <div style=\"max-width:500px;margin:0 auto;background:#fff;border-radius:12px;padding:28px\">\r\n            <div style=\"color:#e8a838;font-size:16px;font-weight:800;letter-spacing:2px;margin-bottom:16px\">STOCKROOM</div>\r\n            <h2 style=\"margin:0 0 12px;color:#111\">Your account has been deleted</h2>\r\n            <p style=\"color:#555;font-size:14px;line-height:1.6\">Your STOCKROOM account and all associated data has been permanently deleted. Thank you for using STOCKROOM.</p>\r\n          </div>\r\n        </body></html>`;\r\n        await fetch('https://api.resend.com/emails', {\r\n          method: 'POST',\r\n          headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },\r\n          body: JSON.stringify({ from: env.FROM_EMAIL, to: [emailAddr], subject: 'Your STOCKROOM account has been deleted', html }),\r\n        });\r\n      }\r"
+  }
+]
