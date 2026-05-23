@@ -2596,7 +2596,7 @@
           <input type="file" id="import-file-sec" style="display:none" accept=".json" onchange="importData(event)">
         </div>
         <div class="acc-sec-row">
-          <div class="acc-sec-label"><div class="acc-sec-h">Clear all data</div><div class="acc-sec-p">Remove all items, notes, groceries, reminders, bills, budget, and tags from this household</div></div>
+          <div class="acc-sec-label"><div class="acc-sec-h">Clear all data</div><div class="acc-sec-p">Remove all items, notes, groceries, reminders, bills, budget, notifications, change history, tags, outbound shares, and alternate households (keeps only "Home")</div></div>
           <button class="btn btn-danger acc-sec-btn" onclick="clearAll()">Clear All</button>
         </div>
       </div>
@@ -4246,6 +4246,7 @@
 <script src="app.js" defer></script>
 <script src="budget.js" defer></script>
 <script src="notes.js" defer></script>
+<script src="demo.js" defer></script>
 <script>
 // Demo mode early detection — set the flag and hide the wizard before
 // app.js boots, so the wizard doesn't flash on screen during loadData().

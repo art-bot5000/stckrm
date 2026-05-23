@@ -951,6 +951,21 @@ async function restoreUserFromR2Snapshot(emailHash: string, snapshotKey: string)
     }
   }
   console.log(`User restore for ${emailHash.slice(0,8)}…: ${restored}/${entries.length} entries from ${snapshotKey}; pre-restore: ${pre.key}`);
+  // Set force-remote flag — signals the user's client to take server data
+  // wholesale on next sync, bypassing the LWW merge. Without this, any
+  // local edits made after the snapshot date win the per-item updatedAt
+  // comparison and the restore is silently undone (e.g. tags revert).
+  // 24h TTL: long enough for the user to open the app and pick it up;
+  // short enough that a stale flag won't surprise anyone later.
+  try {
+    await kvSet(
+      ['kv_force_remote', emailHash],
+      JSON.stringify({ at: new Date().toISOString(), sourceKey: snapshotKey }),
+      { expireIn: 24 * 60 * 60 * 1000 }
+    );
+  } catch (e) {
+    console.warn('Failed to set force-remote flag (restore still succeeded):', (e as Error)?.message);
+  }
   return { ok: true, restored, preRestoreKey: pre.key };
 }
 
@@ -3705,10 +3720,12 @@ Deno.serve(async (request) => {
   // ── Device: register trusted device ─────────────────
   if (url.pathname === '/device/register' && request.method === 'POST') {
     try {
-      const { emailHash, verifier, deviceId, name, addedAt } = await request.json();
-      if (!emailHash || !verifier || !deviceId) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', emailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { emailHash, verifier, sessionToken, deviceId, name, addedAt } = await request.json();
+      if (!emailHash || !deviceId || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const authed = sessionToken
+        ? !!(await kvGet(['passkey_session', emailHash, sessionToken])).value
+        : verifier && (await kvGet(['user', emailHash, 'verifier'])).value === verifier;
+      if (!authed) return json({ error: 'Unauthorised' }, corsHeaders, 401);
       await kvSet(['device', emailHash, deviceId], JSON.stringify({
         deviceId, name: name || 'Unknown device',
         addedAt: addedAt || new Date().toISOString(),
@@ -3739,10 +3756,12 @@ Deno.serve(async (request) => {
   // ── Device: update last seen ──────────────────────────
   if (url.pathname === '/device/seen' && request.method === 'POST') {
     try {
-      const { emailHash, verifier, deviceId } = await request.json();
-      if (!emailHash || !verifier || !deviceId) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', emailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { emailHash, verifier, sessionToken, deviceId } = await request.json();
+      if (!emailHash || !deviceId || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const authed = sessionToken
+        ? !!(await kvGet(['passkey_session', emailHash, sessionToken])).value
+        : verifier && (await kvGet(['user', emailHash, 'verifier'])).value === verifier;
+      if (!authed) return json({ error: 'Unauthorised' }, corsHeaders, 401);
       const existing = await kvGet(['device', emailHash, deviceId]);
       if (existing.value) {
         const data = { ...JSON.parse(existing.value), lastSeen: new Date().toISOString() };
@@ -5609,7 +5628,24 @@ Deno.serve(async (request) => {
         }
         const data     = await kvGetLarge(['user', emailHash, 'data', hKey]);
         const modified = await kvGet(['user', emailHash, 'modified', hKey]);
-        return json({ ciphertext: data.value || null, modified: modified.value || null }, corsHeaders);
+        // Check for an admin-set force-remote flag (set by restoreUserFromR2Snapshot).
+        // When present, the client takes the server's data wholesale on this sync,
+        // bypassing the per-item updatedAt LWW merge that otherwise silently
+        // undoes restores. Client must ack via /data/force-remote/ack to clear it.
+        let forceRemote = false;
+        let forceRemoteMeta: { at?: string; sourceKey?: string } | null = null;
+        try {
+          const flag = await kvGet(['kv_force_remote', emailHash]);
+          if (flag.value) {
+            forceRemote = true;
+            try { forceRemoteMeta = JSON.parse(String(flag.value)); } catch (_) {}
+          }
+        } catch (_) {}
+        return json({
+          ciphertext: data.value || null,
+          modified:   modified.value || null,
+          ...(forceRemote ? { forceRemote: true, forceRemoteMeta } : {}),
+        }, corsHeaders);
       }
 
       // Shared user pull — validate share code
@@ -5659,6 +5695,32 @@ Deno.serve(async (request) => {
       return json({ modifiedTime: modifiedVal }, corsHeaders);
     } catch(err) {
       return json({ modifiedTime }, corsHeaders);
+    }
+  }
+
+  // ── Data: ack force-remote flag ───────────────────────
+  // Called by the client after it has successfully applied a force-remote
+  // sync (server-restored data taken wholesale, bypassing LWW merge).
+  // Clears the flag so subsequent syncs go back to normal merge behaviour.
+  // Auth: same verifier/sessionToken pattern as /data/pull — only the
+  // affected user can clear their own flag.
+  if (url.pathname === '/data/force-remote/ack' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken)) {
+        return json({ error: 'Missing credentials' }, corsHeaders, 400);
+      }
+      if (sessionToken) {
+        const session = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      try { await kv.delete(['kv_force_remote', emailHash]); } catch (_) {}
+      return json({ ok: true }, corsHeaders);
+    } catch(err) {
+      return json({ error: (err as Error).message }, corsHeaders, 500);
     }
   }
 
@@ -5715,8 +5777,10 @@ Deno.serve(async (request) => {
       if (!ownerEmailHash || (!verifier && !sessionToken) || !code || !encryptedShareKey) {
         return json({ error: 'Missing fields' }, corsHeaders, 400);
       }
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const authed = sessionToken
+        ? !!(await kvGet(['passkey_session', ownerEmailHash, sessionToken])).value
+        : verifier && (await kvGet(['user', ownerEmailHash, 'verifier'])).value === verifier;
+      if (!authed) return json({ error: sessionToken ? 'Session expired — sign in again' : 'Unauthorised' }, corsHeaders, 401);
       const share = await kvGet(['share', code.toUpperCase()]);
       if (!share.value) return json({ error: 'Share not found' }, corsHeaders, 404);
       if (JSON.parse(share.value).ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
@@ -5728,10 +5792,12 @@ Deno.serve(async (request) => {
   // ── Share: get encrypted share key (owner recovery) ───
   if (url.pathname === '/share/key/get' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, code } = await request.json();
-      if (!ownerEmailHash || !verifier || !code) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
-      if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { ownerEmailHash, verifier, sessionToken, code } = await request.json();
+      if (!ownerEmailHash || !code || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const authed = sessionToken
+        ? !!(await kvGet(['passkey_session', ownerEmailHash, sessionToken])).value
+        : verifier && (await kvGet(['user', ownerEmailHash, 'verifier'])).value === verifier;
+      if (!authed) return json({ error: sessionToken ? 'Session expired — sign in again' : 'Unauthorised' }, corsHeaders, 401);
       const encKey = await kvGet(['share_key', code.toUpperCase(), ownerEmailHash]);
       if (!encKey.value) return json({ error: 'No key stored for this share' }, corsHeaders, 404);
       return json({ ok: true, encryptedShareKey: encKey.value }, corsHeaders);
