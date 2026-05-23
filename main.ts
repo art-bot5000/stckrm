@@ -6433,104 +6433,156 @@ Deno.serve(async (request) => {
   }
 
   // ── Email schedule: set ───────────────────────────────
+  // Per-user: requires auth, stores under ['user', emailHash, 'schedule', household].
+  // SECURITY: the `email` field in the body is ignored — we always read the
+  // email stored under the auth'd user's emailHash. Otherwise an authenticated
+  // user A could trigger emails to victim address B.
   if (url.pathname === '/set-schedule' && request.method === 'POST') {
     try {
       const body = await request.json();
-      const { email, emailHash, startDate, startTime, intervalDays, household, urgent = [], upcoming = [] } = body;
-      if (!email || !startDate) return json({ error: 'Missing email or startDate' }, corsHeaders, 400);
-      const sfx     = household && household !== 'default' ? `:${household}` : '';
-      const ehash   = emailHash || await hashEmail(email);
+      const { emailHash, verifier, sessionToken, startDate, startTime, intervalDays, household, urgent = [], upcoming = [] } = body;
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      if (!startDate) return json({ error: 'Missing startDate' }, corsHeaders, 400);
+      const hKey  = household || 'default';
+      const emailRow = await kvGet(['user', emailHash, 'email']);
+      const email = emailRow.value as string | null;
+      if (!email) return json({ error: 'No email registered for this account' }, corsHeaders, 400);
       // ── Free-tier email gate ──
       // Per spec, emails for free-tier users are 'silently dropped'. We
       // return ok=true but skip persisting the schedule. The next time the
       // user upgrades and re-saves, the schedule will be re-created. We
       // also delete any pre-existing schedule so we don't keep emailing a
       // free-tier user from a stale schedule.
-      const gate = await gateFeature(ehash, 'emails');
+      const gate = await gateFeature(emailHash, 'emails');
       if (!gate.ok) {
-        try { await kvDel([`schedule${sfx}`]); } catch (_) {}
-        try { await kvDel([`user_items${sfx}`]); } catch (_) {}
+        try { await kvDel(['user', emailHash, 'schedule', hKey]); } catch (_) {}
+        try { await kvDel(['user', emailHash, 'user_items', hKey]); } catch (_) {}
         return json({ ok: true, skipped: 'free_tier' }, corsHeaders);
       }
-      await kvSet([`schedule${sfx}`], JSON.stringify({ startDate, startTime: startTime||'09:00', intervalDays: intervalDays??30, email, emailHash: ehash }));
-      if (urgent.length || upcoming.length) await kvSet([`user_items${sfx}`], JSON.stringify({ urgent, upcoming }));
+      await kvSet(['user', emailHash, 'schedule', hKey], JSON.stringify({
+        startDate,
+        startTime: startTime || '09:00',
+        intervalDays: intervalDays ?? 30,
+        email,
+        emailHash,
+      }));
+      if (urgent.length || upcoming.length) {
+        await kvSet(['user', emailHash, 'user_items', hKey], JSON.stringify({ urgent, upcoming }));
+      }
       return json({ ok: true }, corsHeaders);
     } catch(err) {
-      return json({ error: err.message }, corsHeaders, 500);
+      return json({ error: (err as Error).message }, corsHeaders, 500);
     }
   }
 
   // ── Email schedule: reset last sent ──────────────────
+  // Per-user: requires auth. Clears the per-user last_sent so the next
+  // cron tick treats the schedule as "first send".
   if (url.pathname === '/reset-schedule' && request.method === 'POST') {
     try {
-      const body      = await request.json().catch(() => ({}));
-      const household = body.household || null;
-      const key       = household && household !== 'default' ? `last_sent:${household}` : 'last_sent';
-      await kvDel([key]);
-    } catch(e) { /* ok */ }
-    return json({ ok: true }, corsHeaders);
+      const body = await request.json().catch(() => ({}));
+      const { emailHash, verifier, sessionToken, household } = body;
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      const hKey = household || 'default';
+      await kvDel(['user', emailHash, 'last_sent', hKey]);
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
   }
 
   // ── Email schedule: unsubscribe ───────────────────────
+  // Per-user: requires auth. Removes the user's schedule, last_sent, and
+  // items snapshot. After this the cron will not email this user.
   if (url.pathname === '/unsubscribe' && request.method === 'POST') {
     try {
-      const body      = await request.json().catch(() => ({}));
-      const household = body.household || null;
-      const sfx       = household && household !== 'default' ? `:${household}` : '';
-      await kvDel([`schedule${sfx}`]);
-      await kvDel([`last_sent${sfx}`]);
-      await kvDel([`user_items${sfx}`]);
-    } catch(e) { /* ok */ }
-    return json({ ok: true }, corsHeaders);
+      const body = await request.json().catch(() => ({}));
+      const { emailHash, verifier, sessionToken, household } = body;
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      const hKey = household || 'default';
+      await kvDel(['user', emailHash, 'schedule', hKey]);
+      await kvDel(['user', emailHash, 'last_sent', hKey]);
+      await kvDel(['user', emailHash, 'user_items', hKey]);
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
   }
 
   // ── Manual email send ─────────────────────────────────
+  // Per-user: requires auth. The `email` field in the body is ignored —
+  // we always send to the email stored under the auth'd user's emailHash.
+  // This closes the previous "anyone can trigger emails to anyone" vector.
   if (url.pathname === '/send-reminder' && request.method === 'POST') {
     try {
       const body = await request.json();
-      const { email, urgent = [], upcoming = [], manual = false } = body;
-      if (!email) return json({ error: 'Missing email' }, corsHeaders, 400);
+      const { emailHash, verifier, sessionToken, urgent = [], upcoming = [], manual = false, household } = body;
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      const hKey = household || 'default';
+      const emailRow = await kvGet(['user', emailHash, 'email']);
+      const email = emailRow.value as string | null;
+      if (!email) return json({ error: 'No email registered for this account' }, corsHeaders, 400);
+      // Free-tier gate: paid feature.
+      const gate = await gateFeature(emailHash, 'emails');
+      if (!gate.ok) return json({ error: gate.reason }, corsHeaders, gate.status);
       const result = await sendEmail(email, urgent, upcoming);
       if (!result.ok) return json({ error: result.error }, corsHeaders, 500);
-      if (!manual) await kvSet(['last_sent'], new Date().toISOString());
+      // For automatic sends, update last_sent so the cron skips us until
+      // the interval has elapsed. Manual "Send Now" intentionally doesn't
+      // disturb the cron schedule.
+      if (!manual) await kvSet(['user', emailHash, 'last_sent', hKey], new Date().toISOString());
       return json({ ok: true }, corsHeaders);
     } catch(err) {
-      return json({ error: err.message }, corsHeaders, 500);
+      return json({ error: (err as Error).message }, corsHeaders, 500);
     }
   }
 
-  // ── Debug schedule (KV build — no Drive) ─────────────
-  if (url.pathname === '/debug-schedule' && request.method === 'GET') {
-    const schedRaw  = await kvGet(['schedule']);
-    const lastSent  = await kvGet(['last_sent']);
-    const hasItems  = !!(await kvGet(['user_items'])).value;
-    const schedule  = schedRaw.value ? JSON.parse(schedRaw.value) : null;
-    const now       = new Date();
-    let nextSend    = null;
-    if (schedule && !lastSent.value) {
-      nextSend = `${schedule.startDate}T${schedule.startTime||'09:00'} UK time`;
-    } else if (schedule && lastSent.value) {
-      nextSend = new Date(new Date(lastSent.value).getTime() + schedule.intervalDays * 86400000).toISOString();
-    }
-    return json({
-      now:      now.toISOString(),
-      storage:  'Deno KV (no Drive)',
-      schedule: schedule || '✗ missing',
-      lastSent: lastSent.value || 'never',
-      nextSend,
-      kvSnapshot: hasItems ? '✓' : '✗',
-    }, corsHeaders);
+  // ── Debug schedule (per-user state inspector) ─────────
+  // Per-user: requires auth. Returns the auth'd user's schedule state. UI
+  // surfaces this via the "Check" button under Server schedule status.
+  // Changed from GET to POST so we can carry an auth body.
+  if (url.pathname === '/debug-schedule' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, household } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      const hKey       = household || 'default';
+      const schedRaw   = await kvGet(['user', emailHash, 'schedule', hKey]);
+      const lastSent   = await kvGet(['user', emailHash, 'last_sent', hKey]);
+      const hasItems   = !!(await kvGet(['user', emailHash, 'user_items', hKey])).value;
+      const schedule   = schedRaw.value ? JSON.parse(schedRaw.value as string) : null;
+      const now        = new Date();
+      let nextSend     = null;
+      if (schedule && !lastSent.value) {
+        nextSend = `${schedule.startDate}T${schedule.startTime||'09:00'} UK time`;
+      } else if (schedule && lastSent.value) {
+        nextSend = new Date(new Date(lastSent.value as string).getTime() + schedule.intervalDays * 86400000).toISOString();
+      }
+      return json({
+        now:        now.toISOString(),
+        storage:    'Deno KV (per-user)',
+        schedule:   schedule || '✗ missing',
+        lastSent:   lastSent.value || 'never',
+        nextSend,
+        kvSnapshot: hasItems ? '✓' : '✗',
+      }, corsHeaders);
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
   }
 
-  // ── Immediate schedule check ──────────────────────────
-  // Called right after saving email settings so the first
-  // send fires at the correct time without waiting for cron.
+  // ── Immediate schedule check (per-user) ───────────────
+  // Called right after saving email settings so the first send fires at
+  // the correct time without waiting for the hourly cron. Now scoped to
+  // the auth'd user only — no longer runs the global cron pass.
   if (url.pathname === '/check-now' && request.method === 'POST') {
     try {
-      await cronCheck();
-      return json({ ok: true }, corsHeaders);
+      const { emailHash, verifier, sessionToken, household } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
+      const hKey   = household || 'default';
+      const result = await processUserSchedule(emailHash, hKey);
+      return json({ ok: true, ...result }, corsHeaders);
     } catch(err) {
-      return json({ error: err.message }, corsHeaders, 500);
+      return json({ error: (err as Error).message }, corsHeaders, 500);
     }
   }
 
@@ -7367,57 +7419,121 @@ Deno.cron('stockroom-daily-backup-heartbeat', '5 3 * * *', async () => {
 });
 
 // ── Cron ──────────────────────────────────────────────────
-async function cronCheck() {
+// Convert a "YYYY-MM-DD" + "HH:MM" pair (interpreted as UK local time) to a
+// concrete UTC Date. Used by per-user schedule processing.
+function _toUKDate(dateStr: string, timeStr?: string): Date {
+  const probe    = new Date(`${dateStr}T${timeStr||'09:00'}:00Z`);
+  const ukParts  = new Intl.DateTimeFormat('en-GB', { timeZone:'Europe/London', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false }).formatToParts(probe);
+  const get      = (t: string) => parseInt(ukParts.find(p=>p.type===t)?.value||'0');
+  const ukDate   = new Date(Date.UTC(get('year'),get('month')-1,get('day'),get('hour'),get('minute'),get('second')));
+  const offsetMs = ukDate.getTime() - probe.getTime();
+  return new Date(new Date(`${dateStr}T${timeStr||'09:00'}:00Z`).getTime() - offsetMs);
+}
+
+// Process a single user's schedule for one household. Returns a small status
+// object useful for logging and for the /check-now and /debug-schedule
+// endpoints. Pure data flow: this function never throws (all errors are
+// trapped and reported in the returned object).
+async function processUserSchedule(emailHash: string, household: string): Promise<{
+  status: 'sent' | 'not_due' | 'no_schedule' | 'no_items' | 'nothing_due' | 'free_tier' | 'send_failed' | 'error';
+  detail?: string;
+  nextSend?: string;
+}> {
   try {
-    const schedRaw = await kvGet(['schedule']);
-    if (!schedRaw.value) { console.log('Cron: no schedule'); return; }
-    const { email, startDate, startTime, intervalDays, emailHash } = JSON.parse(schedRaw.value);
-    if (!email) { console.log('Cron: no email in schedule'); return; }
-    // ── Free-tier email gate ──
-    // Even if a stale schedule exists in KV (e.g. user upgraded, scheduled,
-    // then downgraded), don't actually send emails to free-tier users.
-    if (emailHash) {
-      const eff = computeEffectiveStatus(await getBillingAccount(emailHash));
-      if (eff === 'free') {
-        console.log(`Cron: skipping ${email} — free tier`);
-        return;
-      }
-    }
-    const lastSent = await kvGet(['last_sent']);
-    const now      = new Date();
+    const schedRow = await kvGet(['user', emailHash, 'schedule', household]);
+    if (!schedRow.value) return { status: 'no_schedule' };
+    const { email, startDate, startTime, intervalDays } = JSON.parse(schedRow.value);
+    if (!email) return { status: 'no_schedule', detail: 'schedule has no email' };
 
-    function toUKDate(dateStr, timeStr) {
-      const probe    = new Date(`${dateStr}T${timeStr||'09:00'}:00Z`);
-      const ukParts  = new Intl.DateTimeFormat('en-GB', { timeZone:'Europe/London', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false }).formatToParts(probe);
-      const get      = (t) => parseInt(ukParts.find(p=>p.type===t)?.value||'0');
-      const ukDate   = new Date(Date.UTC(get('year'),get('month')-1,get('day'),get('hour'),get('minute'),get('second')));
-      const offsetMs = ukDate.getTime() - probe.getTime();
-      return new Date(new Date(`${dateStr}T${timeStr||'09:00'}:00Z`).getTime() - offsetMs);
-    }
+    // Free-tier gate: don't email free users even if a stale schedule exists.
+    const eff = computeEffectiveStatus(await getBillingAccount(emailHash));
+    if (eff === 'free') return { status: 'free_tier' };
 
-    const nextSend = !lastSent.value
-      ? toUKDate(startDate, startTime||'09:00')
-      : new Date(new Date(lastSent.value).getTime() + intervalDays * 86400000);
+    const lastSentRow = await kvGet(['user', emailHash, 'last_sent', household]);
+    const now         = new Date();
+    const nextSend    = !lastSentRow.value
+      ? _toUKDate(startDate, startTime||'09:00')
+      : new Date(new Date(lastSentRow.value as string).getTime() + (intervalDays ?? 30) * 86400000);
+    if (now < nextSend) return { status: 'not_due', nextSend: nextSend.toISOString() };
 
-    if (now < nextSend) { console.log(`Cron: next send in ${Math.round((nextSend.getTime()-now.getTime())/60000)} mins`); return; }
-
-    const itemsRaw = await kvGet(['user_items']);
-    if (!itemsRaw.value) { console.log('Cron: no items snapshot'); return; }
-    const { urgent = [], upcoming = [] } = JSON.parse(itemsRaw.value);
+    const itemsRow = await kvGet(['user', emailHash, 'user_items', household]);
+    if (!itemsRow.value) return { status: 'no_items' };
+    const { urgent = [], upcoming = [] } = JSON.parse(itemsRow.value);
     if (!urgent.length && !upcoming.length) {
-      await kvSet(['last_sent'], now.toISOString());
-      console.log('Cron: nothing due');
-      return;
+      await kvSet(['user', emailHash, 'last_sent', household], now.toISOString());
+      return { status: 'nothing_due' };
     }
+
     const result = await sendEmail(email, urgent, upcoming);
     if (result.ok) {
-      await kvSet(['last_sent'], now.toISOString());
-      console.log(`Cron: sent to ${email}`);
-    } else {
-      console.error('Cron send failed:', result.error);
+      await kvSet(['user', emailHash, 'last_sent', household], now.toISOString());
+      return { status: 'sent', detail: email };
     }
+    return { status: 'send_failed', detail: result.error };
+  } catch (err) {
+    return { status: 'error', detail: (err as Error).message };
+  }
+}
+
+async function cronCheck() {
+  try {
+    // ── One-shot migration of the legacy single-tenant schedule ──
+    // The pre-refactor code stored ONE global schedule at ['schedule']. If
+    // it's still there, move it to the per-user namespace using the
+    // emailHash embedded in the schedule body, then delete the legacy key.
+    // Idempotent: after the first successful migration the key is gone.
+    try {
+      const legacy = await kvGet(['schedule']);
+      if (legacy.value) {
+        const data = JSON.parse(legacy.value as string);
+        if (data.emailHash) {
+          const dest = ['user', data.emailHash, 'schedule', 'default'];
+          const existing = await kvGet(dest);
+          if (!existing.value) await kvSet(dest, legacy.value as string);
+          // Also migrate last_sent if present
+          const legacyLastSent = await kvGet(['last_sent']);
+          if (legacyLastSent.value) {
+            await kvSet(['user', data.emailHash, 'last_sent', 'default'], legacyLastSent.value);
+            await kvDel(['last_sent']);
+          }
+          const legacyItems = await kvGet(['user_items']);
+          if (legacyItems.value) {
+            await kvSet(['user', data.emailHash, 'user_items', 'default'], legacyItems.value);
+            await kvDel(['user_items']);
+          }
+          await kvDel(['schedule']);
+          console.log(`Cron: migrated legacy schedule for ${data.emailHash.slice(0,8)}`);
+        } else {
+          // Legacy schedule with no emailHash — can't migrate. Delete to
+          // stop revisiting on every cron tick.
+          await kvDel(['schedule']);
+          console.log('Cron: dropped legacy schedule with no emailHash');
+        }
+      }
+    } catch (e) {
+      console.warn('Cron: migration step threw:', (e as Error).message);
+    }
+
+    // ── Walk all per-user schedules ──
+    // We list under the 'user' prefix and filter for the 'schedule' subkey.
+    // KV list is streaming, so memory stays bounded even for many users.
+    let processed = 0, sent = 0, errors = 0;
+    const iter = kv.list({ prefix: ['user'] });
+    for await (const entry of iter) {
+      if (entry.key.length !== 4 || entry.key[2] !== 'schedule') continue;
+      const emailHash = entry.key[1] as string;
+      const household = entry.key[3] as string;
+      const result = await processUserSchedule(emailHash, household);
+      processed++;
+      if (result.status === 'sent') sent++;
+      if (result.status === 'error' || result.status === 'send_failed') {
+        errors++;
+        console.error(`Cron: ${emailHash.slice(0,8)}/${household}: ${result.status} — ${result.detail}`);
+      }
+    }
+    console.log(`Cron: processed=${processed} sent=${sent} errors=${errors}`);
   } catch(err) {
-    console.error('Cron error:', err.message);
+    console.error('Cron error:', (err as Error).message);
   }
 }
 
