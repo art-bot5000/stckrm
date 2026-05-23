@@ -5642,24 +5642,12 @@ Deno.serve(async (request) => {
   // ── Data: get modified time ───────────────────────────
   if (url.pathname === '/data/modified' && request.method === 'POST') {
     try {
-      const { emailHash, verifier, household, shareCode } = await request.json();
+      const { emailHash, verifier, sessionToken, household } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
       const hKey = household || 'default';
-      let modifiedVal = null;
-      if (emailHash && verifier) {
-        const stored = await kvGet(['user', emailHash, 'verifier']);
-        if (stored.value && stored.value === verifier) {
-          const m = await kvGet(['user', emailHash, 'modified', hKey]);
-          modifiedVal = m.value;
-        }
-      } else if (shareCode) {
-        const r = await kvGet(['share', shareCode.toUpperCase()]);
-        if (r.value) {
-          const target = JSON.parse(r.value);
-          const m = await kvGet(['user', target.ownerEmailHash, 'modified', hKey]);
-          modifiedVal = m.value;
-        }
-      }
-      return json({ modifiedTime: modifiedVal }, corsHeaders);
+      const m = await kvGet(['user', emailHash, 'modified', hKey]);
+      return json({ modifiedTime: m.value }, corsHeaders);
     } catch(err) {
       return json({ error: (err as Error).message }, corsHeaders, 500);
     }
@@ -6273,10 +6261,12 @@ Deno.serve(async (request) => {
   // ── Share: modified time ──────────────────────────────
   if (url.pathname === '/share/data/modified' && request.method === 'POST') {
     try {
-      const { guestEmailHash, guestVerifier, code, household } = await request.json();
-      if (!code || !guestEmailHash || !guestVerifier) return json({ error: 'Missing fields' }, corsHeaders, 400);
-      const guestStored = await kvGet(['user', guestEmailHash, 'verifier']);
-      if (!guestStored.value || guestStored.value !== guestVerifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      const { guestEmailHash, guestVerifier, guestSessionToken, code, household } = await request.json();
+      if (!code || !guestEmailHash || (!guestVerifier && !guestSessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
+      const authed = guestSessionToken
+        ? !!(await kvGet(['passkey_session', guestEmailHash, guestSessionToken])).value
+        : guestVerifier && (await kvGet(['user', guestEmailHash, 'verifier'])).value === guestVerifier;
+      if (!authed) return json({ error: guestSessionToken ? 'Session expired — sign in again' : 'Unauthorised' }, corsHeaders, 401);
       const hKey    = household && household !== 'default' ? household : 'default';
       const modified = await kvGet(['share_data', code.toUpperCase(), `${hKey}_modified`]);
       return json({ modifiedTime: modified.value||null }, corsHeaders);
