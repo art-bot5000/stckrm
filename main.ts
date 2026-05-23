@@ -3900,15 +3900,16 @@ Deno.serve(async (request) => {
     try {
       const { emailHash } = await request.json();
       if (!emailHash) return json({ error: 'Missing emailHash' }, corsHeaders, 400);
+      // SECURITY: prevent account enumeration. We return verified:false ONLY for
+      // accounts that genuinely exist and are not verified — the narrow window
+      // where the caller (session-restore guard) needs to block entry. Every
+      // other case ("no account exists", "account exists and verified") returns
+      // verified:true so an unauthenticated probe cannot distinguish a real
+      // account from a non-existent one. We never echo back the stored email.
       const verifierRow = await kvGet(['user', emailHash, 'verifier']);
-      if (!verifierRow.value) return json({ exists: false, verified: false }, corsHeaders);
+      if (!verifierRow.value) return json({ verified: true }, corsHeaders);
       const verified = await kvGet(['user', emailHash, 'email_verified']);
-      const emailRow = await kvGet(['user', emailHash, 'email']);
-      return json({
-        exists: true,
-        verified: !!verified.value,
-        email: emailRow.value || null,
-      }, corsHeaders);
+      return json({ verified: !!verified.value }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
