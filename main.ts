@@ -1151,6 +1151,7 @@ async function _deleteAllUserData(kv: Deno.Kv, emailHash: string): Promise<void>
     ['mfa_otp',          emailHash],   // MFA login OTP
     ['deactivation',     emailHash],   // deactivation state
     ['delete_token',     emailHash],   // pending deletion token
+    ['presence',         emailHash],   // ephemeral per-device presence entries
   ];
 
   for (const prefix of prefixesToScan) {
@@ -6400,28 +6401,46 @@ Deno.serve(async (request) => {
   }
 
   // ── Presence: update (ephemeral, 5min TTL) ───────────
+  // Per-user: requires auth. Presence is scoped to the authenticated user —
+  // each "userId" is a per-device identifier within that user's account.
+  // No cross-account presence visibility. If you want shared-household
+  // presence later, that needs a real household model (not yet built).
   if (url.pathname === '/presence-update' && request.method === 'POST') {
     try {
-      const { userId, name, initials, colour, view } = await request.json();
+      const { emailHash, verifier, sessionToken, userId, name, initials, colour, view } = await request.json();
+      const _authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+      if (_authFail) return _authFail;
       if (!userId) return json({ error: 'Missing userId' }, corsHeaders, 400);
-      await kvSet(['presence', userId], JSON.stringify({ userId, name, initials, colour, view, ts: new Date().toISOString() }), { expireIn: 5 * 60 * 1000 });
+      await kvSet(
+        ['presence', emailHash, userId],
+        JSON.stringify({ userId, name, initials, colour, view, ts: new Date().toISOString() }),
+        { expireIn: 5 * 60 * 1000 }
+      );
       return json({ ok: true }, corsHeaders);
-    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+    } catch(err) { return json({ error: (err as Error).message }, corsHeaders, 500); }
   }
 
   // ── Presence: SSE stream ──────────────────────────────
+  // Per-user: auth carried via query string because EventSource cannot send
+  // POST bodies or custom headers. Lists only the authenticated user's own
+  // devices (presence entries under [presence, emailHash, *]).
   if (url.pathname === '/presence-stream' && request.method === 'GET') {
+    const emailHash    = url.searchParams.get('emailHash') || '';
+    const verifier     = url.searchParams.get('verifier') || undefined;
+    const sessionToken = url.searchParams.get('sessionToken') || undefined;
+    const authFail = await requireUserAuth(emailHash, verifier, sessionToken);
+    if (authFail) return authFail;
     const stream = new ReadableStream({
       start(controller) {
-        const send = (data) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`));
+        const send = (data: unknown) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`));
         const interval = setInterval(async () => {
           try {
-            const users = [];
-            const entries = kv.list({ prefix: ['presence'] });
+            const users: unknown[] = [];
+            const entries = kv.list({ prefix: ['presence', emailHash] });
             for await (const entry of entries) {
-              try { users.push(JSON.parse(entry.value)); } catch(e) {}
+              try { users.push(JSON.parse(entry.value as string)); } catch(e) {}
             }
-            send({ users });
+            send({ type: 'presence', users });
           } catch(e) {}
         }, 5000);
         setTimeout(() => { clearInterval(interval); controller.close(); }, 5 * 60 * 1000);
