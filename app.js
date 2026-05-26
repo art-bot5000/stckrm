@@ -17569,23 +17569,65 @@ function maybeShowInstallBanner() {
 
 let _protectRecoveryCodes = []; // held in memory during setup only
 
-function showProtectDataScreen(recoveryCodes, isMigration = false) {
+function showProtectDataScreen(recoveryCodes, mode = 'default') {
   _protectRecoveryCodes = recoveryCodes || [];
   const hasCodes = _protectRecoveryCodes.length > 0;
-  console.log('[protect] showProtectDataScreen called — hasCodes:', hasCodes, 'codes count:', _protectRecoveryCodes.length);
+  console.log('[protect] showProtectDataScreen called — hasCodes:', hasCodes, 'codes count:', _protectRecoveryCodes.length, 'mode:', mode);
   const step1d = document.getElementById('wizard-step-1d');
   document.querySelectorAll('.wizard-step').forEach(s => s.classList.remove('active'));
   if (step1d) {
     step1d.classList.add('active');
-    // Update heading and subtext for migration context
+    // Heading and subtext vary by entry context
     const heading = step1d.querySelector('h1');
     const subtext = step1d.querySelector('p');
-    if (isMigration) {
-      if (heading) heading.innerHTML = '<svg class="icon icon-md" aria-hidden="true" style="color:var(--ok);vertical-align:-3px"><use href="#i-lock"></use></svg> Encryption upgraded';
-      if (subtext)  subtext.textContent = 'Your account now uses stronger encryption. Save your new recovery codes — your old ones no longer work.';
+    if (mode === 'recovery') {
+      if (heading) heading.innerHTML = '<svg class="icon icon-md" aria-hidden="true" style="color:var(--ok);vertical-align:-3px"><use href="#i-check-circle-2"></use></svg> Passphrase reset';
+      if (subtext)  subtext.textContent = 'Save your new recovery codes — they replace the ones you used to recover your account.';
     } else {
       if (heading) heading.textContent = 'Protecting your data';
       if (subtext)  subtext.textContent = 'Complete these steps to keep your account safe.';
+    }
+  }
+  // ── Section ordering ──────────────────────────────────────
+  // Default layout: Passphrase → Passkey → Recovery codes → Exports.
+  // Recovery layout: Passphrase → Recovery codes → Passkey → Exports.
+  // The recovery flow leads with the codes since they're the critical artifact
+  // (the user lost the previous set and the new ones must be saved before the
+  // session can be considered safe again). The DOM is mutated in place rather
+  // than via CSS order because the wizard-step container isn't a flex parent.
+  const passkeySectionEl  = document.getElementById('protect-passkey-section');
+  const recoverySectionEl = document.getElementById('protect-recovery-section');
+  if (passkeySectionEl && recoverySectionEl && passkeySectionEl.parentNode === recoverySectionEl.parentNode) {
+    const parent = passkeySectionEl.parentNode;
+    if (mode === 'recovery') {
+      // Move passkey AFTER recovery (i.e. insert before recovery's next sibling)
+      parent.insertBefore(passkeySectionEl, recoverySectionEl.nextSibling);
+    } else {
+      // Restore default order — passkey BEFORE recovery
+      parent.insertBefore(passkeySectionEl, recoverySectionEl);
+    }
+  }
+  // Recovery-codes section gets extra descriptive text on the recovery path
+  // so the user understands these codes are specifically tied to the new
+  // passphrase they just set. Element is created/removed on demand.
+  if (recoverySectionEl) {
+    let extraDesc = document.getElementById('protect-recovery-extra-desc');
+    if (mode === 'recovery') {
+      if (!extraDesc) {
+        extraDesc = document.createElement('div');
+        extraDesc.id = 'protect-recovery-extra-desc';
+        extraDesc.style.cssText = 'font-size:12px;color:var(--accent);margin-bottom:10px;line-height:1.5;font-weight:600';
+        extraDesc.textContent = 'Generate and save new recovery codes compatible with the new passphrase';
+        // Insert after the title row (first child) so it sits above the codes block
+        const titleRow = recoverySectionEl.querySelector(':scope > div');
+        if (titleRow && titleRow.nextSibling) {
+          recoverySectionEl.insertBefore(extraDesc, titleRow.nextSibling);
+        } else {
+          recoverySectionEl.appendChild(extraDesc);
+        }
+      }
+    } else if (extraDesc) {
+      extraDesc.remove();
     }
   }
   document.body.classList.add('wizard-active'); show('wizard', 'flex');
@@ -18025,7 +18067,7 @@ async function completeRecovery() {
     if(errEl) errEl.style.display = 'none';
     localStorage.setItem('stockroom_seen', '1');
     toast('Access restored ✓ — please save your new recovery codes');
-    showProtectDataScreen(newCodes);
+    showProtectDataScreen(newCodes, 'recovery');
   } catch(err) {
     console.warn('completeRecovery:', err);
     if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
