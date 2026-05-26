@@ -18022,16 +18022,43 @@ async function completeRecovery() {
   }
   if (btn) { btn.textContent = '⏳ Resetting…'; btn.disabled = true; }
   try {
-    const { wrapKey, saltB64 } = await derivePassphraseWrapKey(newPass, _recoveryEmailHash, null);
-    const newVerifier          = await kvMakeVerifier(newPass, _recoveryEmailHash);
-    const newEnvelope          = await wrapDataKey(_recoveryDataKey, wrapKey);
-    const res = await postKV(`${WORKER_URL}/recovery/reset`, { emailHash: _recoveryEmailHash, recoveryToken: _recoveryToken, newVerifier, newSalt: saltB64, newEnvelope });
+    // ── Build v2 passphrase envelope ──────────────────────────
+    // The server's /recovery/reset endpoint requires v2 fields (newKdfSalt
+    // + newSalt + newEnvelope). The data key itself is unchanged — we just
+    // re-wrap it with the new passphrase. Bulk ciphertext stays untouched.
+    const newKdfSalt  = generateKdfSalt();
+    const newWrapKey  = await derivePassphraseWrapKeyV2(newPass, _recoveryEmailHash, newKdfSalt);
+    const newEnvelope = await wrapDataKeyV2(_recoveryDataKey, newWrapKey);
+    const newVerifier = await kvMakeVerifier(newPass, _recoveryEmailHash);
+    // Random legacy v1 salt — server schema requires the field, but v2
+    // unwrap ignores it (uses kdfSalt instead).
+    const newSalt = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    const res = await postKV(`${WORKER_URL}/recovery/reset`, {
+      emailHash:      _recoveryEmailHash,
+      recoveryToken:  _recoveryToken,
+      newVerifier,
+      newSalt,
+      newEnvelope,
+      newKdfSalt,
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Reset failed');
+    // The server issues a session token alongside the reset — adopt it so
+    // subsequent calls (like /key/update-recovery below) can authenticate
+    // even before kvStoreSession finishes wiring up the local session.
+    if (data.sessionToken) _kvSessionToken = data.sessionToken;
     await kvStoreSession(_recoveryEmail, _recoveryEmailHash, newVerifier, _recoveryDataKey);
+    // ── Regenerate recovery codes (v2) ────────────────────────
+    // The slot we just used is now marked consumed server-side. Issue a
+    // fresh set of v2-format envelopes so the next recovery works the
+    // same way and doesn't fall back to the v1 path.
     const newCodes     = generateRecoveryCodes(10);
-    const newEnvelopes = await buildRecoveryEnvelopes(newCodes, _recoveryDataKey, _recoveryEmailHash);
-    await postKV(`${WORKER_URL}/key/update-recovery`, { emailHash: _recoveryEmailHash, verifier: newVerifier, recoveryEnvelopes: newEnvelopes });
+    const newEnvelopes = await buildRecoveryEnvelopesV2(newCodes, _recoveryDataKey, _recoveryEmailHash);
+    await postKV(`${WORKER_URL}/key/update-recovery`, {
+      emailHash: _recoveryEmailHash,
+      verifier:  newVerifier,
+      recoveryEnvelopes: newEnvelopes,
+    });
     _recoveryEmail = _recoveryEmailHash = _recoveryToken = '';
     _recoveryDataKey = null;
     if(errEl) errEl.style.display = 'none';
@@ -18039,6 +18066,7 @@ async function completeRecovery() {
     toast('Access restored ✓ — please save your new recovery codes');
     showProtectDataScreen(newCodes);
   } catch(err) {
+    console.warn('completeRecovery:', err);
     if(errEl){errEl.textContent = err.message; errEl.style.display='block';}
   } finally {
     if (btn) { btn.textContent = 'Reset passphrase & Sign in →'; btn.disabled = false; }
