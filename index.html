@@ -4692,12 +4692,28 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
       <button class="btn btn-primary" id="cp-submit-btn" style="width:100%;margin-bottom:6px" onclick="cpSubmitPassphrase()"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> Change passphrase</button>
       <button class="btn btn-ghost btn-sm" onclick="closeChangePassphrase()" style="width:100%">Cancel</button>
     </div>
-    <!-- ── Step 3: confirmation ─────────────────────────────── -->
-    <div id="cp-step-done" style="display:none;text-align:center">
-      <div style="margin-bottom:10px;color:var(--ok)"><svg aria-hidden="true" style="width:40px;height:40px"><use href="#i-check-circle-2"></use></svg></div>
-      <h3 style="font-size:16px;font-weight:700;margin-bottom:6px">Passphrase changed</h3>
-      <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:18px">Your new passphrase is active on this device. Other devices will need to re-enter the new passphrase next time they sign in.</p>
-      <button class="btn btn-primary" style="width:100%" onclick="closeChangePassphrase()">Close</button>
+    <!-- ── Step 3: confirmation + new recovery codes ──────────
+         Recovery codes are regenerated alongside the passphrase
+         change. The Close button stays disabled until the user
+         acknowledges they've saved the new codes. -->
+    <div id="cp-step-done" style="display:none">
+      <div style="text-align:center;margin-bottom:10px;color:var(--ok)"><svg aria-hidden="true" style="width:40px;height:40px"><use href="#i-check-circle-2"></use></svg></div>
+      <h3 style="font-size:16px;font-weight:700;margin-bottom:6px;text-align:center">Passphrase changed</h3>
+      <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:14px;text-align:center">Your new passphrase is active on this device. Other devices will need to re-enter it next time they sign in.</p>
+      <div id="cp-codes-section">
+        <div style="background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.25);border-radius:8px;padding:10px 12px;margin-bottom:12px">
+          <div style="font-size:12px;color:var(--accent);font-weight:700;margin-bottom:4px"><svg class="icon" aria-hidden="true" style="vertical-align:-2px"><use href="#i-shield-alert"></use></svg> Save these new recovery codes</div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.5">Your old recovery codes no longer work. Save these somewhere safe — they're your only way back in if you forget your passphrase.</div>
+        </div>
+        <div id="cp-codes-list" style="font-family:var(--mono);font-size:12px;line-height:1.7;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px;text-align:left;max-height:200px;overflow-y:auto"></div>
+        <button class="btn btn-ghost btn-sm" onclick="cpCopyCodes()" style="width:100%;margin-bottom:10px"><svg class="icon" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> Copy to clipboard</button>
+        <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:14px;cursor:pointer">
+          <input type="checkbox" id="cp-codes-saved" onchange="cpUpdateCloseBtn()" style="margin-top:2px;flex-shrink:0">
+          <span>I've saved these codes somewhere safe</span>
+        </label>
+      </div>
+      <div id="cp-codes-error" style="font-size:12px;color:var(--danger);line-height:1.5;margin-bottom:10px;display:none"></div>
+      <button class="btn btn-primary" id="cp-close-btn" style="width:100%" onclick="closeChangePassphrase()" disabled>Close</button>
     </div>
   </div>
 </div>
