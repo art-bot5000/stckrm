@@ -17927,6 +17927,11 @@ async function recoveryStepOtp() {
     const res = await postKV(`${WORKER_URL}/recovery/verify`, { email: _recoveryEmail, otp });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Invalid code');
+    // /recovery/verify issues a fresh recovery_token that overwrites the one
+    // /key/recover set. We MUST adopt the new one — sending the old token to
+    // /recovery/reset would fail with "Invalid recovery token" since the
+    // server's stored value is now the OTP-issued token.
+    if (data.recoveryToken) _recoveryToken = data.recoveryToken;
     if(errEl) errEl.style.display = 'none';
     hide('recovery-step-otp');
     show('recovery-step-reset');
