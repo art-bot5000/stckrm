@@ -20577,17 +20577,182 @@ async function kvSignOut() {
   toast('Signed out');
 }
 
+// ══════════════════════════════════════════
+//  CHANGE PASSPHRASE — modal-driven, code-verified
+// ══════════════════════════════════════════
+// Step 1: 6-digit code (email OTP, or authenticator app if MFA-TOTP is set up)
+// Step 2: current passphrase + new passphrase × 2
+// Step 3: confirmation screen
+//
+// The code-verification step always runs, even when MFA is off. It uses the
+// existing /mfa/otp/send + /mfa/otp/verify endpoints (which work regardless
+// of MFA state — they're authed by verifier/sessionToken). When the account
+// has a TOTP method configured, the user can switch to entering an
+// authenticator-app code instead (verified client-side via _totpVerify).
+let _cpAltMode = false; // false = primary method (email if no TOTP, else TOTP), true = the other
+
 function openChangePassphrase() {
-  const oldPass = prompt('Enter your current passphrase:');
-  if (!oldPass) return;
-  const newPass = prompt('Enter your new passphrase (min 8 characters):');
-  if (!newPass || newPass.length < 8) { toast('New passphrase too short'); return; }
-  const confirm_ = prompt('Confirm new passphrase:');
-  if (newPass !== confirm_) { toast('Passphrases do not match'); return; }
-  kvChangePassphrase(oldPass, newPass);
+  if (!kvConnected) { toast('Sign in first'); return; }
+  // Reset state
+  _cpAltMode = false;
+  document.getElementById('cp-verify-code').value = '';
+  document.getElementById('cp-old-pass').value    = '';
+  document.getElementById('cp-new-pass').value    = '';
+  document.getElementById('cp-new-pass-confirm').value = '';
+  document.getElementById('cp-code-error').textContent = '';
+  document.getElementById('cp-pass-error').textContent = '';
+  document.getElementById('cp-sending-status').style.display = 'none';
+  // Show step 1, hide the others
+  document.getElementById('cp-step-code').style.display = '';
+  document.getElementById('cp-step-pass').style.display = 'none';
+  document.getElementById('cp-step-done').style.display = 'none';
+  // Decide primary method. If the account has a TOTP method enabled, default
+  // to TOTP (faster, no email round-trip). Otherwise email is the only option.
+  const hasTotp = _mfaEnabled() && _mfaMethods().some(m => m.type === 'totp' && m.secret);
+  const altBtn  = document.getElementById('cp-alt-method');
+  if (hasTotp) {
+    // Primary = TOTP, alt = email
+    document.getElementById('cp-totp-hint').style.display  = 'block';
+    document.getElementById('cp-email-hint').style.display = 'none';
+    document.getElementById('cp-resend-btn').style.display = 'none';
+    if (altBtn) { altBtn.style.display = ''; altBtn.textContent = 'Use email code instead'; }
+  } else {
+    // Primary = email, no alt available
+    document.getElementById('cp-totp-hint').style.display  = 'none';
+    document.getElementById('cp-email-hint').style.display = 'block';
+    document.getElementById('cp-resend-btn').style.display = '';
+    if (altBtn) altBtn.style.display = 'none';
+  }
+  openModal('change-passphrase-modal');
+  setTimeout(() => document.getElementById('cp-verify-code')?.focus(), 100);
+  // Send the email OTP if email is the active method
+  if (!hasTotp) _cpSendEmailCode();
 }
 
-async function kvChangePassphrase(oldPass, newPass) {
+function closeChangePassphrase() {
+  closeModal('change-passphrase-modal');
+}
+
+async function _cpSendEmailCode() {
+  const errEl     = document.getElementById('cp-code-error');
+  const sendingEl = document.getElementById('cp-sending-status');
+  if (errEl)     errEl.textContent = '';
+  if (sendingEl) { sendingEl.textContent = 'Sending code…'; sendingEl.style.display = 'block'; }
+  try {
+    const body = {
+      emailHash: _kvEmailHash,
+      email:     _kvEmail || settings.email || '',
+      ...(_kvSessionToken && !_kvVerifier ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
+    };
+    const res = await postKV(`${WORKER_URL}/mfa/otp/send`, body);
+    const d   = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (errEl) errEl.textContent = d.error || `Could not send code (${res.status})`;
+      if (sendingEl) sendingEl.style.display = 'none';
+      return;
+    }
+    if (sendingEl) sendingEl.textContent = 'Code sent ✓ — check your email';
+    setTimeout(() => { if (sendingEl) sendingEl.style.display = 'none'; }, 3000);
+  } catch(e) {
+    if (errEl) errEl.textContent = 'Could not send code: ' + e.message;
+    if (sendingEl) sendingEl.style.display = 'none';
+  }
+}
+
+async function cpResendCode() {
+  await _cpSendEmailCode();
+  toast('Code sent ✓');
+}
+
+function cpSwitchMethod() {
+  _cpAltMode = !_cpAltMode;
+  // Determine effective method after toggle.
+  // Primary is TOTP iff the account has TOTP set up; alt is the opposite.
+  const hasTotp = _mfaEnabled() && _mfaMethods().some(m => m.type === 'totp' && m.secret);
+  const primaryIsTotp   = hasTotp;
+  const effectiveIsTotp = _cpAltMode ? !primaryIsTotp : primaryIsTotp;
+  const altBtn   = document.getElementById('cp-alt-method');
+  const totpHint = document.getElementById('cp-totp-hint');
+  const emailHint= document.getElementById('cp-email-hint');
+  const resendBtn= document.getElementById('cp-resend-btn');
+  const codeEl   = document.getElementById('cp-verify-code');
+  const errEl    = document.getElementById('cp-code-error');
+  if (totpHint)  totpHint.style.display  = effectiveIsTotp ? 'block' : 'none';
+  if (emailHint) emailHint.style.display = effectiveIsTotp ? 'none' : 'block';
+  if (resendBtn) resendBtn.style.display = effectiveIsTotp ? 'none' : '';
+  if (altBtn)    altBtn.textContent       = effectiveIsTotp ? 'Use email code instead' : 'Use authenticator app instead';
+  if (codeEl)    codeEl.value = '';
+  if (errEl)     errEl.textContent = '';
+  // If we just switched TO email, send a fresh code
+  if (!effectiveIsTotp) _cpSendEmailCode();
+}
+
+async function cpVerifyCode() {
+  const codeEl = document.getElementById('cp-verify-code');
+  const errEl  = document.getElementById('cp-code-error');
+  const code   = (codeEl?.value || '').trim().replace(/\s/g,'');
+  if (!code || code.length < 6) { if (errEl) errEl.textContent = 'Enter your 6-digit code'; return; }
+  const hasTotp         = _mfaEnabled() && _mfaMethods().some(m => m.type === 'totp' && m.secret);
+  const primaryIsTotp   = hasTotp;
+  const effectiveIsTotp = _cpAltMode ? !primaryIsTotp : primaryIsTotp;
+  if (errEl) errEl.textContent = '';
+  if (effectiveIsTotp) {
+    const totpMethod = _mfaMethods().find(m => m.type === 'totp');
+    const secret     = totpMethod?.secret || settings.mfa?.totpSecret || null;
+    if (!secret) { if (errEl) errEl.textContent = 'Authenticator app not configured'; return; }
+    const valid = await _totpVerify(secret, code);
+    if (!valid) { if (errEl) errEl.textContent = 'Incorrect code — check your authenticator app and device clock'; return; }
+  } else {
+    try {
+      const res = await postKV(`${WORKER_URL}/mfa/otp/verify`, { emailHash: _kvEmailHash, otp: code });
+      const d   = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (errEl) errEl.textContent = d.error || `Incorrect code (${res.status})`;
+        return;
+      }
+    } catch(e) {
+      if (errEl) errEl.textContent = 'Could not verify code: ' + e.message;
+      return;
+    }
+  }
+  // ── Advance to step 2 ──
+  document.getElementById('cp-step-code').style.display = 'none';
+  document.getElementById('cp-step-pass').style.display = '';
+  setTimeout(() => document.getElementById('cp-old-pass')?.focus(), 100);
+}
+
+async function cpSubmitPassphrase() {
+  const oldPass = document.getElementById('cp-old-pass')?.value || '';
+  const newPass = document.getElementById('cp-new-pass')?.value || '';
+  const confPass= document.getElementById('cp-new-pass-confirm')?.value || '';
+  const errEl   = document.getElementById('cp-pass-error');
+  const btn     = document.getElementById('cp-submit-btn');
+  if (errEl) errEl.textContent = '';
+  if (!oldPass)            { if (errEl) errEl.textContent = 'Enter your current passphrase'; return; }
+  if (newPass.length < 8)  { if (errEl) errEl.textContent = 'New passphrase must be at least 8 characters'; return; }
+  if (newPass !== confPass){ if (errEl) errEl.textContent = 'New passphrases do not match'; return; }
+  if (newPass === oldPass) { if (errEl) errEl.textContent = 'New passphrase must be different from the current one'; return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Changing…'; }
+  try {
+    const result = await kvChangePassphrase(oldPass, newPass, { silent: true });
+    if (!result?.ok) {
+      if (errEl) {
+        errEl.textContent = result?.reason === 'wrong-pass'
+          ? 'Current passphrase incorrect'
+          : ('Could not change passphrase: ' + (result?.message || 'unknown error'));
+      }
+      return;
+    }
+    // Success — advance to confirmation screen
+    document.getElementById('cp-step-pass').style.display = 'none';
+    document.getElementById('cp-step-done').style.display = '';
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> Change passphrase'; }
+  }
+}
+
+async function kvChangePassphrase(oldPass, newPass, opts = {}) {
+  const silent = opts.silent === true;
   try {
     if (!_kvKey) throw new Error('Not signed in');
     // Verify old passphrase. Compute oldVerifier so we can also send it to
@@ -20595,7 +20760,8 @@ async function kvChangePassphrase(oldPass, newPass) {
     // equality short-circuit if _kvVerifier is empty (passkey-only session).
     const oldVerifier = await kvMakeVerifier(oldPass, _kvEmailHash);
     if (_kvVerifier && oldVerifier !== _kvVerifier) {
-      toast('Current passphrase incorrect'); return;
+      if (!silent) toast('Current passphrase incorrect');
+      return { ok: false, reason: 'wrong-pass' };
     }
     // Build a fresh v2 passphrase envelope around the SAME data key — the
     // bulk ciphertext is encrypted by the data key, not by the passphrase,
@@ -20622,7 +20788,10 @@ async function kvChangePassphrase(oldPass, newPass) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      if (res.status === 401) { toast('Current passphrase incorrect'); return; }
+      if (res.status === 401) {
+        if (!silent) toast('Current passphrase incorrect');
+        return { ok: false, reason: 'wrong-pass' };
+      }
       throw new Error(data.error || 'Server rejected the change');
     }
     // Update in-memory + stored session with the new verifier. The data key
@@ -20649,10 +20818,12 @@ async function kvChangePassphrase(oldPass, newPass) {
         expiry: Date.now() + 4 * 60 * 60 * 1000,
       });
     } catch(e) {}
-    toast('Passphrase changed ✓');
+    if (!silent) toast('Passphrase changed ✓');
+    return { ok: true };
   } catch(err) {
     console.warn('kvChangePassphrase:', err);
-    toast('Could not change passphrase: ' + err.message);
+    if (!silent) toast('Could not change passphrase: ' + err.message);
+    return { ok: false, reason: 'error', message: err.message };
   }
 }
 

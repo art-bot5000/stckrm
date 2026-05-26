@@ -4639,6 +4639,70 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
   </div>
 </div>
 
+<!-- ═══════════════════════════════════════════════════════════════════════
+     CHANGE PASSPHRASE MODAL — two-step verified change
+     Step 1: email/authenticator code  Step 2: current + new passphrase
+     Step 3: confirmation
+     ═══════════════════════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="change-passphrase-modal" style="z-index:470">
+  <div class="modal" style="max-width:380px">
+    <!-- ── Step 1: verification code ────────────────────────── -->
+    <div id="cp-step-code">
+      <div style="text-align:center;margin-bottom:8px;color:var(--accent)"><svg aria-hidden="true" style="width:32px;height:32px"><use href="#i-shield"></use></svg></div>
+      <h3 style="font-size:16px;font-weight:700;margin-bottom:6px;text-align:center">Verify it's you</h3>
+      <div id="cp-email-hint">
+        <p style="font-size:13px;color:var(--muted);margin-bottom:8px;text-align:center">We've sent a 6-digit code to your account email. Enter it below to continue.</p>
+      </div>
+      <div id="cp-totp-hint" style="display:none">
+        <p style="font-size:13px;color:var(--muted);margin-bottom:8px;text-align:center">Enter the current code from your authenticator app.</p>
+      </div>
+      <div id="cp-sending-status" style="display:none;font-size:12px;color:var(--ok);margin-bottom:8px;font-weight:600;text-align:center"></div>
+      <input class="form-input" type="text" id="cp-verify-code" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code"
+        style="width:100%;font-family:var(--mono);font-size:28px;letter-spacing:10px;text-align:center;margin-bottom:8px"
+        oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,6)"
+        onkeydown="if(event.key==='Enter')cpVerifyCode()">
+      <p id="cp-code-error" style="font-size:12px;color:var(--danger);margin-bottom:8px;min-height:16px;text-align:center"></p>
+      <button class="btn btn-primary" style="width:100%;margin-bottom:8px" onclick="cpVerifyCode()">Continue →</button>
+      <button class="btn btn-ghost btn-sm" id="cp-alt-method" onclick="cpSwitchMethod()" style="width:100%;margin-bottom:6px;display:none">Use authenticator app instead</button>
+      <button class="btn btn-ghost btn-sm" id="cp-resend-btn" onclick="cpResendCode()" style="width:100%;margin-bottom:6px">Resend code</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeChangePassphrase()" style="width:100%">Cancel</button>
+    </div>
+    <!-- ── Step 2: passphrases ──────────────────────────────── -->
+    <div id="cp-step-pass" style="display:none">
+      <div style="text-align:center;margin-bottom:8px;color:var(--accent)"><svg aria-hidden="true" style="width:32px;height:32px"><use href="#i-lock"></use></svg></div>
+      <h3 style="font-size:16px;font-weight:700;margin-bottom:6px;text-align:center">Change passphrase</h3>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px;text-align:center">Enter your current passphrase, then choose a new one.</p>
+      <div class="field" style="text-align:left;margin-bottom:10px">
+        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Current passphrase</label>
+        <input class="form-input" type="password" id="cp-old-pass" autocomplete="current-password"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:14px">
+      </div>
+      <div class="field" style="text-align:left;margin-bottom:10px">
+        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">New passphrase (min 8 characters)</label>
+        <input class="form-input" type="password" id="cp-new-pass" autocomplete="new-password"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:14px">
+      </div>
+      <div class="field" style="text-align:left;margin-bottom:10px">
+        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Confirm new passphrase</label>
+        <input class="form-input" type="password" id="cp-new-pass-confirm" autocomplete="new-password"
+          style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:14px"
+          onkeydown="if(event.key==='Enter')cpSubmitPassphrase()">
+      </div>
+      <p id="cp-pass-error" style="font-size:12px;color:var(--danger);margin-bottom:8px;min-height:16px;text-align:center"></p>
+      <button class="btn btn-primary" id="cp-submit-btn" style="width:100%;margin-bottom:6px" onclick="cpSubmitPassphrase()"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> Change passphrase</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeChangePassphrase()" style="width:100%">Cancel</button>
+    </div>
+    <!-- ── Step 3: confirmation ─────────────────────────────── -->
+    <div id="cp-step-done" style="display:none;text-align:center">
+      <div style="margin-bottom:10px;color:var(--ok)"><svg aria-hidden="true" style="width:40px;height:40px"><use href="#i-check-circle-2"></use></svg></div>
+      <h3 style="font-size:16px;font-weight:700;margin-bottom:6px">Passphrase changed</h3>
+      <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:18px">Your new passphrase is active on this device. Other devices will need to re-enter the new passphrase next time they sign in.</p>
+      <button class="btn btn-primary" style="width:100%" onclick="closeChangePassphrase()">Close</button>
+    </div>
+  </div>
+</div>
+
+
 <!-- EXPORT SECURE NOTES MODAL -->
 <div class="modal-backdrop" id="export-secure-notes-modal">
   <div class="modal" style="max-width:380px">
