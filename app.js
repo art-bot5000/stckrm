@@ -17604,6 +17604,14 @@ function showProtectDataScreen(recoveryCodes, isMigration = false) {
   hide('protect-codes-grid');
   hide('protect-codes-confirm');
   document.getElementById('protect-codes-checkbox').checked         = false;
+  // Restore the default "Show my recovery codes" reveal button markup. A
+  // prior call may have left this container with the temporary "Preparing…"
+  // text or the fallback "already set up" message — both look wrong when
+  // the user lands here with fresh codes in hand.
+  const _codesContainer = document.getElementById('protect-codes-hidden');
+  if (_codesContainer) {
+    _codesContainer.innerHTML = '<button class="btn btn-ghost btn-sm full" style="width:100%;margin-bottom:8px" onclick="revealRecoveryCodes()"><svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg> Show my recovery codes</button>';
+  }
   if (hasCodes) {
     show('protect-codes-hidden');
     document.getElementById('protect-continue-btn').disabled          = true;
@@ -17699,7 +17707,9 @@ async function _protectRegenerateCodesIfPossible() {
   _protectRecoveryCodes = newCodes;
   const codesContainer = document.getElementById('protect-codes-hidden');
   if (codesContainer) {
-    codesContainer.innerHTML = '';
+    // Put the "Show my recovery codes" reveal button back so the user can
+    // see the newly-generated codes. Without this, the container is empty.
+    codesContainer.innerHTML = '<button class="btn btn-ghost btn-sm full" style="width:100%;margin-bottom:8px" onclick="revealRecoveryCodes()"><svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg> Show my recovery codes</button>';
     codesContainer.style.display = '';
   }
   // Re-disable Continue until the user reveals + confirms — the new codes
@@ -17711,7 +17721,7 @@ async function _protectRegenerateCodesIfPossible() {
     continueBtn.disabled = true;
     continueBtn.style.opacity = '0.5';
   }
-  console.log('[protect] regenerated', newCodes.length, 'fresh recovery codes (v' + (isV2 ? '2' : '1') + ')');
+  console.log('[protect] regenerated', newCodes.length, 'fresh recovery codes');
 }
 
 function revealRecoveryCodes() {
