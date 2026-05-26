@@ -1521,12 +1521,19 @@ function _refreshBudgetEmptyState() {
   const accountsEl = document.getElementById('budget-panel-accounts');
   const subnavEl   = document.getElementById('budget-subnav');
 
-  if (emptyEl)    emptyEl.style.display    = isEmpty ? 'block' : 'none';
+  if (emptyEl)    emptyEl.style.display    = (isEmpty && _budgetActivePanel === 'dashboard') ? 'block' : 'none';
+  // Dashboard hides when isEmpty so the larger budget-empty hero can take its
+  // place. Other panels stay live even on empty accounts — they have their
+  // own per-panel empty states (e.g. budget-spend-empty, "No accounts yet"),
+  // and we want the user to be able to tab between them from the subnav.
   if (dashEl)     dashEl.style.display     = isEmpty ? 'none' : (_budgetActivePanel === 'dashboard' ? 'block' : 'none');
-  if (billsEl)    billsEl.style.display    = isEmpty ? 'none' : (_budgetActivePanel === 'bills'     ? 'block' : 'none');
-  if (spendEl)    spendEl.style.display    = isEmpty ? 'none' : (_budgetActivePanel === 'spend'     ? 'block' : 'none');
-  if (accountsEl) accountsEl.style.display = isEmpty ? 'none' : (_budgetActivePanel === 'accounts'  ? 'block' : 'none');
-  if (subnavEl)   subnavEl.style.display   = isEmpty ? 'none' : 'flex';
+  if (billsEl)    billsEl.style.display    = (_budgetActivePanel === 'bills'     ? 'block' : 'none');
+  if (spendEl)    spendEl.style.display    = (_budgetActivePanel === 'spend'     ? 'block' : 'none');
+  if (accountsEl) accountsEl.style.display = (_budgetActivePanel === 'accounts'  ? 'block' : 'none');
+  // Subnav stays visible at all times so the user can navigate between Bills,
+  // Spend, and Accounts even with no data yet. Previously hidden on empty
+  // accounts, which left users stranded with only the Basic Mode link.
+  if (subnavEl)   subnavEl.style.display   = 'flex';
 }
 
 // ── Sub-nav switch ─────────────────────────────────────────────────────────
@@ -1551,6 +1558,22 @@ function budgetSwitchPanel(name) {
   if (accountsPanel) accountsPanel.style.display = (name === 'accounts') ? 'block' : 'none';
   const basicPanel = document.getElementById('budget-panel-basic');
   if (basicPanel) basicPanel.style.display = (name === 'basic') ? 'block' : 'none';
+  // Sync budget-empty visibility with the active panel. It's the dashboard's
+  // empty-state hero ("No bills yet" with CTA) and shouldn't bleed onto other
+  // panels. Recompute isEmpty here rather than caching from renderBudget —
+  // this function gets called from many places with stale state otherwise.
+  const _emptyEl = document.getElementById('budget-empty');
+  if (_emptyEl) {
+    const _isEmpty = !bills.some(b => !b.archived) && !budgetCategories.some(c => !c.archived) && !budgetAccounts.some(a => !a.archived);
+    _emptyEl.style.display = (_isEmpty && name === 'dashboard') ? 'block' : 'none';
+    // When on the dashboard with empty data, hide the dashboard panel so the
+    // empty hero takes its place. _refreshBudgetEmptyState already does this
+    // on initial render, but switching panels in JS bypasses it.
+    if (_isEmpty && name === 'dashboard') {
+      const _dashEl = document.getElementById('budget-panel-dashboard');
+      if (_dashEl) _dashEl.style.display = 'none';
+    }
+  }
   // Header action button — context-sensitive per panel
   const addBtn = document.getElementById('budget-add-bill-desktop');
   if (addBtn) {

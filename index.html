@@ -1433,9 +1433,6 @@
       <button id="protect-continue-btn" class="btn btn-primary btn-xl full" onclick="protectContinue()" disabled style="opacity:0.5">
         Continue →
       </button>
-      <p style="font-size:11px;color:var(--muted);text-align:center;margin-top:8px">
-        If the button stays grey, <button onclick="protectContinue()" style="background:none;border:none;color:var(--accent);font-size:11px;cursor:pointer;text-decoration:underline;padding:0">tap here to continue</button>.
-      </p>
       <p style="font-size:11px;color:var(--muted);margin-top:10px;text-align:center;line-height:1.5">You can manage passkeys and generate new recovery codes in Settings at any time.</p>
     </div>
 
@@ -4848,10 +4845,10 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
 <div id="card-tag-picker-modal" class="modal-overlay">
   <div class="modal" style="max-width:420px;padding:22px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <h3 style="font-size:15px;font-weight:700;margin:0"><svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg> Tags</h3>
+      <h3 id="card-tag-picker-title" style="font-size:15px;font-weight:700;margin:0"><svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg> Tags</h3>
       <button class="btn-icon" onclick="closeCardTagPicker()" title="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
     </div>
-    <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.5">Tap a tag to add or remove it from this item.</p>
+    <p id="card-tag-picker-hint" style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.5">Tap a tag to add or remove it from this item.</p>
     <div id="card-tag-picker-list" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:18px;min-height:24px"></div>
     <div style="border-top:1px solid var(--border);padding-top:14px">
       <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:8px">Create new tag</div>

@@ -9700,6 +9700,11 @@ let _cardTagPickerItemId = null;
 function openCardTagPicker(itemId) {
   _cardTagPickerItemId = itemId;
   _renderCardTagPicker();
+  // Per-item context: original heading ("Tags") with the helper line visible.
+  const title = document.getElementById('card-tag-picker-title');
+  const hint  = document.getElementById('card-tag-picker-hint');
+  if (title) title.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg> Tags';
+  if (hint)  hint.style.display = '';
   const modal = document.getElementById('card-tag-picker-modal');
   if (modal) modal.classList.add('active');
 }
@@ -9726,9 +9731,16 @@ function clearAllInlineFilters(btn) {
 function openCardTagPickerForCreate() {
   _cardTagPickerItemId = null;
   _renderCardTagPicker();
-  // Hide the toggle list (no item to toggle) and the helper text
+  // Create-only context: rebrand as "Tag editor" and remove both helper
+  // lines (the static hint and the dynamic intro). The form below speaks
+  // for itself — adding a hint here would just duplicate the section
+  // heading "Create new tag".
+  const title = document.getElementById('card-tag-picker-title');
+  const hint  = document.getElementById('card-tag-picker-hint');
+  if (title) title.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg> Tag editor';
+  if (hint)  hint.style.display = 'none';
   const list = document.getElementById('card-tag-picker-list');
-  if (list) list.innerHTML = `<p style="font-size:12px;color:var(--muted);margin:0">Create a new tag below — you can apply it to items afterwards.</p>`;
+  if (list) list.innerHTML = '';
   // _renderCardTagPicker bails when there's no item, so the colour swatches
   // never get built on first open from this entry point. Build them here
   // so the colour picker is visible on the very first invocation.
@@ -22969,7 +22981,12 @@ function renderGrocery() {
   document.body.classList.remove('grocery-multilist');
   const _editToggle = document.getElementById('grocery-edit-toggle');
   const _addItem    = document.querySelector('#view-grocery .btn-primary[onclick*="openAddGroceryItem"]');
-  if (_editToggle) _editToggle.style.display = '';
+  // Hide the Edit button when the active list is empty — there's nothing to
+  // edit, and offering the button leads to a fruitless "edit mode" with no
+  // rows visible. The +Add Item button stays visible because that's how
+  // the user populates an empty list.
+  const _activeItemCount = groceryItems.filter(i => !i._deletedAt && (i.listId || 'default') === activeGroceryListId).length;
+  if (_editToggle) _editToggle.style.display = (_activeItemCount === 0) ? 'none' : '';
   if (_addItem)    _addItem.style.display    = '';
 
   cleanGroceryOrder();
