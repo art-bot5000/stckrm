@@ -20589,29 +20589,71 @@ function openChangePassphrase() {
 
 async function kvChangePassphrase(oldPass, newPass) {
   try {
-    // Verify old passphrase
+    if (!_kvKey) throw new Error('Not signed in');
+    // Verify old passphrase. Compute oldVerifier so we can also send it to
+    // the server as a credential (the server re-checks). Skip the local
+    // equality short-circuit if _kvVerifier is empty (passkey-only session).
     const oldVerifier = await kvMakeVerifier(oldPass, _kvEmailHash);
-    if (oldVerifier !== _kvVerifier) { toast('Current passphrase incorrect'); return; }
-    // Decrypt with old key, re-encrypt with new key
-    const oldKey    = await kvDeriveKey(_kvEmail, oldPass);
-    const newKey    = await kvDeriveKey(_kvEmail, newPass);
-    const newVerifier = await kvMakeVerifier(newPass, _kvEmailHash);
-    // Pull current ciphertext
-    const res = await postKV(`${WORKER_URL}/data/pull`, { emailHash: _kvEmailHash, verifier: _kvVerifier, household: activeProfile });
-    if (!res.ok) throw new Error('Could not fetch current data');
-    const { ciphertext } = await res.json();
-    if (ciphertext) {
-      const plain      = await kvDecrypt(oldKey, ciphertext);
-      const newCipher  = await kvEncrypt(newKey, plain);
-      // Push re-encrypted data with new verifier
-      await postKV(`${WORKER_URL}/data/push`, { emailHash: _kvEmailHash, verifier: newVerifier, household: activeProfile, ciphertext: newCipher });
+    if (_kvVerifier && oldVerifier !== _kvVerifier) {
+      toast('Current passphrase incorrect'); return;
     }
-    // Update session
-    _kvKey      = newKey;
+    // Build a fresh v2 passphrase envelope around the SAME data key — the
+    // bulk ciphertext is encrypted by the data key, not by the passphrase,
+    // so it stays untouched. Only the passphrase-wrapping layer changes.
+    const newKdfSalt   = generateKdfSalt();
+    const newWrapKey   = await derivePassphraseWrapKeyV2(newPass, _kvEmailHash, newKdfSalt);
+    const newEnvelope  = await wrapDataKeyV2(_kvKey, newWrapKey);
+    const newVerifier  = await kvMakeVerifier(newPass, _kvEmailHash);
+    // Random legacy v1 salt — server schema requires the field, but v2
+    // unwrap ignores it (uses kdfSalt instead).
+    const newSalt = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    // Dual auth path: prefer sessionToken on passkey sessions, fall back
+    // to the OLD verifier (the server is verifying the current passphrase).
+    const authBody = (_kvSessionToken && !_kvVerifier)
+      ? { sessionToken: _kvSessionToken }
+      : { verifier: oldVerifier };
+    const res = await postKV(`${WORKER_URL}/key/update-passphrase`, {
+      emailHash: _kvEmailHash,
+      ...authBody,
+      newVerifier,
+      newSalt,
+      newEnvelope,
+      newKdfSalt,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (res.status === 401) { toast('Current passphrase incorrect'); return; }
+      throw new Error(data.error || 'Server rejected the change');
+    }
+    // Update in-memory + stored session with the new verifier. The data key
+    // is unchanged so _kvKey stays as-is and no re-sync is needed.
     _kvVerifier = newVerifier;
-    try { localStorage.setItem('stockroom_kv_session', JSON.stringify({ email: _kvEmail, emailHash: _kvEmailHash, verifier: newVerifier })); } catch(e) {}
+    try {
+      const stored = JSON.parse(localStorage.getItem('stockroom_kv_session') || '{}');
+      localStorage.setItem('stockroom_kv_session', JSON.stringify({
+        ...stored,
+        email:     _kvEmail,
+        emailHash: _kvEmailHash,
+        verifier:  newVerifier,
+      }));
+    } catch(e) {}
+    // Refresh cached session-key envelope so it can still be decrypted on
+    // next page-load even though the passphrase changed (the cache key is
+    // wrapped by a device secret, not the passphrase — but the metadata
+    // includes emailHash which we want to keep current).
+    try {
+      const exported = await crypto.subtle.exportKey('raw', _kvKey);
+      const keyB64   = btoa(String.fromCharCode(...new Uint8Array(exported)));
+      await lsSetEncrypted('stockroom_kv_session_key', {
+        keyData: keyB64, emailHash: _kvEmailHash,
+        expiry: Date.now() + 4 * 60 * 60 * 1000,
+      });
+    } catch(e) {}
     toast('Passphrase changed ✓');
-  } catch(err) { toast('Could not change passphrase: ' + err.message); }
+  } catch(err) {
+    console.warn('kvChangePassphrase:', err);
+    toast('Could not change passphrase: ' + err.message);
+  }
 }
 
 // ── Sync Queue — visual feedback for pending changes ──────
