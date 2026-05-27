@@ -46,9 +46,23 @@
 // pattern.
 
 // One-time load-order sanity check.
+// Uses lexical `typeof` (not `typeof window.X`) because `items` and
+// `settings` are declared as `let` in app.js — they live in module scope,
+// not on the global object. The previous `window[name]` lookup was
+// always falsy for those two, so this check fired the error on every
+// cold page load regardless of whether the load order was actually
+// correct. Now the check correctly verifies that the symbols are
+// accessible from demo.js's lexical scope, which is what the rest of
+// demo.js actually needs (it calls toast(), dbPut(), items.push(), etc.
+// directly, not via window).
 (function _demoLoadOrderCheck() {
-  const required = ['toast', 'dbPut', 'items', 'settings'];
-  const missing  = required.filter(name => typeof window[name] === 'undefined');
+  const checks = {
+    toast:    typeof toast,
+    dbPut:    typeof dbPut,
+    items:    typeof items,
+    settings: typeof settings,
+  };
+  const missing = Object.keys(checks).filter(k => checks[k] === 'undefined');
   if (missing.length > 0) {
     console.error('[demo.js] Missing globals at load time:', missing,
       '— check script order in index.html');
