@@ -7,11 +7,11 @@ COPY styles.css index.html landing.html ./
 COPY sw.js manifest.json admin.html diag-trusted.html ./
 COPY logo.png ./
 RUN mkdir -p public && \
-    npx terser app.js     --compress --mangle --comments false -o public/app.js && \
-    npx terser budget.js  --compress --mangle --comments false -o public/budget.js && \
-    npx terser notes.js   --compress --mangle --comments false -o public/notes.js && \
-    npx terser demo.js    --compress --mangle --comments false -o public/demo.js && \
-    npx terser scanner.js --compress --mangle --comments false -o public/scanner.js && \
+    npx terser app.js     --compress passes=3 --mangle --comments false -o public/app.js && \
+    npx terser budget.js  --compress passes=3 --mangle --comments false -o public/budget.js && \
+    npx terser notes.js   --compress passes=3 --mangle --comments false -o public/notes.js && \
+    npx terser demo.js    --compress passes=3 --mangle --comments false -o public/demo.js && \
+    npx terser scanner.js --compress passes=3 --mangle --comments false -o public/scanner.js && \
     npx cleancss -o public/styles.css styles.css && \
     npx html-minifier-terser index.html \
       --collapse-whitespace --remove-comments --remove-optional-tags \
@@ -27,7 +27,8 @@ RUN mkdir -p public && \
     cp manifest.json public/manifest.json && \
     cp admin.html public/admin.html && \
     cp diag-trusted.html public/diag-trusted.html && \
-    cp logo.png public/logo.png
+    cp logo.png public/logo.png && \
+    (cp logo.webp public/logo.webp 2>/dev/null || true)
 
 FROM denoland/deno:2.3.1
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && \

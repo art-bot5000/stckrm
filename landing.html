@@ -15,7 +15,15 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <!-- Tier 3.6: non-blocking Google Fonts. The preload + media=print + onload
+       pattern lets the browser start fetching the stylesheet immediately
+       without blocking first paint. The noscript fallback ensures fonts
+       still load if JS is disabled. font-display=swap (in the URL) means
+       text renders in the fallback font immediately, then swaps when
+       Inter/Instrument Serif/JetBrains Mono finish loading. -->
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;700&display=swap">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
 
   <style>
     :root {
@@ -1174,7 +1182,10 @@
 <header>
   <div class="header-inner">
     <a class="brand" href="/" aria-label="STCKRM home">
-      <img src="/logo.png" alt="" class="brand-logo" width="46" height="34">
+      <picture>
+        <source srcset="/logo.webp" type="image/webp">
+        <img src="/logo.png" alt="" class="brand-logo" width="46" height="34">
+      </picture>
       <span>STCKRM</span>
     </a>
     <div class="header-actions">
@@ -1835,7 +1846,10 @@
 <footer>
   <div class="footer-inner">
     <a class="brand" href="/">
-      <img src="/logo.png" alt="" class="brand-logo" width="46" height="34">
+      <picture>
+        <source srcset="/logo.webp" type="image/webp">
+        <img src="/logo.png" alt="" class="brand-logo" width="46" height="34">
+      </picture>
       <span>STCKRM</span>
     </a>
     <div class="footer-links">
