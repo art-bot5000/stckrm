@@ -12140,11 +12140,17 @@ function _getMobileTabs() {
 // Map a view name back to its .tab button in #tabs. Returns null if
 // the view isn't a swappable tab (e.g. report/billing/settings have
 // their own tab buttons but aren't part of the swap pool).
+// NOTE: must match BOTH quote styles because html-minifier-terser with
+// --minify-js rewrites onclick="showView('x',this)" into
+// onclick='showView("x",this)'. The source has 'x'; the minified
+// production HTML has "x". Check for both.
 function _getTabButtonForView(view) {
   const tabs = document.querySelectorAll('#tabs > .tab');
+  const needleSingle = `'${view}'`;
+  const needleDouble = `"${view}"`;
   for (const t of tabs) {
     const oc = t.getAttribute('onclick') || '';
-    if (oc.includes(`'${view}'`)) return t;
+    if (oc.includes(needleSingle) || oc.includes(needleDouble)) return t;
   }
   return null;
 }
@@ -21431,7 +21437,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.querySelectorAll('.tab').forEach(btn => {
     const onclick = btn.getAttribute('onclick') || '';
-    const match   = onclick.match(/showView\('(\w+)'/);
+    // Match both 'view' (source) and "view" (minified production) — see
+    // _getTabButtonForView for the full explanation of the quote-swap.
+    const match   = onclick.match(/showView\(['"](\w+)['"]/);
     if (!match) return;
     const viewName = match[1];
     const prewarm  = () => prewarmView(viewName);

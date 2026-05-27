@@ -93,6 +93,42 @@ Disallow: /admin
 "
     }
 
+    # ─────────────────────────────────────────────────────────
+    # Host-based root routing
+    #
+    # stckrm.com / www.stckrm.com  →  serve landing.html at /
+    # app.stckrm.com (and any other Host)  →  serve index.html at / (PWA)
+    #
+    # Both hosts share the same file pool under /app/public so resources
+    # (CSS, JS, fonts, images) resolve from either origin. The only thing
+    # that differs is which HTML file is served when the user hits /.
+    #
+    # Logged-in users hitting stckrm.com should be redirected to
+    # app.stckrm.com by landing.html's own pre-paint JS — Caddy can't
+    # see auth state (it's in IndexedDB) so the redirect is client-side.
+    # ─────────────────────────────────────────────────────────
+    @landingHost host stckrm.com www.stckrm.com
+    handle @landingHost {
+        @rootPath path / /index.html
+        rewrite @rootPath /landing.html
+        root * /app/public
+        file_server
+
+        @html path *.html
+        header @html Cache-Control "no-cache, no-store, must-revalidate"
+
+        @assets path *.js *.css
+        header @assets Cache-Control "public, max-age=31536000, immutable"
+
+        header {
+            X-Content-Type-Options "nosniff"
+            X-Frame-Options "DENY"
+            Referrer-Policy "strict-origin-when-cross-origin"
+            Permissions-Policy "camera=*, microphone=()"
+            -Server
+        }
+    }
+
     handle {
         root * /app/public
         file_server
@@ -128,6 +164,7 @@ RUN npm install
 COPY app.js budget.js notes.js demo.js scanner.js ./
 COPY styles.css index.html landing.html ./
 COPY sw.js manifest.json admin.html diag-trusted.html ./
+COPY logo.png ./
 RUN mkdir -p public && \\
     npx terser app.js     --compress --mangle --comments false -o public/app.js && \\
     npx terser budget.js  --compress --mangle --comments false -o public/budget.js && \\
@@ -148,7 +185,8 @@ RUN mkdir -p public && \\
     cp sw.js public/sw.js && \\
     cp manifest.json public/manifest.json && \\
     cp admin.html public/admin.html && \\
-    cp diag-trusted.html public/diag-trusted.html
+    cp diag-trusted.html public/diag-trusted.html && \\
+    cp logo.png public/logo.png
 
 FROM denoland/deno:2.3.1
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && \\

@@ -613,10 +613,19 @@
        the new single-row design they're hidden via the dynamic
        [data-mobile-tab="off"] attribute set by _applyMobileTabLayout
        in app.js — that lets the user customise which three appear in
-       the main row from the burger menu's Edit button. */
+       the main row from the burger menu's Edit button.
+       NOTE: dual quote styles below are required because html-minifier-terser
+       with --minify-js rewrites `onclick="showView('x',this)"` into
+       `onclick='showView("x",this)'`, swapping outer/inner quotes. The
+       single-quote selector matches the source; the &quot;x&quot; selector
+       matches the minified production HTML. Both are kept so the rule
+       works in dev and prod alike. */
     #tabs > .tab[onclick*="'report'"],
     #tabs > .tab[onclick*="'billing'"],
-    #tabs > .tab[onclick*="'settings'"] { display: none; }
+    #tabs > .tab[onclick*="'settings'"],
+    #tabs > .tab[onclick*='"report"'],
+    #tabs > .tab[onclick*='"billing"'],
+    #tabs > .tab[onclick*='"settings"'] { display: none; }
   }
 
   /* Dynamic mobile-tab visibility — applied at ≤600px only. At
