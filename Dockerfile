@@ -2,20 +2,30 @@ FROM node:22-slim AS builder
 WORKDIR /build
 COPY package.json ./
 RUN npm install
-COPY src/ ./src/
+COPY app.js budget.js notes.js demo.js scanner.js ./
+COPY styles.css index.html landing.html ./
+COPY sw.js manifest.json admin.html diag-trusted.html ./
 RUN mkdir -p public && \
-    npx terser src/app.js --compress --mangle --comments false -o public/app.js && \
-    npx terser src/budget.js --compress --mangle --comments false -o public/budget.js && \
-    npx terser src/scanner.js --compress --mangle --comments false -o public/scanner.js && \
-    npx cleancss -o public/styles.css src/styles.css && \
-    npx html-minifier-terser src/index.html \
+    npx terser app.js     --compress --mangle --comments false -o public/app.js && \
+    npx terser budget.js  --compress --mangle --comments false -o public/budget.js && \
+    npx terser notes.js   --compress --mangle --comments false -o public/notes.js && \
+    npx terser demo.js    --compress --mangle --comments false -o public/demo.js && \
+    npx terser scanner.js --compress --mangle --comments false -o public/scanner.js && \
+    npx cleancss -o public/styles.css styles.css && \
+    npx html-minifier-terser index.html \
       --collapse-whitespace --remove-comments --remove-optional-tags \
       --remove-redundant-attributes --remove-script-type-attributes \
       --remove-tag-whitespace --minify-css true --minify-js true \
       -o public/index.html && \
-    cp src/sw.js public/sw.js && \
-    cp src/manifest.json public/manifest.json && \
-    cp src/admin.html public/admin.html
+    npx html-minifier-terser landing.html \
+      --collapse-whitespace --remove-comments --remove-optional-tags \
+      --remove-redundant-attributes --remove-script-type-attributes \
+      --remove-tag-whitespace --minify-css true --minify-js true \
+      -o public/landing.html && \
+    cp sw.js public/sw.js && \
+    cp manifest.json public/manifest.json && \
+    cp admin.html public/admin.html && \
+    cp diag-trusted.html public/diag-trusted.html
 
 FROM denoland/deno:2.3.1
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && \
