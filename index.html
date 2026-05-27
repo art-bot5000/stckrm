@@ -1656,6 +1656,10 @@
     <svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg>
     <span>Billing</span>
   </button>
+  <button class="mobile-menu-item" data-view="accessibility" onclick="navFromMobileMenu('accessibility')">
+    <svg class="icon icon-tab" aria-hidden="true"><use href="#i-eye"></use></svg>
+    <span>Accessibility</span>
+  </button>
   <button class="mobile-menu-item" data-view="account-security" onclick="navFromMobileMenu('account-security')">
     <svg class="icon icon-tab" aria-hidden="true"><use href="#i-shield"></use></svg>
     <span>Account &amp; Security</span>
@@ -1765,6 +1769,7 @@
       <span id="notif-sidebar-badge" class="notif-sidebar-badge" style="display:none">0</span>
     </button>
     <button class="app-nav-link" data-view="billing" onclick="navTo('billing')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg> <span>Billing</span></button>
+    <button class="app-nav-link" data-view="accessibility" onclick="navTo('accessibility')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-eye"></use></svg> <span>Accessibility</span></button>
     <button class="app-nav-link" data-view="account-security" onclick="navTo('account-security')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shield"></use></svg> <span>Account &amp; Security</span></button>
     <button class="app-nav-link" data-view="settings" onclick="navTo('settings')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg> <span>Settings</span></button>
   </div>
@@ -2732,6 +2737,69 @@
     </div>
   </div>
 
+  <!-- ═══ ACCESSIBILITY VIEW ═══
+       Standalone settings view for accessibility preferences. Modelled on
+       Account & Security and Settings — uses the same .acc-sec-section /
+       .acc-sec-card / .acc-sec-row scaffolding so the page width and
+       padding match exactly on desktop, and the .view-header title sits
+       in the same vertical position.
+
+       The Theme picker and Text size picker were moved here from
+       Settings → Preferences. Searching for "theme", "text size",
+       "dark mode", "high contrast" etc. in the omnibox surfaces inline
+       editable controls (see _renderSearchAccessibilityChip in app.js),
+       so users don't need to navigate here to change a preference. -->
+  <div class="view" id="view-accessibility">
+    <h2 class="view-header" style="font-size:18px;font-weight:700"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-eye"></use></svg> Accessibility</h2>
+
+    <!-- ── DISPLAY ────────────────────────────────────── -->
+    <div class="acc-sec-section" style="margin-bottom:20px">
+      <div class="acc-sec-section-title"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-monitor"></use></svg> Display</div>
+      <div class="acc-sec-card">
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Theme</div>
+            <div class="acc-sec-p">Match system, or pick a fixed look. High contrast maximises readability for low-vision users.</div>
+          </div>
+          <div class="theme-seg" role="radiogroup" aria-label="Theme">
+            <button type="button" class="theme-seg-btn" id="theme-seg-system" role="radio" aria-checked="true" onclick="setTheme('system')" title="Match system setting">
+              <svg class="icon" aria-hidden="true"><use href="#i-monitor"></use></svg>System
+            </button>
+            <button type="button" class="theme-seg-btn" id="theme-seg-light" role="radio" aria-checked="false" onclick="setTheme('light')" title="Always light">
+              <svg class="icon" aria-hidden="true"><use href="#i-sun"></use></svg>Light
+            </button>
+            <button type="button" class="theme-seg-btn" id="theme-seg-dark" role="radio" aria-checked="false" onclick="setTheme('dark')" title="Always dark">
+              <svg class="icon" aria-hidden="true"><use href="#i-moon"></use></svg>Dark
+            </button>
+            <button type="button" class="theme-seg-btn" id="theme-seg-hc" role="radio" aria-checked="false" onclick="setTheme('hc')" title="High contrast — maximum readability">
+              <svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg>High contrast
+            </button>
+          </div>
+        </div>
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Text size</div>
+            <div class="acc-sec-p">Adjusts the size of body text for easier reading. Affects everything inside the main content area.</div>
+          </div>
+          <div class="theme-seg" role="radiogroup" aria-label="Text size">
+            <button type="button" class="theme-seg-btn" id="textscale-seg-s"  role="radio" aria-checked="false" onclick="setTextScale('s')"  title="Small text">
+              <span style="font-size:11px;font-weight:700">S</span>
+            </button>
+            <button type="button" class="theme-seg-btn" id="textscale-seg-m"  role="radio" aria-checked="true"  onclick="setTextScale('m')"  title="Medium (default)">
+              <span style="font-size:13px;font-weight:700">M</span>
+            </button>
+            <button type="button" class="theme-seg-btn" id="textscale-seg-l"  role="radio" aria-checked="false" onclick="setTextScale('l')"  title="Large text">
+              <span style="font-size:15px;font-weight:700">L</span>
+            </button>
+            <button type="button" class="theme-seg-btn" id="textscale-seg-xl" role="radio" aria-checked="false" onclick="setTextScale('xl')" title="Extra large text">
+              <span style="font-size:17px;font-weight:700">XL</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="view" id="view-settings">
     <h2 class="view-header" style="font-size:18px;font-weight:700"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-settings"></use></svg> Settings</h2>
 
@@ -3029,46 +3097,6 @@
           <select id="setting-threshold" onchange="saveSettings()" aria-label="Low stock warning threshold (%)" style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
             <option value="10">10%</option><option value="15">15%</option><option value="20" selected>20%</option><option value="25">25%</option><option value="33">33%</option>
           </select>
-        </div>
-        <div class="acc-sec-row">
-          <div class="acc-sec-label">
-            <div class="acc-sec-h">Theme</div>
-            <div class="acc-sec-p">Match system, or pick a fixed look</div>
-          </div>
-          <div class="theme-seg" role="radiogroup" aria-label="Theme">
-            <button type="button" class="theme-seg-btn" id="theme-seg-system" role="radio" aria-checked="true" onclick="setTheme('system')" title="Match system setting">
-              <svg class="icon" aria-hidden="true"><use href="#i-monitor"></use></svg>System
-            </button>
-            <button type="button" class="theme-seg-btn" id="theme-seg-light" role="radio" aria-checked="false" onclick="setTheme('light')" title="Always light">
-              <svg class="icon" aria-hidden="true"><use href="#i-sun"></use></svg>Light
-            </button>
-            <button type="button" class="theme-seg-btn" id="theme-seg-dark" role="radio" aria-checked="false" onclick="setTheme('dark')" title="Always dark">
-              <svg class="icon" aria-hidden="true"><use href="#i-moon"></use></svg>Dark
-            </button>
-            <button type="button" class="theme-seg-btn" id="theme-seg-hc" role="radio" aria-checked="false" onclick="setTheme('hc')" title="High contrast — maximum readability">
-              <svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg>High contrast
-            </button>
-          </div>
-        </div>
-        <div class="acc-sec-row">
-          <div class="acc-sec-label">
-            <div class="acc-sec-h">Text size</div>
-            <div class="acc-sec-p">Adjusts the size of body text for easier reading</div>
-          </div>
-          <div class="theme-seg" role="radiogroup" aria-label="Text size">
-            <button type="button" class="theme-seg-btn" id="textscale-seg-s"  role="radio" aria-checked="false" onclick="setTextScale('s')"  title="Small text">
-              <span style="font-size:11px;font-weight:700">S</span>
-            </button>
-            <button type="button" class="theme-seg-btn" id="textscale-seg-m"  role="radio" aria-checked="true"  onclick="setTextScale('m')"  title="Medium (default)">
-              <span style="font-size:13px;font-weight:700">M</span>
-            </button>
-            <button type="button" class="theme-seg-btn" id="textscale-seg-l"  role="radio" aria-checked="false" onclick="setTextScale('l')"  title="Large text">
-              <span style="font-size:15px;font-weight:700">L</span>
-            </button>
-            <button type="button" class="theme-seg-btn" id="textscale-seg-xl" role="radio" aria-checked="false" onclick="setTextScale('xl')" title="Extra large text">
-              <span style="font-size:17px;font-weight:700">XL</span>
-            </button>
-          </div>
         </div>
         <div class="acc-sec-row">
           <div class="acc-sec-label">

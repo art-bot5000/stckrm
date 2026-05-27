@@ -4399,7 +4399,7 @@ const _GLOBAL_SEARCH = {
   cachedSettingsIndex: null,
   // Render order — current view first (computed at render time), then this
   // fixed order for the rest. Empty sections are omitted entirely.
-  sectionOrder: ['stock', 'grocery', 'notes', 'reminders', 'budget', 'savings', 'report', 'billing', 'account-security', 'settings'],
+  sectionOrder: ['stock', 'grocery', 'notes', 'reminders', 'budget', 'savings', 'report', 'billing', 'accessibility', 'account-security', 'settings'],
   sectionMeta: {
     stock:             { label: 'Stockroom',          icon: 'i-package',        view: 'stock' },
     grocery:           { label: 'Groceries',          icon: 'i-shopping-cart',  view: 'grocery' },
@@ -4409,6 +4409,7 @@ const _GLOBAL_SEARCH = {
     savings:           { label: 'Savings',            icon: 'i-piggy-bank',     view: 'savings' },
     report:            { label: 'Report',             icon: 'i-clipboard-list', view: 'report' },
     billing:           { label: 'Billing',            icon: 'i-credit-card',    view: 'billing' },
+    accessibility:     { label: 'Accessibility',      icon: 'i-eye',            view: 'accessibility' },
     'account-security':{ label: 'Account & Security', icon: 'i-shield',         view: 'account-security' },
     settings:          { label: 'Settings',           icon: 'i-settings',       view: 'settings' },
   },
@@ -4590,6 +4591,7 @@ function runGlobalSearch(query) {
     report:            _searchStaticView(q, 'report'),
     billing:           _searchStaticView(q, 'billing'),
     'account-security':_searchStaticView(q, 'account-security'),
+    accessibility:     _searchAccessibility(q),
     settings:          _searchStaticView(q, 'settings'),
   };
 
@@ -4733,10 +4735,13 @@ function _renderSearchSection(sectionKey, section, isCurrent, query) {
 function _renderSearchRow(r, sectionKey, query) {
   // r.id is encoded with sectionKey to keep it unique across sections so the
   // tap handler can route correctly. We pass through view + target separately.
-  // Chip-style records (direct-hit Budget accounts / categories) get richer
-  // rendering with inline action buttons. Plain rows are unchanged.
+  // Chip-style records (direct-hit Budget accounts / categories, and the
+  // inline accessibility controls) get richer rendering. Plain rows fall
+  // through to the standard render below.
   if (r.chip === 'account')  return _renderSearchAccountChip(r, query);
   if (r.chip === 'category') return _renderSearchCategoryChip(r, query);
+  if (r.chip === 'accessibility-theme')     return _renderSearchAccessibilityThemeChip();
+  if (r.chip === 'accessibility-textscale') return _renderSearchAccessibilityTextScaleChip();
   const titleHTML = _highlightMatch(r.title || '', query);
   const subHTML   = r.sub ? _highlightMatch(r.sub, query) : '';
   // State badge for archived / deleted matches — surfaced because the
@@ -6042,6 +6047,125 @@ function _searchStaticView(q, viewKey) {
   return { results: out.slice(0, _SEARCH_RESULTS_PER_SECTION), hasMore: out.length > _SEARCH_RESULTS_PER_SECTION };
 }
 
+// ── Accessibility section search ─────────────────────────────────────────
+// Returns chip-style rows that embed the actual control inline in the
+// search results. Users can change theme or text size without leaving
+// the omnibox / search results panel.
+//
+// Synonym buckets recognise the common natural-language ways someone
+// might phrase the search — "dark" surfaces the Theme chip; "bigger"
+// surfaces the Text size chip; "high contrast" or "low vision" surfaces
+// the Theme chip with HC pre-targeted. Each chip renders the same
+// segmented control as the Accessibility view itself, and the buttons
+// share ids — so clicking inline updates the Accessibility view's
+// segmented control in-place via _updateThemeUI / _updateTextScaleUI.
+const _ACCESSIBILITY_THEME_SYNS = [
+  'theme', 'themes', 'appearance', 'colour scheme', 'color scheme',
+  'dark', 'dark mode', 'light', 'light mode',
+  'high contrast', 'high-contrast', 'hc',
+  'contrast', 'low vision', 'visual'
+];
+const _ACCESSIBILITY_TEXTSIZE_SYNS = [
+  'text size', 'text-size', 'textsize', 'font size', 'font-size', 'fontsize',
+  'text scale', 'text-scale', 'textscale',
+  'larger text', 'bigger text', 'smaller text',
+  'large text', 'big text', 'small text',
+  'readable', 'readability', 'legibility',
+  'xl', 'larger', 'bigger', 'smaller'
+];
+
+function _searchAccessibility(q) {
+  // Standard DOM-harvested entries first so labels like "Display" or the
+  // visible "Theme" / "Text size" headers still produce normal nav rows.
+  // The user can tap one of those to land on the full Accessibility view.
+  const baseline = _searchStaticView(q, 'accessibility');
+  const out = [];
+  const matchAny = (arr) => arr.some(syn => q.includes(syn) || syn.includes(q));
+  if (matchAny(_ACCESSIBILITY_THEME_SYNS)) {
+    out.push({ chip: 'accessibility-theme', view: 'accessibility', target: 'view-accessibility' });
+  }
+  if (matchAny(_ACCESSIBILITY_TEXTSIZE_SYNS)) {
+    out.push({ chip: 'accessibility-textscale', view: 'accessibility', target: 'view-accessibility' });
+  }
+  // De-dupe baseline rows that would point at the same in-view targets
+  // we're already showing inline (Theme / Text size headers).
+  const hasChipTheme = out.some(o => o.chip === 'accessibility-theme');
+  const hasChipScale = out.some(o => o.chip === 'accessibility-textscale');
+  const filteredBaseline = (baseline.results || []).filter(r => {
+    const t = (r.title || '').toLowerCase();
+    if (hasChipTheme && t === 'theme') return false;
+    if (hasChipScale && (t === 'text size' || t === 'text-size')) return false;
+    return true;
+  });
+  // Chips first (they're the actionable controls), then any other
+  // baseline rows (e.g. "Display" section header) for context.
+  return {
+    results: [...out, ...filteredBaseline].slice(0, _SEARCH_RESULTS_PER_SECTION),
+    hasMore: false
+  };
+}
+
+// Renders the Theme segmented control inline in a search-result row.
+// Each button uses a distinct DOM id (suffixed with -inline) so it
+// doesn't collide with the one in the Accessibility view itself. Both
+// the inline buttons AND the in-view buttons update via setTheme(),
+// which calls _updateThemeUI() — which finds every theme-seg-btn with
+// the matching id pattern and updates them all in sync. (See the
+// updated _updateThemeUI for how this works.)
+function _renderSearchAccessibilityThemeChip() {
+  const current = (settings && settings.theme) || 'system';
+  const opts = [
+    { id: 'system', label: 'System',        icon: 'i-monitor', title: 'Match system setting' },
+    { id: 'light',  label: 'Light',         icon: 'i-sun',     title: 'Always light' },
+    { id: 'dark',   label: 'Dark',          icon: 'i-moon',    title: 'Always dark' },
+    { id: 'hc',     label: 'High contrast', icon: 'i-eye',     title: 'High contrast — maximum readability' },
+  ];
+  const buttons = opts.map(o => `
+    <button type="button" class="theme-seg-btn ${current === o.id ? 'active' : ''}"
+            id="theme-seg-${o.id}-inline"
+            role="radio"
+            aria-checked="${current === o.id ? 'true' : 'false'}"
+            onclick="event.stopPropagation();setTheme('${o.id}')"
+            title="${esc(o.title)}">
+      <svg class="icon" aria-hidden="true"><use href="#${o.icon}"></use></svg>${esc(o.label)}
+    </button>`).join('');
+  return `<div class="global-search-row search-row-chip search-row-accessibility-chip">
+    <svg class="global-search-row-icon" aria-hidden="true"><use href="#i-monitor"></use></svg>
+    <div class="global-search-row-body">
+      <div class="global-search-row-title">Theme</div>
+      <div class="global-search-row-sub">Tap to change — applies everywhere</div>
+      <div class="theme-seg search-row-inline-seg" role="radiogroup" aria-label="Theme">${buttons}</div>
+    </div>
+  </div>`;
+}
+
+function _renderSearchAccessibilityTextScaleChip() {
+  const current = (settings && settings.textScale) || 'm';
+  const opts = [
+    { id: 's',  label: 'S',  fs: 11, title: 'Small text' },
+    { id: 'm',  label: 'M',  fs: 13, title: 'Medium (default)' },
+    { id: 'l',  label: 'L',  fs: 15, title: 'Large text' },
+    { id: 'xl', label: 'XL', fs: 17, title: 'Extra large text' },
+  ];
+  const buttons = opts.map(o => `
+    <button type="button" class="theme-seg-btn ${current === o.id ? 'active' : ''}"
+            id="textscale-seg-${o.id}-inline"
+            role="radio"
+            aria-checked="${current === o.id ? 'true' : 'false'}"
+            onclick="event.stopPropagation();setTextScale('${o.id}')"
+            title="${esc(o.title)}">
+      <span style="font-size:${o.fs}px;font-weight:700">${o.label}</span>
+    </button>`).join('');
+  return `<div class="global-search-row search-row-chip search-row-accessibility-chip">
+    <svg class="global-search-row-icon" aria-hidden="true"><use href="#i-eye"></use></svg>
+    <div class="global-search-row-body">
+      <div class="global-search-row-title">Text size</div>
+      <div class="global-search-row-sub">Tap to change — affects main content</div>
+      <div class="theme-seg search-row-inline-seg" role="radiogroup" aria-label="Text size">${buttons}</div>
+    </div>
+  </div>`;
+}
+
 function _ensureSettingsIndex() {
   if (_GLOBAL_SEARCH.cachedSettingsIndex) return _GLOBAL_SEARCH.cachedSettingsIndex;
   const idx = {};
@@ -6049,6 +6173,7 @@ function _ensureSettingsIndex() {
     report:             'view-report',
     billing:            'view-billing',
     'account-security': 'view-account-security',
+    accessibility:      'view-accessibility',
     settings:           'view-settings',
   };
   for (const [viewKey, elId] of Object.entries(VIEW_IDS)) {
@@ -12417,6 +12542,15 @@ function showView(name, btn) {
   if (name === 'budget')    renderBudget();
   if (name === 'notes')     { if (billingLocked === 'notes') _renderBillingLockscreen('notes'); else { renderNotes(); setTimeout(_maybeShowMfaPrompt, 600); } }
   if (name === 'account-security') renderAccountSecurity();
+  if (name === 'accessibility') {
+    // Sync the Theme and Text size segmented controls to the current
+    // settings. These pickers live in the new Accessibility view but
+    // are also embedded inline in omnibox search results (see
+    // _renderSearchAccessibilityChip) — both share the same DOM ids,
+    // so calling the same UI-update helpers keeps them in sync.
+    _updateThemeUI();
+    _updateTextScaleUI();
+  }
   if (name === 'billing') {
     // Refresh status (force) and re-render the page. _renderBillingPage()
     // is called both immediately (with cached data) and when the fresh
@@ -12461,7 +12595,7 @@ function showView(name, btn) {
   // instead. Keeps the screen focused on the section the user navigated into
   // from the burger. _previousMainView remembers the last non-burger view so
   // the back button knows where to return.
-  const BURGER_VIEWS = ['report', 'billing', 'settings', 'account-security'];
+  const BURGER_VIEWS = ['report', 'billing', 'settings', 'account-security', 'accessibility'];
   const isBurgerView = BURGER_VIEWS.includes(name);
   if (!isBurgerView) {
     // Remember every non-burger view we visit. When the user later taps a
@@ -21077,11 +21211,19 @@ function setTheme(pref) {
 function _updateThemeUI() {
   const pref = (settings && settings.theme) || 'system';
   ['system', 'light', 'dark', 'hc'].forEach(opt => {
-    const btn = document.getElementById('theme-seg-' + opt);
-    if (!btn) return;
-    const active = opt === pref;
-    btn.classList.toggle('active', active);
-    btn.setAttribute('aria-checked', active ? 'true' : 'false');
+    // The same logical button may appear in two places at once:
+    //  - theme-seg-<opt>          : the Accessibility view's picker
+    //  - theme-seg-<opt>-inline   : the inline picker rendered in an
+    //                                omnibox search result
+    // Both are updated so the UI stays consistent regardless of where
+    // the user changed the value.
+    [opt, opt + '-inline'].forEach(idSuffix => {
+      const btn = document.getElementById('theme-seg-' + idSuffix);
+      if (!btn) return;
+      const active = opt === pref;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-checked', active ? 'true' : 'false');
+    });
   });
 }
 
@@ -21110,11 +21252,15 @@ function setTextScale(pref) {
 function _updateTextScaleUI() {
   const pref = (settings && settings.textScale) || 'm';
   ['s', 'm', 'l', 'xl'].forEach(opt => {
-    const btn = document.getElementById('textscale-seg-' + opt);
-    if (!btn) return;
-    const active = opt === pref;
-    btn.classList.toggle('active', active);
-    btn.setAttribute('aria-checked', active ? 'true' : 'false');
+    // Both the in-view picker and the inline omnibox chip use the same
+    // logical button — see _updateThemeUI for the pattern rationale.
+    [opt, opt + '-inline'].forEach(idSuffix => {
+      const btn = document.getElementById('textscale-seg-' + idSuffix);
+      if (!btn) return;
+      const active = opt === pref;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-checked', active ? 'true' : 'false');
+    });
   });
 }
 

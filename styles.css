@@ -4772,8 +4772,7 @@ body.has-demo-banner #view-notes #notes-header {
   background: rgba(232,168,56,0.25);
   color: var(--text);
   border-radius: 2px;
-  padding: 0 1px;
-}
+  padding: 0 1px;}
 
 /* ── State badges + faded rows for archived / deleted matches ──
    Filter bar at the bottom of the result panel can reveal these. Faded
@@ -4812,6 +4811,38 @@ body.has-demo-banner #view-notes #notes-header {
   background: rgba(220,80,80,0.15);
   color: #c45757;
   border: 1px solid rgba(220,80,80,0.30);
+}
+
+/* ── Inline accessibility chips in search results ──
+   The Theme + Text size pickers can be rendered inline in omnibox
+   search results so users can change them without leaving the
+   omnibox. These rows differ from regular results in two ways:
+     - They contain a segmented control (.theme-seg) inside the body
+     - They're not clickable themselves (the segmented buttons are);
+       so we suppress the hover/active highlight and pointer cursor.
+   The row still has padding for vertical balance with neighbouring
+   rows; the segmented control wraps on narrow viewports because
+   .theme-seg already has flex-wrap from Tier 2.4. */
+.global-search-row.search-row-accessibility-chip {
+  cursor: default;
+  align-items: flex-start;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+.global-search-row.search-row-accessibility-chip:hover,
+.global-search-row.search-row-accessibility-chip.active {
+  background: transparent;
+  border-left-color: transparent;
+}
+.global-search-row.search-row-accessibility-chip .global-search-row-icon {
+  margin-top: 2px;
+}
+.global-search-row.search-row-accessibility-chip .global-search-row-title,
+.global-search-row.search-row-accessibility-chip .global-search-row-sub {
+  white-space: normal;
+}
+.search-row-inline-seg {
+  margin-top: 8px;
 }
 
 /* ── Grocery aggregation: "Also in N other lists" disclosure pill ──
