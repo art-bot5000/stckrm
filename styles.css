@@ -82,6 +82,95 @@
     --card-shadow: 0 0 0 1px #aaaaaa;     /* hard solid border replaces shadow */
     --card-shadow-hover: 0 0 0 2px var(--accent);
   }
+
+  /* ── HIGH CONTRAST OVERRIDES — hardcoded backgrounds ──────────────
+     Many elements throughout this stylesheet hardcode `rgba(26,29,39,...)`
+     (the dark --surface colour) or `rgba(15,17,23,...)` (the dark --bg
+     colour) instead of using var(--surface) / var(--bg). That was done
+     for the glassmorphism effect (controllable opacity), but it means
+     those backgrounds stay dark-slate in light AND high-contrast modes.
+
+     For HC specifically we want pure black for backgrounds and 1px solid
+     borders for definition (no soft shadows, no blur). These overrides
+     target every element that bypasses the variables. If more elements
+     are reported as "not high contrast" later, add them here.
+
+     We also re-style cards, items, and interactive areas to:
+       - Use 1px solid borders (not subtle 0.04 alpha)
+       - Drop backdrop-filter blur (which softens contrast)
+       - Apply strong outline rings on hover/active states */
+  html[data-theme="hc"] .glass,
+  html[data-theme="hc"] #tabs,
+  html[data-theme="hc"] .settings-card,
+  html[data-theme="hc"] .modal,
+  html[data-theme="hc"] .acc-sec-card,
+  html[data-theme="hc"] .settings-collapsible-header,
+  html[data-theme="hc"] .item-card,
+  html[data-theme="hc"] .note-card,
+  html[data-theme="hc"] .grocery-picker-card,
+  html[data-theme="hc"] #app-nav,
+  html[data-theme="hc"] #omnibox,
+  html[data-theme="hc"] .pop,
+  html[data-theme="hc"] .dropdown,
+  html[data-theme="hc"] .department-row,
+  html[data-theme="hc"] .budget-tab,
+  html[data-theme="hc"] .acc-sec-input,
+  html[data-theme="hc"] input,
+  html[data-theme="hc"] textarea,
+  html[data-theme="hc"] select {
+    background: var(--surface) !important;
+    border-color: var(--border) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: 0 0 0 1px var(--border) !important;
+  }
+  /* The sidebar nav and top header use --bg (pure black) not --surface
+     so they recede from the content while staying high contrast. */
+  html[data-theme="hc"] #app-nav,
+  html[data-theme="hc"] #app-header {
+    background: var(--bg) !important;
+    border-right: 2px solid var(--border) !important;
+  }
+  /* Hover and active states get a hard accent outline rather than a
+     soft glow/lift, so keyboard and touch users see clear feedback. */
+  html[data-theme="hc"] .item-card:hover,
+  html[data-theme="hc"] .note-card:hover,
+  html[data-theme="hc"] .grocery-picker-card:hover,
+  html[data-theme="hc"] .tab:hover,
+  html[data-theme="hc"] .btn:hover,
+  html[data-theme="hc"] .app-nav-link:hover {
+    box-shadow: 0 0 0 2px var(--accent) !important;
+    transform: none !important;  /* no lift effect — purely visual contrast */
+  }
+  /* Active tab gets the accent fill since it has highest informational
+     weight on the page. */
+  html[data-theme="hc"] .tab.active,
+  html[data-theme="hc"] .budget-tab.active,
+  html[data-theme="hc"] .app-nav-link.active {
+    background: var(--accent) !important;
+    color: #000000 !important;
+    box-shadow: 0 0 0 2px var(--accent) !important;
+  }
+  /* Buttons in HC: solid black-on-accent for primary, white-on-black
+     with thick border for secondary. */
+  html[data-theme="hc"] .btn-primary,
+  html[data-theme="hc"] button.primary {
+    background: var(--accent) !important;
+    color: #000000 !important;
+    border: 2px solid var(--accent) !important;
+  }
+  html[data-theme="hc"] .btn-secondary,
+  html[data-theme="hc"] button:not(.primary):not(.theme-seg-btn) {
+    background: var(--bg) !important;
+    color: var(--text) !important;
+    border: 2px solid var(--border) !important;
+  }
+  /* Subtle muted text needs to inherit the brighter --muted in HC. */
+  html[data-theme="hc"] .muted,
+  html[data-theme="hc"] .card-meta,
+  html[data-theme="hc"] small {
+    color: var(--muted) !important;
+  }
   /* Smooth crossfade when toggling theme — applied to props the
      theme actually changes. Skipped for users with reduced-motion. */
   html, body, .settings-card, .modal, .acc-sec-card, .item-card,
@@ -179,46 +268,30 @@
      Four-step scale (S/M/L/XL) set on <html data-text-scale="..."> by
      app.js when settings.textScale changes. Default ('m') is identity.
 
-     Strategy: scale only inherited body text — NOT buttons, inputs,
-     labels, or icons. Those have explicit font-sizes set for fit
-     reasons (button height, input padding, icon container), and
-     scaling them would break the layout. Users who need larger text
-     primarily want item names and body content larger, not chrome.
+     Strategy: use the non-standard but well-supported `zoom` property on
+     the <main> landmark. This scales everything inside #main — including
+     the 348+ hard-coded `font-size: NNpx` declarations in this stylesheet
+     — without needing surgical edits to each one.
 
-     The variable --text-scale is consumed in two places:
-       1. The base body font-size (inherits to most text)
-       2. Specific content-text classes that override the body size
-          (item names, card titles, note bodies, etc.)
-     Elements with explicit font-size declarations are unaffected,
-     which gives us per-element control. */
+     `zoom` is supported in Chrome, Edge, Safari, and Firefox (since Fx
+     126, May 2024). It affects layout (so buttons grow proportionally,
+     not just text), which is actually desirable here: the original goal
+     was "make body text bigger" and zoom does that AND keeps tap targets
+     usable.
+
+     Scope is limited to #main so the header, sidebar nav, and tab bar
+     stay at their designed sizes. Modals are out-of-flow and not
+     descendants of #main, but most modal content uses inline font-size
+     that the user can size via OS zoom if needed. A future pass could
+     extend this to #modal-root if user demand justifies it. */
   html { --text-scale: 1; }
   html[data-text-scale="s"]  { --text-scale: 0.875; }
   html[data-text-scale="m"]  { --text-scale: 1; }
   html[data-text-scale="l"]  { --text-scale: 1.15; }
   html[data-text-scale="xl"] { --text-scale: 1.30; }
 
-  /* Apply scale to inherited body text. Anything that doesn't have
-     its own font-size declaration will scale through inheritance. */
-  body { font-size: calc(14px * var(--text-scale)); }
-
-  /* Explicitly scale the high-impact content-text classes — these
-     have their own font-size declarations elsewhere in this stylesheet,
-     so they need to be reaffirmed here to pick up the scale. The
-     base size in each declaration is the original "m" value. */
-  .item-card .card-title,
-  .item-card .card-name,
-  .item-card .card-meta,
-  .note-card .note-body,
-  .note-card .note-title,
-  .grocery-picker-card .grocery-name,
-  .grocery-picker-card .grocery-meta,
-  .modal p,
-  .modal li,
-  .settings-card p,
-  .acc-sec-card p,
-  #notes-view p,
-  #notes-view li {
-    font-size: calc(1em * var(--text-scale));
+  #main {
+    zoom: var(--text-scale);
   }
 
   /* ── APP SIDEBAR NAV (desktop) ── */
