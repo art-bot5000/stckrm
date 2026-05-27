@@ -16,6 +16,7 @@ Categories audited:
   6. DB_STORES vs actual dbGet/dbPut calls in app.js
   7. Auth dual-path pattern in main.ts authenticated endpoints
   8. Stale write_dockerfile.py vs committed Dockerfile/Caddyfile/start.sh
+  9. Cross-origin resource fetches in landing.html / index.html (CORS hazard)
 
 This is a static analysis — no network calls, no DB queries. It just reads
 files and prints what's out of sync.
@@ -617,6 +618,94 @@ def audit_writedockerfile_drift():
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Audit 9 — Cross-origin resource fetches (CORS hazard)
+# ─────────────────────────────────────────────────────────────────────────
+
+def audit_cross_origin_fetches():
+    header("9. Cross-origin resource fetches in landing.html / index.html")
+
+    # The two production hosts the app uses. Resources fetched from the OTHER
+    # host inside a page will trigger CORS — manifest.json, icons, fonts, CSS,
+    # JS, etc. all do CORS preflight (or for manifests, require ACAO header).
+    # Top-level navigation (<a href>) is exempt — those are clicks, not fetches.
+    KNOWN_HOSTS = ('app.stckrm.com', 'stckrm.com', 'www.stckrm.com')
+
+    any_finding = False
+    for html_file in ('landing.html', 'index.html'):
+        content = read(html_file)
+        if content is None:
+            info(f"{html_file} not found — skipping")
+            continue
+
+        # Find resource-fetching tags only — NOT <a href> (that's navigation, no CORS).
+        # Patterns we care about:
+        #   <link rel="..." href="https://otherhost/...">
+        #   <link href="https://otherhost/...">         (incl. preload/preconnect — preconnect is fine)
+        #   <script src="https://otherhost/...">
+        #   <img src="https://otherhost/...">
+        #   <iframe src="https://otherhost/...">        (lower stakes but worth catching)
+        #   fetch('https://otherhost/...')               (JS calls)
+        #   new Request('https://otherhost/...')
+        # NOT flagged:
+        #   <a href="https://otherhost/...">             (navigation)
+        #   window.location.replace/href = 'https://...' (navigation)
+        # preconnect/dns-prefetch links to fonts.googleapis.com etc. are fine — those
+        # are first-party CDN allowances and don't include the app's own hosts.
+
+        # Regex: capture <tag ... resource_attr="https://known_host/...">
+        # We use the explicit known-host list rather than "anything cross-origin"
+        # to avoid flagging legitimate third-party CDN refs (fonts.googleapis.com,
+        # etc.) and to focus on the bug class that actually bit us.
+        host_pattern = '|'.join(re.escape(h) for h in KNOWN_HOSTS)
+
+        # Resource fetch in HTML attributes
+        attr_re = re.compile(
+            r'<(?P<tag>link|script|img|iframe|source|track)\b[^>]*?\b'
+            r'(?:href|src)\s*=\s*["\'](?P<url>https?://(?:' + host_pattern + r')/[^"\']*)["\']',
+            re.IGNORECASE
+        )
+
+        # fetch() / new Request() / new URL() with known hosts in inline scripts
+        js_re = re.compile(
+            r'(?:fetch|new\s+Request|new\s+URL)\s*\(\s*[\'"]'
+            r'(?P<url>https?://(?:' + host_pattern + r')/[^\'"]*)[\'"]',
+            re.IGNORECASE
+        )
+
+        page_hits = []
+
+        for m in attr_re.finditer(content):
+            tag = m.group('tag').lower()
+            url = m.group('url')
+            # Skip preconnect/dns-prefetch on <link rel="preconnect"> etc — those
+            # are connection-warming, not resource fetches, and don't trip CORS.
+            if tag == 'link':
+                attrs_match = re.search(r'rel\s*=\s*["\']([^"\']+)["\']',
+                                        content[max(0, m.start() - 5):m.end()])
+                rel_val = (attrs_match.group(1).lower() if attrs_match else '')
+                if rel_val in ('preconnect', 'dns-prefetch'):
+                    continue
+            # Determine line number
+            line_no = content[:m.start()].count('\n') + 1
+            page_hits.append((line_no, tag, url))
+
+        for m in js_re.finditer(content):
+            url = m.group('url')
+            line_no = content[:m.start()].count('\n') + 1
+            page_hits.append((line_no, 'script (inline)', url))
+
+        if page_hits:
+            any_finding = True
+            for line_no, tag, url in page_hits:
+                warn(f"{html_file}:{line_no}  <{tag}> fetches cross-origin: {url}  "
+                     "— consider host-relative path (e.g. /manifest.json) to avoid CORS issues.",
+                     'warn')
+
+    if not any_finding:
+        ok("No cross-origin resource fetches between stckrm.com and app.stckrm.com")
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -637,6 +726,7 @@ def main():
     audit_db_stores()
     audit_auth_dual_path()
     audit_writedockerfile_drift()
+    audit_cross_origin_fetches()
 
     # Summary
     print()
