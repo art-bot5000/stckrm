@@ -1,32 +1,4 @@
-# ═══════════════════════════════════════════════════════════
-#  STOCKROOM — Caddy reverse-proxy & static-file config
-# ═══════════════════════════════════════════════════════════
-# Hostname routing strategy:
-#   stckrm.com           → CANONICAL apex; serves landing page (marketing)
-#                          + reverse-proxies API endpoints to Deno
-#   www.stckrm.com       → 301 redirects to https://stckrm.com (apex canonical)
-#   app.stckrm.com       → serves the PWA (index.html)
-#                          + reverse-proxies API endpoints to Deno
-#   *.fly.dev / no host  → fallback for Fly edge health checks; serves PWA
-#
-# ARCHITECTURE NOTE — single :8080 site block, host-based routing inside:
-# Fly's edge terminates TLS and forwards plain HTTP to internal port 8080.
-# The Host header is preserved across that hop. Rather than try to declare
-# multiple named site blocks (which has port-binding gotchas with Fly's
-# proxy), we use ONE site block listening on :8080 and route based on the
-# Host header using `@hostname` matchers and `handle` blocks. This is the
-# pattern the original Caddyfile used implicitly and matches Caddy's
-# "behind a reverse proxy" recommended pattern.
-
-{
-    # Disable Caddy's automatic HTTPS — Fly handles TLS at the edge, so
-    # Caddy serves only HTTP internally. Without this, Caddy would try
-    # to acquire its own certs and inject HTTP→HTTPS redirects.
-    auto_https off
-}
-
 :8080 {
-    # ── Compression (applies to everything) ──
     encode {
         zstd
         br
@@ -34,38 +6,7 @@
         minimum_length 256
     }
 
-    # ── Host matchers ──
-    # These match against the Host header forwarded by Fly's edge.
-    # Order matters: we check each in turn and take the first match.
-    @www_host    host www.stckrm.com
-    @apex_host   host stckrm.com
-    @app_host    host app.stckrm.com
-
-    # ── 1. www → 301 redirect to apex ──
-    # Permanent redirect so browsers and search engines treat the apex as
-    # canonical. Path and query are preserved via {uri}.
-    handle @www_host {
-        redir https://stckrm.com{uri} permanent
-    }
-
-    # ── 2. API routes (apply to ANY hostname) ──
-    # These need to work regardless of which hostname the request arrives
-    # at — Stripe webhook hits stckrm.com/webhook/stripe, the PWA at
-    # app.stckrm.com hits app.stckrm.com/user/verify, etc. We declare
-    # them once and they apply to all remaining hostnames (apex, app,
-    # fallback). They are intentionally placed BEFORE the host-specific
-    # static-file handles so that /user/foo on the apex goes to Deno
-    # instead of trying to resolve as a static file.
     handle /ping {
-        reverse_proxy localhost:8000
-    }
-    handle /webhook/stripe {
-        reverse_proxy localhost:8000
-    }
-    handle /billing/* {
-        reverse_proxy localhost:8000
-    }
-    handle /referral/* {
         reverse_proxy localhost:8000
     }
     handle /auth/* {
@@ -98,121 +39,42 @@
     handle /key/* {
         reverse_proxy localhost:8000
     }
-    handle /data/* {
-        reverse_proxy localhost:8000
-    }
-    handle /recovery/* {
-        reverse_proxy localhost:8000
-    }
-    handle /email/* {
-        reverse_proxy localhost:8000
-    }
-    handle /invite/* {
-        reverse_proxy localhost:8000
-    }
-    handle /crypto/* {
-        reverse_proxy localhost:8000
-    }
-    handle /sync/* {
-        reverse_proxy localhost:8000
-    }
-    handle /presence* {
-        reverse_proxy localhost:8000
-    }
-    handle /reminder* {
-        reverse_proxy localhost:8000
-    }
-    handle /status {
-        reverse_proxy localhost:8000
-    }
-    handle /register {
-        reverse_proxy localhost:8000
-    }
-    handle /unregister {
-        reverse_proxy localhost:8000
-    }
-    handle /unsubscribe {
-        reverse_proxy localhost:8000
-    }
-    handle /check-now {
-        reverse_proxy localhost:8000
-    }
-    handle /send-now {
-        reverse_proxy localhost:8000
-    }
-    handle /debug-kv {
-        reverse_proxy localhost:8000
-    }
-    handle /debug-schedule {
-        reverse_proxy localhost:8000
-    }
-    handle /mfa/* {
-        reverse_proxy localhost:8000
-    }
-    handle /note/* {
-        reverse_proxy localhost:8000
-    }
-    handle /reset-schedule {
-        reverse_proxy localhost:8000
-    }
-    handle /set-schedule {
-        reverse_proxy localhost:8000
-    }
-    handle /send-reminder {
-        reverse_proxy localhost:8000
-    }
-    handle /debug-user {
-        reverse_proxy localhost:8000
+
+    # robots.txt — Lighthouse SEO fix. Block the authenticated app shell
+    # from crawlers (no value to index) and the admin panel. Let the marketing
+    # landing remain crawlable.
+    handle /robots.txt {
+        header Content-Type "text/plain; charset=utf-8"
+        header Cache-Control "public, max-age=86400"
+        respond "User-agent: *
+Allow: /
+Disallow: /app
+Disallow: /admin
+"
     }
 
-    # ── 3. Apex (stckrm.com) — serve landing page ──
-    # Default file at / is landing.html (marketing). All other static
-    # assets resolve normally. The landing page itself has client-side
-    # logic that auto-redirects installed PWAs and signed-in users to
-    # app.stckrm.com.
-    handle @apex_host {
-        root * /app/public
-        try_files {path} /landing.html
-        file_server
-    }
-
-    # ── 4. App subdomain — serve PWA ──
-    # Default file at / is index.html (the PWA). SPA fallback so client
-    # routing (?action=login etc.) works on cold loads.
-    handle @app_host {
-        root * /app/public
-        try_files {path} /index.html
-        file_server
-    }
-
-    # ── 5. Fallback (Fly health checks, .fly.dev hostname, anything else) ──
-    # Catches Fly's internal health checks (no Host header) and anyone
-    # hitting stckrm.fly.dev directly. Serves the PWA so the .fly.dev URL
-    # still works for debugging.
     handle {
         root * /app/public
-        try_files {path} /index.html
         file_server
-    }
 
-    # ── Common security & cache headers (applied to all responses) ──
-    @html path *.html
-    header @html Cache-Control "no-cache, no-store, must-revalidate"
+        @html path *.html
+        header @html Cache-Control "no-cache, no-store, must-revalidate"
 
-    @sw path /sw.js
-    header @sw Cache-Control "no-cache, no-store, must-revalidate"
+        @sw path /sw.js
+        header @sw Cache-Control "no-cache, no-store, must-revalidate"
 
-    @manifest path /manifest.json
-    header @manifest Cache-Control "public, max-age=3600"
+        @manifest path /manifest.json
+        header @manifest Cache-Control "public, max-age=3600"
 
-    @assets path *.js *.css
-    header @assets Cache-Control "public, max-age=3600"
+        @assets path *.js *.css
+        header @assets Cache-Control "public, max-age=31536000, immutable"
 
-    header {
-        X-Content-Type-Options "nosniff"
-        X-Frame-Options "DENY"
-        Referrer-Policy "strict-origin-when-cross-origin"
-        Permissions-Policy "camera=*, microphone=()"
-        -Server
+        header {
+            X-Content-Type-Options "nosniff"
+            X-Frame-Options "DENY"
+            Referrer-Policy "strict-origin-when-cross-origin"
+            Permissions-Policy "camera=*, microphone=()"
+            -Server
+        }
     }
 }

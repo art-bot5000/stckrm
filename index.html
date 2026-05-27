@@ -7,13 +7,18 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>STOCKROOM — Household Consumables Tracker (KV)</title>
+<meta name="description" content="Stockroom — track household consumables, predict when they'll run out, and batch-order to save time and reduce deliveries.">
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f1117">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="STOCKROOM">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"></noscript>
 <link rel="stylesheet" href="styles.css">
 <body class="wizard-active">
 <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
@@ -158,7 +163,7 @@
         <input type="text" id="r-name" placeholder="e.g. Toothbrush Head, Water Filter...">
       </div>
       <div class="field form-full">
-        <label>Link to existing item <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+        <label for="r-item-link">Link to existing item <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
         <select id="r-item-link" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px;width:100%">
           <option value="">— standalone reminder —</option>
         </select>
@@ -168,7 +173,7 @@
         <div style="display:flex;gap:8px;align-items:center">
           <input type="number" id="r-interval" min="1" max="52" value="3"
             style="width:72px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
-          <select id="r-unit" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
+          <select id="r-unit" aria-label="Replace every (unit)" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
             <option value="days">days</option>
             <option value="weeks">weeks</option>
             <option value="months" selected>months</option>
@@ -270,7 +275,7 @@
       </div>
 
       <div class="field form-full">
-        <label>Frequency</label>
+        <label for="bill-frequency-preset">Frequency</label>
         <select id="bill-frequency-preset" onchange="billOnFreqPresetChange()" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
           <option value="monthly">Monthly</option>
           <option value="quarterly">Every 3 months</option>
@@ -290,7 +295,7 @@
 
       <!-- Anchor month picker — shown for non-monthly frequencies -->
       <div class="field form-full" id="bill-anchor-row" style="display:none">
-        <label id="bill-anchor-label">First payment month</label>
+        <label id="bill-anchor-label" for="bill-anchor-month">First payment month</label>
         <select id="bill-anchor-month" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
           <option value="0">January</option><option value="1">February</option><option value="2">March</option>
           <option value="3">April</option><option value="4">May</option><option value="5">June</option>
@@ -306,7 +311,7 @@
         <div style="display:flex;gap:8px;align-items:center">
           <input type="number" id="bill-custom-interval" min="1" max="36" value="2"
             style="width:80px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
-          <select id="bill-custom-unit" onchange="billOnFreqPresetChange()"
+          <select id="bill-custom-unit" onchange="billOnFreqPresetChange()" aria-label="Repeats every (unit)"
             style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
             <option value="day">days</option>
             <option value="week">weeks</option>
@@ -361,7 +366,7 @@
       </div>
 
       <div class="field form-full">
-        <label>Account <span style="font-weight:400;color:var(--muted)">(which account does this bill come out of?)</span></label>
+        <label for="bill-account">Account <span style="font-weight:400;color:var(--muted)">(which account does this bill come out of?)</span></label>
         <select id="bill-account"
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
           <option value="">— No accounts yet —</option>
@@ -492,7 +497,7 @@
 
     <div class="form-grid">
       <div class="field form-full">
-        <label>Date range</label>
+        <label for="csv-export-range">Date range</label>
         <select id="csv-export-range" onchange="csvExportRangeChanged()"
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
           <option value="last30" selected>Last 30 days</option>
@@ -589,7 +594,7 @@
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
       </div>
       <div class="field form-full">
-        <label>Category</label>
+        <label for="spend-tx-category">Category</label>
         <select id="spend-tx-category"
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
           <option value="">— Uncategorised —</option>
@@ -653,7 +658,7 @@
         <input type="text" id="budget-cat-name" maxlength="40" placeholder="e.g. Pete spending">
       </div>
       <div class="field form-full">
-        <label>Budget cycle</label>
+        <label for="budget-cat-cycle">Budget cycle</label>
         <select id="budget-cat-cycle" onchange="budgetCatCycleChanged()"
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
           <option value="monthly">Monthly</option>
@@ -731,7 +736,7 @@
         <input type="text" id="account-name" maxlength="40" placeholder="e.g. Joint Current">
       </div>
       <div class="field form-full">
-        <label>Type</label>
+        <label for="account-type">Type</label>
         <select id="account-type"
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
           <option value="current">Current</option>
@@ -819,7 +824,7 @@
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
       </div>
       <div class="field form-full">
-        <label>Frequency</label>
+        <label for="income-tpl-frequency">Frequency</label>
         <select id="income-tpl-frequency" onchange="incomeTplFreqChanged()"
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
           <option value="monthly">Monthly</option>
@@ -837,7 +842,7 @@
         <div style="font-size:11px;color:var(--muted);margin-top:4px">The first occurrence. All subsequent dates roll forward from here.</div>
       </div>
       <div class="field form-full" id="income-tpl-anchor-row" style="display:none">
-        <label>First payment month</label>
+        <label for="income-tpl-anchor-month">First payment month</label>
         <select id="income-tpl-anchor-month"
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
           <option value="0">January</option><option value="1">February</option><option value="2">March</option>
@@ -851,7 +856,7 @@
         <div style="display:flex;gap:8px;align-items:center">
           <input type="number" id="income-tpl-custom-interval" min="1" max="36" value="2"
             style="width:80px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
-          <select id="income-tpl-custom-unit" onchange="incomeTplFreqChanged()"
+          <select id="income-tpl-custom-unit" onchange="incomeTplFreqChanged()" aria-label="Repeats every (unit)"
             style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
             <option value="day">days</option>
             <option value="week">weeks</option>
@@ -873,7 +878,7 @@
         <div style="font-size:11px;color:var(--muted);margin-top:4px">Tick if this income changes each time. The projection averages your last 3 confirmed receipts.</div>
       </div>
       <div class="field form-full">
-        <label>Account *</label>
+        <label for="income-tpl-account">Account *</label>
         <select id="income-tpl-account"
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
           <option value="">— No accounts yet —</option>
@@ -918,7 +923,7 @@
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
       </div>
       <div class="field form-full">
-        <label>Account *</label>
+        <label for="income-entry-account">Account *</label>
         <select id="income-entry-account"
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:13px">
           <option value="">— No accounts yet —</option>
@@ -1837,7 +1842,7 @@
 </div>
 
 <!-- ═══ MAIN ═══ -->
-<div id="main">
+<main id="main">
   <!-- Trial / billing status banner — shown when ≤7 days of trial left, or past_due, or grace ending -->
   <div id="billing-banner" class="billing-banner" style="display:none" role="status">
     <div class="billing-banner-inner">
@@ -1951,7 +1956,7 @@
         </button>
       </div>
       <div id="stock-sort-wrap">
-        <select id="sort-select" onchange="setSort(this.value)"
+        <select id="sort-select" onchange="setSort(this.value)" aria-label="Sort stockroom by"
           style="width:100%;height:36px;font-size:12px;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:5px 12px;font-family:var(--sans);font-weight:normal;cursor:pointer;outline:none">
           <option value="status">↕ Sort: Status</option>
           <option value="name">↕ Sort: Name</option>
@@ -2471,7 +2476,7 @@
             <div class="acc-sec-h">Country / Region</div>
             <div class="acc-sec-p">Sets which stores appear in the price checker</div>
           </div>
-          <select id="setting-country-sec" onchange="saveSettingsCountry(this.value)" class="acc-sec-select"></select>
+          <select id="setting-country-sec" onchange="saveSettingsCountry(this.value)" aria-label="Country or region" class="acc-sec-select"></select>
         </div>
       </div>
     </div>
@@ -2858,7 +2863,7 @@
         </div>
         <div class="acc-sec-row" id="notif-threshold-row" style="display:none">
           <div class="acc-sec-label"><div class="acc-sec-h">Alert when items are within</div></div>
-          <select id="notif-days" onchange="saveNotifSettings()"
+          <select id="notif-days" onchange="saveNotifSettings()" aria-label="Alert when items are within (days)"
             style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
             <option value="7">7 days</option>
             <option value="14" selected>14 days</option>
@@ -2888,7 +2893,7 @@
               <input type="email" id="email-input" placeholder="you@example.com">
             </div>
             <div class="field">
-              <label>Frequency</label>
+              <label for="email-frequency">Frequency</label>
               <select id="email-frequency" onchange="updateEmailDayVisibility()">
                 <option value="daily">Daily</option>
                 <option value="weekly" selected>Weekly</option>
@@ -2896,7 +2901,7 @@
               </select>
             </div>
             <div class="field" id="email-day-field">
-              <label>Day of week</label>
+              <label for="email-day">Day of week</label>
               <select id="email-day">
                 <option value="monday">Monday</option><option value="tuesday">Tuesday</option>
                 <option value="wednesday">Wednesday</option><option value="thursday">Thursday</option>
@@ -2921,12 +2926,12 @@
           <div class="acc-sec-row">
             <div class="acc-sec-label"><div class="acc-sec-h">Frequency</div></div>
             <div style="display:flex;gap:8px;align-items:center">
-              <select id="email-frequency-update" onchange="updateEmailSettings()" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
+              <select id="email-frequency-update" onchange="updateEmailSettings()" aria-label="Email summary frequency" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
                 <option value="daily">Daily</option>
                 <option value="weekly">Weekly</option>
                 <option value="monthly">Monthly</option>
               </select>
-              <select id="email-day-update" onchange="updateEmailSettings()" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
+              <select id="email-day-update" onchange="updateEmailSettings()" aria-label="Email summary day of week" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
                 <option value="monday">Monday</option><option value="tuesday">Tuesday</option>
                 <option value="wednesday">Wednesday</option><option value="thursday">Thursday</option>
                 <option value="friday">Friday</option><option value="saturday">Saturday</option>
@@ -2974,7 +2979,7 @@
             <div class="acc-sec-h">Repeat every</div>
             <div class="acc-sec-p">How often to check after the first reminder</div>
           </div>
-          <select id="setting-email-interval" onchange="saveSettings()"
+          <select id="setting-email-interval" onchange="saveSettings()" aria-label="Repeat reminder check every"
             style="width:140px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
             <option value="0">Manual only</option>
             <option value="7">Weekly</option>
@@ -3020,7 +3025,7 @@
             <div class="acc-sec-h">Low stock warning</div>
             <div class="acc-sec-p">Warn when stock drops below this %</div>
           </div>
-          <select id="setting-threshold" onchange="saveSettings()" style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
+          <select id="setting-threshold" onchange="saveSettings()" aria-label="Low stock warning threshold (%)" style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 28px 6px 8px;font-family:var(--sans);font-size:13px">
             <option value="10">10%</option><option value="15">15%</option><option value="20" selected>20%</option><option value="25">25%</option><option value="33">33%</option>
           </select>
         </div>
@@ -3194,7 +3199,7 @@
 </div>
   </div><!-- end #view-content -->
 
-</div><!-- end #main -->
+</main><!-- end #main -->
 
 <!-- ═══ GROCERY IMPORT INSTRUCTIONS MODAL ═══ -->
 <div class="modal-backdrop" id="grocery-import-info-modal" style="z-index:305">
@@ -3284,7 +3289,7 @@
     </div>
 
     <div class="form-group">
-      <label class="form-label">Department</label>
+      <label class="form-label" for="grocery-f-dept">Department</label>
       <select class="form-input" id="grocery-f-dept"></select>
     </div>
 
@@ -3304,7 +3309,7 @@
       <label class="form-label">Re-add every</label>
       <div style="display:flex;gap:8px;align-items:center">
         <input class="form-input" id="grocery-f-interval" type="number" min="1" max="365" value="7" style="width:80px">
-        <select class="form-input" id="grocery-f-interval-unit" style="flex:1">
+        <select class="form-input" id="grocery-f-interval-unit" aria-label="Re-add every (unit)" style="flex:1">
           <option value="1">days</option>
           <option value="7">weeks</option>
           <option value="30">months</option>
@@ -3338,7 +3343,7 @@
       <div style="display:flex;gap:8px;align-items:center">
         <span style="font-size:13px;color:var(--muted)">I shop every</span>
         <input class="form-input" id="grocery-shop-interval" type="number" min="1" max="60" value="7" style="width:70px">
-        <select class="form-input" id="grocery-shop-interval-unit" style="flex:1">
+        <select class="form-input" id="grocery-shop-interval-unit" aria-label="Shop interval (unit)" style="flex:1">
           <option value="1">days</option>
           <option value="7">weeks</option>
           <option value="30">months</option>
@@ -3619,14 +3624,14 @@
             <button type="button" class="btn btn-ghost btn-sm" onclick="openBarcodeScanner()" title="Scan barcode"><svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg> Scan</button>
           </div>
         </div>
-        <div class="field"><label>Category</label>
+        <div class="field"><label for="f-category">Category</label>
           <select id="f-category">
             <option>Kitchen</option><option>Bathroom</option><option>Cleaning</option>
             <option>Food &amp; Drink</option><option>Health</option><option>Garden</option>
             <option>Office</option><option>Other</option>
           </select>
         </div>
-        <div class="field"><label>Purchase Cadence</label>
+        <div class="field"><label for="f-cadence">Purchase Cadence</label>
           <select id="f-cadence">
             <option value="monthly">Monthly supply</option>
             <option value="bulk">Bulk (multi-month)</option>
@@ -3730,14 +3735,14 @@
             <button type="button" class="btn btn-ghost btn-sm" onclick="openBarcodeScanner()" title="Scan barcode"><svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg> Scan</button>
           </div>
         </div>
-        <div class="field"><label>Category</label>
+        <div class="field"><label for="wiz-category">Category</label>
           <select id="wiz-category">
             <option>Kitchen</option><option>Bathroom</option><option>Cleaning</option>
             <option>Food &amp; Drink</option><option>Health</option><option>Garden</option>
             <option>Office</option><option>Other</option>
           </select>
         </div>
-        <div class="field"><label>Purchase Cadence</label>
+        <div class="field"><label for="wiz-cadence">Purchase Cadence</label>
           <select id="wiz-cadence">
             <option value="monthly">Monthly supply</option>
             <option value="bulk">Bulk (multi-month)</option>

@@ -80,6 +80,19 @@ caddyfile = """\
         reverse_proxy localhost:8000
     }
 
+    # robots.txt — Lighthouse SEO fix. Block the authenticated app shell
+    # from crawlers (no value to index) and the admin panel. Let the marketing
+    # landing remain crawlable.
+    handle /robots.txt {
+        header Content-Type "text/plain; charset=utf-8"
+        header Cache-Control "public, max-age=86400"
+        respond "User-agent: *
+Allow: /
+Disallow: /app
+Disallow: /admin
+"
+    }
+
     handle {
         root * /app/public
         file_server
