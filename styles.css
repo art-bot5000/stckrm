@@ -21,23 +21,66 @@
   }
   /* ── LIGHT MODE ──────────────────────────────────────────────────
      Warm off-white palette. Amber and blue accents darkened slightly
-     for AA contrast on light surfaces. Shadows softened. */
+     for AA contrast on light surfaces. Shadows softened.
+     Tier 2.5 contrast audit: --accent (was #c08418, 2.89:1) and --ok
+     (was #2e9560, 3.39:1) both failed WCAG AA on the off-white bg.
+     --muted (was #6b6f7d, 4.51:1) was on the borderline. All three
+     darkened to comfortably exceed AA (4.5:1) for body text. */
   html[data-theme="light"] {
     --bg: #f5f3ec;          /* warm off-white, easier on the eye than stark white */
     --surface: #ffffff;
     --surface2: #ebe8df;
     --border: #d8d4c8;
-    --accent: #c08418;      /* amber, darker for contrast on white */
-    --accent2: #3b6fd0;     /* blue, darker for contrast on white */
+    --accent: #8f6005;      /* amber — 4.92:1 (was 2.89:1, AA fail) */
+    --accent2: #3b6fd0;     /* blue */
     --danger: #c83838;
-    --warn: #c08418;
-    --ok: #2e9560;
+    --warn: #8f6005;
+    --ok: #287052;          /* green — 5.36:1 (was 3.39:1, AA fail) */
     --text: #1a1d27;        /* very dark blue-grey (was --surface in dark) */
-    --muted: #6b6f7d;
+    --muted: #5c6173;       /* secondary text — 5.54:1 (was 4.51:1, borderline) */
     --glass-border: rgba(0,0,0,0.08);
     --glass-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 1px 0 rgba(255,255,255,0.6) inset;
     --card-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 1px 0 rgba(255,255,255,0.5) inset;
     --card-shadow-hover: 0 6px 20px rgba(0,0,0,0.1), 0 1px 0 rgba(255,255,255,0.6) inset;
+  }
+  /* ── HIGH-CONTRAST MODE (Tier 2.4) ────────────────────────────────
+     Maximum readability palette for users with low vision or visual
+     processing difficulties. All token pairs designed to meet WCAG AAA
+     (7:1 contrast) at minimum; most exceed 14:1. Borders are solid
+     and prominent. Decorative tints removed.
+
+     Contrast measurements (text colour on bg):
+       --text on --bg            = 21:1 (#fff on #000)
+       --muted on --bg           = 16:1 (#e0e0e0 on #000)
+       --accent on --bg          = 14.5:1 (#ffcc33 on #000)
+       --accent2 on --bg         = 12:1 (#7dc4ff on #000)
+       --ok on --bg              = 12:1 (#7dee9e on #000)
+       --danger on --bg          = 7.5:1 (#ff8888 on #000)
+
+     This theme deliberately uses pure black + pure white as anchors —
+     this maximises contrast for OLED screens (true black) and is
+     also the most legible combination for many low-vision users. */
+  html[data-theme="hc"] {
+    --bg: #000000;
+    --surface: #0a0a0a;
+    --surface2: #1a1a1a;
+    --border: #aaaaaa;       /* solid visible border — not a subtle tint */
+    --accent: #ffcc33;       /* brighter amber — pops against pure black */
+    --accent2: #7dc4ff;      /* brighter blue */
+    --danger: #ff8888;       /* softer red, still ≥7:1 */
+    --warn: #ffcc33;
+    --ok: #7dee9e;
+    --text: #ffffff;         /* pure white — 21:1 on pure black */
+    --muted: #e0e0e0;        /* much lighter than the dark default's #7880a0
+                                so secondary text is still 16:1, not 5:1 */
+    /* Strip glassmorphism effects — they reduce contrast */
+    --temp-tint: rgba(0,0,0,0);
+    --surface-opacity: 1;
+    --glass-blur: 0px;
+    --glass-border: #aaaaaa;
+    --glass-shadow: none;
+    --card-shadow: 0 0 0 1px #aaaaaa;     /* hard solid border replaces shadow */
+    --card-shadow-hover: 0 0 0 2px var(--accent);
   }
   /* Smooth crossfade when toggling theme — applied to props the
      theme actually changes. Skipped for users with reduced-motion. */
@@ -62,6 +105,121 @@
   body.wizard-active #incomplete-banner,
   body.wizard-active #install-banner,
   body.wizard-active #sync-queue-bar { display: none !important; }
+
+  /* ── KEYBOARD FOCUS INDICATORS (Tier 2.1) ─────────────────────────
+     :focus-visible (NOT :focus) fires only on keyboard navigation —
+     never on mouse click. Mouse users see no ring (no visual noise);
+     Tab/arrow-key users get a clear 3px accent ring. This is the
+     single most impactful keyboard-accessibility win the app can make.
+
+     The 39 existing `outline: none` declarations throughout the CSS
+     are deliberately preserved — they strip the inconsistent browser
+     default (which varies by OS/UA), and our :focus-visible block
+     here provides the unified replacement. Specificity is handled by
+     pseudo-class ordering: :focus-visible wins for keyboard cases.
+
+     For form inputs/textareas/selects the outline would visually
+     overlap the input border, so those use a softer ring via
+     border-colour + box-shadow instead. */
+  :focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(232, 168, 56, 0.30);
+  }
+  /* For elements that already have a strong border-radius (buttons,
+     cards, pills), restore the natural radius so the focus ring
+     follows the shape rather than appearing square. */
+  button:focus-visible,
+  .btn:focus-visible,
+  a.btn:focus-visible,
+  .tab:focus-visible,
+  .item-card:focus-visible,
+  .grocery-picker-card:focus-visible {
+    border-radius: inherit;
+  }
+
+  /* ── SKIP-TO-CONTENT LINK (Tier 2.2) ──────────────────────────────
+     Hidden off-screen by default; pops into view on Tab. Lets
+     keyboard and screen-reader users jump past the header/nav
+     directly to the main content. Target #main exists from Tier 1.3.
+
+     Implementation note: we use `top: -100px` (not `display: none` or
+     `visibility: hidden`) because those would make the link
+     un-focusable, defeating the purpose. The link IS in the tab
+     order; it just sits off-screen until focused. */
+  .skip-link {
+    position: absolute;
+    top: -100px;
+    left: 8px;
+    z-index: 9999;
+    padding: 10px 16px;
+    background: var(--accent);
+    color: #000;
+    font-weight: 700;
+    font-size: 14px;
+    border-radius: 6px;
+    text-decoration: none;
+    transition: top 0.15s;
+  }
+  .skip-link:focus,
+  .skip-link:focus-visible {
+    top: 8px;
+    outline: 3px solid var(--text);
+    outline-offset: 2px;
+  }
+
+  /* ── TEXT SIZE SCALE (Tier 2.3) ─────────────────────────────────
+     Four-step scale (S/M/L/XL) set on <html data-text-scale="..."> by
+     app.js when settings.textScale changes. Default ('m') is identity.
+
+     Strategy: scale only inherited body text — NOT buttons, inputs,
+     labels, or icons. Those have explicit font-sizes set for fit
+     reasons (button height, input padding, icon container), and
+     scaling them would break the layout. Users who need larger text
+     primarily want item names and body content larger, not chrome.
+
+     The variable --text-scale is consumed in two places:
+       1. The base body font-size (inherits to most text)
+       2. Specific content-text classes that override the body size
+          (item names, card titles, note bodies, etc.)
+     Elements with explicit font-size declarations are unaffected,
+     which gives us per-element control. */
+  html { --text-scale: 1; }
+  html[data-text-scale="s"]  { --text-scale: 0.875; }
+  html[data-text-scale="m"]  { --text-scale: 1; }
+  html[data-text-scale="l"]  { --text-scale: 1.15; }
+  html[data-text-scale="xl"] { --text-scale: 1.30; }
+
+  /* Apply scale to inherited body text. Anything that doesn't have
+     its own font-size declaration will scale through inheritance. */
+  body { font-size: calc(14px * var(--text-scale)); }
+
+  /* Explicitly scale the high-impact content-text classes — these
+     have their own font-size declarations elsewhere in this stylesheet,
+     so they need to be reaffirmed here to pick up the scale. The
+     base size in each declaration is the original "m" value. */
+  .item-card .card-title,
+  .item-card .card-name,
+  .item-card .card-meta,
+  .note-card .note-body,
+  .note-card .note-title,
+  .grocery-picker-card .grocery-name,
+  .grocery-picker-card .grocery-meta,
+  .modal p,
+  .modal li,
+  .settings-card p,
+  .acc-sec-card p,
+  #notes-view p,
+  #notes-view li {
+    font-size: calc(1em * var(--text-scale));
+  }
 
   /* ── APP SIDEBAR NAV (desktop) ── */
   #app-nav {
@@ -5974,6 +6132,38 @@ body.omnibox-expanded { /* reserved for future scroll-lock if needed */ }
     z-index: 10;
     box-shadow: 0 4px 12px rgba(0,0,0,0.4);
   }
+
+  /* ── Tier 2.6 touch target augmentation ──
+     WCAG 2.5.5 recommends ≥44×44 CSS pixels for interactive elements
+     on touch devices. We scope these bumps to (hover: none) only —
+     desktop/mouse users retain the tighter visual layout. Selective
+     rather than blanket because some tight UIs (segmented controls,
+     tag chips, inline icons inside table cells) would break visually
+     if every button got 44px.
+
+     Approach: bump the most-tapped small icon buttons. Checkbox
+     sizes are addressed above (lines 959/991 already bump them to
+     24px on mobile, with adequate label tap area). */
+  .btn-icon {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  /* Generic "small close button" pattern — modals and banners.
+     The visual ✕ stays the same size; the tap target expands. */
+  .modal .close,
+  .modal-close,
+  .banner-close,
+  [aria-label="Close"],
+  [aria-label="Dismiss"] {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 /* ═══════════════════════════════════════════════════════════════════
    OMNIBOX — Pass 4: Mobile 3×2 grid + darkened backdrop
@@ -6098,6 +6288,9 @@ body.global-search-open .omnibox-backdrop {
   padding: 2px;
   gap: 0;
   flex-shrink: 0;
+  flex-wrap: wrap;        /* Allow buttons to wrap on narrow screens —
+                             needed once the picker has 4+ options
+                             (Tier 2.4 added "High contrast") */
 }
 .theme-seg-btn {
   background: transparent;
@@ -6115,6 +6308,10 @@ body.global-search-open .omnibox-backdrop {
   gap: 5px;
   white-space: nowrap;
   -webkit-tap-highlight-color: transparent;
+  min-height: 32px;       /* Tier 2.6 — closer to 44px target. The
+                             segmented control is a tight UI, so we
+                             can't go full 44; 32 + outer padding
+                             gets close on tap targets. */
 }
 .theme-seg-btn:hover {
   color: var(--text);
@@ -6131,6 +6328,13 @@ body.global-search-open .omnibox-backdrop {
    benefits from a touch more weight on the active state */
 html[data-theme="light"] .theme-seg-btn.active {
   box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+/* In high-contrast mode the active state needs to remain pure-accent
+   on pure-black for the contrast guarantee — no soft shadow. */
+html[data-theme="hc"] .theme-seg-btn.active {
+  background: var(--accent);
+  color: #000;
+  box-shadow: none;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

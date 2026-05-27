@@ -1130,6 +1130,8 @@ async function loadData() {
   // re-runs applyTheme with the persisted choice, replacing the early
   // dark-default paint that happened before settings were ready.
   if (typeof applyTheme === 'function') applyTheme();
+  // Apply text size scale (Tier 2.3) — same lifecycle as theme.
+  if (typeof applyTextScale === 'function') applyTextScale();
 
   // Backfill localStorage from user settings so early-firing browser events (beforeinstallprompt)
   // also see the dismissed flag without waiting for a network sync
@@ -21021,8 +21023,8 @@ function updateSyncPill(state, provider) {
 
 function _resolveTheme(pref) {
   // 'system' resolves to the current OS preference; everything else
-  // passes through unchanged.
-  if (pref === 'light' || pref === 'dark') return pref;
+  // (light, dark, hc) passes through unchanged.
+  if (pref === 'light' || pref === 'dark' || pref === 'hc') return pref;
   try {
     return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   } catch (e) {
@@ -21039,9 +21041,15 @@ function applyTheme() {
   // that need to disambiguate from the no-attribute default.
   document.documentElement.setAttribute('data-theme', resolved);
   // Keep the browser/PWA chrome in sync. The static <meta> value in
-  // index.html is just the initial-paint fallback.
+  // index.html is just the initial-paint fallback. Each theme has a
+  // distinct chrome colour so the address bar / status bar matches.
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', resolved === 'light' ? '#f5f3ec' : '#0f1117');
+  if (meta) {
+    let chromeColour = '#0f1117'; // dark default
+    if (resolved === 'light') chromeColour = '#f5f3ec';
+    else if (resolved === 'hc') chromeColour = '#000000';
+    meta.setAttribute('content', chromeColour);
+  }
   // Re-apply the time-of-day surface/accent shifts for the new mode.
   if (typeof applyAdaptiveColourTemp === 'function') applyAdaptiveColourTemp();
   // Update the segmented control in Preferences if it's mounted.
@@ -21059,7 +21067,7 @@ function applyTheme() {
 // (_NOTE_COLOUR_LIGHT_MAP and _noteBgForCurrentTheme moved to notes.js)
 
 function setTheme(pref) {
-  if (!['system', 'light', 'dark'].includes(pref)) pref = 'system';
+  if (!['system', 'light', 'dark', 'hc'].includes(pref)) pref = 'system';
   settings.theme = pref;
   // Save without re-rendering everything — applyTheme handles UI.
   _saveSettings();
@@ -21068,8 +21076,41 @@ function setTheme(pref) {
 
 function _updateThemeUI() {
   const pref = (settings && settings.theme) || 'system';
-  ['system', 'light', 'dark'].forEach(opt => {
+  ['system', 'light', 'dark', 'hc'].forEach(opt => {
     const btn = document.getElementById('theme-seg-' + opt);
+    if (!btn) return;
+    const active = opt === pref;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-checked', active ? 'true' : 'false');
+  });
+}
+
+// ── Text size scale (Tier 2.3) ──────────────────────────────────────
+// Four-step accessibility scale for body text. Sets data-text-scale on
+// <html> which is consumed by the CSS rules at the top of styles.css.
+// Per-user preference, syncs across devices via settings.
+//
+// Identity ('m') is the default; we always set the attribute explicitly
+// (rather than removing it) so the JS-driven path is consistent with
+// the CSS [data-text-scale="m"] rule.
+function applyTextScale() {
+  const pref = (settings && settings.textScale) || 'm';
+  const normalised = ['s', 'm', 'l', 'xl'].includes(pref) ? pref : 'm';
+  document.documentElement.setAttribute('data-text-scale', normalised);
+  _updateTextScaleUI();
+}
+
+function setTextScale(pref) {
+  if (!['s', 'm', 'l', 'xl'].includes(pref)) pref = 'm';
+  settings.textScale = pref;
+  _saveSettings();
+  applyTextScale();
+}
+
+function _updateTextScaleUI() {
+  const pref = (settings && settings.textScale) || 'm';
+  ['s', 'm', 'l', 'xl'].forEach(opt => {
+    const btn = document.getElementById('textscale-seg-' + opt);
     if (!btn) return;
     const active = opt === pref;
     btn.classList.toggle('active', active);

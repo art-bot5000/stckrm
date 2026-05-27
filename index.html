@@ -21,6 +21,7 @@
 <noscript><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"></noscript>
 <link rel="stylesheet" href="styles.css">
 <body class="wizard-active">
+<a href="#main" class="skip-link">Skip to main content</a>
 <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
   <symbol id="i-package" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></symbol>
   <symbol id="i-shopping-cart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></symbol>
@@ -3043,6 +3044,29 @@
             </button>
             <button type="button" class="theme-seg-btn" id="theme-seg-dark" role="radio" aria-checked="false" onclick="setTheme('dark')" title="Always dark">
               <svg class="icon" aria-hidden="true"><use href="#i-moon"></use></svg>Dark
+            </button>
+            <button type="button" class="theme-seg-btn" id="theme-seg-hc" role="radio" aria-checked="false" onclick="setTheme('hc')" title="High contrast — maximum readability">
+              <svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg>High contrast
+            </button>
+          </div>
+        </div>
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Text size</div>
+            <div class="acc-sec-p">Adjusts the size of body text for easier reading</div>
+          </div>
+          <div class="theme-seg" role="radiogroup" aria-label="Text size">
+            <button type="button" class="theme-seg-btn" id="textscale-seg-s"  role="radio" aria-checked="false" onclick="setTextScale('s')"  title="Small text">
+              <span style="font-size:11px;font-weight:700">S</span>
+            </button>
+            <button type="button" class="theme-seg-btn" id="textscale-seg-m"  role="radio" aria-checked="true"  onclick="setTextScale('m')"  title="Medium (default)">
+              <span style="font-size:13px;font-weight:700">M</span>
+            </button>
+            <button type="button" class="theme-seg-btn" id="textscale-seg-l"  role="radio" aria-checked="false" onclick="setTextScale('l')"  title="Large text">
+              <span style="font-size:15px;font-weight:700">L</span>
+            </button>
+            <button type="button" class="theme-seg-btn" id="textscale-seg-xl" role="radio" aria-checked="false" onclick="setTextScale('xl')" title="Extra large text">
+              <span style="font-size:17px;font-weight:700">XL</span>
             </button>
           </div>
         </div>
