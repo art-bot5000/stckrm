@@ -144,8 +144,8 @@ function toggle(id, visible, mode = '') { const el = document.getElementById(id)
 //
 // _activeDbName is mutable: helpers below flip it before any dbGet/dbPut
 // call resolves a database handle. openDB() reads _activeDbName each call.
-const DB_VERSION = 6;
-const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists','reminderDeletedIds','bills','billInstances','budgetSettings','budgetCategories','transactions','budgetCategoryDeletedIds','budgetTransactionDeletedIds','budgetAccounts','incomeTemplates','incomeEntries','budgetAccountDeletedIds','incomeTemplateDeletedIds','incomeEntryDeletedIds','billsDeletedIds','notifications'];
+const DB_VERSION = 7;
+const DB_STORES  = ['items','settings','reminders','groceries','departments','deletedIds','profiles','groceryDeletedIds','groceryLists','reminderDeletedIds','bills','billInstances','budgetSettings','budgetCategories','transactions','budgetCategoryDeletedIds','budgetTransactionDeletedIds','budgetAccounts','incomeTemplates','incomeEntries','budgetAccountDeletedIds','incomeTemplateDeletedIds','incomeEntryDeletedIds','billsDeletedIds','notifications','history'];
 
 let _activeDbName = 'stockroom_unauth';
 let _db = null;

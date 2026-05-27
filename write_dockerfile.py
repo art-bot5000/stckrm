@@ -79,6 +79,68 @@ caddyfile = """\
     handle /key/* {
         reverse_proxy localhost:8000
     }
+    # ────────────────────────────────────────────────────────
+    # All other backend route prefixes used by main.ts. Without these,
+    # the catch-all `handle { file_server }` below returns 404 for every
+    # one of them — breaking data sync, billing, MFA, notes, email
+    # verification, recovery, presence, push notifications, webhooks,
+    # cron triggers, and the unsubscribe flow.
+    #
+    # IMPORTANT: any new top-level route prefix added to main.ts must
+    # ALSO be added here. The deployed Caddyfile must list every prefix
+    # main.ts handles, or those calls 404 silently.
+    # ────────────────────────────────────────────────────────
+    handle /data/* {
+        reverse_proxy localhost:8000
+    }
+    handle /billing/* {
+        reverse_proxy localhost:8000
+    }
+    handle /mfa/* {
+        reverse_proxy localhost:8000
+    }
+    handle /note/* {
+        reverse_proxy localhost:8000
+    }
+    handle /email/* {
+        reverse_proxy localhost:8000
+    }
+    handle /recovery/* {
+        reverse_proxy localhost:8000
+    }
+    handle /referral/* {
+        reverse_proxy localhost:8000
+    }
+    handle /webhook/* {
+        reverse_proxy localhost:8000
+    }
+    handle /presence-stream {
+        reverse_proxy localhost:8000
+    }
+    handle /presence-update {
+        reverse_proxy localhost:8000
+    }
+    handle /check-now {
+        reverse_proxy localhost:8000
+    }
+    handle /send-reminder {
+        reverse_proxy localhost:8000
+    }
+    handle /set-schedule {
+        reverse_proxy localhost:8000
+    }
+    handle /reset-schedule {
+        reverse_proxy localhost:8000
+    }
+    handle /debug-schedule {
+        reverse_proxy localhost:8000
+    }
+    handle /unsubscribe {
+        reverse_proxy localhost:8000
+    }
+    handle /push/* {
+        reverse_proxy localhost:8000
+    }
 
     # robots.txt — Lighthouse SEO fix. Block the authenticated app shell
     # from crawlers (no value to index) and the admin panel. Let the marketing
