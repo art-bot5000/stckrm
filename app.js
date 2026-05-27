@@ -16026,7 +16026,19 @@ async function syncNow() {
       if (remote.settings) {
         const localTags     = settings.customTags;
         const localTagsTs   = settings.customTagsUpdatedAt;
+        // ONE-SHOT SETUP FLAGS — see kvSyncNow merge for full rationale. Same
+        // OR-merge applied here so the share/drivePull path can't downgrade
+        // server-side true→false either.
+        const stickyProtectSeen = !!(remote.settings._setupProtectSeen || settings._setupProtectSeen);
+        const stickyCountrySet  = !!(remote.settings._setupCountrySet  || settings._setupCountrySet);
+        const stickyInstallDismissed = !!(remote.settings._installDismissed || settings._installDismissed);
         settings            = { ...remote.settings, ...settings };
+        if (stickyProtectSeen)      settings._setupProtectSeen = true;
+        else                        delete settings._setupProtectSeen;
+        if (stickyCountrySet)       settings._setupCountrySet  = true;
+        else                        delete settings._setupCountrySet;
+        if (stickyInstallDismissed) settings._installDismissed = true;
+        else                        delete settings._installDismissed;
         const remoteTags    = remote.settings.customTags || [];
         const remoteTagsTs  = remote.settings.customTagsUpdatedAt;
         const localMs  = localTagsTs  ? new Date(localTagsTs).getTime()  : 0;
@@ -17045,8 +17057,12 @@ async function kvRegister() {
     } catch(e) {}
     // Wipe the in-memory + IDB settings flags too — these are the values
     // getProtectSeenForDevice() and getCountrySetForDevice() actually read.
-    settings._setupProtectSeen = false;
-    settings._setupCountrySet  = false;
+    // Use `delete` rather than `= false` so the flags are ABSENT from the
+    // pushed settings blob. Pushing an explicit false would overwrite the
+    // server-side true on the next sync if this code runs after the user
+    // has already onboarded — defensively, deletion is safer.
+    delete settings._setupProtectSeen;
+    delete settings._setupCountrySet;
     try { await dbPut('settings', 'settings', settings); } catch(e) {}
     // ── Demo → real account: convert the in-memory demo data into this
     // account's starting state. This must run AFTER kvStoreSession (so the
@@ -19950,8 +19966,28 @@ async function kvSyncNow(silent = false) {
         // EXCEPTION: MFA config always takes from remote — it's a security setting
         // that must never be downgraded by stale local state.
         const remoteMfa = remote.settings.mfa;
+        // ONE-SHOT SETUP FLAGS: capture the OR of remote+local BEFORE the spread,
+        // then re-apply after. These flags transition false→true exactly once
+        // (user completes onboarding) and must NEVER go back to false. The
+        // generic local-wins spread would let a stale local `false` overwrite
+        // a server-side `true`, causing the Protect/Country screens to re-appear
+        // on every login. Same logic as _mfaGate does for the initial pull,
+        // but applied here so the full sync merge can't undo it either.
+        const stickyProtectSeen = !!(remote.settings._setupProtectSeen || settings._setupProtectSeen);
+        const stickyCountrySet  = !!(remote.settings._setupCountrySet  || settings._setupCountrySet);
+        const stickyInstallDismissed = !!(remote.settings._installDismissed || settings._installDismissed);
         settings = { ...remote.settings, ...settings };
         if (remoteMfa !== undefined) settings.mfa = remoteMfa; // remote MFA always wins
+        // Re-apply the OR-merged one-shot flags so the spread above can't
+        // downgrade them. Use deletion (rather than `= false`) when the flag
+        // is unset, so it stays absent from the object and doesn't get pushed
+        // as an explicit false to the server.
+        if (stickyProtectSeen)      settings._setupProtectSeen = true;
+        else                        delete settings._setupProtectSeen;
+        if (stickyCountrySet)       settings._setupCountrySet  = true;
+        else                        delete settings._setupCountrySet;
+        if (stickyInstallDismissed) settings._installDismissed = true;
+        else                        delete settings._installDismissed;
         // Tag merge: side with the newer customTagsUpdatedAt wins. This honours
         // explicit deletions (which used to be reverted by a count-based merge
         // that always picked whichever side had MORE defined tags).
@@ -29025,8 +29061,13 @@ function resetFirstRunPrompts() {
   // Clear all first-run/onboarding dismissed flags from the synced settings blob.
   // On next login the Protecting Your Data, Country, Amazon import and
   // Enable MFA prompts will all show again as if it were a first-time setup.
-  settings._setupProtectSeen     = false;
-  settings._setupCountrySet      = false;
+  // Use `delete` (not `= false`) for the sticky one-shot flags so the
+  // OR-merge in kvSyncNow can't undo the reset by restoring the server-side
+  // true. The push immediately below writes settings without these keys,
+  // so the server-side flags are also cleared.
+  delete settings._setupProtectSeen;
+  delete settings._setupCountrySet;
+  delete settings._installDismissed;
   settings._amazonBannerDismissed = false;
   settings._snsBannerDismissed    = false;
   settings._mfaPromptDismissed   = false;
