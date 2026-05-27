@@ -15,11 +15,11 @@ jobs:
       - name: Check required files exist
         run: |
           REQUIRED=(
-            app.js budget.js scanner.js styles.css
+            app.js budget.js notes.js demo.js scanner.js styles.css
             index.html landing.html
-            sw.js manifest.json admin.html
+            sw.js manifest.json admin.html diag-trusted.html
             main.ts deno.json start.sh Caddyfile
-            logo.png
+            logo.png package.json
           )
           MISSING=()
           for f in "${REQUIRED[@]}"; do
@@ -37,14 +37,37 @@ jobs:
         run: |
           node --check app.js     && echo "✅ app.js syntax OK"
           node --check budget.js  && echo "✅ budget.js syntax OK"
+          node --check notes.js   && echo "✅ notes.js syntax OK"
+          node --check demo.js    && echo "✅ demo.js syntax OK"
           node --check scanner.js && echo "✅ scanner.js syntax OK"
+
+      - name: Repo drift audit
+        # Static analysis of cross-file invariants:
+        #   - main.ts URL routes ↔ Caddyfile reverse_proxy handles
+        #   - Dockerfile COPY list ↔ files actually present
+        #   - deploy.yml REQUIRED list ↔ Dockerfile COPY list
+        #   - package.json build script ↔ Dockerfile build steps
+        #   - <script src> tags ↔ files in build
+        #   - DB_STORES ↔ actual dbGet/dbPut calls
+        #   - auth dual-path (sessionToken || verifier) on every authenticated route
+        #   - write_dockerfile.py outputs ↔ committed Dockerfile/Caddyfile/start.sh
+        #
+        # To bypass for an emergency: include "[skip audit]" in the commit
+        # message. Use sparingly — every bypass is technical debt.
+        if: "!contains(github.event.head_commit.message, '[skip audit]')"
+        run: |
+          if [ ! -f audit.py ]; then
+            echo "⚠ audit.py not found in repo — skipping (script may not be committed yet)"
+            exit 0
+          fi
+          python3 audit.py
 
       - name: Check Dockerfile references
         run: |
           DOCKERFILE_FILES=(
-            app.js budget.js scanner.js styles.css
-            index.html landing.html admin.html
-            sw.js manifest.json
+            app.js budget.js notes.js demo.js scanner.js styles.css
+            index.html landing.html admin.html diag-trusted.html
+            sw.js manifest.json logo.png
           )
           MISSING=()
           for f in "${DOCKERFILE_FILES[@]}"; do

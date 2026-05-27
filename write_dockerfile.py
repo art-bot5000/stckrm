@@ -49,9 +49,6 @@ caddyfile = """\
     handle /ping {
         reverse_proxy localhost:8000
     }
-    handle /auth/* {
-        reverse_proxy localhost:8000
-    }
     handle /user/* {
         reverse_proxy localhost:8000
     }
@@ -61,19 +58,10 @@ caddyfile = """\
     handle /share/* {
         reverse_proxy localhost:8000
     }
-    handle /schedule/* {
-        reverse_proxy localhost:8000
-    }
     handle /passkey/* {
         reverse_proxy localhost:8000
     }
     handle /admin/* {
-        reverse_proxy localhost:8000
-    }
-    handle /household/* {
-        reverse_proxy localhost:8000
-    }
-    handle /items/* {
         reverse_proxy localhost:8000
     }
     handle /key/* {

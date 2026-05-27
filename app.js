@@ -15685,7 +15685,13 @@ async function _doClearAll() {
   try { await dbPut('deletedIds',            'deletedIds',            []); } catch(e) {}
   try { await dbPut('groceryDeletedIds',     'groceryDeletedIds',     []); } catch(e) {}
   try { await dbPut('reminderDeletedIds',    'reminderDeletedIds',    []); } catch(e) {}
-  try { await dbPut('groceryListDeletedIds', 'groceryListDeletedIds', []); } catch(e) {}
+  // Grocery-list tombstones live INSIDE the groceryLists store under the
+  // special key '_deletedIds' (not a separate object store). Previous code
+  // here used dbPut('groceryListDeletedIds', ...) which targeted a store
+  // that doesn't exist in DB_STORES, so the call always threw and the
+  // tombstone clear was silently a no-op. Corrected to match how the rest
+  // of the codebase reads/writes this list.
+  try { await dbPut('groceryLists',          '_deletedIds',           []); } catch(e) {}
 
   // Alternate households — keep only the active 'default' household and
   // tombstone every other key so the sync merge doesn't re-create them
