@@ -6764,3 +6764,105 @@ body.has-demo-banner .omnibox[data-state="expanded"] {
     top: var(--demo-banner-offset, 38px) !important;
   }
 }
+
+/* ── Tier 4.1: Keyboard shortcuts help overlay ──────────────────────────
+   Built lazily by openShortcutsHelp() in app.js. Centred modal card over
+   a dimmed backdrop. Uses theme tokens so it inherits dark/light/HC
+   automatically. Respects prefers-reduced-motion (transition removed). */
+.shortcuts-help-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+.shortcuts-help-overlay.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+.shortcuts-help-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  width: 100%;
+  max-width: 420px;
+  max-height: 80vh;
+  overflow-y: auto;
+  transform: translateY(8px);
+  transition: transform 0.18s ease;
+}
+.shortcuts-help-overlay.show .shortcuts-help-card {
+  transform: translateY(0);
+}
+.shortcuts-help-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+}
+.shortcuts-help-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 8px;
+}
+.shortcuts-help-close:hover { color: var(--text); }
+.shortcuts-help-body {
+  padding: 8px 18px 18px;
+}
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.shortcut-row:last-child { border-bottom: none; }
+.shortcut-keys {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-width: 130px;
+}
+.shortcut-kbd {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+.shortcut-then {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--sans);
+}
+.shortcut-desc {
+  font-size: 13px;
+  color: var(--text);
+}
+@media (prefers-reduced-motion: reduce) {
+  .shortcuts-help-overlay,
+  .shortcuts-help-card { transition: none; }
+}

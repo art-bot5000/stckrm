@@ -29929,6 +29929,190 @@ function _omniboxKeyShortcut(e) {
   }
 }
 
+// ── Tier 4.1: Global keyboard shortcuts ─────────────────────────────────
+// Gmail-style navigation and a couple of single-key shortcuts. Deliberately
+// conservative: every shortcut bails the moment the user is typing in a
+// field, so it never interferes with the omnibox, note editor, inputs,
+// selects, or any contenteditable. Cmd/Ctrl+K (omnibox) is handled
+// separately in _omniboxKeyShortcut and is unaffected.
+//
+// Shortcuts:
+//   /         focus the omnibox search (when not typing)
+//   ?         toggle the keyboard-shortcuts help overlay
+//   Esc       close the help overlay (other Esc handlers are untouched)
+//   g then …  navigate to a view (Gmail "go to" pattern):
+//               g s  Stockroom        g g  Groceries
+//               g b  Budget           g n  Notes
+//               g r  Reminders        g v  Savings (a"v"ings)
+//               g p  Report           g a  Accessibility
+//               g c  Account & Security (se"c"urity)
+//               g t  Settings (se"t"tings)
+//
+// The g-prefix uses a short timeout window: press g, then the second key
+// within ~1.2s. Pressing g alone does nothing; an unrecognised second key
+// silently cancels.
+const _GKEY = { armed: false, timer: null };
+const _GKEY_MAP = {
+  s: 'stock',
+  g: 'grocery',
+  b: 'budget',
+  n: 'notes',
+  r: 'reminders',
+  v: 'savings',
+  p: 'report',
+  a: 'accessibility',
+  c: 'account-security',
+  t: 'settings',
+};
+
+// True when focus is in a field where typing should suppress shortcuts.
+function _isTypingContext(e) {
+  const t = e.target;
+  if (!t) return false;
+  const tag = (t.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+  if (t.isContentEditable) return true;
+  // Some wrappers carry contenteditable on an ancestor (e.g. note body).
+  if (t.closest && t.closest('[contenteditable="true"], [contenteditable=""]')) return true;
+  return false;
+}
+
+function _disarmGKey() {
+  _GKEY.armed = false;
+  if (_GKEY.timer) { clearTimeout(_GKEY.timer); _GKEY.timer = null; }
+}
+
+function _globalKeyShortcuts(e) {
+  // Never hijack typing, never fire alongside a modifier (those belong to
+  // the browser or to Cmd/Ctrl+K).
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (_isTypingContext(e)) { _disarmGKey(); return; }
+
+  const key = (e.key || '').toLowerCase();
+
+  // Second key of a g-sequence?
+  if (_GKEY.armed) {
+    _disarmGKey();
+    const view = _GKEY_MAP[key];
+    if (view) {
+      e.preventDefault();
+      try { navTo(view); } catch (_) {}
+    }
+    return; // whether matched or not, the sequence is consumed
+  }
+
+  // First key of a g-sequence.
+  if (key === 'g') {
+    _GKEY.armed = true;
+    _GKEY.timer = setTimeout(_disarmGKey, 1200);
+    return;
+  }
+
+  // "/" focuses the omnibox search. Some keyboard layouts put "/" behind
+  // shift; accept both as long as the resulting character is "/".
+  if (e.key === '/') {
+    e.preventDefault();
+    try {
+      const inp = _omniboxInput();
+      if (inp) { expandOmnibox(); inp.focus(); inp.select(); }
+    } catch (_) {}
+    return;
+  }
+
+  // "?" toggles the shortcuts help overlay.
+  if (e.key === '?') {
+    e.preventDefault();
+    toggleShortcutsHelp();
+    return;
+  }
+
+  // Esc closes the help overlay if it's open. We DON'T preventDefault or
+  // stop propagation unless the overlay was actually open, so existing
+  // per-component Esc handlers (modals, omnibox, menus) keep working.
+  if (e.key === 'Escape') {
+    const overlay = document.getElementById('shortcuts-help-overlay');
+    if (overlay && overlay.classList.contains('show')) {
+      e.preventDefault();
+      closeShortcutsHelp();
+    }
+  }
+}
+
+// ── Shortcuts help overlay ──────────────────────────────────────────────
+// Built lazily on first open so it adds nothing to initial DOM/paint.
+function toggleShortcutsHelp() {
+  const existing = document.getElementById('shortcuts-help-overlay');
+  if (existing && existing.classList.contains('show')) {
+    closeShortcutsHelp();
+  } else {
+    openShortcutsHelp();
+  }
+}
+
+function openShortcutsHelp() {
+  let overlay = document.getElementById('shortcuts-help-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'shortcuts-help-overlay';
+    overlay.className = 'shortcuts-help-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Keyboard shortcuts');
+    overlay.addEventListener('click', (ev) => {
+      // Click on the backdrop (not the card) closes.
+      if (ev.target === overlay) closeShortcutsHelp();
+    });
+    const rows = [
+      ['/', 'Focus search'],
+      ['?', 'Show this help'],
+      ['Esc', 'Close this help'],
+      ['Ctrl / ⌘ + K', 'Open search'],
+      ['g then s', 'Go to Stockroom'],
+      ['g then g', 'Go to Groceries'],
+      ['g then b', 'Go to Budget'],
+      ['g then n', 'Go to Notes'],
+      ['g then r', 'Go to Reminders'],
+      ['g then v', 'Go to Savings'],
+      ['g then p', 'Go to Report'],
+      ['g then a', 'Go to Accessibility'],
+      ['g then c', 'Go to Account & Security'],
+      ['g then t', 'Go to Settings'],
+    ];
+    const rowsHtml = rows.map(([keys, desc]) => {
+      const keyHtml = keys.split(' then ')
+        .map(k => `<kbd class="shortcut-kbd">${esc(k)}</kbd>`)
+        .join('<span class="shortcut-then">then</span>');
+      return `<div class="shortcut-row">
+        <div class="shortcut-keys">${keyHtml}</div>
+        <div class="shortcut-desc">${esc(desc)}</div>
+      </div>`;
+    }).join('');
+    overlay.innerHTML = `
+      <div class="shortcuts-help-card" role="document">
+        <div class="shortcuts-help-header">
+          <h2 style="font-size:16px;font-weight:700;margin:0"><svg class="icon icon-md" aria-hidden="true"><use href="#i-help-circle"></use></svg> Keyboard shortcuts</h2>
+          <button class="shortcuts-help-close" type="button" aria-label="Close" onclick="closeShortcutsHelp()">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-x"></use></svg>
+          </button>
+        </div>
+        <div class="shortcuts-help-body">${rowsHtml}</div>
+      </div>`;
+    document.body.appendChild(overlay);
+  }
+  // Force reflow then add .show for the transition.
+  void overlay.offsetWidth;
+  overlay.classList.add('show');
+  // Move focus to the close button for keyboard users.
+  const closeBtn = overlay.querySelector('.shortcuts-help-close');
+  if (closeBtn) { try { closeBtn.focus(); } catch (_) {} }
+}
+
+function closeShortcutsHelp() {
+  const overlay = document.getElementById('shortcuts-help-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('show');
+}
+
 // ── Outside-click handler: collapse when the user taps away ──
 // Without this, the expanded panel stays open until the user explicitly
 // dismisses it, which is annoying when they tap a tab or a card behind.
@@ -29974,6 +30158,8 @@ function initOmnibox() {
   }
   document.addEventListener('keydown', _omniboxKeyShortcut, true); // capture phase
   document.addEventListener('click', _omniboxOutsideClick);
+  // Tier 4.1 — global keyboard shortcuts (g-prefix navigation, / search, ? help).
+  document.addEventListener('keydown', _globalKeyShortcuts);
   // Render initial empty state so the panel isn't blank if focused
   // before any input.
   _renderOmniboxEmpty();
