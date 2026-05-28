@@ -19,7 +19,7 @@ jobs:
             index.html landing.html
             sw.js manifest.json admin.html diag-trusted.html
             main.ts deno.json start.sh Caddyfile
-            logo.png package.json
+            logo.png logo.webp package.json
           )
           MISSING=()
           for f in "${REQUIRED[@]}"; do
@@ -67,7 +67,7 @@ jobs:
           DOCKERFILE_FILES=(
             app.js budget.js notes.js demo.js scanner.js styles.css
             index.html landing.html admin.html diag-trusted.html
-            sw.js manifest.json logo.png
+            sw.js manifest.json logo.png logo.webp
           )
           MISSING=()
           for f in "${DOCKERFILE_FILES[@]}"; do
