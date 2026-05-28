@@ -7994,6 +7994,10 @@ async function deleteLogEntry(itemId, logId) {
   if (!canWrite("stockroom")) { showLockBanner("stockroom"); return; }
   const item = items.find(i => i.id === itemId);
   if (!item) return;
+  // Tier 6.2: destructive-action confirm. Deleting a log entry is
+  // permanent (no recycle bin for individual log rows), so guard it
+  // like every other destructive path in the app.
+  if (!confirm('Delete this log entry? This cannot be undone.')) return;
   item.logs = (item.logs||[]).filter(l => l.id !== logId);
   touchItem(item);
   await saveData();

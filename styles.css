@@ -6887,3 +6887,29 @@ body.has-demo-banner .omnibox[data-state="expanded"] {
   .shortcuts-help-overlay,
   .shortcuts-help-card { transition: none; }
 }
+
+/* ── GLOBAL REDUCED-MOTION CATCH-ALL (Tier 6.1) ──────────────────────
+   The three targeted prefers-reduced-motion blocks above (theme
+   transitions ~L182, view-transitions ~L517, shortcuts overlay ~L6886)
+   each disable motion on a hand-picked selector list. With 138
+   transitions, 16 animations and 18 @keyframes across this stylesheet,
+   those leave most motion untamed. This global backstop honours the
+   user's OS-level "reduce motion" preference EVERYWHERE — it does not
+   replace the targeted blocks, it catches everything they miss.
+
+   We use 0.01ms (not 0s) so transitionend/animationend events still
+   fire — JS that waits on those (e.g. modal close, toast dismissal)
+   keeps working; the motion is just imperceptible. !important is
+   required to beat the many inline-ish per-selector durations.
+
+   scroll-behavior:auto disables JS/CSS smooth-scrolling (none in this
+   sheet today, but future-proofs it). Exposed via the same @media the
+   browser already evaluates, so no JS hook is needed. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
