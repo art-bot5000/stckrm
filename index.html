@@ -1875,16 +1875,16 @@
     </div>
   </div>
   <div id="tabs-sticky-wrap">
-  <div id="tabs">
-    <button class="tab active" onclick="showView('stock',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-package"></use></svg> <span>Stockroom</span></button>
-    <button class="tab" onclick="showView('budget',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
-    <button class="tab" onclick="showView('notes',this)" id="notes-tab"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> <span>Notes</span></button>
-    <button class="tab" onclick="showView('grocery',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> <span>Groceries</span></button>
-    <button class="tab" onclick="showView('reminders',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-bell"></use></svg> <span>Reminders</span></button>
-    <button class="tab" onclick="showView('savings',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-piggy-bank"></use></svg> <span>Savings</span></button>
-    <button class="tab" onclick="showView('report',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> <span>Report</span></button>
-    <button class="tab" onclick="showView('billing',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg> <span>Billing</span></button>
-    <button class="tab" onclick="showView('settings',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg> <span>Settings</span></button>
+  <div id="tabs" role="tablist" aria-label="Main sections">
+    <button class="tab active" role="tab" aria-selected="true" aria-controls="view-stock" onclick="showView('stock',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-package"></use></svg> <span>Stockroom</span></button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="view-budget" onclick="showView('budget',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="view-notes" onclick="showView('notes',this)" id="notes-tab"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> <span>Notes</span></button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="view-grocery" onclick="showView('grocery',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> <span>Groceries</span></button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="view-reminders" onclick="showView('reminders',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-bell"></use></svg> <span>Reminders</span></button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="view-savings" onclick="showView('savings',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-piggy-bank"></use></svg> <span>Savings</span></button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="view-report" onclick="showView('report',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> <span>Report</span></button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="view-billing" onclick="showView('billing',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg> <span>Billing</span></button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="view-settings" onclick="showView('settings',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg> <span>Settings</span></button>
   </div>
 
   </div><!-- /tabs-sticky-wrap -->
@@ -4313,6 +4313,17 @@
 
 <div id="toast">✓ Saved</div>
 
+<!-- Tier 5.1 — ARIA live regions for screen-reader announcements.
+     Visually hidden (.sr-only) but read aloud when announce() injects text.
+     Two channels:
+       #sr-live-polite (role=status, aria-live=polite) — routine updates
+         like "Saved", "Synced", view changes. Waits for a pause.
+       #sr-live-assertive (role=alert, aria-live=assertive) — errors and
+         time-sensitive messages. Interrupts the screen reader.
+     aria-atomic=true means the whole region is re-read on each change. -->
+<div id="sr-live-polite" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+<div id="sr-live-assertive" class="sr-only" role="alert" aria-live="assertive" aria-atomic="true"></div>
+
 <script src="app.js" defer></script>
 <script src="budget.js" defer></script>
 <script src="notes.js" defer></script>
@@ -4529,6 +4540,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     </div>
     <div id="note-ticks-body" style="display:none;flex:1;overflow-y:auto;padding:12px 16px"></div>
     <div id="note-body-input" contenteditable="true" spellcheck="true" data-placeholder="Write your note here…"
+      role="textbox" aria-multiline="true" aria-label="Note body"
       style="flex:1;padding:14px 16px;background:transparent;color:var(--text);font-size:15px;line-height:1.7;outline:none;font-family:var(--sans);overflow-y:auto;min-height:0;word-break:break-word"
       oninput="onNoteBodyInput()"></div>
   </div>

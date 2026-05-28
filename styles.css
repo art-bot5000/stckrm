@@ -243,9 +243,26 @@
      `visibility: hidden`) because those would make the link
      un-focusable, defeating the purpose. The link IS in the tab
      order; it just sits off-screen until focused. */
+  /* ── SCREEN-READER-ONLY UTILITY (Tier 5.1) ──────────────────────
+     Visually hidden but present in the accessibility tree. Used for the
+     ARIA live regions (#sr-live-polite / #sr-live-assertive) and any
+     other content that should be announced but not shown. The clip +
+     1px size + negative margin is the long-standing robust pattern;
+     `display:none` / `visibility:hidden` would remove it from the a11y
+     tree entirely (defeating the purpose). */
+  .sr-only {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+  }
+
   .skip-link {
-    position: absolute;
-    top: -100px;
     left: 8px;
     z-index: 9999;
     padding: 10px 16px;

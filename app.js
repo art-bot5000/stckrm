@@ -12519,6 +12519,14 @@ function showView(name, btn) {
   const targetView = document.getElementById('view-'+name);
   if (targetView) targetView.classList.add('active');
   if (btn) btn.classList.add('active');
+  // Tier 5.2 — keep ARIA tab state in sync. aria-selected must reflect the
+  // active view no matter how it was reached (tab tap, sidebar, burger,
+  // keyboard shortcut). We match each role=tab to its aria-controls target.
+  const expectedPanel = 'view-' + name;
+  document.querySelectorAll('#tabs [role="tab"]').forEach(tab => {
+    const controls = tab.getAttribute('aria-controls');
+    tab.setAttribute('aria-selected', controls === expectedPanel ? 'true' : 'false');
+  });
   // Sync sidebar active state
   document.querySelectorAll('.app-nav-link').forEach(a => {
     a.classList.toggle('active', a.dataset.view === name);
@@ -15909,11 +15917,39 @@ function toastAction(msg, action) {
   setTimeout(() => { if (el.parentNode) el.remove(); }, 8000);
 }
 
+// ── Tier 5.1: Screen-reader announcements ───────────────────────────────
+// Injects text into a visually-hidden ARIA live region so screen readers
+// announce it without moving focus. Two priorities:
+//   'polite' (default) — waits for a pause; use for routine status.
+//   'assertive'        — interrupts; use for errors / time-sensitive info.
+// We clear the region first, then set the text on the next animation
+// frame. Without the clear-then-set, setting the same string twice in a
+// row wouldn't trigger a re-announcement (the DOM text didn't change).
+function announce(msg, priority) {
+  if (!msg) return;
+  const id = priority === 'assertive' ? 'sr-live-assertive' : 'sr-live-polite';
+  const region = document.getElementById(id);
+  if (!region) return;
+  region.textContent = '';
+  // rAF (with a setTimeout fallback) ensures the empty->text transition
+  // is observed by the screen reader as a genuine change.
+  const set = () => { region.textContent = msg; };
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => requestAnimationFrame(set));
+  } else {
+    setTimeout(set, 50);
+  }
+}
+
 function toast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 2500);
+  // Mirror the toast to the polite live region so screen-reader users
+  // hear the same confirmation sighted users see. Toasts are routine
+  // status (saved, synced, copied) so 'polite' is correct.
+  announce(msg, 'polite');
 }
 
 // ═══════════════════════════════════════════
@@ -21126,6 +21162,7 @@ function renderSettingsForUser() {
   }
 }
 
+let _lastAnnouncedSyncState = null;
 function updateSyncPill(state, provider) {
   const pill  = document.getElementById('sync-pill');
   const label = document.getElementById('sync-label');
@@ -21153,6 +21190,19 @@ function updateSyncPill(state, provider) {
     if (state === 'error')     { pill.className = 'sync-pill error';  label.textContent = 'Sync error'; }
   }
   _applyState(navPill, navLabel);
+
+  // Tier 5.1 — announce sync ERRORS to screen readers (assertive). We do
+  // NOT announce routine 'syncing'/'synced'/'connected' churn — updateSyncPill
+  // fires on every background sync cycle, and narrating each one would flood
+  // the screen reader. Only the error state is worth interrupting for, and
+  // only on the transition INTO error (tracked via _lastAnnouncedSyncState)
+  // so a persistent error isn't repeated on every retry.
+  if (state === 'error') {
+    if (_lastAnnouncedSyncState !== 'error') {
+      announce('Sync error — your changes may not be saved to the cloud.', 'assertive');
+    }
+  }
+  _lastAnnouncedSyncState = state;
 }
 
 
