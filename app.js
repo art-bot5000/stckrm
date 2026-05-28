@@ -17722,6 +17722,16 @@ async function _enterStockroom() {
   // resulting _shareState and pull shared data.
   try { await hydrateMembershipsFromServer(); } catch(e) { console.warn('[share] membership hydration in _enterStockroom failed:', e.message); }
   try { await kvSyncNow(true); } finally { hideDataLoadingOverlay(); }
+  // Re-apply accessibility display prefs now that the cloud pull has
+  // merged the authoritative settings. Boot-time applyTheme/applyTextScale
+  // (in init) ran against whatever was in local IDB BEFORE login — which
+  // on a fresh device or after a sign-out is stale or empty. Without this
+  // re-apply, the Accessibility page would show the correct selection
+  // (it reads settings.theme/textScale directly) but the <html> data-theme
+  // and data-text-scale attributes would still reflect the pre-login value,
+  // so the theme/text size wouldn't visually change until manual reselection.
+  if (typeof applyTheme === 'function') applyTheme();
+  if (typeof applyTextScale === 'function') applyTextScale();
   // Show install banner only after server sync — settings._installDismissed is
   // now authoritative regardless of whether IDB/cookies were cleared.
   setTimeout(maybeShowInstallBanner, 2000);
