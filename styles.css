@@ -263,6 +263,8 @@
   }
 
   .skip-link {
+    position: absolute;
+    top: -100px;
     left: 8px;
     z-index: 9999;
     padding: 10px 16px;
@@ -1720,6 +1722,8 @@
 #view-account-security.active { display:block !important; }
 /* Settings view — same width as Account & Security */
 #view-settings { max-width:680px; }
+/* Accessibility view — same width as Account & Security & Settings */
+#view-accessibility { max-width:680px; }
 /* Ensure acc-sec rows use flex regardless of any settings overrides — but
    skip rows that have been explicitly hidden via inline style="display:none"
    (e.g. #household-joined-section, which is only shown when _shareState is
