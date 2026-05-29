@@ -27944,11 +27944,14 @@ function scanChooserLogPurchase() {
 
 function scanChooserFullAdd() {
   closeModal('scan-chooser-modal');
-  openAddModal();
-  document.getElementById('f-name').value = scannedProductName;
-  if (scannedProductImage) {
-    pendingImageUrl = scannedProductImage;
-    showImagePreview(scannedProductImage, 'Image found via barcode');
+  openAddModal();  // opens the WIZARD (wiz-* fields) and resets them synchronously first
+  const wn = document.getElementById('wiz-name');
+  if (wn) { wn.value = scannedProductName; wn.dispatchEvent(new Event('input', { bubbles: true })); }
+  const wc = document.getElementById('wiz-category');
+  if (wc) wc.value = 'Food & Drink';
+  if (scannedProductImage && typeof wizShowImage === 'function') {
+    _wizImageUrl = scannedProductImage;
+    wizShowImage(scannedProductImage);
   }
 }
 
