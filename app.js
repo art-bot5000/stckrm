@@ -1002,6 +1002,87 @@ function getTotalDaysForUnits(item, units) {
   return getDaysPerUnit(item) * Math.max(0.0001, units || 1);
 }
 
+// ── Unit types ─────────────────────────────────────────────────────
+// An item is counted in a unit type: countable things (rolls, cans) or
+// measured things (kg, litres). The core maths is unchanged — qty and
+// months still drive daysPerUnit = (months × 30.5) / qty. unitType only
+// affects (a) whether qty/stock-count inputs allow decimals, and (b) the
+// labels shown to the user ("3 cans left" instead of "3 units left").
+// `decimal: true` types permit fractional quantities; countable types are
+// whole-number stepped. `one`/`many` are the singular/plural display words.
+// Legacy items without item.unitType default to 'item' everywhere.
+const UNIT_TYPES = {
+  item:   { label: 'item',   one: 'item',   many: 'items',  decimal: false },
+  roll:   { label: 'roll',   one: 'roll',   many: 'rolls',  decimal: false },
+  can:    { label: 'can',    one: 'can',    many: 'cans',   decimal: false },
+  bottle: { label: 'bottle', one: 'bottle', many: 'bottles',decimal: false },
+  pack:   { label: 'pack',   one: 'pack',   many: 'packs',  decimal: false },
+  kg:     { label: 'kg',     one: 'kg',     many: 'kg',     decimal: true  },
+  g:      { label: 'g',      one: 'g',      many: 'g',      decimal: true  },
+  litre:  { label: 'litre',  one: 'litre',  many: 'litres', decimal: true  },
+  ml:     { label: 'ml',     one: 'ml',     many: 'ml',     decimal: true  },
+};
+const UNIT_TYPE_ORDER = ['item','roll','can','bottle','pack','kg','g','litre','ml'];
+
+// Resolve an item's unit type key, defaulting to 'item' for legacy records.
+function getUnitType(item) {
+  const t = item && item.unitType;
+  return (t && UNIT_TYPES[t]) ? t : 'item';
+}
+
+// Whether the item's unit type permits fractional quantities (kg, g, litre, ml).
+function unitTypeAllowsDecimal(item) {
+  return !!UNIT_TYPES[getUnitType(item)].decimal;
+}
+
+// Display label for a count of this item's unit. n omitted → bare label.
+// unitLabel(item)          → "rolls"  (plural/base label)
+// unitLabel(item, 1)       → "roll"
+// unitLabel(item, 3)       → "rolls"
+// Mass/volume types (kg, ml…) read the same singular and plural.
+function unitLabel(item, n) {
+  const u = UNIT_TYPES[getUnitType(item)];
+  if (n == null) return u.many;
+  return n === 1 ? u.one : u.many;
+}
+
+// Sync the qty input's stepping/min to the currently-selected unit type.
+// Countable types (rolls, cans) → whole numbers; mass/volume → decimals.
+// Called when the unit dropdown changes and when the item modal opens.
+function applyUnitTypeToQtyInput() {
+  const utSel = document.getElementById('f-unit-type');
+  const qtyEl = document.getElementById('f-qty');
+  if (!utSel || !qtyEl) return;
+  const allowsDecimal = !!(UNIT_TYPES[utSel.value] && UNIT_TYPES[utSel.value].decimal);
+  if (allowsDecimal) {
+    qtyEl.step = '0.1';
+    qtyEl.min  = '0.1';
+  } else {
+    qtyEl.step = '1';
+    qtyEl.min  = '1';
+    // Round any fractional leftover from a previous decimal unit to whole.
+    const v = parseFloat(qtyEl.value);
+    if (!isNaN(v) && v % 1 !== 0) qtyEl.value = Math.max(1, Math.round(v));
+  }
+}
+
+// Same as applyUnitTypeToQtyInput, for the Add-Item wizard's fields.
+function applyWizUnitTypeToQtyInput() {
+  const utSel = document.getElementById('wiz-unit-type');
+  const qtyEl = document.getElementById('wiz-qty');
+  if (!utSel || !qtyEl) return;
+  const allowsDecimal = !!(UNIT_TYPES[utSel.value] && UNIT_TYPES[utSel.value].decimal);
+  if (allowsDecimal) {
+    qtyEl.step = '0.1';
+    qtyEl.min  = '0.1';
+  } else {
+    qtyEl.step = '1';
+    qtyEl.min  = '1';
+    const v = parseFloat(qtyEl.value);
+    if (!isNaN(v) && v % 1 !== 0) qtyEl.value = Math.max(1, Math.round(v));
+  }
+}
+
 function calcStock(item) {
   if (!item.logs || !item.logs.length) return null;
   // Only count delivered (non-pending) logs for stock calculation
@@ -9249,7 +9330,8 @@ function cardHTML(item, threshold) {
   let qtyText, qtyClass;
   if (projectedUnits != null) {
     const projStr = formatProjectedUnits(projectedUnits);
-    qtyText  = `<strong>${projStr}</strong> left`;
+    const projNum = Math.round(projectedUnits);
+    qtyText  = `<strong>${projStr}</strong> ${unitLabel(item, projNum)} left`;
     qtyClass = '';
   } else if (daysLeft !== null) {
     qtyText  = `<strong>${item.months || 1}mo</strong> per purchase`;
@@ -9482,10 +9564,10 @@ function openItemActionsModal(id) {
   if (projected != null) {
     const projStr = (typeof formatProjectedUnits === 'function') ? formatProjectedUnits(projected) : String(projected);
     stat2Num.textContent = projStr;
-    stat2Lab.textContent = 'in stock';
+    stat2Lab.textContent = `${unitLabel(item, Math.round(projected))} in stock`;
   } else if (lastLog) {
     stat2Num.textContent = lastLog.qty || 1;
-    stat2Lab.textContent = 'last bought';
+    stat2Lab.textContent = `${unitLabel(item, lastLog.qty || 1)} bought`;
   } else {
     stat2Num.textContent = '—';
     stat2Lab.textContent = 'in stock';
@@ -11025,10 +11107,16 @@ function openStockCountModal(id) {
   const last = item.logs?.at(-1);
   const totalPurchased = last?.qty || 1;
 
-  document.getElementById('sc-subtitle').textContent = `How many units of "${item.name}" do you have left?`;
+  document.getElementById('sc-subtitle').textContent = `How many ${unitLabel(item)} of "${item.name}" do you have left?`;
   document.getElementById('sc-explanation').textContent =
-    `You last bought ${totalPurchased} unit${totalPurchased!==1?'s':''} on ${fmtDate(last?.date)}. ` +
+    `You last bought ${totalPurchased} ${unitLabel(item, totalPurchased)} on ${fmtDate(last?.date)}. ` +
     `Enter how many you have now — the app will calculate your actual consumption rate and project when you'll run out.`;
+  // Mass/volume items may have fractional stock counts; countable ones are whole.
+  const scRemEl = document.getElementById('sc-remaining');
+  if (scRemEl) {
+    if (unitTypeAllowsDecimal(item)) { scRemEl.step = '0.1'; scRemEl.min = '0'; }
+    else                            { scRemEl.step = '1';   scRemEl.min = '0'; }
+  }
   document.getElementById('sc-remaining').value = item.stockCount != null ? item.stockCount : '';
   document.getElementById('sc-date').value = today();
   // The "How long does 1 unit last?" field is per-unit lifetime in months.
@@ -11090,9 +11178,9 @@ function updateStockCountPreview(item) {
           `${remaining} left → runs out ~${runOutDate} (${daysLeft ?? '?'} days, ${pct}% remaining).`;
   } else {
     const lifetimeLabel = perUnitMonths >= 1
-      ? `${perUnitMonths} month${perUnitMonths !== 1 ? 's' : ''}/unit`
-      : `${Math.round(dpu)} days/unit`;
-    msg = `${remaining} of ${totalPurchased} units remaining (${pct}%) → estimated ${daysLeft ?? '?'} days left (${lifetimeLabel}).`;
+      ? `${perUnitMonths} month${perUnitMonths !== 1 ? 's' : ''}/${unitLabel(item, 1)}`
+      : `${Math.round(dpu)} days/${unitLabel(item, 1)}`;
+    msg = `${remaining} of ${totalPurchased} ${unitLabel(item, remaining)} remaining (${pct}%) → estimated ${daysLeft ?? '?'} days left (${lifetimeLabel}).`;
   }
 
   previewText.textContent = msg;
@@ -12955,10 +13043,11 @@ function openAddModal() {
   _wizReminders = [];
   // Reset all fields
   const reset = { 'wiz-name':'', 'wiz-category':'Kitchen', 'wiz-cadence':'monthly',
-    'wiz-qty':1, 'wiz-months':1, 'wiz-url':'', 'wiz-store':'', 'wiz-notes':'',
+    'wiz-unit-type':'item', 'wiz-qty':1, 'wiz-months':1, 'wiz-url':'', 'wiz-store':'', 'wiz-notes':'',
     'wiz-last-date':today(), 'wiz-last-qty':1, 'wiz-last-price':'', 'wiz-started-using':'',
     'wiz-price-search':'' };
   Object.entries(reset).forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.value = v; });
+  if (typeof applyWizUnitTypeToQtyInput === 'function') applyWizUnitTypeToQtyInput();
   const storeEl = document.getElementById('wiz-store');
   if (storeEl) { storeEl.dataset.manual = ''; storeEl.dataset.autoFilled = ''; }
   // Reset awaiting-delivery checkbox + ensure started-using row visible
@@ -13230,6 +13319,7 @@ async function wizSave() {
     cadence:              document.getElementById('wiz-cadence').value,
     qty:                  wizQty,
     months:               wizMonths,
+    unitType:             document.getElementById('wiz-unit-type')?.value || 'item',
     daysPerUnit,
     url:                  document.getElementById('wiz-url').value.trim(),
     store:                storeVal,
@@ -13278,7 +13368,7 @@ function openEditModal(id) {
   const metaParts = [];
   if (item.cadence === 'bulk') metaParts.push('Bulk');
   else metaParts.push('Monthly');
-  if (item.qty) metaParts.push(`${item.qty} unit${item.qty !== 1 ? 's' : ''} per purchase`);
+  if (item.qty) metaParts.push(`${item.qty} ${unitLabel(item, item.qty)} per purchase`);
   if (item.months) metaParts.push(`${item.months} month${item.months !== 1 ? 's' : ''} supply`);
   const lastLog = (item.logs || []).filter(l => !l.pendingDelivery).at(-1);
   if (lastLog?.price) metaParts.push(`Last price: ${lastLog.price}`);
@@ -13315,6 +13405,9 @@ function openEditModal(id) {
   document.getElementById('f-cadence').value = item.cadence || 'monthly';
   document.getElementById('f-qty').value = item.qty || 1;
   document.getElementById('f-months').value = item.months || 1;
+  const utSel = document.getElementById('f-unit-type');
+  if (utSel) utSel.value = getUnitType(item);
+  if (typeof applyUnitTypeToQtyInput === 'function') applyUnitTypeToQtyInput();
   document.getElementById('f-url').value = item.url || '';
   pendingImageUrl = item.imageUrl || null;
   showModalImagePreview(item.imageUrl || null);
@@ -14164,6 +14257,7 @@ async function saveItem() {
       }
       item.qty          = newQty;
       item.months       = newMonths;
+      item.unitType     = document.getElementById('f-unit-type')?.value || 'item';
       item.url          = document.getElementById('f-url').value.trim();
       item.store        = storeVal;
       // Propagate new store name to all log entries so filter bar stays clean
@@ -14197,7 +14291,7 @@ async function saveItem() {
         }
       }
       touchField(item,
-        'name','category','cadence','qty','months','daysPerUnit','url','store',
+        'name','category','cadence','qty','months','unitType','daysPerUnit','url','store',
         'notes','startedUsing','rating','imageUrl','storePrices',
         'expiry','thresholdOverride','replacementInterval','replacementUnit'
       );
@@ -14218,6 +14312,7 @@ async function saveItem() {
       cadence:           document.getElementById('f-cadence').value,
       qty:               newQty,
       months:            newMonths,
+      unitType:          document.getElementById('f-unit-type')?.value || 'item',
       daysPerUnit:       (newMonths * AVG_DAYS_PER_MONTH) / Math.max(0.0001, newQty),
       url:               document.getElementById('f-url').value.trim(),
       store:             storeVal,
@@ -27919,10 +28014,31 @@ async function saveQuickAdd() {
 
 let scannedProductName  = '';
 let scannedProductImage = null;
+let scannedProductUnitType = 'item';
 
-function openScanChooser(name, imageUrl) {
+// Guess a unit type from an Open Food Facts `quantity` string, e.g.
+// "500 g" → 'g', "1.5 l" → 'litre', "4 x 110 g" → 'g', "6 rolls" → 'roll',
+// "330ml can" → 'can'. Returns 'item' when nothing matches. Order matters:
+// explicit container words (rolls, cans, bottles) win over mass/volume so a
+// "330ml can" is tracked as cans, not ml.
+function detectUnitTypeFromQuantity(qStr) {
+  if (!qStr || typeof qStr !== 'string') return 'item';
+  const s = qStr.toLowerCase();
+  if (/\broll(s)?\b/.test(s))            return 'roll';
+  if (/\b(can|cans|tin|tins)\b/.test(s)) return 'can';
+  if (/\bbottle(s)?\b/.test(s))          return 'bottle';
+  if (/\b(pack|packs|x\s*\d)\b/.test(s)) return 'pack';
+  if (/\b(kg|kilograms?)\b/.test(s))     return 'kg';
+  if (/\b(l|lt|ltr|litre|litres|liter|liters)\b/.test(s)) return 'litre';
+  if (/\bml\b/.test(s))                  return 'ml';
+  if (/\bg(rams?)?\b/.test(s))           return 'g';
+  return 'item';
+}
+
+function openScanChooser(name, imageUrl, unitType) {
   scannedProductName  = name;
   scannedProductImage = imageUrl;
+  scannedProductUnitType = (unitType && UNIT_TYPES[unitType]) ? unitType : 'item';
   const nameEl = document.getElementById('scan-chooser-name');
   if (nameEl) nameEl.textContent = name;
   openModal('scan-chooser-modal');
@@ -27949,6 +28065,8 @@ function scanChooserFullAdd() {
   if (wn) { wn.value = scannedProductName; wn.dispatchEvent(new Event('input', { bubbles: true })); }
   const wc = document.getElementById('wiz-category');
   if (wc) wc.value = 'Food & Drink';
+  const wut = document.getElementById('wiz-unit-type');
+  if (wut) { wut.value = scannedProductUnitType || 'item'; if (typeof applyWizUnitTypeToQtyInput === 'function') applyWizUnitTypeToQtyInput(); }
   if (scannedProductImage && typeof wizShowImage === 'function') {
     _wizImageUrl = scannedProductImage;
     wizShowImage(scannedProductImage);

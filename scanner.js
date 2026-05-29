@@ -67,6 +67,7 @@ async function lookupBarcode(barcode) {
   try {
     let productName = null;
     let imageUrl    = null;
+    let quantityStr = null;
 
     // Try Open Food Facts first
     let res  = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
@@ -74,6 +75,7 @@ async function lookupBarcode(barcode) {
     if (data.status === 1 && data.product?.product_name) {
       productName = data.product.product_name;
       imageUrl    = data.product.image_url || null;
+      quantityStr = data.product.quantity || null;
     }
 
     // Try Open Beauty Facts
@@ -83,8 +85,15 @@ async function lookupBarcode(barcode) {
       if (data.status === 1 && data.product?.product_name) {
         productName = data.product.product_name;
         imageUrl    = data.product.image_url || null;
+        quantityStr = data.product.quantity || null;
       }
     }
+
+    // Auto-detect the unit type from the pack quantity ("500 g" → g,
+    // "6 rolls" → roll). Silently defaults to 'item' when unknown.
+    const detectedUnit = (typeof detectUnitTypeFromQuantity === 'function')
+      ? detectUnitTypeFromQuantity(quantityStr)
+      : 'item';
 
     closeBarcodeScanner();
     sessionStorage.removeItem('barcode_target');
@@ -92,7 +101,7 @@ async function lookupBarcode(barcode) {
     if (productName) {
       if (isScanChooser) {
         // Ask what to do with the scanned item
-        openScanChooser(productName, imageUrl);
+        openScanChooser(productName, imageUrl, detectedUnit);
       } else if (isQuickAdd) {
         // Append to quick-add textarea
         const ta  = document.getElementById('quick-add-input');
@@ -104,6 +113,8 @@ async function lookupBarcode(barcode) {
       } else {
         document.getElementById('f-name').value     = productName;
         document.getElementById('f-category').value = 'Food & Drink';
+        const futEl = document.getElementById('f-unit-type');
+        if (futEl) { futEl.value = detectedUnit; if (typeof applyUnitTypeToQtyInput === 'function') applyUnitTypeToQtyInput(); }
         if (imageUrl) { pendingImageUrl = imageUrl; showImagePreview(imageUrl, 'Image found via barcode'); }
         toast('Product found ✓');
       }
@@ -642,9 +653,10 @@ async function addIncomingItem(payload, openEdit) {
   }
 }
 
-function openScanChooser(name, imageUrl) {
+function openScanChooser(name, imageUrl, unitType) {
   scannedProductName  = name;
   scannedProductImage = imageUrl;
+  scannedProductUnitType = (unitType && typeof UNIT_TYPES === 'object' && UNIT_TYPES[unitType]) ? unitType : 'item';
   const nameEl = document.getElementById('scan-chooser-name');
   if (nameEl) nameEl.textContent = name;
   openModal('scan-chooser-modal');
@@ -672,6 +684,8 @@ function scanChooserFullAdd() {
   if (wn) { wn.value = scannedProductName; wn.dispatchEvent(new Event('input', { bubbles: true })); }
   const wc = document.getElementById('wiz-category');
   if (wc) wc.value = 'Food & Drink';
+  const wut = document.getElementById('wiz-unit-type');
+  if (wut) { wut.value = (typeof scannedProductUnitType !== 'undefined' && scannedProductUnitType) ? scannedProductUnitType : 'item'; if (typeof applyWizUnitTypeToQtyInput === 'function') applyWizUnitTypeToQtyInput(); }
   if (scannedProductImage && typeof wizShowImage === 'function') {
     _wizImageUrl = scannedProductImage;
     wizShowImage(scannedProductImage);
