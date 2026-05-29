@@ -15,39 +15,38 @@ async function openBarcodeScanner() {
   const video     = document.getElementById('barcode-video');
   const statusEl  = document.getElementById('barcode-status');
   try {
-    // Request a higher-resolution rear camera. A low-res frame is the main
-    // cause of misreads; 1280x720 gives the detector enough detail. focusMode
-    // is non-standard but harmless where unsupported.
-    barcodeStream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: 'environment',
-        width:  { ideal: 1280 },
-        height: { ideal: 720 },
-        focusMode: 'continuous',
-      },
-    });
+    barcodeStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
     video.srcObject = barcodeStream;
     const detector = new BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e','code_128','code_39'] });
     // Require the SAME value on two consecutive detections before accepting,
-    // so a single mis-decoded frame can't be reported as "Found". This is the
-    // fix for barcodes resolving to the wrong number.
-    let _lastSeen = null, _sameCount = 0;
+    // so a single mis-decoded frame can't be reported as "Found" — this is the
+    // fix for barcodes resolving to the wrong number. The _busy guard prevents
+    // detect() calls from stacking up (and saturating the main thread) if one
+    // ever runs longer than the interval.
+    let _lastSeen = null, _sameCount = 0, _busy = false;
     barcodeInterval = setInterval(async () => {
-      if (video.readyState < 2) return;
+      if (_busy || video.readyState < 2) return;
+      _busy = true;
       try {
         const codes = await detector.detect(video);
-        if (!codes.length) { _lastSeen = null; _sameCount = 0; return; }
-        const candidate = codes[0].rawValue;
-        if (candidate === _lastSeen) { _sameCount++; }
-        else { _lastSeen = candidate; _sameCount = 1; statusEl.textContent = 'Reading barcode…'; }
-        if (_sameCount >= 2) {
-          clearInterval(barcodeInterval);
-          statusEl.textContent = `Found: ${candidate} — looking up product…`;
-          navigator.vibrate && navigator.vibrate([50, 30, 50]);
-          await lookupBarcode(candidate);
+        if (!codes.length) {
+          _lastSeen = null; _sameCount = 0;
+        } else {
+          const candidate = codes[0].rawValue;
+          if (candidate === _lastSeen) { _sameCount++; }
+          else { _lastSeen = candidate; _sameCount = 1; statusEl.textContent = 'Reading barcode…'; }
+          if (_sameCount >= 2) {
+            clearInterval(barcodeInterval);
+            statusEl.textContent = `Found: ${candidate} — looking up product…`;
+            navigator.vibrate && navigator.vibrate([50, 30, 50]);
+            await lookupBarcode(candidate);
+          }
         }
-      } catch(e) {}
-    }, 250);
+      } catch(e) {
+      } finally {
+        _busy = false;
+      }
+    }, 400);
   } catch(e) {
     statusEl.textContent = 'Could not access camera. Please check permissions.';
   }
