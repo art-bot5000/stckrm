@@ -21568,8 +21568,8 @@ function openFab() {
     // Secondaries stack above FAB (normal vertical menu)
     menu.innerHTML = secondaries.map((a, i) => `
       <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;animation:fabItemIn 0.18s ease ${(i+1)*0.06}s both">
-        <span onclick="(${a.action.toString()})()" style="font-size:17px;font-weight:600;color:var(--text);background:var(--surface);padding:7px 14px;border-radius:8px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3);border:1px solid var(--border);cursor:pointer">${a.label}</span>
-        <button onclick="(${a.action.toString()})()" style="width:52px;height:52px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,0.3);flex-shrink:0">${a.icon}</button>
+        <span onclick="(${a.action.toString().replace(/"/g,'&quot;')})()" style="font-size:17px;font-weight:600;color:var(--text);background:var(--surface);padding:7px 14px;border-radius:8px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3);border:1px solid var(--border);cursor:pointer">${a.label}</span>
+        <button onclick="(${a.action.toString().replace(/"/g,'&quot;')})()" style="width:52px;height:52px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,0.3);flex-shrink:0">${a.icon}</button>
       </div>`).join('');
 
     // Primary slides out to the LEFT of the FAB button
@@ -21578,7 +21578,7 @@ function openFab() {
     slide.id = 'fab-primary-slide';
     slide.style.cssText = 'position:fixed;bottom:88px;right:112px;z-index:1100;display:flex;align-items:center;gap:10px;animation:fabSlideLeft 0.22s cubic-bezier(0.34,1.56,0.64,1) both';
     slide.innerHTML = `
-      <span onclick="(${primary.action.toString()})()" style="font-size:17px;font-weight:700;color:#111;background:var(--accent);padding:10px 18px;border-radius:12px;white-space:nowrap;box-shadow:0 4px 16px rgba(232,168,56,0.45);cursor:pointer;border:none">${primary.label}</span>
+      <span onclick="(${primary.action.toString().replace(/"/g,'&quot;')})()" style="font-size:17px;font-weight:700;color:#111;background:var(--accent);padding:10px 18px;border-radius:12px;white-space:nowrap;box-shadow:0 4px 16px rgba(232,168,56,0.45);cursor:pointer;border:none">${primary.label}</span>
       <span style="font-size:24px">${primary.icon}</span>`;
     container.appendChild(slide);
 
@@ -21586,8 +21586,8 @@ function openFab() {
     const actions = _getFabActionsForView(_currentView);
     menu.innerHTML = actions.map((a, i) => `
       <div style="display:flex;align-items:center;gap:10px;animation:fabItemIn 0.18s ease ${i*0.05}s both">
-        <span onclick="(${a.action.toString()})()" style="font-size:17px;font-weight:600;color:var(--text);background:var(--surface);padding:7px 14px;border-radius:8px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3);border:1px solid var(--border);cursor:pointer">${a.label}</span>
-        <button onclick="(${a.action.toString()})()" style="width:52px;height:52px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,0.3);flex-shrink:0">${a.icon}</button>
+        <span onclick="(${a.action.toString().replace(/"/g,'&quot;')})()" style="font-size:17px;font-weight:600;color:var(--text);background:var(--surface);padding:7px 14px;border-radius:8px;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3);border:1px solid var(--border);cursor:pointer">${a.label}</span>
+        <button onclick="(${a.action.toString().replace(/"/g,'&quot;')})()" style="width:52px;height:52px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 12px rgba(0,0,0,0.3);flex-shrink:0">${a.icon}</button>
       </div>`).join('');
   }
 }
