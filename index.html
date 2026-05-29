@@ -3545,8 +3545,9 @@
 </div>
 
 <!-- ═══ BARCODE SCANNER MODAL ═══ -->
-<div class="modal-backdrop" id="barcode-modal" style="z-index:500">
-  <div class="modal" style="max-width:420px">
+<div class="modal-backdrop" id="barcode-modal" style="z-index:100000">
+  <div class="modal" style="max-width:420px;position:relative">
+    <button onclick="closeBarcodeScanner()" aria-label="Close scanner" title="Close" style="position:absolute;top:8px;right:8px;width:36px;height:36px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:22px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2;-webkit-tap-highlight-color:transparent;padding:0">×</button>
     <h2><svg class="icon icon-lg" aria-hidden="true"><use href="#i-camera"></use></svg> Scan Barcode</h2>
     <p class="subtitle">Point your camera at the product barcode.</p>
     <div id="barcode-video-wrap" style="position:relative;border-radius:10px;overflow:hidden;background:#000;margin-bottom:12px;aspect-ratio:4/3">
