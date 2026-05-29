@@ -4,16 +4,51 @@
 // ═══════════════════════════════════════════
 let barcodeStream   = null;
 let barcodeInterval = null;
+let _zxingReader    = null;   // ZXing BrowserMultiFormatReader instance (fallback path)
+let _zxingLoading   = null;   // promise guard so we only inject the script once
+
+// Lazily inject the vendored ZXing UMD bundle (self-hosted at /zxing.min.js).
+// Resolves once window.ZXing is available. Used only when the native
+// BarcodeDetector API is missing (e.g. Chrome on Windows/desktop).
+function _loadZXing() {
+  if (window.ZXing) return Promise.resolve();
+  if (_zxingLoading) return _zxingLoading;
+  _zxingLoading = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'zxing.min.js';
+    s.defer = true;
+    s.onload  = () => window.ZXing ? resolve() : reject(new Error('ZXing loaded but window.ZXing missing'));
+    s.onerror = (e) => reject(e);
+    document.head.appendChild(s);
+  });
+  return _zxingLoading;
+}
 
 async function openBarcodeScanner() {
-  // Check for BarcodeDetector API support
-  if (!('BarcodeDetector' in window)) {
-    toast('Barcode scanning not supported on this browser — try Chrome on Android');
+  openModal('barcode-modal');
+  const video    = document.getElementById('barcode-video');
+  const statusEl = document.getElementById('barcode-status');
+  // Reset the manual-entry sub-panel to its collapsed default each open.
+  if (typeof _resetBarcodeManualEntry === 'function') _resetBarcodeManualEntry();
+
+  // Fast path: native BarcodeDetector (Chrome on Android/ChromeOS/macOS).
+  if ('BarcodeDetector' in window) {
+    return _scanWithBarcodeDetector(video, statusEl);
+  }
+  // Fallback path: vendored ZXing decoder (Chrome on Windows/desktop, etc.).
+  statusEl.textContent = 'Loading scanner…';
+  try {
+    await _loadZXing();
+  } catch (e) {
+    statusEl.textContent = 'Scanner engine failed to load. You can type the barcode below instead.';
+    if (typeof _showBarcodeManualEntry === 'function') _showBarcodeManualEntry();
     return;
   }
-  openModal('barcode-modal');
-  const video     = document.getElementById('barcode-video');
-  const statusEl  = document.getElementById('barcode-status');
+  return _scanWithZXing(video, statusEl);
+}
+
+// Native-API scan loop (unchanged behaviour).
+async function _scanWithBarcodeDetector(video, statusEl) {
   try {
     barcodeStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
     video.srcObject = barcodeStream;
@@ -48,7 +83,40 @@ async function openBarcodeScanner() {
       }
     }, 400);
   } catch(e) {
-    statusEl.textContent = 'Could not access camera. Please check permissions.';
+    statusEl.textContent = 'Could not access camera. Please check permissions, or type the barcode below.';
+    if (typeof _showBarcodeManualEntry === 'function') _showBarcodeManualEntry();
+  }
+}
+
+// ZXing fallback scan loop. ZXing manages its own camera + decode cycle via
+// decodeFromVideoDevice; we apply the same "two consecutive identical reads"
+// confirmation guard the native path uses.
+async function _scanWithZXing(video, statusEl) {
+  try {
+    _zxingReader = new window.ZXing.BrowserMultiFormatReader();
+    statusEl.textContent = 'Searching for barcode…';
+    let _lastSeen = null, _sameCount = 0, _done = false;
+    // deviceId null = let ZXing pick the default (prefers rear on mobile).
+    await _zxingReader.decodeFromVideoDevice(null, video, (result, err) => {
+      if (_done) return;
+      if (result) {
+        const candidate = result.getText();
+        if (candidate === _lastSeen) { _sameCount++; }
+        else { _lastSeen = candidate; _sameCount = 1; statusEl.textContent = 'Reading barcode…'; }
+        if (_sameCount >= 2) {
+          _done = true;
+          statusEl.textContent = `Found: ${candidate} — looking up product…`;
+          navigator.vibrate && navigator.vibrate([50, 30, 50]);
+          // Stop the camera/decode loop before the async lookup.
+          try { _zxingReader.reset(); } catch(_) {}
+          lookupBarcode(candidate);
+        }
+      }
+      // err is a NotFoundException on every frame without a code — ignore it.
+    });
+  } catch(e) {
+    statusEl.textContent = 'Could not access camera. Please check permissions, or type the barcode below.';
+    if (typeof _showBarcodeManualEntry === 'function') _showBarcodeManualEntry();
   }
 }
 
@@ -56,8 +124,50 @@ function closeBarcodeScanner() {
   clearInterval(barcodeInterval);
   barcodeInterval = null;
   if (barcodeStream) { barcodeStream.getTracks().forEach(t => t.stop()); barcodeStream = null; }
+  if (_zxingReader) { try { _zxingReader.reset(); } catch(_) {} _zxingReader = null; }
   closeModal('barcode-modal');
 }
+
+// ── Manual barcode entry ───────────────────────────────────────────
+// A small "type it instead" affordance in the scan modal. Universal
+// fallback: works with no camera, denied permissions, no scanner engine,
+// or an unreadable/damaged label. Submits straight into lookupBarcode().
+function _resetBarcodeManualEntry() {
+  const panel = document.getElementById('barcode-manual-panel');
+  const input = document.getElementById('barcode-manual-input');
+  const link  = document.getElementById('barcode-manual-toggle');
+  if (panel) panel.style.display = 'none';
+  if (input) input.value = '';
+  if (link)  link.style.display = '';
+}
+
+function _showBarcodeManualEntry() {
+  const panel = document.getElementById('barcode-manual-panel');
+  const link  = document.getElementById('barcode-manual-toggle');
+  if (panel) panel.style.display = 'block';
+  if (link)  link.style.display = 'none';
+  const input = document.getElementById('barcode-manual-input');
+  if (input) setTimeout(() => input.focus(), 50);
+}
+
+function submitManualBarcode() {
+  const input = document.getElementById('barcode-manual-input');
+  const raw   = (input?.value || '').trim();
+  // Barcodes are digits only (EAN/UPC). Strip spaces/dashes the user may type.
+  const code  = raw.replace(/[\s-]/g, '');
+  if (!/^\d{6,14}$/.test(code)) {
+    toast('Enter a valid barcode number (6–14 digits)');
+    return;
+  }
+  const statusEl = document.getElementById('barcode-status');
+  if (statusEl) statusEl.textContent = `Looking up ${code}…`;
+  // Stop any live camera/decoder before the lookup navigates away.
+  clearInterval(barcodeInterval); barcodeInterval = null;
+  if (barcodeStream) { barcodeStream.getTracks().forEach(t => t.stop()); barcodeStream = null; }
+  if (_zxingReader) { try { _zxingReader.reset(); } catch(_) {} _zxingReader = null; }
+  lookupBarcode(code);
+}
+
 
 async function lookupBarcode(barcode) {
   const statusEl = document.getElementById('barcode-status');

@@ -20,6 +20,7 @@ jobs:
             sw.js manifest.json admin.html diag-trusted.html
             main.ts deno.json start.sh Caddyfile
             logo.png logo.webp package.json
+            zxing.min.js
           )
           MISSING=()
           for f in "${REQUIRED[@]}"; do
@@ -68,6 +69,7 @@ jobs:
             app.js budget.js notes.js demo.js scanner.js styles.css
             index.html landing.html admin.html diag-trusted.html
             sw.js manifest.json logo.png logo.webp
+            zxing.min.js
           )
           MISSING=()
           for f in "${DOCKERFILE_FILES[@]}"; do

@@ -3557,6 +3557,18 @@
       </div>
     </div>
     <div id="barcode-status" style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:12px">Searching for barcode…</div>
+    <div style="text-align:center;margin-bottom:10px">
+      <a href="#" id="barcode-manual-toggle" onclick="event.preventDefault();_showBarcodeManualEntry()" style="font-size:12px;color:var(--accent,#e8a838);text-decoration:underline;cursor:pointer">Can't scan? Type the barcode instead</a>
+    </div>
+    <div id="barcode-manual-panel" style="display:none;margin-bottom:12px">
+      <label for="barcode-manual-input" style="display:block;font-size:12px;color:var(--muted);margin-bottom:6px">Enter the barcode number (the digits printed under the bars)</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="barcode-manual-input" inputmode="numeric" autocomplete="off" placeholder="e.g. 5000159484695"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();submitManualBarcode();}"
+          style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px;outline:none">
+        <button type="button" class="btn btn-blue btn-sm" onclick="submitManualBarcode()">Look up</button>
+      </div>
+    </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeBarcodeScanner()">Cancel</button>
     </div>

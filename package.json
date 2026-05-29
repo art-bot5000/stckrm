@@ -7,7 +7,7 @@
     "build:js":   "terser app.js --compress passes=3 --mangle --comments false -o public/app.js && terser budget.js --compress passes=3 --mangle --comments false -o public/budget.js && terser notes.js --compress passes=3 --mangle --comments false -o public/notes.js && terser demo.js --compress passes=3 --mangle --comments false -o public/demo.js && terser scanner.js --compress passes=3 --mangle --comments false -o public/scanner.js",
     "build:css":  "cleancss -o public/styles.css styles.css",
     "build:html": "html-minifier-terser index.html --collapse-whitespace --remove-comments --remove-optional-tags --remove-redundant-attributes --remove-script-type-attributes --remove-tag-whitespace --minify-css true --minify-js true -o public/index.html && html-minifier-terser landing.html --collapse-whitespace --remove-comments --remove-optional-tags --remove-redundant-attributes --remove-script-type-attributes --remove-tag-whitespace --minify-css true --minify-js true -o public/landing.html",
-    "build:copy": "cp sw.js public/sw.js && cp manifest.json public/manifest.json && cp admin.html public/admin.html && cp diag-trusted.html public/diag-trusted.html && cp logo.png public/logo.png && cp logo.webp public/logo.webp",
+    "build:copy": "cp sw.js public/sw.js && cp manifest.json public/manifest.json && cp admin.html public/admin.html && cp diag-trusted.html public/diag-trusted.html && cp logo.png public/logo.png && cp logo.webp public/logo.webp && cp zxing.min.js public/zxing.min.js",
     "build":      "mkdir -p public && npm run build:js && npm run build:css && npm run build:html && npm run build:copy"
   },
   "devDependencies": {
