@@ -172,8 +172,8 @@ function renderStorePricesSection(item) {
   }
 }
 
-// Temporary store prices for the current modal session
-let tempStorePrices = [];
+// tempStorePrices is declared at the top level of app.js (loaded before scanner.js);
+// do NOT re-declare it here — a duplicate global `let` is a fatal SyntaxError.
 
 function addStorePriceRow() {
   tempStorePrices.push({ store: '', price: '' });
@@ -215,7 +215,8 @@ function renderTempStorePrices() {
 // ═══════════════════════════════════════════
 //  SHARE ITEM
 // ═══════════════════════════════════════════
-let sharingItem = null;
+// sharingItem is declared at the top level of app.js (loaded first); do NOT
+// re-declare it here — a duplicate global `let` is a fatal SyntaxError.
 
 function shareItem(id) {
   const item = items.find(i => i.id === id);
@@ -535,8 +536,9 @@ function fallbackCopy(text) {
 }
 
 
-let scannedProductName  = '';
-let scannedProductImage = null;
+// scannedProductName / scannedProductImage are declared at the top level of app.js
+// (loaded before scanner.js); do NOT re-declare them here — duplicate global `let`s
+// are a fatal "already declared" SyntaxError.
 
 // ═══════════════════════════════════════════
 //  ITEM SHARE — SHARE & RECEIVE VIA URL
