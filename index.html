@@ -2170,7 +2170,12 @@
 
     <!-- Hero: Left to pay -->
     <div id="budget-hero" style="background:linear-gradient(135deg,rgba(232,168,56,0.08),rgba(91,141,238,0.06));border:1px solid var(--border);border-radius:14px;padding:20px 22px;margin-bottom:14px">
-      <div style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px">Left to pay this month</div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:6px">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase">Left to pay this month</div>
+        <button id="budget-start-new-month-btn" onclick="budgetStartNewMonth()" style="display:none;flex:none;align-items:center;gap:5px;background:var(--accent,#e8a838);color:#1a1206;border:none;border-radius:8px;padding:6px 11px;font-size:11px;font-weight:700;font-family:var(--sans);letter-spacing:0.3px;cursor:pointer;white-space:nowrap">
+          <svg class="icon" aria-hidden="true" style="width:13px;height:13px"><use href="#i-chevron-right"></use></svg> Start new month
+        </button>
+      </div>
       <div style="font-size:32px;font-weight:700;font-family:var(--sans);color:var(--text);letter-spacing:-0.5px" id="budget-hero-amount">£0.00</div>
       <div style="display:flex;gap:20px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
         <div style="flex:1;min-width:0">

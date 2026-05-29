@@ -44,6 +44,7 @@ let billsDeletedIds = new Set();  // tombstones for hard-deleted bill templates
 let budgetSettings = {
   weekStart: 'mon',                // 'mon' | 'sun' — Phase 2+ consumer
   materialisedMonths: [],          // months we've generated instances for (union-merged)
+  newMonthDismissed: null,         // 'YYYY-MM' the user dismissed the "Start new month" button FROM
 };
 
 // ── Persistence ────────────────────────────────────────────────────────────
@@ -1505,6 +1506,50 @@ async function budgetGoToday() {
   await renderBudget();
 }
 
+// ── "Start new month" early-rollover button ────────────────────────────────
+// Lets the user jump the bill view to next month before the calendar month
+// actually ticks over (e.g. when pay lands a day or two early at a weekend).
+// Non-destructive: advancing the view materialises a fresh set of unpaid bills
+// for next month and auto-rolls split-bill savings, exactly as a natural month
+// change would. Spends stay scoped to the real calendar date, so they reset on
+// their own when the new month genuinely begins.
+//
+// Visibility: shown only while viewing today's month, and only from the 25th
+// onward OR once every bill in the current month is paid. Dismissed (hidden)
+// for the rest of that window once pressed; reappears next month.
+function _shouldShowNewMonthButton() {
+  if (typeof canWrite === 'function' && !canWrite('budget')) return false;
+  const todayMonth = _yyyymm(new Date());
+  // Only offer it from the current real month — not while browsing past/future.
+  if (_budgetViewMonth !== todayMonth) return false;
+  // Already dismissed for this month?
+  if (budgetSettings.newMonthDismissed === todayMonth) return false;
+  const dayOfMonth = new Date().getDate();
+  const allPaid    = getLeftToPay(todayMonth) <= 0
+                  && Object.keys(getMonthInstances(todayMonth)).length > 0;
+  return dayOfMonth >= 25 || allPaid;
+}
+
+function _refreshNewMonthButton() {
+  const btn = document.getElementById('budget-start-new-month-btn');
+  if (!btn) return;
+  btn.style.display = _shouldShowNewMonthButton() ? 'inline-flex' : 'none';
+}
+
+async function budgetStartNewMonth() {
+  if (typeof canWrite === 'function' && !canWrite('budget')) {
+    if (typeof showLockBanner === 'function') showLockBanner('budget');
+    return;
+  }
+  // Remember the month we're leaving so the button stays hidden for the rest
+  // of this window (it'll naturally re-evaluate once the calendar rolls over).
+  budgetSettings.newMonthDismissed = _yyyymm(new Date());
+  await saveBudgetLocal();
+  _syncQueue?.enqueue();
+  await budgetNextMonth(); // advances _budgetViewMonth + full re-render
+  if (typeof toast === 'function') toast('Started next month — bills reset, ready to budget');
+}
+
 // ── Empty state ────────────────────────────────────────────────────────────
 function _refreshBudgetEmptyState() {
   // Empty only if NEITHER bills NOR spend categories NOR accounts exist.
@@ -1686,6 +1731,9 @@ function renderBudgetDashboard() {
   if (typeof renderCashFlowChart === 'function') renderCashFlowChart();
   // Augment the hero card with projected balance + low-point
   if (typeof _augmentHeroWithProjection === 'function') _augmentHeroWithProjection();
+
+  // Early-rollover button in the hero box
+  _refreshNewMonthButton();
 }
 
 // ── Bills panel render ─────────────────────────────────────────────────────
