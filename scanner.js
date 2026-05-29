@@ -56,6 +56,9 @@ function closeBarcodeScanner() {
   clearInterval(barcodeInterval);
   barcodeInterval = null;
   if (barcodeStream) { barcodeStream.getTracks().forEach(t => t.stop()); barcodeStream = null; }
+  // Clear any pending scan target so a cancelled scan (via the × / Cancel) doesn't
+  // leave a stale 'scan-chooser'/'quick-add' flag that misroutes the next scan.
+  sessionStorage.removeItem('barcode_target');
   closeModal('barcode-modal');
 }
 
@@ -102,9 +105,23 @@ async function lookupBarcode(barcode) {
         toast(`Found: ${productName}`);
         openModal('quick-add-modal');
       } else {
-        document.getElementById('f-name').value     = productName;
-        document.getElementById('f-category').value = 'Food & Drink';
-        if (imageUrl) { pendingImageUrl = imageUrl; showImagePreview(imageUrl, 'Image found via barcode'); }
+        // This function is shared by BOTH Scan buttons. openAddModal() opens the
+        // step wizard (wiz-* fields); editing an existing item opens item-modal
+        // (f-* fields). Populate whichever one is currently open.
+        const wizOpen = document.getElementById('add-item-wizard-modal')?.classList.contains('open');
+        if (wizOpen) {
+          const wn = document.getElementById('wiz-name');
+          if (wn) { wn.value = productName; wn.dispatchEvent(new Event('input', { bubbles: true })); }
+          const wc = document.getElementById('wiz-category');
+          if (wc) wc.value = 'Food & Drink';
+          if (imageUrl && typeof wizShowImage === 'function') { _wizImageUrl = imageUrl; wizShowImage(imageUrl); }
+        } else {
+          const fn = document.getElementById('f-name');
+          if (fn) fn.value = productName;
+          const fc = document.getElementById('f-category');
+          if (fc) fc.value = 'Food & Drink';
+          if (imageUrl) { pendingImageUrl = imageUrl; showImagePreview(imageUrl, 'Image found via barcode'); }
+        }
         toast('Product found ✓');
       }
     } else {
@@ -119,7 +136,9 @@ async function lookupBarcode(barcode) {
         toast(`Barcode ${barcode} added — rename it later`);
         openModal('quick-add-modal');
       } else {
-        document.getElementById('f-name').focus();
+        const wizOpen = document.getElementById('add-item-wizard-modal')?.classList.contains('open');
+        const nameEl = document.getElementById(wizOpen ? 'wiz-name' : 'f-name');
+        if (nameEl) nameEl.focus();
         toast(`Barcode not found — enter name manually`);
       }
     }
