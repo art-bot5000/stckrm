@@ -125,6 +125,8 @@ function closeBarcodeScanner() {
   barcodeInterval = null;
   if (barcodeStream) { barcodeStream.getTracks().forEach(t => t.stop()); barcodeStream = null; }
   if (_zxingReader) { try { _zxingReader.reset(); } catch(_) {} _zxingReader = null; }
+  // Clear any pending target so an abandoned scan can't mis-route the next one.
+  sessionStorage.removeItem('barcode_target');
   closeModal('barcode-modal');
 }
 
@@ -173,6 +175,7 @@ async function lookupBarcode(barcode) {
   const statusEl = document.getElementById('barcode-status');
   const isQuickAdd   = sessionStorage.getItem('barcode_target') === 'quick-add';
   const isScanChooser = sessionStorage.getItem('barcode_target') === 'scan-chooser';
+  const isWizard      = sessionStorage.getItem('barcode_target') === 'wizard';
 
   try {
     let productName = null;
@@ -220,12 +223,25 @@ async function lookupBarcode(barcode) {
         updateQuickAddPreview();
         toast(`Found: ${productName}`);
         openModal('quick-add-modal');
+      } else if (isWizard) {
+        // Add-Item wizard fields
+        const wn = document.getElementById('wiz-name');
+        if (wn) { wn.value = productName; wn.dispatchEvent(new Event('input', { bubbles: true })); }
+        const wc = document.getElementById('wiz-category');
+        if (wc) wc.value = 'Food & Drink';
+        const wut = document.getElementById('wiz-unit-type');
+        if (wut) { wut.value = detectedUnit; if (typeof applyWizUnitTypeToQtyInput === 'function') applyWizUnitTypeToQtyInput(); }
+        if (imageUrl && typeof wizShowImage === 'function') { _wizImageUrl = imageUrl; wizShowImage(imageUrl); }
+        openModal('add-item-wizard-modal');
+        toast('Product found ✓');
       } else {
+        // Edit Item modal fields (default / 'edit' target)
         document.getElementById('f-name').value     = productName;
         document.getElementById('f-category').value = 'Food & Drink';
         const futEl = document.getElementById('f-unit-type');
         if (futEl) { futEl.value = detectedUnit; if (typeof applyUnitTypeToQtyInput === 'function') applyUnitTypeToQtyInput(); }
         if (imageUrl) { pendingImageUrl = imageUrl; showImagePreview(imageUrl, 'Image found via barcode'); }
+        openModal('item-modal');
         toast('Product found ✓');
       }
     } else {
@@ -239,7 +255,13 @@ async function lookupBarcode(barcode) {
         updateQuickAddPreview();
         toast(`Barcode ${barcode} added — rename it later`);
         openModal('quick-add-modal');
+      } else if (isWizard) {
+        openModal('add-item-wizard-modal');
+        const wn = document.getElementById('wiz-name');
+        if (wn) wn.focus();
+        toast(`Barcode not found — enter name manually`);
       } else {
+        openModal('item-modal');
         document.getElementById('f-name').focus();
         toast(`Barcode not found — enter name manually`);
       }

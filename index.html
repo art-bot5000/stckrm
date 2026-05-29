@@ -3779,7 +3779,7 @@
           <label>Item Name *</label>
           <div style="display:flex;gap:8px;align-items:center">
             <input type="text" id="f-name" placeholder="e.g. Coffee Beans (1kg)" style="flex:1">
-            <button type="button" class="btn btn-ghost btn-sm" onclick="openBarcodeScanner()" title="Scan barcode"><svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg> Scan</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="sessionStorage.setItem('barcode_target','edit');openBarcodeScanner()" title="Scan barcode"><svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg> Scan</button>
           </div>
         </div>
         <div class="field"><label for="f-category">Category</label>
@@ -3903,7 +3903,7 @@
           <label>Item Name *</label>
           <div style="display:flex;gap:8px;align-items:center">
             <input type="text" id="wiz-name" placeholder="e.g. Coffee Beans (1kg)" style="flex:1" oninput="document.getElementById('wiz-price-search').value=this.value;wizUpdatePriceLinks()">
-            <button type="button" class="btn btn-ghost btn-sm" onclick="openBarcodeScanner()" title="Scan barcode"><svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg> Scan</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="sessionStorage.setItem('barcode_target','wizard');openBarcodeScanner()" title="Scan barcode"><svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg> Scan</button>
           </div>
         </div>
         <div class="field"><label for="wiz-category">Category</label>
