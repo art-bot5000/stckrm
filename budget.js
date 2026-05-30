@@ -45,7 +45,6 @@ let budgetSettings = {
   weekStart: 'mon',                // 'mon' | 'sun' — Phase 2+ consumer
   materialisedMonths: [],          // months we've generated instances for (union-merged)
   newMonthDismissed: null,         // 'YYYY-MM' the user dismissed the "Start new month" button FROM
-  rolledToMonth: null,             // 'YYYY-MM' early-rollover view override; survives refresh until calendar catches up
 };
 
 // ── Persistence ────────────────────────────────────────────────────────────
@@ -302,51 +301,6 @@ async function _autoRollPastSavingInstances() {
   return touched;
 }
 
-// Self-healing: collapse duplicate saving instances for the same split bill
-// within the same calendar month down to a single instance. A historical
-// double-run of the saving-instance backfill (and an old key-format
-// migration) left some months with two saving rows for one bill, which
-// inflated the "X/N mo saved" count. A monthly-split bill can only ever have
-// ONE saving instance per calendar month, so any extras are safe to drop.
-//
-// Dedup rule per (billId, yyyymm) group of kind:'saving' instances:
-//   • Prefer to KEEP a paid, non-skipped instance (so we don't lose credit).
-//   • Among equally-eligible, keep the earliest updatedAt (stable).
-//   • Delete the rest.
-// Cheap: only writes when a real duplicate is found.
-async function _dedupeSavingInstances() {
-  let removed = 0;
-  for (const yyyymm of Object.keys(billInstances)) {
-    const month = billInstances[yyyymm];
-    const groups = {}; // billId -> [{ key, inst }]
-    for (const key of Object.keys(month)) {
-      const inst = month[key];
-      if (!inst || inst.kind !== 'saving') continue;
-      (groups[inst.billId] ||= []).push({ key, inst });
-    }
-    for (const billId of Object.keys(groups)) {
-      const list = groups[billId];
-      if (list.length <= 1) continue; // no duplicate
-      list.sort((a, b) => {
-        const aPaid = (a.inst.paidAt && !a.inst.skipped) ? 0 : 1;
-        const bPaid = (b.inst.paidAt && !b.inst.skipped) ? 0 : 1;
-        if (aPaid !== bPaid) return aPaid - bPaid;
-        return (a.inst.updatedAt || '').localeCompare(b.inst.updatedAt || '');
-      });
-      for (let i = 1; i < list.length; i++) {
-        delete month[list[i].key];
-        removed++;
-      }
-    }
-    if (Object.keys(month).length === 0) delete billInstances[yyyymm];
-  }
-  if (removed > 0) {
-    await saveBudgetLocal();
-    _syncQueue?.enqueue();
-  }
-  return removed;
-}
-
 // ── Bill template CRUD ─────────────────────────────────────────────────────
 async function createBill(input) {
   const tpl = {
@@ -564,11 +518,6 @@ function _nextDueDate(billId) {
     for (const key of Object.keys(billInstances[yyyymm])) {
       const inst = billInstances[yyyymm][key];
       if (inst.billId !== billId) continue;
-      // Saving instances are paper-only set-asides, NOT the bill's payment.
-      // The cycle is bounded by PAYMENT dates, so a saving instance must
-      // never be mistaken for "next due" — that corrupts the carry-over
-      // cycle window and the X/N saved count.
-      if (inst.kind === 'saving') continue;
       if (inst.paidAt || inst.skipped) continue;
       if (!inst.dueDate) continue;
       if (inst.dueDate < today) continue; // past-due — not part of next cycle
@@ -1493,26 +1442,13 @@ let _budgetMarkPaidContext = null; // { yyyymm, billId, expected } during mark-p
 // ── View entry point — called by showView('budget', ...) ───────────────────
 async function renderBudget() {
   // Default month = today's month
-  if (!_budgetViewMonth) {
-    const todayMonth = _yyyymm(new Date());
-    // Restore an early-rollover override if one is still genuinely ahead of
-    // the real calendar; otherwise drop it (the calendar has caught up).
-    const rolled = budgetSettings.rolledToMonth;
-    if (rolled && rolled > todayMonth) {
-      _budgetViewMonth = rolled;
-    } else {
-      if (rolled) { budgetSettings.rolledToMonth = null; /* persisted below */ }
-      _budgetViewMonth = todayMonth;
-    }
-  }
+  if (!_budgetViewMonth) _budgetViewMonth = _yyyymm(new Date());
   // Materialise on first view of any month (idempotent)
   await materialiseMonth(_budgetViewMonth, { persist: true });
   // Auto-roll past-month unpaid saving instances into "paid" so carry-over
   // self-heals across month boundaries even if the user hasn't opened the
   // app for a while. Cheap when there's nothing to roll.
   await _autoRollPastSavingInstances();
-  // Self-heal any historical duplicate saving instances (cheap no-op when clean)
-  await _dedupeSavingInstances();
 
   _updateBudgetMonthLabel();
   _refreshBudgetEmptyState();
@@ -1567,12 +1503,6 @@ async function budgetNextMonth() {
 }
 async function budgetGoToday() {
   _budgetViewMonth = _yyyymm(new Date());
-  // Returning to today clears any early-rollover override.
-  if (budgetSettings.rolledToMonth) {
-    budgetSettings.rolledToMonth = null;
-    await saveBudgetLocal();
-    _syncQueue?.enqueue();
-  }
   await renderBudget();
 }
 
@@ -1611,48 +1541,13 @@ async function budgetStartNewMonth() {
     if (typeof showLockBanner === 'function') showLockBanner('budget');
     return;
   }
-
-  const fromMonth = _yyyymm(new Date());                 // month being closed (real "today")
-  const { year, month } = _parseYyyymm(_budgetViewMonth);
-  const toMonth   = _yyyymm(new Date(year, month + 1, 1)); // month being entered
-
-  // Make sure both months' instances exist before we try to mark them paid.
-  await materialiseMonth(fromMonth, { persist: false });
-  await materialiseMonth(toMonth,   { persist: false });
-
-  // Advance the split-bill saving counts: mark the saving instance PAID for
-  // both the month being closed and the month being entered, for every active
-  // split bill. Idempotent — skips payment months, missing instances, and
-  // instances already paid, so pressing twice (or the calendar later catching
-  // up) never double-credits.
-  for (const tpl of bills) {
-    if (tpl.archived) continue;
-    if (tpl.paymentStrategy !== 'split') continue;
-    if (!tpl.splitInto || !tpl.splitInto.count) continue;
-    for (const ym of [fromMonth, toMonth]) {
-      const { year: y, month: m } = _parseYyyymm(ym);
-      // Only saving months get credited; the payment month is paid via the
-      // normal bills list, not here.
-      if (!_isSplitBillSavingMonth(tpl, y, m)) continue;
-      const inst = _getInstance(ym, tpl.id);
-      if (!inst || inst.kind !== 'saving') continue;
-      if (inst.paidAt || inst.skipped) continue;
-      await markBillPaid(ym, tpl.id, { dueDate: inst.dueDate });
-    }
-  }
-
-  // Persist the early-rollover so it survives a refresh: the view jumps to the
-  // entering month and stays there until the real calendar catches up (or the
-  // user taps Today). Also remember the month we left so the button hides for
-  // the rest of this window.
-  budgetSettings.rolledToMonth     = toMonth;
-  budgetSettings.newMonthDismissed = fromMonth;
-  _budgetViewMonth = toMonth;
+  // Remember the month we're leaving so the button stays hidden for the rest
+  // of this window (it'll naturally re-evaluate once the calendar rolls over).
+  budgetSettings.newMonthDismissed = _yyyymm(new Date());
   await saveBudgetLocal();
   _syncQueue?.enqueue();
-
-  await renderBudget();
-  if (typeof toast === 'function') toast('Started next month — bills reset, savings advanced');
+  await budgetNextMonth(); // advances _budgetViewMonth + full re-render
+  if (typeof toast === 'function') toast('Started next month — bills reset, ready to budget');
 }
 
 // ── Empty state ────────────────────────────────────────────────────────────
