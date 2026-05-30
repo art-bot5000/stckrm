@@ -44,8 +44,6 @@ let billsDeletedIds = new Set();  // tombstones for hard-deleted bill templates
 let budgetSettings = {
   weekStart: 'mon',                // 'mon' | 'sun' — Phase 2+ consumer
   materialisedMonths: [],          // months we've generated instances for (union-merged)
-  newMonthDismissed: null,         // 'YYYY-MM' the user dismissed the "Start new month" button FROM
-  rolledToMonth: null,             // 'YYYY-MM' early-rollover view override; survives refresh until calendar catches up
 };
 
 // ── Persistence ────────────────────────────────────────────────────────────
@@ -95,6 +93,36 @@ async function saveBudgetLocal() {
   await dbPut('billInstances',   'billInstances',   billInstances);
   await dbPut('budgetSettings',  'budgetSettings',  budgetSettings);
   await dbPut('billsDeletedIds', 'billsDeletedIds', [...billsDeletedIds]);
+}
+
+// ── View-state persistence (device-local, NOT synced) ───────────────────────
+// The early-rollover view override and the "Start new month" button-dismissal
+// are per-device UI preferences, not budget data. They must NOT live in
+// budgetSettings — that blob is encrypted, synced, and shared with household
+// guests, and a sync-down was overwriting these fields (the view kept snapping
+// back to the real calendar month after a refresh). localStorage is the right
+// home: it survives refresh, stays on this device, and never reaches the
+// share/sync layer. Mirrors the app's convention for wizard/compact/notif flags.
+const _LS_ROLLED_MONTH = 'stockroom_budget_rolled_month';   // 'YYYY-MM' or absent
+const _LS_NEWMONTH_DISMISS = 'stockroom_budget_newmonth_dismissed'; // 'YYYY-MM' or absent
+
+function _getRolledMonth() {
+  try { return localStorage.getItem(_LS_ROLLED_MONTH) || null; } catch (e) { return null; }
+}
+function _setRolledMonth(yyyymm) {
+  try {
+    if (yyyymm) localStorage.setItem(_LS_ROLLED_MONTH, yyyymm);
+    else        localStorage.removeItem(_LS_ROLLED_MONTH);
+  } catch (e) { /* private mode / quota — non-fatal */ }
+}
+function _getNewMonthDismissed() {
+  try { return localStorage.getItem(_LS_NEWMONTH_DISMISS) || null; } catch (e) { return null; }
+}
+function _setNewMonthDismissed(yyyymm) {
+  try {
+    if (yyyymm) localStorage.setItem(_LS_NEWMONTH_DISMISS, yyyymm);
+    else        localStorage.removeItem(_LS_NEWMONTH_DISMISS);
+  } catch (e) { /* non-fatal */ }
 }
 
 // ── Date helpers ───────────────────────────────────────────────────────────
@@ -1497,11 +1525,12 @@ async function renderBudget() {
     const todayMonth = _yyyymm(new Date());
     // Restore an early-rollover override if one is still genuinely ahead of
     // the real calendar; otherwise drop it (the calendar has caught up).
-    const rolled = budgetSettings.rolledToMonth;
+    // Stored in localStorage (device-local) so the sync layer can't wipe it.
+    const rolled = _getRolledMonth();
     if (rolled && rolled > todayMonth) {
       _budgetViewMonth = rolled;
     } else {
-      if (rolled) { budgetSettings.rolledToMonth = null; /* persisted below */ }
+      if (rolled) _setRolledMonth(null); // calendar caught up — clear override
       _budgetViewMonth = todayMonth;
     }
   }
@@ -1568,11 +1597,7 @@ async function budgetNextMonth() {
 async function budgetGoToday() {
   _budgetViewMonth = _yyyymm(new Date());
   // Returning to today clears any early-rollover override.
-  if (budgetSettings.rolledToMonth) {
-    budgetSettings.rolledToMonth = null;
-    await saveBudgetLocal();
-    _syncQueue?.enqueue();
-  }
+  _setRolledMonth(null);
   await renderBudget();
 }
 
@@ -1593,7 +1618,7 @@ function _shouldShowNewMonthButton() {
   // Only offer it from the current real month — not while browsing past/future.
   if (_budgetViewMonth !== todayMonth) return false;
   // Already dismissed for this month?
-  if (budgetSettings.newMonthDismissed === todayMonth) return false;
+  if (_getNewMonthDismissed() === todayMonth) return false;
   const dayOfMonth = new Date().getDate();
   const allPaid    = getLeftToPay(todayMonth) <= 0
                   && Object.keys(getMonthInstances(todayMonth)).length > 0;
@@ -1643,13 +1668,12 @@ async function budgetStartNewMonth() {
 
   // Persist the early-rollover so it survives a refresh: the view jumps to the
   // entering month and stays there until the real calendar catches up (or the
-  // user taps Today). Also remember the month we left so the button hides for
-  // the rest of this window.
-  budgetSettings.rolledToMonth     = toMonth;
-  budgetSettings.newMonthDismissed = fromMonth;
+  // user taps Today). Stored in localStorage (device-local) so the encrypted
+  // budget sync can't overwrite it. Also remember the month we left so the
+  // button hides for the rest of this window.
+  _setRolledMonth(toMonth);
+  _setNewMonthDismissed(fromMonth);
   _budgetViewMonth = toMonth;
-  await saveBudgetLocal();
-  _syncQueue?.enqueue();
 
   await renderBudget();
   if (typeof toast === 'function') toast('Started next month — bills reset, savings advanced');
