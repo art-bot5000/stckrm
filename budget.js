@@ -714,8 +714,15 @@ function getBillCarryOver(template, todayIso = null) {
   // Sum paid SAVING instances strictly between cycleStartIso (exclusive)
   // and nextDueIso (exclusive — the payment month doesn't count toward
   // carry-over since paying that bill is what closes the cycle).
+  //
+  // SINGLE SOURCE OF TRUTH: count each distinct calendar MONTH once, never raw
+  // instances. A monthly split bill saves at most once per month, so two
+  // instances in the same month (a historical duplicate) must NOT count twice.
+  // This keeps the header ("X of N months saved"), the dashboard row, and the
+  // ticked month list in the timeline modal in perfect agreement, regardless
+  // of any stray duplicate rows still sitting in the data.
+  const countedMonths = new Set();
   let accrued = 0;
-  let slot = 0;
   for (const yyyymm of Object.keys(billInstances)) {
     for (const key of Object.keys(billInstances[yyyymm])) {
       const inst = billInstances[yyyymm][key];
@@ -723,12 +730,16 @@ function getBillCarryOver(template, todayIso = null) {
       if (inst.kind !== 'saving') continue;
       if (!inst.paidAt) continue;
       if (inst.skipped) continue;
+      if (!inst.dueDate) continue;
       if (cycleStartIso && inst.dueDate <= cycleStartIso) continue;
       if (nextDueIso && inst.dueDate >= nextDueIso) continue;
+      const monthKey = inst.dueDate.slice(0, 7);
+      if (countedMonths.has(monthKey)) continue; // dedupe by calendar month
+      countedMonths.add(monthKey);
       accrued += (inst.actualAmount ?? inst.expectedAmount) || 0;
-      slot++;
     }
   }
+  const slot = countedMonths.size;
   accrued = Math.round(accrued * 100) / 100;
 
   // Is the bill due THIS calendar month and unpaid? If so, the bill itself
@@ -2136,21 +2147,27 @@ function _renderMultiMonthBillRow(tpl) {
     ? new Date(co.nextDueIso + 'T12:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
     : null;
 
-  // Months remaining until next payment date. Computed from today.
+  // Saving months remaining = how many set-asides are still to be made before
+  // the bill pays. Driven by the saved count (single source of truth), NOT
+  // calendar distance — so pressing "Start new month" advances the saved count
+  // and this figure ticks down by one in step.
   let monthsLeftLabel = '';
-  if (co.nextDueIso) {
+  const savingMonthsLeft = Math.max(0, co.totalSlots - co.slot);
+  if (co.currentMonthIsPayment) {
+    monthsLeftLabel = 'pays this month';
+  } else if (co.nextDueIso) {
     const today = new Date();
     const next  = new Date(co.nextDueIso + 'T12:00:00');
     const monthsDiff = (next.getFullYear() - today.getFullYear()) * 12
                      + (next.getMonth()    - today.getMonth());
-    if (co.currentMonthIsPayment) {
-      monthsLeftLabel = 'pays this month';
-    } else if (monthsDiff <= 0) {
+    if (monthsDiff <= 0) {
       monthsLeftLabel = 'overdue';
-    } else if (monthsDiff === 1) {
-      monthsLeftLabel = 'pays next month';
+    } else if (savingMonthsLeft === 0) {
+      monthsLeftLabel = 'fully saved';
+    } else if (savingMonthsLeft === 1) {
+      monthsLeftLabel = '1 month left';
     } else {
-      monthsLeftLabel = `${monthsDiff} months left`;
+      monthsLeftLabel = `${savingMonthsLeft} months left`;
     }
   }
 
