@@ -21406,6 +21406,30 @@ function _writeA11yCookie() {
   } catch (e) {}
 }
 
+// Read the device's accessibility choice from the cross-origin cookie
+// (falling back to same-origin localStorage). Returns { theme, scale } with
+// validated values, defaulting to 'system' / 'm'. Used by demo mode to honour
+// the choice the visitor made on the landing page, since demo seeds a fresh
+// settings object that has no theme/textScale of its own.
+function _readA11yPrefs() {
+  let theme = null, scale = null;
+  try {
+    const m = document.cookie.match('(?:^|; )stckrm_a11y=([^;]*)');
+    if (m) {
+      const c = decodeURIComponent(m[1]);
+      const mt = c.match(/(?:^|&)t=([^&]+)/);
+      const ms = c.match(/(?:^|&)s=([^&]+)/);
+      if (mt) theme = mt[1];
+      if (ms) scale = ms[1];
+    }
+  } catch (e) {}
+  if (!theme) { try { theme = localStorage.getItem('stckrm_a11y_theme'); } catch (e) {} }
+  if (!scale) { try { scale = localStorage.getItem('stckrm_a11y_textscale'); } catch (e) {} }
+  if (!['system', 'light', 'dark', 'hc'].includes(theme)) theme = 'system';
+  if (!['s', 'm', 'l', 'xl'].includes(scale)) scale = 'm';
+  return { theme, scale };
+}
+
 function _updateThemeUI() {
   const pref = (settings && settings.theme) || 'system';
   ['system', 'light', 'dark', 'hc'].forEach(opt => {
@@ -27804,8 +27828,20 @@ async function init() {
     settings.threshold = settings.threshold || 20;
     settings._setupProtectSeen = true;
     settings._setupCountrySet  = true;
+    // Honour the device's accessibility choice in demo. _resetInMemoryUserState
+    // rebuilt `settings` without theme/textScale, so without this the demo
+    // would show the picker as 'system'/'m' even if the visitor picked e.g.
+    // dark + large on the landing page. Seeding from the cookie keeps the
+    // demo's Accessibility view in sync and lets changes work live.
+    {
+      const _a = _readA11yPrefs();
+      settings.theme = _a.theme;
+      settings.textScale = _a.scale;
+    }
     await _seedDemoData();
     await _saveSettings();
+    if (typeof applyTheme === 'function') applyTheme();
+    if (typeof applyTextScale === 'function') applyTextScale();
     scheduleRender(...RENDER_REGIONS);
     _showDemoBanner();
     hideDataLoadingOverlay();

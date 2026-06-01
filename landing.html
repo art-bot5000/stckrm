@@ -163,6 +163,49 @@
       border-bottom: 2px solid #ffffff;
     }
 
+    /* ─────────── PRODUCT-MOCKUP SURFACES STAY DARK ───────────
+       The hero "stockroom" mockup, the encryption mockup, the three benefit
+       pillars, the how-it-works steps, and the eco-stats panel are deliberate
+       *screenshots of the dark app UI*. They're designed dark and read well
+       dark. But their backgrounds are hard-coded dark rgba values while their
+       inner text uses the themeable --text / --muted tokens — so in light (or
+       HC) mode the card stays dark while the text turns dark too, making it
+       invisible (the bug in the screenshots).
+
+       Fix: in non-dark themes, re-pin the INNER text of these surfaces to the
+       dark-theme palette so each mockup stays self-consistent regardless of
+       the page theme. Backgrounds are already dark and need no change. We
+       scope tightly to these card classes so the rest of the light page is
+       untouched. */
+    html[data-theme="light"] .shelf-frame,
+    html[data-theme="hc"]    .shelf-frame,
+    html[data-theme="light"] .pillar,
+    html[data-theme="hc"]    .pillar,
+    html[data-theme="light"] .step,
+    html[data-theme="hc"]    .step,
+    html[data-theme="light"] .eco-card,
+    html[data-theme="hc"]    .eco-card {
+      /* Dark-palette tokens, re-declared locally so descendants that use
+         var(--text)/var(--muted)/--border resolve to the dark values. */
+      --text: #e8eaf2;
+      --muted: #7880a0;
+      --border: #2e3350;
+      --glass-border: rgba(255,255,255,0.07);
+      --surface: #1a1d27;
+      --surface-2: #22263a;
+      /* Keep the dark-mode accent hues inside the mockups (the light-mode
+         darkened accents look muddy on the dark card backgrounds). */
+      --accent: #e8a838;
+      --accent-2: #5b8dee;
+      --ok: #4cbb8a;
+    }
+    /* The shelf items use a faint white overlay that disappears unless the
+       card context is dark — restore it explicitly in non-dark themes. */
+    html[data-theme="light"] .shelf-item,
+    html[data-theme="hc"]    .shelf-item {
+      background: rgba(255,255,255,0.02);
+    }
+
     /* ─────────── TEXT SIZE SCALE (S/M/L/XL) ───────────
        Mirrors styles.css. Uses `zoom` on <main> so layout scales with text.
        Header stays at designed size; the a11y panel reads comfortably at
