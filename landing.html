@@ -2104,10 +2104,24 @@
   // Login routing: /app?action=login → wizard goes straight to login flow.
   // Register routing: /app?action=register → wizard goes to step 1 (create account).
 
+  // ── Deliberate-visit escape hatch ────────────────────────
+  // Signed-in users are normally bounced straight to app.stckrm.com (see
+  // below). But the login/wizard screen's logo links here with ?landing=1
+  // to mean "I came here on purpose — show me the marketing page". Without
+  // this, clicking the logo would instantly redirect back to the app and
+  // the user could never reach the landing page while signed in.
+  var _wantsLanding = false;
+  try {
+    _wantsLanding = new URLSearchParams(window.location.search).get('landing') === '1';
+  } catch (e) {}
+
   // ── Installed PWA users go straight to the app ────────────
   // Existing installations have start_url='./' which lands here. Detect
   // standalone mode (Android/iOS) and redirect immediately so the marketing
   // page never shows for the installed app.
+  // Note: the ?landing=1 escape hatch intentionally does NOT bypass this —
+  // an installed PWA has no browser chrome to navigate back with, and the
+  // logo link is only rendered in the in-browser login screen anyway.
   var _isStandalone = false;
   try {
     _isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
@@ -2137,9 +2151,10 @@
       } catch (e) { isSignedIn = false; }
     }
 
-    if (isSignedIn) {
+    if (isSignedIn && !_wantsLanding) {
       // Signed-in users never need the marketing page — go straight to the app.
       // The app's own init will restore the session and land on the Stockroom view.
+      // (Skipped when ?landing=1 — the user clicked the logo on purpose.)
       window.location.replace('https://app.stckrm.com/');
       return;
     } else if (rememberedEmail) {
