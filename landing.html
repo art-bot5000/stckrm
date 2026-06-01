@@ -30,6 +30,63 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet"></noscript>
 
+  <!-- ─────────── ACCESSIBILITY PRE-PAINT BOOTSTRAP ───────────
+       Runs synchronously in <head> BEFORE the stylesheet renders so the
+       chosen theme + text size apply on first paint with no flash.
+
+       Source of truth (in priority order):
+         1. stckrm_a11y cookie (Domain=.stckrm.com) — set once consent given;
+            this is what carries the choice across the stckrm.com /
+            app.stckrm.com origin boundary.
+         2. localStorage (same-origin fallback for visitors who haven't
+            consented to cookies yet — keeps the landing page itself
+            consistent across reloads even without the cross-origin cookie).
+         3. Defaults: theme 'system', text size 'm'.
+
+       Format: stckrm_a11y = "t=<system|light|dark|hc>&s=<s|m|l|xl>"
+       Mirror localStorage keys: stckrm_a11y_theme, stckrm_a11y_textscale.
+
+       This logic is duplicated (intentionally, to stay dependency-free and
+       pre-paint) in index.html. If the cookie name / format changes, update
+       BOTH files. -->
+  <script>
+  (function () {
+    function readCookie(name) {
+      try {
+        var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
+        return m ? decodeURIComponent(m[1]) : null;
+      } catch (e) { return null; }
+    }
+    var theme = null, scale = null;
+    var c = readCookie('stckrm_a11y');
+    if (c) {
+      var mt = c.match(/(?:^|&)t=([^&]+)/);
+      var ms = c.match(/(?:^|&)s=([^&]+)/);
+      if (mt) theme = mt[1];
+      if (ms) scale = ms[1];
+    }
+    // Same-origin fallback (used before cookie consent is granted)
+    if (!theme) { try { theme = localStorage.getItem('stckrm_a11y_theme'); } catch (e) {} }
+    if (!scale) { try { scale = localStorage.getItem('stckrm_a11y_textscale'); } catch (e) {} }
+
+    if (['system', 'light', 'dark', 'hc'].indexOf(theme) === -1) theme = 'system';
+    if (['s', 'm', 'l', 'xl'].indexOf(scale) === -1) scale = 'm';
+
+    var resolved = theme;
+    if (theme === 'system') {
+      try {
+        resolved = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      } catch (e) { resolved = 'dark'; }
+    }
+    var de = document.documentElement;
+    de.setAttribute('data-theme', resolved);
+    de.setAttribute('data-text-scale', scale);
+    // Stash the *preference* (not the resolved value) so the panel can show
+    // the correct active button and so 'system' keeps tracking the OS.
+    de.setAttribute('data-theme-pref', theme);
+  })();
+  </script>
+
   <style>
     :root {
       --bg: #0f1117;
@@ -50,7 +107,72 @@
       --serif: 'Instrument Serif', Georgia, serif;
       --shadow-card: 0 2px 12px rgba(0,0,0,0.35), 0 1px 0 rgba(255,255,255,0.04) inset;
       --shadow-card-hover: 0 6px 24px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06) inset;
+      /* Header glass background — themed so it tracks light/HC modes too. */
+      --header-bg: rgba(15,17,23,0.72);
     }
+
+    /* ─────────── LIGHT MODE ───────────
+       Mirrors styles.css light palette so the landing page matches the app.
+       Covers the landing-only tokens (--bg-2, --accent-hot, --shadow-*) as
+       well as the shared ones. */
+    html[data-theme="light"] {
+      --bg: #f5f3ec;
+      --bg-2: #ece9e0;
+      --surface: #ffffff;
+      --surface-2: #ebe8df;
+      --border: #d8d4c8;
+      --glass-border: rgba(0,0,0,0.08);
+      --accent: #8f6005;
+      --accent-hot: #a86f06;
+      --accent-2: #3b6fd0;
+      --ok: #287052;
+      --danger: #c83838;
+      --text: #1a1d27;
+      --muted: #5c6173;
+      --shadow-card: 0 2px 8px rgba(0,0,0,0.06), 0 1px 0 rgba(255,255,255,0.5) inset;
+      --shadow-card-hover: 0 6px 20px rgba(0,0,0,0.1), 0 1px 0 rgba(255,255,255,0.6) inset;
+      --header-bg: rgba(245,243,236,0.82);
+    }
+
+    /* ─────────── HIGH-CONTRAST MODE ───────────
+       Pure black/white anchors, prominent borders, decorative tints off. */
+    html[data-theme="hc"] {
+      --bg: #000000;
+      --bg-2: #000000;
+      --surface: #000000;
+      --surface-2: #0a0a0a;
+      --border: #ffffff;
+      --glass-border: #ffffff;
+      --accent: #ffcc33;
+      --accent-hot: #ffd95c;
+      --accent-2: #7dc4ff;
+      --ok: #7dee9e;
+      --danger: #ff8888;
+      --text: #ffffff;
+      --muted: #e0e0e0;
+      --shadow-card: 0 0 0 1px #ffffff;
+      --shadow-card-hover: 0 0 0 2px #ffffff;
+      --header-bg: #000000;
+    }
+    /* HC: kill the atmospheric background haze and blur so contrast holds. */
+    html[data-theme="hc"] body::before,
+    html[data-theme="hc"] body::after { display: none !important; }
+    html[data-theme="hc"] header {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+      border-bottom: 2px solid #ffffff;
+    }
+
+    /* ─────────── TEXT SIZE SCALE (S/M/L/XL) ───────────
+       Mirrors styles.css. Uses `zoom` on <main> so layout scales with text.
+       Header stays at designed size; the a11y panel reads comfortably at
+       any scale because it lives outside <main>. */
+    html { --text-scale: 1; }
+    html[data-text-scale="s"]  { --text-scale: 0.875; }
+    html[data-text-scale="m"]  { --text-scale: 1; }
+    html[data-text-scale="l"]  { --text-scale: 1.15; }
+    html[data-text-scale="xl"] { --text-scale: 1.30; }
+    main { zoom: var(--text-scale); }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
@@ -92,7 +214,7 @@
     /* ─────────── HEADER ─────────── */
     header {
       position: sticky; top: 0; z-index: 50;
-      background: rgba(15,17,23,0.72);
+      background: var(--header-bg);
       backdrop-filter: blur(14px) saturate(160%);
       -webkit-backdrop-filter: blur(14px) saturate(160%);
       border-bottom: 1px solid var(--glass-border);
@@ -125,6 +247,60 @@
 
     .header-actions {
       display: flex; align-items: center; gap: 10px;
+    }
+
+    /* ─────────── ACCESSIBILITY BUTTON + POPOVER ───────────
+       Desktop: icon button sits to the LEFT of "Log in" in the header.
+       Mobile (≤560px): the header copy is moved out to a fixed control at
+       top-left, below the Create account flow — see media query below. */
+    .a11y-wrap { position: relative; display: inline-flex; }
+    .a11y-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 40px; height: 40px; padding: 0;
+      border-radius: 8px; cursor: pointer;
+      background: rgba(255,255,255,0.04); color: var(--text);
+      border: 1px solid var(--glass-border);
+      transition: background 0.18s, border-color 0.18s;
+    }
+    .a11y-btn:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.14); }
+    .a11y-btn svg { width: 20px; height: 20px; }
+    html[data-theme="light"] .a11y-btn { background: rgba(0,0,0,0.04); }
+    html[data-theme="light"] .a11y-btn:hover { background: rgba(0,0,0,0.07); }
+
+    .a11y-panel {
+      position: absolute; top: calc(100% + 10px); right: 0; z-index: 200;
+      width: 280px; max-width: calc(100vw - 28px);
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border); border-radius: 12px;
+      box-shadow: var(--shadow-card-hover);
+      padding: 16px; display: none;
+    }
+    .a11y-panel.open { display: block; }
+    .a11y-panel h3 {
+      font-family: var(--sans); font-size: 13px; font-weight: 700;
+      letter-spacing: 0.04em; text-transform: uppercase;
+      color: var(--muted); margin: 0 0 8px;
+    }
+    .a11y-panel .a11y-group + .a11y-group { margin-top: 16px; }
+    .a11y-seg {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+    }
+    .a11y-seg-btn {
+      font-family: var(--sans); font-weight: 600; font-size: 13px;
+      padding: 9px 4px; border-radius: 8px; cursor: pointer;
+      background: var(--surface-2); color: var(--text);
+      border: 1px solid var(--border);
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+      white-space: nowrap; min-height: 40px;
+    }
+    .a11y-seg-btn:hover { border-color: var(--accent); }
+    .a11y-seg-btn.active {
+      background: var(--accent); color: #111; border-color: var(--accent);
+    }
+    html[data-theme="hc"] .a11y-seg-btn.active { color: #000; }
+    .a11y-seg-btn:focus-visible {
+      outline: 2px solid var(--accent-2); outline-offset: 2px;
     }
 
     /* ─────────── BUTTONS ─────────── */
@@ -653,6 +829,14 @@
       .header-actions { gap: 6px; }
       .header-actions .btn { padding: 9px 12px; font-size: 13px; }
       .brand { font-size: 14px; letter-spacing: 2px; }
+      /* Mobile: lift the a11y button out of the header row and pin it to the
+         top-left, sitting below the header (which carries Create account).
+         The header has z-index 50; this sits just under it at z-index 49 and
+         is offset down by the header height so it reads as "underneath". */
+      .a11y-wrap {
+        position: fixed; top: 64px; left: 12px; z-index: 49;
+      }
+      .a11y-panel { right: auto; left: 0; }
       .hero { padding: 32px 18px 36px; }
       h1 { font-size: 38px; line-height: 1.05; }
       .hero-sub { font-size: 16px; }
@@ -1200,6 +1384,42 @@
         <svg aria-hidden="true"><use href="#i-arrow-right"/></svg>
       </a>
       <!-- Not signed in: login + register -->
+      <!-- Accessibility control — sits to the LEFT of "Log in" on desktop;
+           pinned top-left below the header on mobile (see CSS). -->
+      <span class="a11y-wrap">
+        <button class="a11y-btn" id="a11y-btn" type="button"
+                aria-haspopup="true" aria-expanded="false" aria-controls="a11y-panel"
+                title="Accessibility settings" aria-label="Accessibility settings"
+                onclick="toggleA11yPanel()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="4" r="1.6" fill="currentColor" stroke="none"/>
+            <path d="M5 8h14"/>
+            <path d="M9 8l1 5 m4-5l-1 5"/>
+            <path d="M10 13l-1.5 6 m5-6l1.5 6"/>
+          </svg>
+        </button>
+        <div class="a11y-panel" id="a11y-panel" role="dialog" aria-label="Accessibility settings">
+          <div class="a11y-group">
+            <h3 id="a11y-theme-label">Theme</h3>
+            <div class="a11y-seg" role="radiogroup" aria-labelledby="a11y-theme-label">
+              <button type="button" class="a11y-seg-btn" data-a11y-theme="system" role="radio" aria-checked="false" onclick="setLandingTheme('system')" title="Match your device">Auto</button>
+              <button type="button" class="a11y-seg-btn" data-a11y-theme="light"  role="radio" aria-checked="false" onclick="setLandingTheme('light')"  title="Always light">Light</button>
+              <button type="button" class="a11y-seg-btn" data-a11y-theme="dark"   role="radio" aria-checked="false" onclick="setLandingTheme('dark')"   title="Always dark">Dark</button>
+              <button type="button" class="a11y-seg-btn" data-a11y-theme="hc"     role="radio" aria-checked="false" onclick="setLandingTheme('hc')"     title="High contrast">HC</button>
+            </div>
+          </div>
+          <div class="a11y-group">
+            <h3 id="a11y-size-label">Text size</h3>
+            <div class="a11y-seg" role="radiogroup" aria-labelledby="a11y-size-label">
+              <button type="button" class="a11y-seg-btn" data-a11y-scale="s"  role="radio" aria-checked="false" onclick="setLandingScale('s')"  title="Small">S</button>
+              <button type="button" class="a11y-seg-btn" data-a11y-scale="m"  role="radio" aria-checked="false" onclick="setLandingScale('m')"  title="Medium (default)">M</button>
+              <button type="button" class="a11y-seg-btn" data-a11y-scale="l"  role="radio" aria-checked="false" onclick="setLandingScale('l')"  title="Large">L</button>
+              <button type="button" class="a11y-seg-btn" data-a11y-scale="xl" role="radio" aria-checked="false" onclick="setLandingScale('xl')" title="Extra large">XL</button>
+            </div>
+          </div>
+        </div>
+      </span>
       <button class="btn btn-ghost" id="header-login" type="button" onclick="goLogin()">Log in</button>
       <button class="btn btn-primary" id="header-register" type="button" onclick="goRegister()">
         Create account
@@ -1954,6 +2174,121 @@
     var wb = document.getElementById('welcome-back');
     if (wb) wb.classList.remove('visible');
   }
+
+  // ═══════════════════════════════════════════════════════════
+  //  ACCESSIBILITY PANEL — theme + text size on the landing page
+  // ═══════════════════════════════════════════════════════════
+  // Writes the choice to:
+  //   • localStorage (same-origin, always) so the landing page itself
+  //     stays consistent across reloads even without cookie consent.
+  //   • stckrm_a11y cookie (Domain=.stckrm.com) ONLY when cookie consent
+  //     has been granted — this is what carries the setting across to
+  //     app.stckrm.com (wizard + app). Until consent, the cross-origin
+  //     hop falls back to the app's own defaults / saved account settings.
+  //
+  // Cookie format mirrors the pre-paint bootstrap in <head>:
+  //   stckrm_a11y = "t=<system|light|dark|hc>&s=<s|m|l|xl>"
+  function _a11yHasConsent() {
+    try { return localStorage.getItem('stockroom_cookie_consent') === 'granted'; }
+    catch (e) { return false; }
+  }
+  function _a11yWriteCookie() {
+    if (!_a11yHasConsent()) return; // consent-gated
+    var de = document.documentElement;
+    var t = de.getAttribute('data-theme-pref') || 'system';
+    var s = de.getAttribute('data-text-scale') || 'm';
+    try {
+      var val = 't=' + encodeURIComponent(t) + '&s=' + encodeURIComponent(s);
+      document.cookie = 'stckrm_a11y=' + val +
+        ';Domain=.stckrm.com;Path=/;Max-Age=31536000;SameSite=Lax' +
+        (location.protocol === 'https:' ? ';Secure' : '');
+    } catch (e) {}
+  }
+  function _a11yResolve(theme) {
+    if (theme === 'system') {
+      try { return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'; }
+      catch (e) { return 'dark'; }
+    }
+    return theme;
+  }
+  function _a11ySyncButtons() {
+    var de = document.documentElement;
+    var t = de.getAttribute('data-theme-pref') || 'system';
+    var s = de.getAttribute('data-text-scale') || 'm';
+    document.querySelectorAll('[data-a11y-theme]').forEach(function (b) {
+      var on = b.getAttribute('data-a11y-theme') === t;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    document.querySelectorAll('[data-a11y-scale]').forEach(function (b) {
+      var on = b.getAttribute('data-a11y-scale') === s;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    // Keep the browser chrome colour in sync with the resolved theme.
+    var resolved = _a11yResolve(t);
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      meta.setAttribute('content',
+        resolved === 'light' ? '#f5f3ec' : (resolved === 'hc' ? '#000000' : '#0f1117'));
+    }
+  }
+  function setLandingTheme(pref) {
+    if (['system', 'light', 'dark', 'hc'].indexOf(pref) === -1) pref = 'system';
+    var de = document.documentElement;
+    de.setAttribute('data-theme-pref', pref);
+    de.setAttribute('data-theme', _a11yResolve(pref));
+    try { localStorage.setItem('stckrm_a11y_theme', pref); } catch (e) {}
+    _a11yWriteCookie();
+    _a11ySyncButtons();
+  }
+  function setLandingScale(pref) {
+    if (['s', 'm', 'l', 'xl'].indexOf(pref) === -1) pref = 'm';
+    document.documentElement.setAttribute('data-text-scale', pref);
+    try { localStorage.setItem('stckrm_a11y_textscale', pref); } catch (e) {}
+    _a11yWriteCookie();
+    _a11ySyncButtons();
+  }
+  function toggleA11yPanel() {
+    var panel = document.getElementById('a11y-panel');
+    var btn = document.getElementById('a11y-btn');
+    if (!panel || !btn) return;
+    var open = !panel.classList.contains('open');
+    panel.classList.toggle('open', open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) _a11ySyncButtons();
+  }
+  // Close on outside click / Escape.
+  document.addEventListener('click', function (e) {
+    var wrap = e.target.closest && e.target.closest('.a11y-wrap');
+    if (wrap) return; // click was inside the control
+    var panel = document.getElementById('a11y-panel');
+    var btn = document.getElementById('a11y-btn');
+    if (panel && panel.classList.contains('open')) {
+      panel.classList.remove('open');
+      if (btn) btn.setAttribute('aria-expanded', 'false');
+    }
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    var panel = document.getElementById('a11y-panel');
+    var btn = document.getElementById('a11y-btn');
+    if (panel && panel.classList.contains('open')) {
+      panel.classList.remove('open');
+      if (btn) { btn.setAttribute('aria-expanded', 'false'); btn.focus(); }
+    }
+  });
+  // If the OS theme flips while 'system' is selected, re-resolve.
+  try {
+    window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', function () {
+      if ((document.documentElement.getAttribute('data-theme-pref') || 'system') === 'system') {
+        document.documentElement.setAttribute('data-theme', _a11yResolve('system'));
+        _a11ySyncButtons();
+      }
+    });
+  } catch (e) {}
+  // Initial button sync (attributes already set by the pre-paint script).
+  _a11ySyncButtons();
 
   // ═══════════════════════════════════════════════════════════
   //  HERO CAROUSEL — auto-advance + dot navigation + swipe

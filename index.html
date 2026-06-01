@@ -17,6 +17,46 @@
 <link rel="icon" type="image/webp" href="/logo.webp">
 <link rel="apple-touch-icon" href="/logo.png">
 <meta name="theme-color" content="#0f1117">
+<!-- ─────────── ACCESSIBILITY PRE-PAINT BOOTSTRAP ───────────
+     Runs synchronously BEFORE styles.css so the login/wizard screen shows
+     the correct theme + text size on first paint, matching what the user
+     chose on the landing page (carried via the stckrm_a11y cookie scoped to
+     .stckrm.com). Once app.js loads and a user signs in, applyTheme() /
+     applyTextScale() take over from settings.theme / settings.textScale and
+     re-stamp the cookie (account wins — see app.js).
+
+     This MUST stay in sync with the matching script in landing.html.
+     Cookie format: stckrm_a11y = "t=<system|light|dark|hc>&s=<s|m|l|xl>" -->
+<script>
+(function () {
+  function readCookie(name) {
+    try {
+      var m = document.cookie.match('(?:^|; )' + name + '=([^;]*)');
+      return m ? decodeURIComponent(m[1]) : null;
+    } catch (e) { return null; }
+  }
+  var theme = null, scale = null;
+  var c = readCookie('stckrm_a11y');
+  if (c) {
+    var mt = c.match(/(?:^|&)t=([^&]+)/);
+    var ms = c.match(/(?:^|&)s=([^&]+)/);
+    if (mt) theme = mt[1];
+    if (ms) scale = ms[1];
+  }
+  if (!theme) { try { theme = localStorage.getItem('stckrm_a11y_theme'); } catch (e) {} }
+  if (!scale) { try { scale = localStorage.getItem('stckrm_a11y_textscale'); } catch (e) {} }
+  if (['system', 'light', 'dark', 'hc'].indexOf(theme) === -1) theme = 'system';
+  if (['s', 'm', 'l', 'xl'].indexOf(scale) === -1) scale = 'm';
+  var resolved = theme;
+  if (theme === 'system') {
+    try { resolved = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'; }
+    catch (e) { resolved = 'dark'; }
+  }
+  var de = document.documentElement;
+  de.setAttribute('data-theme', resolved);
+  de.setAttribute('data-text-scale', scale);
+})();
+</script>
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">

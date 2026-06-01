@@ -21347,6 +21347,12 @@ function applyTheme() {
   if (typeof applyAdaptiveColourTemp === 'function') applyAdaptiveColourTemp();
   // Update the segmented control in Preferences if it's mounted.
   _updateThemeUI();
+  // Mirror the applied preference into the cross-origin .stckrm.com cookie
+  // so the landing/login screen matches. This runs after EVERY settings
+  // application (boot, login, sync), which is exactly why "account wins":
+  // once account settings load and applyTheme runs, the cookie is rewritten
+  // to the account's value, overwriting whatever the device cookie held.
+  if (typeof _writeA11yCookie === 'function') _writeA11yCookie();
 }
 
 // Returns the background CSS value to apply to the note editor overlay
@@ -21365,6 +21371,39 @@ function setTheme(pref) {
   // Save without re-rendering everything — applyTheme handles UI.
   _saveSettings();
   applyTheme();
+}
+
+// ── Cross-origin accessibility cookie bridge ────────────────────────
+// The landing page (stckrm.com) and the app (app.stckrm.com) are separate
+// origins, so localStorage doesn't cross between them. A cookie scoped to
+// Domain=.stckrm.com is sent to BOTH, so it's the carrier for the user's
+// theme + text-size choice across the origin boundary.
+//
+// Written here whenever a signed-in user changes theme/textScale, and once
+// after account settings load on login (so the account's saved choice — which
+// wins over any device cookie — is reflected back onto the device for the
+// next visit to the landing/login screen).
+//
+// Consent-gated: only written once the user has granted cookie consent,
+// matching the rest of the app's cookie behaviour. Format MUST match the
+// pre-paint bootstrap scripts in index.html and landing.html:
+//   stckrm_a11y = "t=<system|light|dark|hc>&s=<s|m|l|xl>"
+function _writeA11yCookie() {
+  let consent = false;
+  try { consent = localStorage.getItem('stockroom_cookie_consent') === 'granted'; } catch (e) {}
+  if (!consent) return;
+  const t = (settings && settings.theme) || 'system';
+  const s = (settings && settings.textScale) || 'm';
+  try {
+    const val = 't=' + encodeURIComponent(t) + '&s=' + encodeURIComponent(s);
+    document.cookie = 'stckrm_a11y=' + val +
+      ';Domain=.stckrm.com;Path=/;Max-Age=31536000;SameSite=Lax' +
+      (location.protocol === 'https:' ? ';Secure' : '');
+    // Mirror to same-origin localStorage too, so the app's own pre-paint
+    // bootstrap stays correct even if the cookie is later cleared.
+    localStorage.setItem('stckrm_a11y_theme', t);
+    localStorage.setItem('stckrm_a11y_textscale', s);
+  } catch (e) {}
 }
 
 function _updateThemeUI() {
@@ -21399,6 +21438,7 @@ function applyTextScale() {
   const normalised = ['s', 'm', 'l', 'xl'].includes(pref) ? pref : 'm';
   document.documentElement.setAttribute('data-text-scale', normalised);
   _updateTextScaleUI();
+  if (typeof _writeA11yCookie === 'function') _writeA11yCookie();
 }
 
 function setTextScale(pref) {
