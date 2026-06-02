@@ -20277,6 +20277,15 @@ async function kvSyncNow(silent = false) {
         const stickyInstallDismissed = !!(remote.settings._installDismissed || settings._installDismissed);
         settings = { ...remote.settings, ...settings };
         if (remoteMfa !== undefined) settings.mfa = remoteMfa; // remote MFA always wins
+        // Theme + text size: the ACCOUNT is authoritative once logged in, so
+        // the saved remote value must win over whatever the device was seeded
+        // with (cookie/localStorage/URL). The generic local-wins spread above
+        // would otherwise let a stale device theme override the user's saved
+        // choice on every login. Only override when remote actually has a
+        // value, so accounts created before these fields existed keep the
+        // local/device value rather than getting wiped to undefined.
+        if (remote.settings.theme != null)     settings.theme = remote.settings.theme;
+        if (remote.settings.textScale != null) settings.textScale = remote.settings.textScale;
         // Re-apply the OR-merged one-shot flags so the spread above can't
         // downgrade them. Use deletion (rather than `= false`) when the flag
         // is unset, so it stays absent from the object and doesn't get pushed
