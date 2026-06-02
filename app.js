@@ -21402,7 +21402,7 @@ function _writeA11yCookie() {
   try {
     const val = 't=' + encodeURIComponent(t) + '&s=' + encodeURIComponent(s);
     document.cookie = 'stckrm_a11y=' + val +
-      ';Domain=.stckrm.com;Path=/;Max-Age=31536000;SameSite=Lax' +
+      ';Domain=stckrm.com;Path=/;Max-Age=31536000;SameSite=Lax' +
       (location.protocol === 'https:' ? ';Secure' : '');
     // Mirror to same-origin localStorage too, so the app's own pre-paint
     // bootstrap stays correct even if the cookie is later cleared.
@@ -21418,16 +21418,27 @@ function _writeA11yCookie() {
 // settings object that has no theme/textScale of its own.
 function _readA11yPrefs() {
   let theme = null, scale = null;
-  try {
-    const m = document.cookie.match('(?:^|; )stckrm_a11y=([^;]*)');
-    if (m) {
-      const c = decodeURIComponent(m[1]);
-      const mt = c.match(/(?:^|&)t=([^&]+)/);
-      const ms = c.match(/(?:^|&)s=([^&]+)/);
-      if (mt) theme = mt[1];
-      if (ms) scale = ms[1];
-    }
-  } catch (e) {}
+  // 1. URL-param fallback (set by handleURLAction from the demo link's
+  //    ?t=&s=). This is the most explicit, just-passed intent and is robust
+  //    to cookie failures, so it takes priority.
+  if (window._demoA11y) {
+    if (window._demoA11y.theme) theme = window._demoA11y.theme;
+    if (window._demoA11y.scale) scale = window._demoA11y.scale;
+  }
+  // 2. Cross-origin cookie.
+  if (!theme || !scale) {
+    try {
+      const m = document.cookie.match('(?:^|; )stckrm_a11y=([^;]*)');
+      if (m) {
+        const c = decodeURIComponent(m[1]);
+        const mt = c.match(/(?:^|&)t=([^&]+)/);
+        const ms = c.match(/(?:^|&)s=([^&]+)/);
+        if (!theme && mt) theme = mt[1];
+        if (!scale && ms) scale = ms[1];
+      }
+    } catch (e) {}
+  }
+  // 3. Same-origin localStorage.
   if (!theme) { try { theme = localStorage.getItem('stckrm_a11y_theme'); } catch (e) {} }
   if (!scale) { try { scale = localStorage.getItem('stckrm_a11y_textscale'); } catch (e) {} }
   if (!['system', 'light', 'dark', 'hc'].includes(theme)) theme = 'system';
@@ -28755,6 +28766,19 @@ function handleURLAction() {
   if (action === 'demo') {
     window._demoMode = true;
     window._landingAction = 'demo';
+    // URL-param fallback for the a11y preference. The landing page stamps
+    // ?t=<theme>&s=<size> onto the demo link so the choice carries even when
+    // the cross-origin cookie can't (private mode, strict cookie policy).
+    // Capture them into a global BEFORE we strip the query string below;
+    // _readA11yPrefs() reads this global first, ahead of cookie/localStorage.
+    {
+      const _t = params.get('t');
+      const _s = params.get('s');
+      const _a = {};
+      if (['system', 'light', 'dark', 'hc'].includes(_t)) _a.theme = _t;
+      if (['s', 'm', 'l', 'xl'].includes(_s)) _a.scale = _s;
+      if (_a.theme || _a.scale) window._demoA11y = _a;
+    }
     // Reset persona to 'couple' on every new demo session (per the spec —
     // the chosen persona doesn't persist across tab refreshes).
     window._demoPersona = 'couple';

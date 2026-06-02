@@ -36,12 +36,21 @@
     } catch (e) { return null; }
   }
   var theme = null, scale = null;
+  // URL params first (demo link carries ?t=&s= as a cookie-independent
+  // fallback). Reading them here means the very first paint is already
+  // correct — no dark flash before app.js applies the demo theme.
+  try {
+    var usp = new URLSearchParams(window.location.search);
+    var ut = usp.get('t'), us = usp.get('s');
+    if (['system', 'light', 'dark', 'hc'].indexOf(ut) !== -1) theme = ut;
+    if (['s', 'm', 'l', 'xl'].indexOf(us) !== -1) scale = us;
+  } catch (e) {}
   var c = readCookie('stckrm_a11y');
   if (c) {
     var mt = c.match(/(?:^|&)t=([^&]+)/);
     var ms = c.match(/(?:^|&)s=([^&]+)/);
-    if (mt) theme = mt[1];
-    if (ms) scale = ms[1];
+    if (!theme && mt) theme = mt[1];
+    if (!scale && ms) scale = ms[1];
   }
   if (!theme) { try { theme = localStorage.getItem('stckrm_a11y_theme'); } catch (e) {} }
   if (!scale) { try { scale = localStorage.getItem('stckrm_a11y_textscale'); } catch (e) {} }

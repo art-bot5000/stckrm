@@ -2430,7 +2430,7 @@
     try {
       var val = 't=' + encodeURIComponent(t) + '&s=' + encodeURIComponent(s);
       document.cookie = 'stckrm_a11y=' + val +
-        ';Domain=.stckrm.com;Path=/;Max-Age=31536000;SameSite=Lax' +
+        ';Domain=stckrm.com;Path=/;Max-Age=31536000;SameSite=Lax' +
         (location.protocol === 'https:' ? ';Secure' : '');
       localStorage.setItem('stckrm_a11y_theme', t);
       localStorage.setItem('stckrm_a11y_textscale', s);
@@ -2464,6 +2464,15 @@
       meta.setAttribute('content',
         resolved === 'light' ? '#f5f3ec' : (resolved === 'hc' ? '#000000' : '#0f1117'));
     }
+    // URL-param fallback: stamp the chosen theme/size onto every "Try the
+    // demo" link so the choice carries to app.stckrm.com even if the
+    // cross-origin cookie doesn't (private mode, strict cookie policy, etc.).
+    // The demo init reads ?t=&s= and applies them. We pass the PREFERENCE
+    // (incl. 'system') so the demo can keep tracking the OS if chosen.
+    document.querySelectorAll('a.hero-demo').forEach(function (a) {
+      a.href = 'https://app.stckrm.com/?action=demo&t=' +
+        encodeURIComponent(t) + '&s=' + encodeURIComponent(s);
+    });
   }
   function setLandingTheme(pref) {
     if (['system', 'light', 'dark', 'hc'].indexOf(pref) === -1) pref = 'system';
