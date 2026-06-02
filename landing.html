@@ -2381,11 +2381,23 @@
     // Send the user into the existing login flow.
     // The app's existing logic (showKvLogin) auto-skips to the auth step
     // if a remembered email is present, matching current behaviour exactly.
-    window.location.href = 'https://app.stckrm.com/?action=login';
+    window.location.href = 'https://app.stckrm.com/?action=login' + _a11yQuery();
   }
 
   function goRegister() {
-    window.location.href = 'https://app.stckrm.com/?action=register';
+    window.location.href = 'https://app.stckrm.com/?action=register' + _a11yQuery();
+  }
+
+  // Build the &t=&s= query carrying the current theme + text size to the app.
+  // Cross-origin navigation can't rely on localStorage, and the cookie has
+  // proven flaky, so these URL params are the reliable carrier. The app's
+  // pre-paint bootstrap (index.html) reads them so the login/wizard screen
+  // matches. Once the user logs in, account settings override this.
+  function _a11yQuery() {
+    var de = document.documentElement;
+    var t = de.getAttribute('data-theme-pref') || 'system';
+    var s = de.getAttribute('data-text-scale') || 'm';
+    return '&t=' + encodeURIComponent(t) + '&s=' + encodeURIComponent(s);
   }
 
   function forgetEmail() {

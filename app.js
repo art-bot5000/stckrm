@@ -1210,6 +1210,18 @@ async function loadData() {
   // Apply user's theme preference now that settings are loaded — this
   // re-runs applyTheme with the persisted choice, replacing the early
   // dark-default paint that happened before settings were ready.
+  //
+  // For users who haven't logged in yet (register/login flow, or a fresh
+  // device), there's no saved theme in settings, so without this it would
+  // fall back to the default and override the choice the visitor made on the
+  // landing page. Seed from the device prefs (URL params → cookie →
+  // localStorage) ONLY when the loaded account settings don't already specify
+  // a value — so a logged-in user's saved theme always wins.
+  if (!loadedSettings || loadedSettings.theme == null || loadedSettings.textScale == null) {
+    const _a = _readA11yPrefs();
+    if (!loadedSettings || loadedSettings.theme == null) settings.theme = _a.theme;
+    if (!loadedSettings || loadedSettings.textScale == null) settings.textScale = _a.scale;
+  }
   if (typeof applyTheme === 'function') applyTheme();
   // Apply text size scale (Tier 2.3) — same lifecycle as theme.
   if (typeof applyTextScale === 'function') applyTextScale();
@@ -21418,12 +21430,22 @@ function _writeA11yCookie() {
 // settings object that has no theme/textScale of its own.
 function _readA11yPrefs() {
   let theme = null, scale = null;
-  // 1. URL-param fallback (set by handleURLAction from the demo link's
-  //    ?t=&s=). This is the most explicit, just-passed intent and is robust
-  //    to cookie failures, so it takes priority.
+  // 1a. window._demoA11y (set by the demo handler before it strips the URL).
   if (window._demoA11y) {
     if (window._demoA11y.theme) theme = window._demoA11y.theme;
     if (window._demoA11y.scale) scale = window._demoA11y.scale;
+  }
+  // 1b. URL params ?t=&s= directly. The landing page stamps these onto the
+  //     login/register/demo links so the choice carries across the origin
+  //     boundary even when the cookie can't. Read here too because loadData()
+  //     (which seeds the theme) runs BEFORE handleURLAction strips the query.
+  if (!theme || !scale) {
+    try {
+      const usp = new URLSearchParams(location.search);
+      const ut = usp.get('t'), us = usp.get('s');
+      if (!theme && ['system', 'light', 'dark', 'hc'].includes(ut)) theme = ut;
+      if (!scale && ['s', 'm', 'l', 'xl'].includes(us)) scale = us;
+    } catch (e) {}
   }
   // 2. Cross-origin cookie.
   if (!theme || !scale) {
