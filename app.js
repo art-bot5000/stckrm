@@ -23626,11 +23626,24 @@ function renderGroceryChrome() {
 // `checkedBar` (they're cheap lookups) so this function is self-contained
 // and callable independently of the chrome. Only reached when the chrome
 // returned falsy (active single/multi list with a real list body present).
+// Keyed-row diff master switch. While FALSE, the diffable (dept/alpha) builds
+// always do a full body.innerHTML rebuild — identical to pre-diff behaviour.
+// This lets the data-render-mode fallback plumbing ship and be verified before
+// any real diff logic is wired in (build-order step 2). Step 3+ flips this on
+// per-path once _diffKeyedRows exists.
+const _GROCERY_BODY_DIFF_ON = false;
+
 function renderGroceryBody() {
   const query = '';
   const body  = document.getElementById('grocery-list-body');
   const checkedBar = document.getElementById('grocery-checked-bar');
   if (!body) return;  // defensive — chrome already guarded, but body may be called directly
+
+  // Previous terminal render mode, stamped on the body by the last render.
+  // The diffable builds only diff when prev === target (same layout); any
+  // mode transition (alpha↔dept, locked↔edit, →empty, →nomatch, etc.) forces
+  // a full rebuild. Read it BEFORE we overwrite anything.
+  const _prevRenderMode = body.dataset.renderMode || '';
 
   cleanGroceryOrder();
   // Hide multi-select bar whenever we re-render
@@ -23722,11 +23735,13 @@ function renderGroceryBody() {
         Quick Add by Department
       </button>
     </div>`;
+    body.dataset.renderMode = 'empty';
     return;
   }
 
   if (filtered.length === 0 && !groceryEditMode) {
     body.innerHTML = `<div class="grocery-empty"><div class="grocery-empty-icon" style="color:var(--muted)"><svg aria-hidden="true" style="width:48px;height:48px"><use href="#i-search"></use></svg></div><div style="font-size:15px;font-weight:600">No matches</div></div>`;
+    body.dataset.renderMode = 'nomatch';
     return;
   }
 
@@ -23780,9 +23795,15 @@ function renderGroceryBody() {
     }
 
     body.innerHTML = editHtml;
+    body.dataset.renderMode = 'edit';
     if (canDrag) initGroceryDragSort();
     return;
   }
+
+  // We're now in one of the two diffable (locked) builds. Target mode is the
+  // current sort. Step 3+ will diff when _prevRenderMode === _targetRenderMode
+  // and diffing is on; otherwise (mode change, or diff off) full rebuild.
+  const _targetRenderMode = grocerySort === 'dept' ? 'dept' : 'alpha';
 
   let html = '';
 
@@ -23871,7 +23892,23 @@ function renderGroceryBody() {
     </div>`;
   }
 
-  body.innerHTML = html;
+  // ── Commit: full rebuild vs keyed diff (build-order steps 2–4) ──────
+  // Diff only when the master switch is on AND the previous render was the
+  // SAME diffable layout. Any structure swap (alpha↔dept, in from edit/empty/
+  // nomatch) must full-rebuild — never diff across a layout change. In step 2
+  // _GROCERY_BODY_DIFF_ON is false, so this always full-rebuilds; the branch
+  // exists so steps 3–4 slot the real diff in without touching this scaffold.
+  const _canDiff = _GROCERY_BODY_DIFF_ON && _prevRenderMode === _targetRenderMode;
+  if (_canDiff) {
+    // STUB — unreachable while _GROCERY_BODY_DIFF_ON is false. Step 3 (alpha)
+    // and step 4 (dept) replace this with _diffKeyedRows + dept-collapse
+    // snapshot/reapply. Defensive fallback so a premature flip can't blank the
+    // list: if we somehow reach here, rebuild.
+    body.innerHTML = html;
+  } else {
+    body.innerHTML = html;
+  }
+  body.dataset.renderMode = _targetRenderMode;
 
   // Render Recently Deleted section after the main grocery body
   renderGroceryRecycleBin();
