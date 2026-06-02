@@ -395,6 +395,19 @@
     bottom: 0;
     border-top: 1px solid var(--glass-border);
   }
+  /* The wizard bars hard-code a dark translucent background, so in light/HC
+     mode they stay dark while the rest of the screen is light. Override to a
+     themed surface so they match. Text/border already use theme tokens. */
+  html[data-theme="light"] body.wizard-active #wizard-header,
+  html[data-theme="light"] body.wizard-active #wizard-footer {
+    background: rgba(245,243,236,0.85);
+  }
+  html[data-theme="hc"] body.wizard-active #wizard-header,
+  html[data-theme="hc"] body.wizard-active #wizard-footer {
+    background: #000000;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
   .wb-inner {
     max-width: 1200px; margin: 0 auto;
     padding: 14px 24px;
