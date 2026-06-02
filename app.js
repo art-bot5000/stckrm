@@ -22147,11 +22147,19 @@ function appendToGroceryOrder(id) {
   const order = getGroceryManualOrder();
   if (!order.includes(id)) { order.push(id); saveGroceryManualOrder(order); }
 }
-// Clean stale IDs from the order array (items that were deleted)
+// Clean stale IDs from the order array (items that were deleted).
+// renderGrocery calls this on every render, but in the common case (no items
+// deleted since last render) the array is already clean and the only thing the
+// old code did was a synchronous localStorage.setItem + JSON.stringify on the
+// main thread — on every checkbox tap, dept toggle, mode change, etc. We now
+// only persist when the clean actually removed a stale id. Cheap to detect:
+// if lengths match, every surviving id was already present (filter preserves
+// order and only ever drops elements), so no write is needed.
 function cleanGroceryOrder() {
   const ids = new Set(groceryItems.map(i => i.id));
-  const clean = getGroceryManualOrder().filter(id => ids.has(id));
-  saveGroceryManualOrder(clean);
+  const existing = getGroceryManualOrder();
+  const clean = existing.filter(id => ids.has(id));
+  if (clean.length !== existing.length) saveGroceryManualOrder(clean);
 }
 let groceryContextTarget = null;
 let groceryConvertItem   = null;
