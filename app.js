@@ -1083,6 +1083,30 @@ function applyWizUnitTypeToQtyInput() {
   }
 }
 
+// ── Per-render stock memo ──────────────────────────────────────────────
+// renderGrid calls calcStock() many times per item per render: once in the
+// filter loop, up to O(n log n) times inside the sort comparator (each item
+// is compared against several others), and once more inside cardHTML(). For
+// a status/days sort over hundreds of items that's thousands of redundant
+// recomputations of the same value within a single synchronous render.
+//
+// _stockCache is a WeakMap keyed by the item object reference. renderGrid
+// resets it once at the top of each render (so values stay fresh across
+// renders and Date.now() drift), then every grid-path call site reads through
+// _calcStockMemo() instead of calcStock(). Because it's keyed by reference and
+// rebuilt each render, an edited item simply triggers a fresh render and a
+// fresh cache entry — there is no staleness risk.
+//
+// Scope is deliberately grid-only: calcStock() itself is left untouched so
+// every other caller in the app behaves exactly as before.
+let _stockCache = new WeakMap();
+function _calcStockMemo(item) {
+  if (_stockCache.has(item)) return _stockCache.get(item);
+  const s = calcStock(item);
+  _stockCache.set(item, s);
+  return s;
+}
+
 function calcStock(item) {
   if (!item.logs || !item.logs.length) return null;
   // Only count delivered (non-pending) logs for stock calculation
@@ -9138,6 +9162,11 @@ function renderGrid() {
     items = [];
   }
 
+  // Reset the per-render stock memo so this render computes fresh values
+  // (handles Date.now() drift and any edits since the last render), then
+  // every calcStock call below this point reads through _calcStockMemo().
+  _stockCache = new WeakMap();
+
   let filtered = items.filter(item => {
     // Soft-deleted items live in the recycle bin section, not the main grid
     if (item._deletedAt) return false;
@@ -9150,7 +9179,7 @@ function renderGrid() {
       return true;
     }
 
-    const s = calcStock(item);
+    const s = _calcStockMemo(item);
     const status = getStatus(s?.pct ?? null, threshold);
 
     // Status filter
@@ -9204,8 +9233,8 @@ function renderGrid() {
       case 'name':
         return (a.name||'').localeCompare(b.name||'');
       case 'days': {
-        const da = calcStock(a)?.daysLeft ?? 9999;
-        const db = calcStock(b)?.daysLeft ?? 9999;
+        const da = _calcStockMemo(a)?.daysLeft ?? 9999;
+        const db = _calcStockMemo(b)?.daysLeft ?? 9999;
         return da - db;
       }
       case 'lastbought': {
@@ -9219,8 +9248,8 @@ function renderGrid() {
         return 0; // preserve insertion order
       case 'status':
       default: {
-        const pa = calcStock(a)?.pct ?? 101;
-        const pb = calcStock(b)?.pct ?? 101;
+        const pa = _calcStockMemo(a)?.pct ?? 101;
+        const pb = _calcStockMemo(b)?.pct ?? 101;
         return pa - pb;
       }
     }
@@ -9314,7 +9343,7 @@ function renderItemsRecycleBin() {
 }
 
 function cardHTML(item, threshold) {
-  const s = calcStock(item);
+  const s = _calcStockMemo(item);
   const pct = s?.pct ?? null;
   const daysLeft = s?.daysLeft ?? null;
   const status = getStatus(pct, threshold);
