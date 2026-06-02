@@ -6514,6 +6514,18 @@ html[data-theme="light"] .btn-ghost:hover {
   background: rgba(0,0,0,0.06);
   border-color: var(--muted);
 }
+/* Light-mode primary buttons: --accent is deliberately darkened (#8f6005)
+   for AA text/link contrast on the cream page, but as a BUTTON FILL that
+   reads muddy/grey. Use a brighter gold fill here (option C) with dark text
+   so the CTA looks lit, matching the landing page. --accent itself is left
+   untouched so text/link contrast elsewhere is unaffected. */
+html[data-theme="light"] .btn-primary {
+  background: #d99a1f;
+  color: #3a2600;
+}
+html[data-theme="light"] .btn-primary:hover {
+  background: #e8a838;
+}
 
 /* Item card hover — white-on-white border doesn't pop. Use the accent
    instead, which already happens elsewhere via :hover. */

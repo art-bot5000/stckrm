@@ -218,6 +218,48 @@
     html[data-theme="hc"] .shelf-item,
     html[data-theme="hc"] .item-bar { background: var(--surface-2); }
 
+    /* ── Carousel arrows: hard-coded dark bg → themed surface. ── */
+    html[data-theme="light"] .hero-arrow,
+    html[data-theme="hc"]    .hero-arrow {
+      background: var(--surface);
+      border-color: var(--border);
+    }
+    html[data-theme="light"] .hero-arrow:hover,
+    html[data-theme="hc"]    .hero-arrow:hover {
+      background: var(--surface-2);
+    }
+
+    /* ── Locked-note frosted overlay (the "Spare keys" box). The ::after
+          paints a dark radial; swap to a light frosted veil so the locked
+          card matches the light theme while still obscuring the blurred
+          content beneath. ── */
+    html[data-theme="light"] .note-locked::after {
+      background:
+        radial-gradient(circle at center, rgba(236,233,224,0.72), rgba(236,233,224,0.92));
+    }
+    html[data-theme="hc"] .note-locked::after {
+      background: rgba(0,0,0,0.92);
+    }
+
+    /* ── Footer bar: hard-coded dark → themed surface so it matches the
+          rest of the light page instead of staying a grey band. ── */
+    html[data-theme="light"] footer,
+    html[data-theme="hc"]    footer {
+      background: var(--surface-2);
+      border-top-color: var(--border);
+    }
+
+    /* ── Primary CTA buttons in light mode: brighter gold fill (option C)
+          so they look lit instead of the muddy darkened --accent. Matches
+          the app (styles.css). --accent itself stays untouched. ── */
+    html[data-theme="light"] .btn-primary {
+      background: #d99a1f;
+      color: #3a2600;
+    }
+    html[data-theme="light"] .btn-primary:hover {
+      background: #e8a838;
+    }
+
     /* ─────────── TEXT SIZE SCALE (S/M/L/XL) ───────────
        Mirrors styles.css. Uses `zoom` on <main> so layout scales with text.
        Header stays at designed size; the a11y panel reads comfortably at
