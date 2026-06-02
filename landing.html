@@ -913,12 +913,20 @@
     }
     .footer-inner .brand { font-size: 14px; }
     .footer-links {
-      display: flex; gap: 18px;
+      display: flex; gap: 18px; flex-wrap: wrap; align-items: center;
     }
     .footer-links a {
       color: var(--muted); transition: color 0.15s;
     }
     .footer-links a:hover { color: var(--text); }
+    /* Cookie-preferences button styled as a footer link (button for correct
+       semantics since it opens a dialog rather than navigating). */
+    .footer-cookie-link {
+      background: none; border: none; padding: 0; cursor: pointer;
+      font-family: var(--sans); font-size: inherit; color: var(--muted);
+      transition: color 0.15s;
+    }
+    .footer-cookie-link:hover { color: var(--text); }
 
     /* ─────────── RESPONSIVE ─────────── */
     @media (max-width: 960px) {
@@ -2269,6 +2277,7 @@
       <a href="#benefits">Benefits</a>
       <a href="#how">How it works</a>
       <a href="https://app.stckrm.com">Open app</a>
+      <button type="button" class="footer-cookie-link" onclick="openCookiePrefs()">Cookie preferences</button>
     </div>
     <div style="font-family:var(--mono);font-size:11px;letter-spacing:1px;">
       © <span id="year"></span> · Built with care
@@ -2424,6 +2433,21 @@
     } catch (e) {}
     var b = document.getElementById('cookie-banner');
     if (b) b.classList.remove('open');
+  }
+  // Footer "Cookie preferences" entry point. Re-opens the banner with the
+  // prefs panel expanded, regardless of whether the visitor already responded
+  // once (stckrm_banner_seen). Lets a returning user change their remember-me
+  // choice at any time. Accept re-saves and dismisses as normal.
+  function openCookiePrefs() {
+    var b = document.getElementById('cookie-banner');
+    var panel = document.getElementById('cookie-prefs');
+    var btn = document.getElementById('cookie-manage-btn');
+    if (b) b.classList.add('open');
+    if (panel) panel.classList.add('open');
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+    var t = document.getElementById('cookie-remember-toggle');
+    if (t) { try { t.checked = localStorage.getItem('stockroom_cookie_consent') === 'granted'; } catch (e) {} }
+    if (b && b.scrollIntoView) b.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }
 
   // ═══════════════════════════════════════════════════════════
