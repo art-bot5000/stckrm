@@ -1437,6 +1437,74 @@
       outline: 2px solid var(--accent);
       outline-offset: 3px;
     }
+
+    /* ─────────── COOKIE / PRIVACY NOTICE ───────────
+       The app sets ONE first-party functional cookie (theme/size, no PII)
+       which is written freely. This notice covers the OPTIONAL personal-data
+       persistence (remember-me / remembered email). Themed so it respects
+       light/dark/HC. Lives outside <main> so text-scale zoom doesn't affect
+       it. Hidden until JS shows it (avoids a flash before the choice is read). */
+    .cookie-banner {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 300;
+      background: var(--surface); color: var(--text);
+      border-top: 1px solid var(--border);
+      box-shadow: 0 -4px 24px rgba(0,0,0,0.18);
+      padding: 16px 20px;
+      display: none;
+    }
+    .cookie-banner.open { display: block; }
+    .cookie-inner {
+      max-width: 1100px; margin: 0 auto;
+      display: flex; flex-wrap: wrap; align-items: center;
+      gap: 14px 20px; justify-content: space-between;
+    }
+    .cookie-text { font-size: 13px; line-height: 1.6; color: var(--muted); flex: 1 1 360px; }
+    .cookie-text strong { color: var(--text); font-weight: 600; }
+    .cookie-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+    .cookie-manage {
+      background: none; border: none; padding: 0; cursor: pointer;
+      font-family: var(--sans); font-size: 13px; font-weight: 600;
+      color: var(--accent); text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .cookie-manage:hover { color: var(--accent-hot); }
+    .cookie-accept {
+      font-family: var(--sans); font-size: 14px; font-weight: 600;
+      padding: 10px 22px; border-radius: 8px; border: none; cursor: pointer;
+      background: var(--accent); color: #111;
+    }
+    .cookie-accept:hover { background: var(--accent-hot); }
+    html[data-theme="light"] .cookie-accept { background: #d99a1f; color: #3a2600; }
+    html[data-theme="light"] .cookie-accept:hover { background: #e8a838; }
+    /* Expanded preferences panel (revealed by "Manage preferences"). */
+    .cookie-prefs {
+      display: none;
+      max-width: 1100px; margin: 14px auto 0;
+      border-top: 1px solid var(--border); padding-top: 14px;
+    }
+    .cookie-prefs.open { display: block; }
+    .cookie-pref-row {
+      display: flex; gap: 12px; align-items: flex-start;
+      padding: 10px 0;
+    }
+    .cookie-pref-row + .cookie-pref-row { border-top: 1px solid var(--glass-border); }
+    .cookie-pref-copy { flex: 1; font-size: 13px; line-height: 1.55; color: var(--muted); }
+    .cookie-pref-copy b { color: var(--text); font-weight: 600; display: block; margin-bottom: 2px; }
+    .cookie-pref-tag {
+      font-family: var(--mono); font-size: 11px; letter-spacing: 1px;
+      text-transform: uppercase; color: var(--muted);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 3px 8px; white-space: nowrap; align-self: center;
+    }
+    /* The remember-me toggle uses a native checkbox styled minimally. */
+    .cookie-pref-toggle { display: flex; align-items: center; gap: 8px; align-self: center; }
+    .cookie-pref-toggle input { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+    .cookie-pref-toggle label { font-size: 13px; color: var(--text); cursor: pointer; }
+    @media (max-width: 560px) {
+      .cookie-inner { flex-direction: column; align-items: stretch; }
+      .cookie-actions { justify-content: space-between; }
+      .cookie-accept { flex: 1; }
+    }
   </style>
 </head>
 <body>
@@ -2261,6 +2329,10 @@
       var wb = document.getElementById('welcome-back');
       if (wb) wb.classList.add('visible');
     }
+
+    // Surface the cookie/privacy notice if the visitor hasn't responded yet.
+    // (Not reached when redirecting a signed-in user above.)
+    _showCookieBanner();
   })();
 
   // ── Navigation handlers ────────────────────────────────────
@@ -2288,6 +2360,50 @@
   }
 
   // ═══════════════════════════════════════════════════════════
+  //  COOKIE / PRIVACY NOTICE
+  // ═══════════════════════════════════════════════════════════
+  // The theme/size cookie is functional and already written freely. This
+  // banner governs the OPTIONAL remember-me/email persistence and gives a
+  // transparency surface. We track "has the visitor responded" separately
+  // from the remember-me grant so we don't re-show it every visit:
+  //   stckrm_banner_seen = '1'                 (a choice was made)
+  //   stockroom_cookie_consent = 'granted'     (remember-me allowed)
+  function _bannerSeen() {
+    try { return localStorage.getItem('stckrm_banner_seen') === '1'; }
+    catch (e) { return false; }
+  }
+  function _showCookieBanner() {
+    if (_bannerSeen()) return;
+    var b = document.getElementById('cookie-banner');
+    if (b) b.classList.add('open');
+  }
+  function toggleCookiePrefs() {
+    var panel = document.getElementById('cookie-prefs');
+    var btn = document.getElementById('cookie-manage-btn');
+    if (!panel) return;
+    var open = !panel.classList.contains('open');
+    panel.classList.toggle('open', open);
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    // Reflect any existing remember-me grant in the toggle.
+    if (open) {
+      var t = document.getElementById('cookie-remember-toggle');
+      if (t) { try { t.checked = localStorage.getItem('stockroom_cookie_consent') === 'granted'; } catch (e) {} }
+    }
+  }
+  function acceptCookies() {
+    try {
+      localStorage.setItem('stckrm_banner_seen', '1');
+      // Honour the remember-me toggle if the prefs panel was opened; default
+      // is OFF (the optional personal-data persistence requires opt-in).
+      var t = document.getElementById('cookie-remember-toggle');
+      if (t && t.checked) localStorage.setItem('stockroom_cookie_consent', 'granted');
+      else localStorage.removeItem('stockroom_cookie_consent');
+    } catch (e) {}
+    var b = document.getElementById('cookie-banner');
+    if (b) b.classList.remove('open');
+  }
+
+  // ═══════════════════════════════════════════════════════════
   //  ACCESSIBILITY PANEL — theme + text size on the landing page
   // ═══════════════════════════════════════════════════════════
   // Writes the choice to:
@@ -2305,7 +2421,9 @@
     catch (e) { return false; }
   }
   function _a11yWriteCookie() {
-    if (!_a11yHasConsent()) return; // consent-gated
+    // Functional preference, no PII → written freely (not consent-gated).
+    // This is what lets the theme/size choice carry across to the demo on
+    // app.stckrm.com immediately, before any consent banner is actioned.
     var de = document.documentElement;
     var t = de.getAttribute('data-theme-pref') || 'system';
     var s = de.getAttribute('data-text-scale') || 'm';
@@ -2314,6 +2432,8 @@
       document.cookie = 'stckrm_a11y=' + val +
         ';Domain=.stckrm.com;Path=/;Max-Age=31536000;SameSite=Lax' +
         (location.protocol === 'https:' ? ';Secure' : '');
+      localStorage.setItem('stckrm_a11y_theme', t);
+      localStorage.setItem('stckrm_a11y_textscale', s);
     } catch (e) {}
   }
   function _a11yResolve(theme) {
@@ -2605,6 +2725,47 @@
     startTimer();
   })();
 </script>
+
+<!-- ─────────── COOKIE / PRIVACY NOTICE ───────────
+     Covers the OPTIONAL remember-me / email persistence. The theme/size
+     cookie is functional (no PII) and is set regardless. Block-until-choose
+     applies to the personal-data persistence governed here. -->
+<div class="cookie-banner" id="cookie-banner" role="dialog" aria-live="polite"
+     aria-label="Cookie and privacy preferences">
+  <div class="cookie-inner">
+    <div class="cookie-text">
+      <strong>A note on cookies.</strong> STCKRM uses one functional cookie to remember your
+      theme and text size — that's it, no tracking or analytics. If you log in, you can
+      optionally let us remember your email on this device for faster sign-in.
+    </div>
+    <div class="cookie-actions">
+      <button type="button" class="cookie-manage" id="cookie-manage-btn"
+              aria-expanded="false" aria-controls="cookie-prefs" onclick="toggleCookiePrefs()">Manage preferences</button>
+      <button type="button" class="cookie-accept" onclick="acceptCookies()">Accept</button>
+    </div>
+  </div>
+  <div class="cookie-prefs" id="cookie-prefs">
+    <div class="cookie-pref-row">
+      <div class="cookie-pref-copy">
+        <b>Theme &amp; text size (functional)</b>
+        Stores your chosen appearance so it follows you across the site and the demo.
+        No personal data. Always on.
+      </div>
+      <span class="cookie-pref-tag">Always on</span>
+    </div>
+    <div class="cookie-pref-row">
+      <div class="cookie-pref-copy">
+        <b>Remember my email on sign-in (optional)</b>
+        If enabled, your email is kept on this device so you don't have to retype it.
+        Stored locally; never shared.
+      </div>
+      <span class="cookie-pref-toggle">
+        <input type="checkbox" id="cookie-remember-toggle">
+        <label for="cookie-remember-toggle">Allow</label>
+      </span>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>

@@ -21384,14 +21384,19 @@ function setTheme(pref) {
 // wins over any device cookie — is reflected back onto the device for the
 // next visit to the landing/login screen).
 //
-// Consent-gated: only written once the user has granted cookie consent,
-// matching the rest of the app's cookie behaviour. Format MUST match the
+// Written unconditionally — see the note on the function itself for why this
+// functional preference is not consent-gated. Format MUST match the pre-paint
+// bootstrap scripts in index.html and landing.html:
+//   stckrm_a11y = "t=<system|light|dark|hc>&s=<s|m|l|xl>"
+// Consent: the a11y cookie carries NO personal data — only a theme + text
+// size preference (t=dark&s=l). It's a strictly-necessary functional cookie,
+// exempt from consent under PECR/GDPR, so it is written freely (not gated on
+// stockroom_cookie_consent, which governs the remember-me/email persistence).
+// Writing it unconditionally is what lets the theme carry across origins to
+// the demo even before any consent banner is actioned. Format MUST match the
 // pre-paint bootstrap scripts in index.html and landing.html:
 //   stckrm_a11y = "t=<system|light|dark|hc>&s=<s|m|l|xl>"
 function _writeA11yCookie() {
-  let consent = false;
-  try { consent = localStorage.getItem('stockroom_cookie_consent') === 'granted'; } catch (e) {}
-  if (!consent) return;
   const t = (settings && settings.theme) || 'system';
   const s = (settings && settings.textScale) || 'm';
   try {
