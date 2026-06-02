@@ -1236,7 +1236,16 @@ function _exitDemo() {
   _setActiveDbForSignedOut();
   window._demoMode = false;
   _hideDemoBanner();
-  location.href = '/';
+  // Exit to the marketing/landing page (stckrm.com) rather than the app's
+  // login screen, so the user can keep learning about the app. We carry the
+  // current theme + text size as URL params (?t=&s=) — a cross-origin
+  // navigation, so this is the reliable carrier independent of cookies. The
+  // landing pre-paint bootstrap reads these. ?landing=1 stops the landing
+  // page bouncing a (non-existent) session straight back to the app.
+  var t = (typeof settings === 'object' && settings && settings.theme) || 'system';
+  var s = (typeof settings === 'object' && settings && settings.textScale) || 'm';
+  location.href = 'https://stckrm.com/?landing=1&t=' +
+    encodeURIComponent(t) + '&s=' + encodeURIComponent(s);
 }
 
 // ── DEMO MODE contextual nudges ─────────────────────────────────────────
