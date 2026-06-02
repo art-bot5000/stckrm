@@ -163,80 +163,60 @@
       border-bottom: 2px solid #ffffff;
     }
 
-    /* ─────────── PRODUCT-MOCKUP SURFACES STAY DARK ───────────
-       The hero "stockroom" mockup, the encryption mockup, the three benefit
-       pillars, the how-it-works steps, and the eco-stats panel are deliberate
-       *screenshots of the dark app UI*. They're designed dark and read well
-       dark. But their backgrounds are hard-coded dark rgba values while their
-       inner text uses the themeable --text / --muted tokens — so in light (or
-       HC) mode the card stays dark while the text turns dark too, making it
-       invisible (the bug in the screenshots).
+    /* ─────────── PRODUCT-MOCKUP SURFACES IN LIGHT / HC ───────────
+       The hero "stockroom" mockup, encryption mockup, the three benefit
+       pillars, how-it-works steps, and eco-stats panel all have HARD-CODED
+       dark backgrounds (rgba(26,29,39,…) etc.). In dark mode that's correct.
+       In light mode the page background + text tokens go light but these card
+       backgrounds stay dark — so they read as a dark grey overlay with text
+       that's invisible or mismatched (the bug in the screenshots).
 
-       Fix: in non-dark themes, re-pin the INNER text of these surfaces to the
-       dark-theme palette so each mockup stays self-consistent regardless of
-       the page theme. Backgrounds are already dark and need no change. We
-       scope tightly to these card classes so the rest of the light page is
-       untouched.
-
-       IMPORTANT: re-declaring the --text/--muted *variables* alone is not
-       enough. Headings inside these cards set no `color` of their own — they
-       inherit the COMPUTED color from <body> (which is dark in light mode).
-       A variable re-pin never touches that inherited color. So we ALSO set
-       `color` directly on the card and force the heading/paragraph elements
-       to the light value. Elements that read var(--muted) still pick up the
-       re-pinned muted grey. */
+       Fix: in light (and HC) mode, override these surfaces' BACKGROUNDS and
+       BORDERS to the themed light/HC surface tokens. The inner text uses
+       var(--text)/var(--muted) already, which resolve correctly for the
+       active theme — so once the background is light, the dark text shows
+       perfectly with no per-element colour rules needed. Status accents on
+       the shelf bars (.urgent/.warn/.ok) keep working via their own tokens. */
     html[data-theme="light"] .shelf-frame,
-    html[data-theme="hc"]    .shelf-frame,
+    html[data-theme="hc"]    .shelf-frame {
+      background: var(--surface);
+    }
     html[data-theme="light"] .pillar,
     html[data-theme="hc"]    .pillar,
     html[data-theme="light"] .step,
-    html[data-theme="hc"]    .step,
+    html[data-theme="hc"]    .step {
+      background: var(--surface);
+      border-color: var(--border);
+    }
+    /* eco-card keeps its subtle green wash but on a light base instead of the
+       dark rgba(26,29,39) layer. */
     html[data-theme="light"] .eco-card,
     html[data-theme="hc"]    .eco-card {
-      /* Dark-palette tokens, re-declared locally so descendants that use
-         var(--text)/var(--muted)/--border resolve to the dark values. */
-      --text: #e8eaf2;
-      --muted: #7880a0;
-      --border: #2e3350;
-      --glass-border: rgba(255,255,255,0.07);
-      --surface: #1a1d27;
-      --surface-2: #22263a;
-      /* Keep the dark-mode accent hues inside the mockups (the light-mode
-         darkened accents look muddy on the dark card backgrounds). */
-      --accent: #e8a838;
-      --accent-2: #5b8dee;
-      --ok: #4cbb8a;
-      --danger: #ff6b6b;
-      /* The actual fix: set the inherited text colour to light so headings
-         (which have no explicit colour) stop inheriting body's dark colour. */
-      color: #e8eaf2;
+      background:
+        linear-gradient(135deg, rgba(40,112,82,0.08), rgba(40,112,82,0.02)),
+        var(--surface);
+      border-color: var(--border);
     }
-    /* Force the heading + body elements inside the mockups to light text,
-       overriding any inherited dark colour. Headings vary by card (.pillar/
-       .eco-card use h3, .step uses h4), so target both plus the shelf item
-       text. Paragraphs/labels that already use var(--muted) resolve it to the
-       re-pinned grey above. */
-    html[data-theme="light"] .shelf-frame h1, html[data-theme="hc"] .shelf-frame h1,
-    html[data-theme="light"] .shelf-frame h2, html[data-theme="hc"] .shelf-frame h2,
-    html[data-theme="light"] .pillar h3,      html[data-theme="hc"] .pillar h3,
-    html[data-theme="light"] .step h4,        html[data-theme="hc"] .step h4,
-    html[data-theme="light"] .eco-card h3,    html[data-theme="hc"] .eco-card h3,
-    html[data-theme="light"] .item-name,      html[data-theme="hc"] .item-name,
-    html[data-theme="light"] .step-num,       html[data-theme="hc"] .step-num {
-      color: #e8eaf2;
+    html[data-theme="light"] .eco-stat,
+    html[data-theme="hc"]    .eco-stat {
+      background: var(--surface-2);
+      border-color: var(--border);
     }
-    html[data-theme="light"] .pillar p,       html[data-theme="hc"] .pillar p,
-    html[data-theme="light"] .step p,         html[data-theme="hc"] .step p,
-    html[data-theme="light"] .eco-card p,     html[data-theme="hc"] .eco-card p,
-    html[data-theme="light"] .eco-stat-label, html[data-theme="hc"] .eco-stat-label {
-      color: #7880a0;
-    }
-    /* The shelf items use a faint white overlay that disappears unless the
-       card context is dark — restore it explicitly in non-dark themes. */
+    /* Shelf rows + usage bars used faint WHITE overlays (visible only on dark).
+       On a light card those vanish — swap to faint dark overlays so the rows
+       and bar tracks read against the now-light frame. */
     html[data-theme="light"] .shelf-item,
     html[data-theme="hc"]    .shelf-item {
-      background: rgba(255,255,255,0.02);
+      background: rgba(0,0,0,0.03);
+      border-color: var(--border);
     }
+    html[data-theme="light"] .item-bar,
+    html[data-theme="hc"]    .item-bar {
+      background: rgba(0,0,0,0.08);
+    }
+    /* HC needs hard edges, not the translucent fills. */
+    html[data-theme="hc"] .shelf-item,
+    html[data-theme="hc"] .item-bar { background: var(--surface-2); }
 
     /* ─────────── TEXT SIZE SCALE (S/M/L/XL) ───────────
        Mirrors styles.css. Uses `zoom` on <main> so layout scales with text.
