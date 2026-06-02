@@ -172,6 +172,11 @@ function _setActiveDbForUser(emailHash) {
   const next = `stockroom_u_${slug}`;
   if (_activeDbName === next) return;
   _activeDbName = next;
+  // The active IndexedDB just changed (user switch). Any in-memory `reminders`
+  // belong to the previous DB, so force renderReminders() to reload from the
+  // new DB on its next call rather than trusting the now-stale cache flag.
+  _remindersLoaded = false;
+  _remAggVersion++; // new user's data — invalidate the aggregation memo
   _resetDbHandle();
 }
 
@@ -197,6 +202,8 @@ async function _setActiveDbForDemo() {
     } catch (e) { resolve(); }
   });
   _activeDbName = 'stockroom_demo';
+  _remindersLoaded = false; // demo DB is a different store — force reload on next render
+  _remAggVersion++;         // and invalidate the aggregation memo
 }
 
 function _setActiveDbForSignedOut() {
@@ -1270,6 +1277,7 @@ async function loadData() {
 
 async function saveData() {
   if (!Array.isArray(items)) { console.error('stockroom: items is not an array, aborting save'); return; }
+  _remAggVersion++; // items can hold replacementReminders — invalidate the reminders aggregation memo
   await dbPut('items', 'items', items);
   if (activeProfile) await saveCurrentProfile();
   registerBackgroundSync();
@@ -3062,11 +3070,36 @@ const REMINDER_SUGGESTIONS = [
 ];
 
 let reminders = []; // separate from items[]
+// True once loadReminders() has populated `reminders` from IndexedDB at least
+// once this session. renderReminders() used to `await loadReminders()` on every
+// single call — an IDB read on every render, including the rapid mutation→save→
+// render cycles where we'd just written the data and then immediately read it
+// back. The flag lets renderReminders skip that redundant reload once the array
+// is known-loaded. All mutation and sync paths keep `reminders` authoritative in
+// memory (they assign then saveReminders()), so a reload after them is never
+// needed. The only time the flag is false is before the first real load — which
+// is exactly when we still want renderReminders to pull from IDB.
+let _remindersLoaded = false;
+// Version counter for the renderReminders aggregation memo. Bumped whenever the
+// data that feeds the aggregation is persisted (saveData for items, which can
+// hold replacementReminders; saveReminders for standalone reminders). The memo
+// (see renderReminders) caches the expensive dual-source merge + status bucketing
+// and reuses it when this counter AND the two source-array lengths are unchanged.
+// The length check is a fail-safe: any add/delete invalidates even if a bump were
+// ever missed, so the worst a missed bump could do is reuse an aggregation across
+// an in-place field edit — and field edits always go through saveData/saveReminders.
+let _remAggVersion = 0;
+// Cache for the built+bucketed reminders aggregation. Holds the version and the
+// two source-array lengths it was built against, plus the four status buckets.
+// renderReminders reuses it when version + both lengths match (see _buildRemAgg).
+let _remAggCache = null;
 let editingReminderId = null;
 let loggingReminderId = null;
 
 // ── Persistence ───────────────────────────
 async function loadReminders() {
+  _remindersLoaded = true; // mark loaded regardless of which branch populates
+  _remAggVersion++;        // fresh data — invalidate the aggregation memo
   const stored = await dbGet('reminders', 'reminders');
   if (stored) { reminders = stored; return; }
   // Migration
@@ -3081,6 +3114,7 @@ async function loadReminders() {
 }
 
 async function saveReminders() {
+  _remAggVersion++; // invalidate the renderReminders aggregation memo
   await dbPut('reminders', 'reminders', reminders);
   if (activeProfile) await saveCurrentProfile();
   // Recompute future push schedule — debounced so rapid edits coalesce.
@@ -6576,10 +6610,22 @@ function getReminderStatus(reminder) {
 }
 
 // ── Render ────────────────────────────────
-async function renderReminders() {
-  await loadReminders();
+// Builds the dual-source reminders aggregation (standalone reminders + reminders
+// embedded in items) and buckets them by status, sorted within each bucket.
+// This is the expensive part of renderReminders: a full walk of reminders AND
+// every item, four getReminderStatus passes (each calling getReminderDaysUntil
+// per reminder), and three sorts. It's memoised against _remAggVersion and the
+// two source-array lengths — see _remAggCache. Repeated renders with no data
+// change (the common case: navigating to the view, badge refreshes) reuse the
+// cached buckets instead of rebuilding.
+function _buildRemAgg() {
+  if (_remAggCache &&
+      _remAggCache.v === _remAggVersion &&
+      _remAggCache.rl === reminders.length &&
+      _remAggCache.il === items.length) {
+    return _remAggCache;
+  }
 
-  // Also collect reminders embedded in items — supports both old single and new array format
   const allReminders = [
     ...reminders.filter(r => !r._deletedAt),
     ...items.filter(i => !i._deletedAt).flatMap(i => {
@@ -6619,13 +6665,43 @@ async function renderReminders() {
     }),
   ];
 
-  const overdue  = allReminders.filter(r => getReminderStatus(r) === 'overdue');
-  const soon     = allReminders.filter(r => getReminderStatus(r) === 'soon');
-  const upcoming = allReminders.filter(r => getReminderStatus(r) === 'upcoming');
-  const unknown  = allReminders.filter(r => getReminderStatus(r) === 'unknown');
+  // Single status pass: compute each reminder's status once and bucket it,
+  // rather than four full filter passes that each recompute getReminderStatus.
+  const overdue = [], soon = [], upcoming = [], unknown = [];
+  for (const r of allReminders) {
+    switch (getReminderStatus(r)) {
+      case 'overdue':  overdue.push(r);  break;
+      case 'soon':     soon.push(r);     break;
+      case 'upcoming': upcoming.push(r); break;
+      default:         unknown.push(r);  break;
+    }
+  }
+
+  // Sort each bucket once, here, so the cached result is render-ready.
+  overdue.sort((a,b)  => (getReminderDaysUntil(a)||0) - (getReminderDaysUntil(b)||0));
+  soon.sort((a,b)     => (getReminderDaysUntil(a)||0) - (getReminderDaysUntil(b)||0));
+  upcoming.sort((a,b) => (getReminderDaysUntil(a)||0) - (getReminderDaysUntil(b)||0));
+
+  _remAggCache = {
+    v: _remAggVersion, rl: reminders.length, il: items.length,
+    total: allReminders.length, overdue, soon, upcoming, unknown,
+  };
+  return _remAggCache;
+}
+
+async function renderReminders() {
+  // Only hit IndexedDB when we don't already have an authoritative in-memory
+  // copy. Mutation and sync paths keep `reminders` current and call
+  // saveReminders(), and DB switches reset _remindersLoaded — so a reload here
+  // is only needed on the very first render (or right after a user/demo switch).
+  if (!_remindersLoaded) await loadReminders();
+
+  // Built + bucketed + sorted aggregation (memoised; see _buildRemAgg).
+  const agg = _buildRemAgg();
+  const { overdue, soon, upcoming, unknown } = agg;
 
   const empty = document.getElementById('reminders-empty');
-  if (allReminders.length === 0) {
+  if (agg.total === 0) {
     if (empty) empty.style.display = 'block';
     ['overdue-section','soon-section','upcoming-section'].forEach(s => {
       const el = document.getElementById('reminders-' + s);
@@ -6660,11 +6736,7 @@ async function renderReminders() {
     container.innerHTML = list.map(r => reminderCardHTML(r)).join('');
   };
 
-  // Sort overdue by most overdue first
-  overdue.sort((a,b)  => (getReminderDaysUntil(a)||0) - (getReminderDaysUntil(b)||0));
-  soon.sort((a,b)     => (getReminderDaysUntil(a)||0) - (getReminderDaysUntil(b)||0));
-  upcoming.sort((a,b) => (getReminderDaysUntil(a)||0) - (getReminderDaysUntil(b)||0));
-
+  // Buckets arrive pre-sorted from _buildRemAgg(); render-ready.
   renderSection([...overdue], 'reminders-overdue-list',    'reminders-overdue-section', 'overdue-count');
   renderSection([...soon],    'reminders-soon-list',       'reminders-soon-section',    'soon-count');
   renderSection([...upcoming, ...unknown], 'reminders-upcoming-list', 'reminders-upcoming-section', null);
