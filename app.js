@@ -24943,6 +24943,48 @@ function _persistDragOrder() {
   saveGroceryManualOrder([...newOrder, ...rest]);
 }
 
+// ── Per-row dirty signature ───────────────────────────────────────
+// Captures EVERY input that affects a locked row's rendered output, so a
+// future keyed-row diff (see renderGrocery-keyed-diff-plan) can skip rows
+// whose visible content hasn't changed. Stamped as data-sig on the row root
+// (see groceryItemHTML). Today it's an inert attribute — harmless on its own,
+// and lays the groundwork without changing any behaviour.
+//
+// Inputs that drive the markup, all of which MUST appear here:
+//   item.name, item.notes, item.recurring, item.intervalDays   → name + meta line
+//   item.department                                            → dept label (alpha view only)
+//   item.qty                                                   → qty stepper number + minus-disabled + has-qty class
+//   item.checked + the list's mode/shoppingPhase + _itemIsNeeded(item)
+//                                                              → stateClass (needed / checked / unneeded-suppressed)
+// grocerySort is intentionally NOT in the sig: the diff only ever runs
+// same-mode→same-mode (dept→dept or alpha→alpha), so grocerySort is constant
+// across any single diff pass. It only changes the dept-label-in-meta, which
+// a sort switch (alpha↔dept) handles via the full-rebuild fallback anyway.
+function _groceryRowSig(item) {
+  const list = groceryLists.find(l => l.id === (item.listId || 'default'));
+  const isStockcheck = list && list.mode === 'stockcheck';
+  const phase = isStockcheck ? (list.shoppingPhase || 'check') : '';
+  let stateClass = '';
+  if (isStockcheck && phase === 'check') {
+    if (_itemIsNeeded(item)) stateClass = 'needed';
+  } else if (isStockcheck && phase === 'shop') {
+    if (!_itemIsNeeded(item)) stateClass = 'checked unneeded-suppressed';
+    else if (item.checked) stateClass = 'checked';
+  } else {
+    if (item.checked) stateClass = 'checked';
+  }
+  const qty = (typeof item.qty === 'number' && item.qty > 0) ? item.qty : 1;
+  return [
+    item.name,
+    item.notes || '',
+    item.recurring ? 1 : 0,
+    item.intervalDays || 7,
+    item.department || 'other',
+    qty,
+    stateClass,
+  ].join('\x1f');
+}
+
 function groceryItemHTML(item) {
   const deptDef = groceryDepts.find(d => d.id === (item.department || 'other')) || {name:'Other', emoji:'📦'};
   const meta = [
@@ -24980,8 +25022,10 @@ function groceryItemHTML(item) {
     if (item.checked) stateClass = ' checked';
   }
 
-  // Full-row tap target: no checkbox, no menu button
+  // Full-row tap target: no checkbox, no menu button.
+  // data-id / data-sig support the (future) keyed-row diff; inert today.
   return `<div class="grocery-item${stateClass}" id="gitem-${item.id}"
+    data-id="${item.id}" data-sig="${esc(_groceryRowSig(item))}"
     role="button" tabindex="0"
     onclick="tapGroceryItem('${item.id}')"
     onkeydown="if(event.key==='Enter'||event.key===' ')tapGroceryItem('${item.id}')"
