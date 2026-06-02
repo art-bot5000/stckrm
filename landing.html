@@ -2364,7 +2364,16 @@
 
     // Surface the cookie/privacy notice if the visitor hasn't responded yet.
     // (Not reached when redirecting a signed-in user above.)
-    _showCookieBanner();
+    // NOTE: the #cookie-banner element appears LATER in the document than this
+    // script, so at IIFE-run time it doesn't exist yet. Defer the show until
+    // the DOM has finished parsing, otherwise getElementById returns null and
+    // the banner silently never opens. (The footer "Cookie preferences" link
+    // works regardless because it fires after full load.)
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', _showCookieBanner);
+    } else {
+      _showCookieBanner();
+    }
   })();
 
   // ── Navigation handlers ────────────────────────────────────
