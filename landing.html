@@ -176,7 +176,15 @@
        dark-theme palette so each mockup stays self-consistent regardless of
        the page theme. Backgrounds are already dark and need no change. We
        scope tightly to these card classes so the rest of the light page is
-       untouched. */
+       untouched.
+
+       IMPORTANT: re-declaring the --text/--muted *variables* alone is not
+       enough. Headings inside these cards set no `color` of their own — they
+       inherit the COMPUTED color from <body> (which is dark in light mode).
+       A variable re-pin never touches that inherited color. So we ALSO set
+       `color` directly on the card and force the heading/paragraph elements
+       to the light value. Elements that read var(--muted) still pick up the
+       re-pinned muted grey. */
     html[data-theme="light"] .shelf-frame,
     html[data-theme="hc"]    .shelf-frame,
     html[data-theme="light"] .pillar,
@@ -198,6 +206,30 @@
       --accent: #e8a838;
       --accent-2: #5b8dee;
       --ok: #4cbb8a;
+      --danger: #ff6b6b;
+      /* The actual fix: set the inherited text colour to light so headings
+         (which have no explicit colour) stop inheriting body's dark colour. */
+      color: #e8eaf2;
+    }
+    /* Force the heading + body elements inside the mockups to light text,
+       overriding any inherited dark colour. Headings vary by card (.pillar/
+       .eco-card use h3, .step uses h4), so target both plus the shelf item
+       text. Paragraphs/labels that already use var(--muted) resolve it to the
+       re-pinned grey above. */
+    html[data-theme="light"] .shelf-frame h1, html[data-theme="hc"] .shelf-frame h1,
+    html[data-theme="light"] .shelf-frame h2, html[data-theme="hc"] .shelf-frame h2,
+    html[data-theme="light"] .pillar h3,      html[data-theme="hc"] .pillar h3,
+    html[data-theme="light"] .step h4,        html[data-theme="hc"] .step h4,
+    html[data-theme="light"] .eco-card h3,    html[data-theme="hc"] .eco-card h3,
+    html[data-theme="light"] .item-name,      html[data-theme="hc"] .item-name,
+    html[data-theme="light"] .step-num,       html[data-theme="hc"] .step-num {
+      color: #e8eaf2;
+    }
+    html[data-theme="light"] .pillar p,       html[data-theme="hc"] .pillar p,
+    html[data-theme="light"] .step p,         html[data-theme="hc"] .step p,
+    html[data-theme="light"] .eco-card p,     html[data-theme="hc"] .eco-card p,
+    html[data-theme="light"] .eco-stat-label, html[data-theme="hc"] .eco-stat-label {
+      color: #7880a0;
     }
     /* The shelf items use a faint white overlay that disappears unless the
        card context is dark — restore it explicitly in non-dark themes. */
