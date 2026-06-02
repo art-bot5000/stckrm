@@ -23504,16 +23504,27 @@ async function confirmGroceryImport() {
   toast(`${valid.length} item${valid.length !== 1 ? 's' : ''} added to grocery list ✓`);
 }
 
-function renderGrocery() {
+// ── renderGrocery split into chrome + body (Option A refactor) ──
+// `renderGrocery()` (the single public entry point used by ~28 call sites)
+// is now a thin wrapper at the bottom of this block. It calls
+// `renderGroceryChrome()` first, then `renderGroceryBody()` unless the
+// chrome handled everything (picker view, or no #grocery-list-body in the
+// DOM). This is a behaviour-preserving split: same output, same order of
+// operations. It decouples the header/toolbar chrome (recomputed on every
+// render today) from the row-build path so a future keyed-row diff can
+// touch the body without re-running all the chrome. The chrome returns
+// `true` to mean "stop — nothing more to render".
+function renderGroceryChrome() {
   // Previously this read from two inline search inputs (#grocery-search on
   // desktop, #grocery-fs-search-input on mobile FS). Both were removed when
   // the global search took over — searching groceries now happens via the
   // global search modal. `query` is kept as a const here so the existing
   // filter call sites (`!query || …`) stay valid without a wider sweep.
-  const query = '';
-  const body  = document.getElementById('grocery-list-body');
-  const checkedBar = document.getElementById('grocery-checked-bar');
-  if (!body) return;
+  // `query`, `body` and `checkedBar` are re-derived in renderGroceryBody()
+  // where they're actually consumed — chrome only needs `body` for the
+  // early "nothing to render" guard.
+  const body = document.getElementById('grocery-list-body');
+  if (!body) return true;  // no list body in DOM — nothing to render
 
   // ── Multi-list picker vs active-list view ──
   // Picker view: shown when 2+ lists exist AND no list is currently open.
@@ -23591,7 +23602,7 @@ function renderGrocery() {
     // Hide any leftover phase bar from a previous active-list render.
     const _phaseBar = document.getElementById('grocery-phase-bar');
     if (_phaseBar) _phaseBar.style.display = 'none';
-    return;
+    return true;  // picker handled the full render — wrapper skips body
   }
   // Single list mode — restore controls
   document.body.classList.remove('grocery-multilist');
@@ -23604,6 +23615,22 @@ function renderGrocery() {
   const _activeItemCount = groceryItems.filter(i => !i._deletedAt && (i.listId || 'default') === activeGroceryListId).length;
   if (_editToggle) _editToggle.style.display = (_activeItemCount === 0) ? 'none' : '';
   if (_addItem)    _addItem.style.display    = '';
+
+  return false;  // chrome done — wrapper proceeds to renderGroceryBody()
+}
+
+// Body half of the renderGrocery split. Owns all row-level work: filtering,
+// the checked-bar / hide-checked button state, empty + no-match states, the
+// edit-mode build, the dept/alpha locked builds, the final
+// `body.innerHTML =`, and the recycle bin. Re-derives `query`, `body` and
+// `checkedBar` (they're cheap lookups) so this function is self-contained
+// and callable independently of the chrome. Only reached when the chrome
+// returned falsy (active single/multi list with a real list body present).
+function renderGroceryBody() {
+  const query = '';
+  const body  = document.getElementById('grocery-list-body');
+  const checkedBar = document.getElementById('grocery-checked-bar');
+  if (!body) return;  // defensive — chrome already guarded, but body may be called directly
 
   cleanGroceryOrder();
   // Hide multi-select bar whenever we re-render
@@ -23848,6 +23875,14 @@ function renderGrocery() {
 
   // Render Recently Deleted section after the main grocery body
   renderGroceryRecycleBin();
+}
+
+// Public entry point — unchanged signature, called by ~28 sites. Runs chrome
+// first; if chrome fully handled the render (picker view or missing list
+// body) it returns truthy and we stop. Otherwise we render the body.
+function renderGrocery() {
+  if (renderGroceryChrome()) return;
+  renderGroceryBody();
 }
 
 function renderGroceryRecycleBin() {
