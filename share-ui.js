@@ -85,6 +85,11 @@ async function bulkShareAppendToExisting(shareCode) {
       rec.share = { allow: [shareCode] };
     }
     rec.updatedAt = now;
+    // Cascade to children (e.g. grocery list → its items) — see
+    // _applyBulkSharePending / the grocery spec's cascadeShare for why.
+    if (typeof spec.cascadeShare === 'function') {
+      try { spec.cascadeShare(rec, shareCode, now); } catch(e) { console.warn('[bulk-share] cascade failed:', e); }
+    }
     appended++;
   }
   await spec.save();
@@ -189,6 +194,14 @@ async function _applyBulkSharePending(newShareCode) {
       rec.share = { allow: [newShareCode] };
     }
     rec.updatedAt = now;
+    // Cascade hook: some sections share a CONTAINER whose children must also
+    // be tagged. A grocery LIST, for example, is the selectable unit, but the
+    // share filter operates on grocery ITEMS — tagging only the list leaves a
+    // record-scoped share with an empty list. The spec's cascadeShare tags the
+    // children too. (Mirrors applyDelete's cascade-to-items behaviour.)
+    if (typeof spec.cascadeShare === 'function') {
+      try { spec.cascadeShare(rec, newShareCode, now); } catch(e) { console.warn('[bulk-share] cascade failed:', e); }
+    }
   }
   await spec.save();
   if (spec.rerender) spec.rerender();

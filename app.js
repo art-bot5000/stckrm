@@ -22602,6 +22602,26 @@ registerBulkSelectSection('grocery', {
   findRecord: (id) => groceryLists.find(l => l.id === id),
   save:       async () => { await _saveGroceryLists(); await saveGrocery(); },
   rerender:   ()   => renderGrocery(),
+  // Sharing a grocery LIST must also tag every ITEM in that list with the
+  // share's allow-list — otherwise a record-scoped share gets the (empty)
+  // list container but none of its items, and the recipient sees nothing.
+  // Mirrors applyDelete's cascade-to-items. Tags only non-deleted items.
+  cascadeShare: (list, shareCode, now) => {
+    groceryItems.forEach(it => {
+      if ((it.listId || 'default') !== list.id) return;
+      if (it._deletedAt) return;
+      if (it.share == null) {
+        it.share = { allow: [shareCode] };
+      } else if (typeof it.share === 'object') {
+        const allow = Array.isArray(it.share.allow) ? it.share.allow : [];
+        if (!allow.includes(shareCode)) allow.push(shareCode);
+        it.share.allow = allow;
+      } else if (it.share === 'private') {
+        it.share = { allow: [shareCode] };
+      }
+      it.updatedAt = now || new Date().toISOString();
+    });
+  },
   getVisibleIds: () => Array.from(document.querySelectorAll('#grocery-list-body [data-bulk-id][data-bulk-section="grocery"]'))
                         .map(el => el.getAttribute('data-bulk-id'))
                         .filter(Boolean),
