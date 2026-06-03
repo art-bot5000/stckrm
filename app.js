@@ -23626,12 +23626,11 @@ function renderGroceryChrome() {
 // `checkedBar` (they're cheap lookups) so this function is self-contained
 // and callable independently of the chrome. Only reached when the chrome
 // returned falsy (active single/multi list with a real list body present).
-// Keyed-row diff master switch. While FALSE, the diffable (dept/alpha) builds
-// always do a full body.innerHTML rebuild — identical to pre-diff behaviour.
-// This lets the data-render-mode fallback plumbing ship and be verified before
-// any real diff logic is wired in (build-order step 2). Step 3+ flips this on
-// per-path once _diffKeyedRows exists.
-const _GROCERY_BODY_DIFF_ON = false;
+// Keyed-row diff master switch. The per-commit _canDiff guard restricts the
+// diff to the ALPHA path only (step 3); the dept path still full-rebuilds
+// until step 4 wires its collapse-snapshot handling. Flipping this on with the
+// alpha-only guard in place is safe — dept can't reach the diff branch.
+const _GROCERY_BODY_DIFF_ON = true;
 
 function renderGroceryBody() {
   const query = '';
@@ -23807,6 +23806,11 @@ function renderGroceryBody() {
 
   let html = '';
 
+  // Diff inputs for the alpha path, captured here and consumed at commit.
+  // Null in dept mode so the commit knows which path to take.
+  let _alphaDesired = null;     // ordered [{id, sig, html}] of unchecked rows
+  let _alphaCheckedHtml = null; // the "✓ Checked" section markup (or '')
+
   if (grocerySort === 'dept') {
     // Use manual order within each department group
     const ordered = getGroceryItemsInOrder();
@@ -23878,33 +23882,64 @@ function renderGroceryBody() {
       ordered = ordered.filter(i => _itemIsNeeded(i));
     }
     const sorted  = [...ordered].sort((a,b) => a.name.localeCompare(b.name));
-    html += sorted.map(item => groceryItemHTML(item)).join('');
+    // Build BOTH the flat html (for the full-rebuild fallback) AND the keyed
+    // desired list (for the diff). _groceryRowSig here is the RAW sig — it must
+    // match what we read back from the DOM via getAttribute (the browser
+    // de-escapes the data-sig attribute, giving us the raw value back).
+    _alphaDesired = sorted.map(item => ({
+      id:   item.id,
+      sig:  _groceryRowSig(item),
+      html: groceryItemHTML(item),
+    }));
+    html += _alphaDesired.map(d => d.html).join('');
   }
 
   // In alpha view: checked items at bottom (in dept view they're per-dept above)
   if (grocerySort === 'alpha' && checked.length > 0) {
-    html += `<div style="margin-top:16px">
+    _alphaCheckedHtml = `<div style="margin-top:16px" data-grocery-checked-section="1">
       <div class="grocery-dept-header">
         <span class="grocery-dept-label" style="color:var(--muted)">✓ Checked</span>
         <span class="grocery-dept-count">${checked.length}</span>
       </div>
       ${checked.map(item => groceryItemHTML(item)).join('')}
     </div>`;
+    html += _alphaCheckedHtml;
+  } else if (grocerySort === 'alpha') {
+    _alphaCheckedHtml = ''; // alpha with no checked items — section absent
   }
 
   // ── Commit: full rebuild vs keyed diff (build-order steps 2–4) ──────
   // Diff only when the master switch is on AND the previous render was the
   // SAME diffable layout. Any structure swap (alpha↔dept, in from edit/empty/
-  // nomatch) must full-rebuild — never diff across a layout change. In step 2
-  // _GROCERY_BODY_DIFF_ON is false, so this always full-rebuilds; the branch
-  // exists so steps 3–4 slot the real diff in without touching this scaffold.
-  const _canDiff = _GROCERY_BODY_DIFF_ON && _prevRenderMode === _targetRenderMode;
+  // nomatch) must full-rebuild — never diff across a layout change. Step 3
+  // enables the ALPHA path; dept still full-rebuilds (step 4 will wire it).
+  const _canDiff = _GROCERY_BODY_DIFF_ON
+                && _prevRenderMode === _targetRenderMode
+                && _targetRenderMode === 'alpha'
+                && _alphaDesired !== null;
+
   if (_canDiff) {
-    // STUB — unreachable while _GROCERY_BODY_DIFF_ON is false. Step 3 (alpha)
-    // and step 4 (dept) replace this with _diffKeyedRows + dept-collapse
-    // snapshot/reapply. Defensive fallback so a premature flip can't blank the
-    // list: if we somehow reach here, rebuild.
-    body.innerHTML = html;
+    // ALPHA keyed diff.
+    // 1. Detach the existing checked-section so the keyed unchecked rows form
+    //    a clean run at the top of body (the reconciler diffs body's direct
+    //    data-id children; a trailing wrapper would otherwise confuse cursor
+    //    positioning for newly-inserted rows).
+    const oldChecked = body.querySelector(':scope > [data-grocery-checked-section]');
+    if (oldChecked) oldChecked.remove();
+
+    // 2. Reconcile the unchecked rows in place — only changed/added/removed/
+    //    moved rows touch the DOM; unchanged rows (same data-sig) are skipped.
+    _diffKeyedRows(body, _alphaDesired);
+
+    // 3. Re-append the checked section (rebuilt wholesale — it's small and not
+    //    on the hot path; a tick moves a row out of the diffed region and the
+    //    section's count/rows change together).
+    if (_alphaCheckedHtml) {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = _alphaCheckedHtml;
+      const sec = tmp.firstElementChild;
+      if (sec) body.appendChild(sec);
+    }
   } else {
     body.innerHTML = html;
   }
@@ -24978,6 +25013,85 @@ function _persistDragOrder() {
   const visible = new Set(newOrder);
   const rest = groceryItems.filter(i => !visible.has(i.id)).map(i => i.id);
   saveGroceryManualOrder([...newOrder, ...rest]);
+}
+
+// ── Keyed-row reconciler ──────────────────────────────────────────
+// Reconciles a container's direct-child rows (those carrying data-id) against
+// a desired ordered list, doing the minimum DOM work: skip unchanged rows
+// (same data-sig), replace changed ones, insert new ones, remove gone ones,
+// and move mis-ordered ones into place. NON-row children (section headers,
+// wrappers, dividers) are left untouched — the caller is responsible for any
+// such scaffolding around the keyed rows.
+//
+// `desired` = ordered array of { id, sig, html } where html is the full row
+// markup (already carrying data-id + data-sig, as groceryItemHTML emits).
+//
+// Reused by both the alpha build (step 3) and, per dept body, the dept build
+// (step 4). Dependency-free vanilla DOM. Returns nothing; mutates container.
+function _diffKeyedRows(container, desired) {
+  // Map existing keyed rows by id (only direct children that have data-id —
+  // ignore headers/wrappers so we never touch non-row scaffolding).
+  const existing = new Map();
+  for (const el of container.children) {
+    if (el.dataset && el.dataset.id != null) existing.set(el.dataset.id, el);
+  }
+
+  // cursor = the node currently occupying the slot we're about to fill.
+  // Invariant: after handling each desired row, cursor points at the next
+  // not-yet-placed node (or null = end).
+  let cursor = container.firstChild;
+  const seen = new Set();
+
+  // Advance cursor past any non-keyed nodes (headers/wrappers/text) so slot
+  // comparisons only consider real rows.
+  const skipNonRows = () => {
+    while (cursor && !(cursor.nodeType === 1 && cursor.dataset && cursor.dataset.id != null)) {
+      cursor = cursor.nextSibling;
+    }
+  };
+
+  for (const d of desired) {
+    seen.add(d.id);
+    skipNonRows();
+    let node = existing.get(d.id);
+
+    if (node && node.getAttribute('data-sig') !== d.sig) {
+      // Sig changed → swap in a fresh node at the old node's exact position.
+      const tmp = document.createElement('div');
+      tmp.innerHTML = d.html;
+      const fresh = tmp.firstElementChild;
+      if (fresh) {
+        // If the node being replaced is the current cursor, the cursor must
+        // follow the replacement so the slot comparison below stays correct.
+        const wasCursor = (cursor === node);
+        node.replaceWith(fresh);
+        existing.set(d.id, fresh);
+        node = fresh;
+        if (wasCursor) cursor = fresh;
+      }
+    } else if (!node) {
+      // New row.
+      const tmp = document.createElement('div');
+      tmp.innerHTML = d.html;
+      node = tmp.firstElementChild;
+      if (!node) continue;
+      existing.set(d.id, node);
+    }
+
+    if (cursor === node) {
+      // Already in the right slot — advance.
+      cursor = node.nextSibling;
+    } else {
+      // Place node before cursor (cursor null = append at end). cursor itself
+      // is unchanged: the next desired row still compares against it.
+      container.insertBefore(node, cursor);
+    }
+  }
+
+  // Remove rows no longer desired.
+  for (const [id, el] of existing) {
+    if (!seen.has(id)) el.remove();
+  }
 }
 
 // ── Per-row dirty signature ───────────────────────────────────────
