@@ -491,13 +491,22 @@ function checkShareAccessControl(email) {
 // Malformed `share` fields fail-safe to 'none' (drop) and emit a console
 // warning so the writer can be fixed. Better to hide a record than to
 // accidentally expose one we shouldn't.
-function resolveRecordShare(record, shareCode, sectionPerm) {
+function resolveRecordShare(record, shareCode, sectionPerm, recordScoped) {
   // Rule 1: section access denied — record is unreachable regardless
   if (!sectionPerm || sectionPerm === 'none') return 'none';
 
-  // Rule 2: no override — inherit section perm
+  // Rule 2: no override.
   const share = record?.share;
-  if (share == null) return sectionPerm;
+  if (share == null) {
+    // For a RECORD-SCOPED share (created via "share these specific items"),
+    // an untagged record is NOT visible — only explicitly allow-listed
+    // records are shared. This is the opposite default from a normal
+    // section share, where no-override means inherit. Without this, every
+    // untagged item leaks into a per-item share that merely needed section
+    // permission set so the recipient could see the section at all.
+    if (recordScoped) return 'none';
+    return sectionPerm; // normal section share — inherit
+  }
 
   // Rule 3: explicit private
   if (share === 'private') return 'none';
@@ -511,6 +520,11 @@ function resolveRecordShare(record, shareCode, sectionPerm) {
     // Rule 5: allow list — only listed shares see it
     if (Array.isArray(share.allow)) {
       if (!share.allow.includes(shareCode)) return 'none';
+    } else if (recordScoped) {
+      // Record-scoped share but this record has a share object with NO allow
+      // list (e.g. only a deny/readOnly entry) — it was never explicitly
+      // shared into this scoped share, so it's not visible.
+      return 'none';
     }
     // Rule 6: readOnly downgrade — force 'r' even if section says 'rw'
     if (Array.isArray(share.readOnly) && share.readOnly.includes(shareCode)) {
@@ -535,12 +549,12 @@ function resolveRecordShare(record, shareCode, sectionPerm) {
 // the section-level perm alone isn't enough once readOnly is in play.
 // The annotation is stripped before save on the guest side via
 // _scrubGuestRecords below.
-function _filterRecordsForShare(records, shareCode, sectionPerm) {
+function _filterRecordsForShare(records, shareCode, sectionPerm, recordScoped) {
   if (!Array.isArray(records)) return records;
   if (!sectionPerm || sectionPerm === 'none') return [];
   const out = [];
   for (const rec of records) {
-    const perm = resolveRecordShare(rec, shareCode, sectionPerm);
+    const perm = resolveRecordShare(rec, shareCode, sectionPerm, recordScoped);
     if (perm === 'none') continue;
     // Annotate only if the per-record perm differs from the section perm —
     // saves wire bytes on the common case where it inherits.
@@ -578,7 +592,7 @@ function _filterRecordsForShare(records, shareCode, sectionPerm) {
 //   categories:    Array,         // filtered category array
 //   transactions:  Object,        // {month: {txId: tx}} with non-shared cats dropped
 // }
-function _filterBudgetForShare(categories, txMap, shareCode, sectionPerm) {
+function _filterBudgetForShare(categories, txMap, shareCode, sectionPerm, recordScoped) {
   const empty = { allowedCatIds: new Set(), categories: [], transactions: {} };
   if (!sectionPerm || sectionPerm === 'none') return empty;
   if (!Array.isArray(categories)) return empty;
@@ -590,7 +604,7 @@ function _filterBudgetForShare(categories, txMap, shareCode, sectionPerm) {
   const allowedCatIds = new Set();
   const filteredCategories = [];
   for (const cat of categories) {
-    const perm = resolveRecordShare(cat, shareCode, sectionPerm);
+    const perm = resolveRecordShare(cat, shareCode, sectionPerm, recordScoped);
     if (perm === 'none') continue;
     allowedCatIds.add(cat.id);
     // Annotate with _shareEffectivePerm when different from section perm
@@ -25786,37 +25800,6 @@ function showLockBanner(section) {
 }
 
 // Save/restore share state from localStorage
-// Guest-side share-key recovery via ECDH. The owner stores a key wrapped for
-// THIS guest at /share/ecdh-key/get; we fetch it and unwrap with our private
-// key. This is the guest analogue of recoverShareKey (which is owner-only —
-// it uses /share/key/get + the owner's own _kvKey). Returns a CryptoKey on
-// success, null otherwise. Caches the unwrapped key locally so subsequent
-// loads hit the fast path. Does NOT fire a rewrap-request — callers decide.
-async function _recoverShareKeyForGuest(code) {
-  if (!WORKER_URL || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return null;
-  try {
-    const guestPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
-    if (!guestPrivKey) return null;
-    const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
-    const res = await postKV(`${WORKER_URL}/share/ecdh-key/get`, { guestEmailHash: _kvEmailHash, ...authFields, code });
-    if (!res.ok) return null; // 404 = not wrapped yet (still pending / owner offline)
-    const { wrappedKey, ownerPublicKeyJwk } = (await _readJsonSafe(res)) || {};
-    if (!wrappedKey || !ownerPublicKeyJwk) return null;
-    const sk = await ecdhUnwrapShareKey(guestPrivKey, ownerPublicKeyJwk, wrappedKey);
-    // Cache locally so subsequent loads don't need the round-trip.
-    try {
-      const b64 = await exportShareKey(sk);
-      const stored = await _getShareKeys();
-      stored[code] = b64;
-      await _setShareKeys(stored);
-    } catch(e) {}
-    return sk;
-  } catch(e) {
-    console.warn('[share] guest key recovery failed:', e?.message || e);
-    return null;
-  }
-}
-
 async function loadShareState() {
   try {
     const raw = localStorage.getItem('stockroom_share_state');
@@ -25845,31 +25828,6 @@ async function loadShareState() {
         _shareKey = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
       }
     } catch(e) { console.warn('Could not restore share key from cache:', e.message); }
-    // Local cache miss (new device, cleared storage, or approved in a prior
-    // session whose cache was lost) — recover the ECDH-wrapped key from the
-    // server. Without this, an approved guest whose local key cache is empty
-    // is stuck with _shareState set but _shareKey null, and every pull bails
-    // with "no share key in memory". Skip for pending shares (no key yet).
-    if (!_shareKey && !stored._pending && !stored._declined) {
-      try {
-        const sk = await _recoverShareKeyForGuest(stored.code);
-        if (sk) {
-          _shareKey = sk;
-          console.log('[share] recovered share key from server for', stored.code);
-          // Pull now that we can decrypt, and refresh the share UIs.
-          try { if (kvConnected) await kvSyncNow(true); } catch(_) {}
-          try { updateHouseholdShareUI(); } catch(_) {}
-          try { scheduleRender(...RENDER_REGIONS); } catch(_) {}
-        } else {
-          // No wrapped key on the server yet — fall back to the rewrap-request
-          // path so the owner's next sync (re)wraps for us. Mirrors the
-          // hydrateMembershipsFromServer behaviour.
-          const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
-          try { await postKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, { guestEmailHash: _kvEmailHash, ...authFields, code: stored.code }); } catch(_) {}
-          console.warn('[share] no server key yet for', stored.code, '— rewrap requested');
-        }
-      } catch(e) { console.warn('[share] server key recovery error:', e?.message || e); }
-    }
   } catch(e) {}
 }
 
@@ -26361,18 +26319,22 @@ async function pushSharedData(code, shareKey) {
       //
       // For each section, apply the filter only when the section is
       // visible. The share `code` is already in scope from the outer
-      // function signature.
+      // function signature. recordScoped (set on shares created via
+      // "share these specific items") flips the no-override default from
+      // "inherit section perm" to "not shared" — so only explicitly
+      // allow-listed records go in the blob, not the whole section.
+      const recordScoped = !!target?.recordScoped;
       const filteredItems     = canSeeStockroom
-        ? _filterRecordsForShare(hItems, code, perms.stockroom)
+        ? _filterRecordsForShare(hItems, code, perms.stockroom, recordScoped)
         : [];
       const filteredGroceries = canSeeGroceries
-        ? _filterRecordsForShare(hGroceries, code, perms.groceries)
+        ? _filterRecordsForShare(hGroceries, code, perms.groceries, recordScoped)
         : [];
       const filteredReminders = canSeeReminders
-        ? _filterRecordsForShare(hReminders, code, perms.reminders)
+        ? _filterRecordsForShare(hReminders, code, perms.reminders, recordScoped)
         : [];
       const filteredGroceryLists = canSeeGroceries
-        ? _filterRecordsForShare(groceryLists, code, perms.groceries)
+        ? _filterRecordsForShare(groceryLists, code, perms.groceries, recordScoped)
         : [];
       // ── Budget filter (Pass 2e-a) ──
       // Per-category sharing: walk budgetCategories to compute the
@@ -26384,7 +26346,7 @@ async function pushSharedData(code, shareKey) {
       // category-membership filtering doesn't apply to those. The
       // section perm 'r'/'rw' gates them as before.
       const budgetFiltered = canSeeBudget
-        ? _filterBudgetForShare(budgetCategories, transactions, code, perms.budget)
+        ? _filterBudgetForShare(budgetCategories, transactions, code, perms.budget, recordScoped)
         : { allowedCatIds: new Set(), categories: [], transactions: {} };
 
       const payload = JSON.stringify({

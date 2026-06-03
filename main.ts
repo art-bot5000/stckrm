@@ -5735,7 +5735,7 @@ Deno.serve(async (request) => {
   if (url.pathname === '/share/create' && request.method === 'POST') {
     try {
       const body = await request.json();
-      const { ownerEmailHash, verifier, sessionToken, name, type, ownerName, households, householdNames, colour, shareManagement, guestEmail, pendingInvite } = body;
+      const { ownerEmailHash, verifier, sessionToken, name, type, ownerName, households, householdNames, colour, shareManagement, guestEmail, pendingInvite, recordScoped } = body;
       if (!ownerEmailHash || (!verifier && !sessionToken) || !name || !households) return json({ error: 'Missing required fields' }, corsHeaders, 400);
       if (sessionToken) {
         const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
@@ -5761,6 +5761,7 @@ Deno.serve(async (request) => {
         name, type: type||'guest', ownerName: ownerName||'Owner', ownerEmailHash,
         households, householdNames: householdNames||{}, colour: colour||'#e8a838',
         shareManagement: mgmt,
+        ...(recordScoped === true ? { recordScoped: true } : {}),
         ...(typeof guestEmail === 'string' && guestEmail ? { guestEmail } : {}),
         ...(validPending ? { pendingInvite: validPending } : {}),
         createdAt: new Date().toISOString(),

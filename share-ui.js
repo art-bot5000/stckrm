@@ -902,12 +902,20 @@ async function saveShareTarget() {
 
       // Create the share record. No pendingInvite under the pure-request
       // model — the link doesn't belong to a pre-named recipient.
+      // recordScoped marks a "share these specific items" share: the per-record
+      // allow-list is authoritative and untagged records are NOT inherited
+      // from the section perm (the section perm only exists so the recipient
+      // can see the section at all). Set when this create came from the bulk
+      // selection flow (_bulkShareSelectionPending is still set at this point;
+      // _applyBulkSharePending consumes it just after).
+      const _isRecordScoped = !!(_bulkShareSelectionPending && Array.isArray(_bulkShareSelectionPending.ids) && _bulkShareSelectionPending.ids.length);
       const res = await postKV(`${WORKER_URL}/share/create`, {
           ownerEmailHash: _kvEmailHash,
           ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
           name, type: _shareTargetType, colour, ownerName,
           households: _shareTargetPerms,
           shareManagement: _shareTargetMgmt,
+          ...(_isRecordScoped ? { recordScoped: true } : {}),
           householdNames: Object.fromEntries(
             Object.entries(profiles).map(([k,p]) => [k, p.name||(k==='default'?'Home':k)])
           ),
