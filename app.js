@@ -27064,6 +27064,140 @@ function updateHouseholdShareUI() {
   } else {
     joinedSection.style.display = 'none';
   }
+  // Keep the "Shared with me" guest view in sync with share state.
+  try { renderSharedWithMe(); } catch(_) {}
+}
+
+// ── "Shared with me" — guest-side view of what the share exposes ──
+// While in _shareState, the guest's visible shared records live in the same
+// live arrays (items / groceryItems / reminders / budget) that the share pull
+// merged into. This renders a brief, grouped summary of those records with a
+// tap-to-jump into the owning tab. Hidden entirely when not in a share or
+// while still pending (no key/data yet).
+function renderSharedWithMe() {
+  const section = document.getElementById('shared-with-me-section');
+  const list    = document.getElementById('shared-with-me-list');
+  if (!section || !list) return;
+
+  // Only meaningful for an ACTIVE guest share (not owner, not pending).
+  if (!_shareState || _shareState._pending || _shareState._declined || !_shareKey) {
+    section.style.display = 'none';
+    list.innerHTML = '';
+    return;
+  }
+
+  // Resolve which sections this share permits (union across permitted
+  // households — the guest sees a merged view today, single-active-share).
+  const households = _shareState.households || {};
+  const perm = (sec) => Object.values(households).some(h => h && h[sec] && h[sec] !== 'none');
+  const canStock  = perm('stockroom');
+  const canGroc   = perm('groceries');
+  const canRem    = perm('reminders');
+  const canBudget = perm('budget');
+
+  // Build groups. Each row: { id, title, sub }. Keep info brief.
+  const groups = [];
+
+  if (canStock && Array.isArray(items) && items.length) {
+    groups.push({
+      key: 'stock', label: 'Stockroom', icon: 'i-package',
+      rows: items.slice(0, 50).map(it => ({
+        id: it.id,
+        title: it.name || '(unnamed)',
+        sub: [it.category, it.qty != null ? `qty ${it.qty}` : null].filter(Boolean).join(' · '),
+      })),
+      total: items.length,
+    });
+  }
+  if (canGroc && Array.isArray(groceryItems) && groceryItems.length) {
+    groups.push({
+      key: 'grocery', label: 'Groceries', icon: 'i-shopping-cart',
+      rows: groceryItems.slice(0, 50).map(g => ({
+        id: g.id,
+        title: g.name || '(unnamed)',
+        sub: [g.dept || g.department, g.needed ? 'to buy' : null].filter(Boolean).join(' · '),
+      })),
+      total: groceryItems.length,
+    });
+  }
+  if (canRem && Array.isArray(reminders) && reminders.length) {
+    groups.push({
+      key: 'reminders', label: 'Reminders', icon: 'i-clock',
+      rows: reminders.slice(0, 50).map(r => ({
+        id: r.id,
+        title: r.name || r.title || '(unnamed)',
+        sub: r.nextDue || r.date || '',
+      })),
+      total: reminders.length,
+    });
+  }
+  if (canBudget && typeof budgetCategories !== 'undefined' && Array.isArray(budgetCategories) && budgetCategories.length) {
+    groups.push({
+      key: 'budget', label: 'Budget', icon: 'i-credit-card',
+      rows: budgetCategories.slice(0, 50).map(c => ({
+        id: c.id,
+        title: c.name || '(unnamed)',
+        sub: c.budget != null ? `budget ${c.budget}` : '',
+      })),
+      total: budgetCategories.length,
+    });
+  }
+
+  if (!groups.length) {
+    section.style.display = 'block';
+    // Distinguish "share grants nothing" from "owner hasn't shared anything yet".
+    const anyPerm = canStock || canGroc || canRem || canBudget;
+    list.innerHTML = `<div style="font-size:12px;color:var(--muted);line-height:1.5;padding:4px 2px">
+      ${anyPerm
+        ? `Nothing has been shared with you yet. ${esc(_shareState.ownerName || 'The owner')} may not have added any items to this share, or hasn't synced yet.`
+        : 'This share doesn\u2019t grant access to any sections.'}
+    </div>`;
+    return;
+  }
+
+  section.style.display = 'block';
+  list.innerHTML = groups.map(g => {
+    const more = g.total > g.rows.length ? `<div style="font-size:11px;color:var(--muted);padding:4px 2px">+ ${g.total - g.rows.length} more</div>` : '';
+    return `<div>
+      <div style="font-size:11px;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;font-weight:700;margin-bottom:6px">
+        <svg class="icon" aria-hidden="true" style="width:11px;height:11px;vertical-align:-1px"><use href="#${g.icon}"></use></svg>
+        ${esc(g.label)} <span style="color:var(--muted);font-weight:400">(${g.total})</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        ${g.rows.map(row => `
+          <div onclick="_jumpToSharedItem('${g.key}','${esc(String(row.id))}')"
+               style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;cursor:pointer"
+               onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(row.title)}</div>
+              ${row.sub ? `<div style="font-size:11px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(row.sub)}</div>` : ''}
+            </div>
+            <svg class="icon icon-sm" aria-hidden="true" style="color:var(--muted);flex-shrink:0"><use href="#i-chevron-right"></use></svg>
+          </div>`).join('')}
+        ${more}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Jump from the "Shared with me" list into the owning tab and scroll/flash
+// the record. Reuses the same selector conventions as global search
+// (_findSearchResultElement) and the notification-tap navigation.
+function _jumpToSharedItem(section, target) {
+  const navName = section === 'stock' ? 'stock'
+                : section === 'grocery' ? 'grocery'
+                : section === 'reminders' ? 'reminders'
+                : section === 'budget' ? 'budget'
+                : section;
+  try { navTo(navName); } catch(_) {}
+  setTimeout(() => {
+    let el = null;
+    try { el = _findSearchResultElement(section, target); } catch(_) {}
+    if (el && el.scrollIntoView) {
+      try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch(_) {}
+      if (typeof _flashElement === 'function') _flashElement(el);
+    }
+  }, 350);
 }
 
 async function renderSettingsHouseholdList() {

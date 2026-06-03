@@ -3056,6 +3056,18 @@
             <button class="btn btn-ghost btn-sm" onclick="leaveShare()" style="color:var(--danger);border-color:var(--danger)">Leave shared household</button>
           </div>
         </div>
+        <!-- ── SHARED WITH ME ─────────────────────────────────
+             Guest-only. Lists exactly what the current shared household
+             lets this user see, grouped by app area, with a tap-to-jump
+             into the relevant tab. Hidden entirely when not in a share
+             (renderSharedWithMe toggles display). -->
+        <div class="acc-sec-row acc-sec-row-block" id="shared-with-me-section" style="display:none">
+          <div class="acc-sec-label" style="width:100%">
+            <div class="acc-sec-h"><svg class="icon" aria-hidden="true"><use href="#i-share-2"></use></svg> Shared with me</div>
+            <div class="acc-sec-p">What this household is sharing with you. Tap an item to jump to it.</div>
+          </div>
+          <div id="shared-with-me-list" style="width:100%;margin-top:12px;display:flex;flex-direction:column;gap:14px"></div>
+        </div>
         <div id="household-status" style="font-size:12px;color:var(--muted);font-family:var(--mono);padding:0 18px 14px"></div>
       </div>
     </div>
