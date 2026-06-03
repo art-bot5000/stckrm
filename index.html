@@ -4599,6 +4599,26 @@ window._loadNotesUI = function() {
     document.head.appendChild(s);
   });
 };
+// Lazy-load share-ui.js (the Household Share Access MANAGEMENT UI: the access-
+// control panel, share-targets list, add/edit/save-target modals, household-
+// perms picker, colour/type pickers, bulk-share flow). The shared-DATA sync
+// engine, share crypto, record filtering, card-action share buttons and the
+// join/auth gate all stay in app.js (they run on boot/sync). loadShareTargets()
+// stays core too — it fetches data and typeof-guards its render call. This
+// bundle loads only when the user opens Settings (Share Access section) or taps
+// Share in the bulk-select bar. Same load-once pattern as _loadBudgetUI/_loadNotesUI.
+window._shareUILoaded = false;
+window._loadShareUI = function() {
+  if (window._shareUILoaded) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'share-ui.js';
+    s.defer = true;
+    s.onload = () => { window._shareUILoaded = true; resolve(); };
+    s.onerror = (e) => { console.error('share-ui.js failed to load:', e); reject(e); };
+    document.head.appendChild(s);
+  });
+};
 // Everything else (quickAdd, shareItem, logPicker, etc.) is now in app.js.
 // After _loadScanner() resolves, scanner.js redefines these on window,
 // so we re-call them — they're no longer the stub at that point.
