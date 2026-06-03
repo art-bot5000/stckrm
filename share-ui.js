@@ -880,51 +880,28 @@ async function saveShareTarget() {
       closeModal('share-target-modal');
       toast(`✓ ${name}'s access updated`);
     } else {
-      // Create new — ECDH key wrapping flow
-      const guestEmail = document.getElementById('share-target-email')?.value.trim();
-      if (!guestEmail) throw new Error('Enter their email address so their share key can be encrypted for them');
+      // Create new — pure request-to-join model. The link is GENERIC: we
+      // generate the share's AES-GCM key now and store it locally, but we do
+      // NOT wrap it for any specific recipient at create time. Whoever follows
+      // the link requests access; the owner approves (which wraps the key for
+      // that requester then). The guest email is now OPTIONAL — used only for
+      // the deny/allow check and to optionally email the invite link.
+      const guestEmail = document.getElementById('share-target-email')?.value.trim() || '';
 
-      // Forward-only enforcement of the deny / allow lists. The check exists
-      // only here at share-create time — existing shares are unaffected when
-      // someone is added to the deny list later (renderShareAccessControl
-      // shows a conflict hint instead). The check is client-side only by
-      // design — the lists exist to protect the owner from themselves.
-      const sacCheck = checkShareAccessControl(guestEmail);
-      if (!sacCheck.ok) throw new Error(sacCheck.reason);
+      // Forward-only deny/allow enforcement — only when an email is supplied.
+      // (Client-side only by design; protects the owner from themselves.)
+      if (guestEmail) {
+        const sacCheck = checkShareAccessControl(guestEmail);
+        if (!sacCheck.ok) throw new Error(sacCheck.reason);
+      }
 
-      // 1. Hash guest email → fetch their ECDH public key. A 404 means the
-      //    recipient hasn't signed up yet — that's a supported case via
-      //    pendingInvite (server stores the invite; owner's rewrap queue
-      //    finishes the ECDH wrap once the recipient registers and uploads
-      //    their pubkey).
-      const guestEmailHash = await kvHashEmail(guestEmail);
-      const pubRes         = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: guestEmailHash });
-      const guestExists    = pubRes.ok;
-      if (!pubRes.ok && pubRes.status !== 404) throw new Error('Could not fetch their encryption key — try again');
-      const guestPubKeyJwk = guestExists ? (await pubRes.json()).publicKeyJwk : null;
-
-      // 2. Load our own ECDH private key
-      const ownerPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
-      if (!ownerPrivKey) throw new Error('Your encryption key is missing — try signing out and back in');
-
-      // 3. Generate the AES-GCM share key
+      // Generate the AES-GCM share key (kept by the owner; wrapped per-guest
+      // at approval time, not now).
       const shareKey    = await generateShareKey();
       const shareKeyB64 = await exportShareKey(shareKey);
 
-      // 4. ECDH-wrap the share key for the guest — only if they exist now.
-      //    If they don't exist yet, the wrap happens later (see rewrap queue).
-      const wrappedKey = guestExists
-        ? await ecdhWrapShareKey(ownerPrivKey, guestPubKeyJwk, shareKey)
-        : null;
-
-      // 5. Export our own public key JWK to send alongside (guest needs it to unwrap)
-      const ownerPubRes = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: _kvEmailHash });
-      if (!ownerPubRes.ok) throw new Error('Could not fetch your encryption key — try again');
-      const { publicKeyJwk: ownerPubKeyJwk } = await ownerPubRes.json();
-
-      // 6. Create share on server. Include pendingInvite when the recipient
-      //    doesn't have an account yet, so the share-join flow and owner UI
-      //    can show "awaiting signup" state for this entry.
+      // Create the share record. No pendingInvite under the pure-request
+      // model — the link doesn't belong to a pre-named recipient.
       const res = await postKV(`${WORKER_URL}/share/create`, {
           ownerEmailHash: _kvEmailHash,
           ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
@@ -934,27 +911,11 @@ async function saveShareTarget() {
           householdNames: Object.fromEntries(
             Object.entries(profiles).map(([k,p]) => [k, p.name||(k==='default'?'Home':k)])
           ),
-          ...(guestExists ? {} : { pendingInvite: { guestEmailHash, guestEmail } }),
         });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed');
 
-      // 7. Store ECDH-wrapped key on server for the guest — only if we
-      //    actually wrapped one. For pending invites, the wrapped key is
-      //    deferred until the guest signs up and the rewrap queue runs.
-      if (wrappedKey) {
-        const ecdhStoreRes = await postKV(`${WORKER_URL}/share/ecdh-key/store`, {
-            ownerEmailHash: _kvEmailHash,
-            ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
-            code: data.code,
-            guestEmailHash,
-            wrappedKey,
-            ownerPublicKeyJwk: ownerPubKeyJwk,
-          });
-        if (!ecdhStoreRes.ok) throw new Error('Could not store encrypted share key — try again');
-      }
-
-      // 8. Cache share key locally and back it up (for owner cross-device recovery)
+      // Cache share key locally and back it up (owner cross-device recovery).
       try {
         const stored = await _getShareKeys();
         stored[data.code] = shareKeyB64;
@@ -962,25 +923,22 @@ async function saveShareTarget() {
       } catch(e) {}
       await backupShareKey(data.code, shareKey).catch(e => console.warn('Share key backup failed:', e.message));
 
-      // 9. Push initial shared data
+      // Push initial shared data.
       await pushSharedData(data.code, shareKey);
 
-      // 10. Share created — enable household, close modal, show link in toast
+      // Enable household, close modal, show link.
       if (!_householdEnabled) {
         _householdEnabled = true;
         try { localStorage.setItem('stockroom_household', JSON.stringify({ enabled: true, colour: _householdColour })); } catch(e) {}
         connectPresence();
       }
 
-      // Copy link to clipboard and close modal — no "Done" step needed
       const inviteLink = data.link || `${location.origin}${location.pathname}?join=${data.code}`;
       try { await navigator.clipboard.writeText(inviteLink); } catch(e) {}
 
-      // Send invite email if address provided
-      const createEmailEl = document.getElementById('share-target-email');
-      const createEmailVal = createEmailEl?.value.trim();
-      if (createEmailVal && WORKER_URL) {
-        await _sendShareEmail(createEmailVal, {
+      // Optionally email the invite link if an address was provided.
+      if (guestEmail && WORKER_URL) {
+        await _sendShareEmail(guestEmail, {
           code: data.code, name, type: _shareTargetType,
           households: _shareTargetPerms, isUpdate: false, inviteLink,
         }).catch(() => {});
@@ -990,18 +948,12 @@ async function saveShareTarget() {
       closeModal('share-target-modal');
       _shareTargetDone = false; // reset for next use
 
-      // Bulk-share hand-off — if this share was created via the
-      // selection-driven flow (bulkShareCreateNew), apply allow
-      // overrides to the selected records now that we have a share code.
-      // The Pending state's `section` field routes the apply to the right
-      // section spec (stock, grocery, reminder, transaction).
-      // Fire-and-forget — failures only toast a warn, the share itself
-      // is already created and saved.
+      // Bulk-share hand-off — apply allow overrides to selected records now
+      // that we have a share code (fire-and-forget).
       try { await _applyBulkSharePending(data.code); } catch(e) { console.warn('_applyBulkSharePending failed:', e); }
-      // Clear the pending-bulk-share banner if it was inserted.
       document.getElementById('bulk-share-pending-banner')?.remove();
 
-      toast(`✓ Share created — link copied! Send it to ${name}`);
+      toast(`✓ Share created — link copied!${guestEmail ? ` Sent to ${name}.` : ` Send it to ${name}.`} They'll request access and you approve.`);
       if (kvConnected) setTimeout(syncAll, 600);
     }
   } catch(err) {

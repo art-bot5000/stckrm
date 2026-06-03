@@ -27052,7 +27052,15 @@ function updateHouseholdShareUI() {
   if (_shareState) {
     joinedSection.style.display = 'block';
     const statusEl = document.getElementById('joined-status-text');
-    if (statusEl) statusEl.textContent = `✓ Joined ${_shareState.ownerName || 'a household'}'s STOCKROOM as ${_shareState.type || 'guest'}`;
+    if (statusEl) {
+      if (_shareState._declined) {
+        statusEl.innerHTML = `<span style="color:var(--danger)"><svg class="icon" aria-hidden="true" style="width:13px;height:13px;vertical-align:-2px"><use href="#i-alert-triangle"></use></svg> Your request to join ${esc(_shareState.ownerName || 'this household')} was declined</span>`;
+      } else if (_shareState._pending) {
+        statusEl.innerHTML = `<span style="color:var(--accent)"><svg class="icon" aria-hidden="true" style="width:13px;height:13px;vertical-align:-2px"><use href="#i-clock"></use></svg> Waiting for approval from ${esc(_shareState.ownerName || 'the owner')}…</span>`;
+      } else {
+        statusEl.textContent = `✓ Joined ${_shareState.ownerName || 'a household'}'s STOCKROOM as ${_shareState.type || 'guest'}`;
+      }
+    }
   } else {
     joinedSection.style.display = 'none';
   }
@@ -27109,6 +27117,9 @@ function initHouseholdSettingsUI() {
   if (window._pendingShareApproval && typeof _consumeShareApprovalDeepLink === 'function') {
     setTimeout(() => _consumeShareApprovalDeepLink(), 400);
   }
+  // If a persisted share is still awaiting approval, resume polling so the
+  // owner's eventual approval lands without re-following the link.
+  if (typeof _resumePendingShare === 'function') _resumePendingShare();
 }
 
 // ── User ID ───────────────────────────────────────────────
@@ -28160,10 +28171,10 @@ function showShareAuthGate(meta) {
   const groupName = meta.name ? `the <strong>${esc(meta.name)}</strong> group` : 'this household';
   step1.innerHTML = `
     <div style="margin-bottom:12px;color:var(--accent)"><svg aria-hidden="true" style="width:44px;height:44px"><use href="#i-home"></use></svg></div>
-    <h1 style="font-size:22px;font-weight:700;margin-bottom:6px">You're invited!</h1>
+    <h1 style="font-size:22px;font-weight:700;margin-bottom:6px">Request access</h1>
     <p style="color:var(--muted);font-size:13px;line-height:1.6;margin-bottom:16px">
-      <strong style="color:var(--text)">${esc(meta.ownerName||'Someone')}</strong> has invited you
-      to access ${hCount} household${hCount!==1?'s':''} as a member of ${groupName}.
+      <strong style="color:var(--text)">${esc(meta.ownerName||'Someone')}</strong> has shared ${hCount} household${hCount!==1?'s':''} (${groupName}).
+      Sign in or create an account to request access — they'll approve it.
     </p>
     <div style="text-align:left;margin-bottom:12px">
       <div class="form-group" style="margin-bottom:10px">
@@ -28175,8 +28186,8 @@ function showShareAuthGate(meta) {
         <input class="form-input" id="share-gate-pass" type="password" placeholder="Your passphrase" autocomplete="current-password">
       </div>
     </div>
-    <button class="btn btn-primary btn-xl full" style="margin-bottom:8px" onclick="shareGateSignIn()">Sign in &amp; Accept →</button>
-    <button class="btn btn-ghost btn-xl full" style="font-size:13px;margin-bottom:8px" onclick="shareGateRegister()">Create new account &amp; Accept →</button>
+    <button class="btn btn-primary btn-xl full" style="margin-bottom:8px" onclick="shareGateSignIn()">Sign in &amp; Request →</button>
+    <button class="btn btn-ghost btn-xl full" style="font-size:13px;margin-bottom:8px" onclick="shareGateRegister()">Create new account &amp; Request →</button>
     <p id="share-gate-error" style="font-size:12px;color:var(--danger);margin-top:6px;display:none"></p>
   `;
   step1.classList.add('active');
@@ -28347,9 +28358,32 @@ async function completePendingJoin() {
         ...(_kvSessionToken ? { guestSessionToken: _kvSessionToken } : { guestVerifier: _kvVerifier }),
       });
     const data = (await _readJsonSafe(res)) || {};
-    if (!res.ok) throw new Error(data.error || `Invalid invite link (${res.status}) — it may have expired`);
+    if (!res.ok) {
+      // A previously-rejected user who hasn't re-requested gets a 403. Under
+      // the re-request model the server normally re-pends them, but guard the
+      // explicit declined case so we can show a clear state rather than a
+      // generic error.
+      if (res.status === 403 && data.rejected) {
+        _enterPendingShareShell(code, data, /*declined=*/true);
+        return;
+      }
+      throw new Error(data.error || `Invalid invite link (${res.status}) — it may have expired`);
+    }
     // Server returned 200 but with ok:false — means it needs auth (shouldn't happen here but guard it)
     if (data.requiresAuth) throw new Error('Authentication required — please sign in first');
+
+    // ── Pending request → labelled waiting state ─────────────────
+    // Under the request→approve model, a fresh join is admitted as 'pending'
+    // with NO wrapped key yet. We must NOT fall into _tryUnwrapWithRewrapRetry
+    // (which fires an auto request-rewrap and shows "refreshing invite"). The
+    // owner approving is now the mechanism. Enter the app shell with the
+    // household listed as "Waiting for approval", and poll for the wrapped key
+    // to appear (= owner approved). The first success finalises the join.
+    if (data.pending) {
+      _enterPendingShareShell(code, data, /*declined=*/false);
+      _pollShareApproval(code);
+      return;
+    }
 
     // Attempt the unwrap. If it fails because of stale wrap, request a rewrap
     // and poll for up to ~30s for the owner's app to fulfil it. This avoids
@@ -28361,31 +28395,140 @@ async function completePendingJoin() {
       // the request-rewrap call on the first failure.
       throw new Error('Your invite is being refreshed — ask the owner to open STOCKROOM, then tap this link again');
     }
-
-    const shareKeyB64 = await exportShareKey(shareKey);
-    try {
-      const stored = await _getShareKeys();
-      stored[code] = shareKeyB64;
-      await _setShareKeys(stored);
-    } catch(e) {}
-    _shareState = { ...data, code };
-    _shareKey   = shareKey;
-    saveShareState();
-    _pendingJoinCode  = null;
-    _pendingShareMeta = null;
-    localStorage.setItem('stockroom_seen', '1');
-    localStorage.setItem('stockroom_country_set', '1');
-    document.body.classList.remove('wizard-active');
-    hide('wizard');
-    applyTabPermissions();
-    updateSyncPill('syncing');
-    await kvSyncNow();
-    scheduleRender(...RENDER_REGIONS);
-    toast(`✓ Joined ${data.ownerName || 'household'}'s STOCKROOM`);
+    await _finalisePendingJoin(code, data, shareKey);
   } catch(err) {
     const msg = err.message || 'Unknown error — please try again';
     toast('Could not join: ' + msg);
     updateSyncPill('error');
+  }
+}
+
+// Shared completion path — store the key, set live share state, leave the
+// wizard, and sync. Used by both the immediate-join path and the
+// approval-poll path (Stage 4) once the owner has approved.
+async function _finalisePendingJoin(code, data, shareKey) {
+  const shareKeyB64 = await exportShareKey(shareKey);
+  try {
+    const stored = await _getShareKeys();
+    stored[code] = shareKeyB64;
+    await _setShareKeys(stored);
+  } catch(e) {}
+  // Drop any pending/declined flags — this is now a live membership.
+  _shareState = { ...data, code };
+  delete _shareState._pending;
+  delete _shareState._declined;
+  _shareKey   = shareKey;
+  saveShareState();
+  _pendingJoinCode  = null;
+  _pendingShareMeta = null;
+  localStorage.setItem('stockroom_seen', '1');
+  localStorage.setItem('stockroom_country_set', '1');
+  document.body.classList.remove('wizard-active');
+  hide('wizard');
+  applyTabPermissions();
+  updateHouseholdShareUI();
+  updateSyncPill('syncing');
+  await kvSyncNow();
+  scheduleRender(...RENDER_REGIONS);
+  toast(`✓ Joined ${data.ownerName || 'household'}'s STOCKROOM`);
+}
+
+// Enter the app shell in a pending (or declined) state. The household appears
+// in the UI with a "Waiting for approval" / "declined" label, but no data
+// decrypts because there's no share key yet. Persisted so a reload keeps the
+// pending state (the poller restarts on next boot via _resumePendingShare).
+function _enterPendingShareShell(code, data, declined) {
+  _shareState = { ...data, code, _pending: !declined, _declined: !!declined };
+  // No _shareKey — nothing decrypts until approval.
+  _shareKey = null;
+  saveShareState();
+  _pendingJoinCode  = null;
+  _pendingShareMeta = null;
+  localStorage.setItem('stockroom_seen', '1');
+  localStorage.setItem('stockroom_country_set', '1');
+  document.body.classList.remove('wizard-active');
+  hide('wizard');
+  applyTabPermissions();
+  updateHouseholdShareUI();
+  updateSyncPill(declined ? 'error' : 'idle');
+  scheduleRender(...RENDER_REGIONS);
+  if (declined) {
+    toast('Your request to join was declined');
+  } else {
+    toast(`Request sent — waiting for ${data.ownerName || 'the owner'} to approve`);
+  }
+}
+
+// Poll for the owner's approval. Unlike _tryUnwrapWithRewrapRetry, this does
+// NOT fire a request-rewrap (owner approval is the mechanism now) and does not
+// give up after 30s — a pending request can sit until the owner comes online.
+// Adaptive backoff: fast at first (the owner may approve from the email link
+// within seconds), then slows to conserve battery. The first time the wrapped
+// key appears, we finalise the join. A 403 with a revocation marker means the
+// owner declined → switch to the declined state and stop.
+let _shareApprovalPollTimer = null;
+async function _pollShareApproval(code) {
+  if (_shareApprovalPollTimer) { clearTimeout(_shareApprovalPollTimer); _shareApprovalPollTimer = null; }
+  // Backoff schedule (ms): 4s ×5, 10s ×6, then 30s indefinitely.
+  let attempt = 0;
+  const delayFor = (n) => n < 5 ? 4000 : (n < 11 ? 10000 : 30000);
+
+  const guestPrivKey = await loadEcdhPrivateKey(_kvEmailHash).catch(() => null);
+
+  const tick = async () => {
+    // Stop if the user navigated away from this pending share.
+    if (!_shareState || _shareState.code !== code || !_shareState._pending) return;
+    if (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
+    try {
+      const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+      const res = await postKV(`${WORKER_URL}/share/ecdh-key/get`, { guestEmailHash: _kvEmailHash, ...authFields, code });
+      if (res.status === 200) {
+        const { wrappedKey, ownerPublicKeyJwk } = (await _readJsonSafe(res)) || {};
+        if (wrappedKey && ownerPublicKeyJwk && guestPrivKey) {
+          try {
+            const key = await ecdhUnwrapShareKey(guestPrivKey, ownerPublicKeyJwk, wrappedKey);
+            // Approved! Re-fetch full share metadata via /share/join (now active)
+            // so _shareState carries permissions/households, then finalise.
+            const joinRes = await postKV(`${WORKER_URL}/share/join`, {
+              code, guestEmailHash: _kvEmailHash,
+              ...(_kvSessionToken ? { guestSessionToken: _kvSessionToken } : { guestVerifier: _kvVerifier }),
+            });
+            const joinData = (await _readJsonSafe(joinRes)) || {};
+            await _finalisePendingJoin(code, joinRes.ok && !joinData.pending ? joinData : _shareState, key);
+            return; // stop polling
+          } catch(unwrapErr) {
+            // Key present but not wrapped for our current pubkey — file a
+            // rewrap request once so the owner's next sync corrects it, then
+            // keep polling.
+            try {
+              await postKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, { guestEmailHash: _kvEmailHash, ...authFields, code });
+            } catch(_) {}
+          }
+        }
+      } else if (res.status === 403) {
+        // Could be a revocation (declined). Confirm via a data/pull which
+        // surfaces the revoked marker, then switch to declined.
+        _shareState._pending = false;
+        _shareState._declined = true;
+        saveShareState();
+        updateHouseholdShareUI();
+        toast('Your request to join was declined');
+        return; // stop polling
+      }
+      // 404 = not approved yet — keep waiting.
+    } catch(e) { /* network hiccup — keep polling */ }
+    attempt++;
+    _shareApprovalPollTimer = setTimeout(tick, delayFor(attempt));
+  };
+  // First check after a short beat (owner might approve near-instantly from email).
+  _shareApprovalPollTimer = setTimeout(tick, 3000);
+}
+
+// On boot, if a persisted share is still pending, resume polling so approval
+// is picked up without the user re-following the link.
+function _resumePendingShare() {
+  if (_shareState && _shareState._pending && _shareState.code) {
+    _pollShareApproval(_shareState.code);
   }
 }
 
