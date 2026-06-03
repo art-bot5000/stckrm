@@ -41,7 +41,15 @@ let _noteOtpPending = false;       // waiting for 2FA OTP input
 // Pass 3a: the bucket is filled by absorb but no UI reads it yet.
 // Pass 3b will surface it as a "Shared with you" section in the Notes
 // view. Pass 3c adds bulk-select on the user's personal notes.
-let _sharedNotesIncoming = new Map();   // shareCode → Note[]
+// _sharedNotesIncoming is declared eagerly in app.js (see the note there) so
+// that kvSyncNow can absorb shared notes before this lazy-loaded file exists.
+// Reuse that same global rather than re-declaring — a fresh `let` here would
+// shadow/reset the map and discard notes absorbed before the Notes view was
+// first opened. Only initialise if app.js somehow hasn't (defensive).
+if (typeof _sharedNotesIncoming === 'undefined' || !(_sharedNotesIncoming instanceof Map)) {
+  window._sharedNotesIncoming = new Map();
+}
+// shareCode → Note[]  (lives on window, set up by app.js)
 
 // ── Persistence (load/save) ──────────────────────────────────────
 async function renderNotes() {

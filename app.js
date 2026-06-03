@@ -868,6 +868,17 @@ let activeProfile = 'default'; // household profile key
 
 // ── Notes state ───────────────────────────────────────────
 // (Notes state moved to notes.js: notes[], _notesFilter, _editingNoteId, _noteUnlocked, _noteColourPickerOpen, _noteUndoStack, _noteRedoStack, _noteBodyDirty, _noteAutoSaveTimer, _noteOtpPending, _sharedNotesIncoming)
+//
+// _sharedNotesIncoming is declared HERE (eagerly, in app.js) rather than in
+// notes-ui.js because notes-ui.js is LAZY-LOADED (only when the Notes view is
+// opened), but kvSyncNow references this map on every share sync. A guest who
+// never opens Notes would otherwise hit "ReferenceError: _sharedNotesIncoming
+// is not defined" inside kvSyncNow, crashing the entire sync (taking grocery /
+// stockroom / everything down with it). notes-ui.js reuses this same global
+// instead of re-declaring it.
+var _sharedNotesIncoming = (typeof _sharedNotesIncoming !== 'undefined' && _sharedNotesIncoming instanceof Map)
+  ? _sharedNotesIncoming
+  : new Map();   // shareCode → Note[]
 
 // ═══════════════════════════════════════════
 //  MODAL HELPERS (defined early — used everywhere)
