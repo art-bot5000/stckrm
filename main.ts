@@ -5920,6 +5920,26 @@ Deno.serve(async (request) => {
         try {
           const data = JSON.parse(entry.value);
           if (data.ownerEmailHash !== ownerEmailHash) continue;
+          // Self-heal: an owner-self membership can exist from a pre-guard
+          // self-join. Strip the owner's own hash from members/memberDetails
+          // so it never shows as a pending request, counts toward the cap, or
+          // re-enters share-view mode. Persist the cleaned record once.
+          let mutated = false;
+          if (Array.isArray(data.members) && data.members.includes(ownerEmailHash)) {
+            data.members = data.members.filter((m: string) => m !== ownerEmailHash);
+            mutated = true;
+          }
+          if (data.memberDetails && data.memberDetails[ownerEmailHash]) {
+            delete data.memberDetails[ownerEmailHash];
+            mutated = true;
+          }
+          if (mutated) {
+            try {
+              await kvSet(['share', entry.key[1]], JSON.stringify(data));
+              await kvDel(['share_ecdh_key', entry.key[1], ownerEmailHash]);
+              await kvDel(['share_rewrap_request', entry.key[1], ownerEmailHash]);
+            } catch(e) {}
+          }
           // Fold in pending requests so the client can render the approval
           // badge/list without a second endpoint. A pending request is any
           // memberDetails entry with status === 'pending'. Resolve the
@@ -5927,6 +5947,7 @@ Deno.serve(async (request) => {
           const pendingRequests = [];
           const md = data.memberDetails || {};
           for (const [hash, detail] of Object.entries(md)) {
+            if (hash === ownerEmailHash) continue; // never the owner themselves
             if (detail && (detail as any).status === 'pending') {
               const emailRow = await kvGet(['user', hash, 'email']);
               const pubRow = await kvGet(['user', hash, 'ecdh_public_key']);
@@ -5995,6 +6016,17 @@ Deno.serve(async (request) => {
       const r = await kvGet(['share', code.toUpperCase()]);
       if (!r.value) return json({ error: 'Invalid invite link' }, corsHeaders, 404);
       const target = JSON.parse(r.value);
+      // ── Owner-self guard (security + data-safety) ────────────────
+      // The owner must NEVER be admitted to their own share. If they were,
+      // the client would enter share-view mode pointed at their own data,
+      // and a subsequent share-pull/merge could overwrite their personal
+      // account. This is the authoritative fence; the client also guards.
+      // We compare against the authenticated guestEmailHash only — an
+      // unauthenticated metadata probe (no credentials) is allowed through
+      // so the link still renders, but the post-auth join is blocked.
+      if (guestEmailHash && target.ownerEmailHash === guestEmailHash) {
+        return json({ error: "You can't join a household you own — it's already yours.", ownShare: true }, corsHeaders, 409);
+      }
       const isExistingMember = guestEmailHash && target.members?.includes(guestEmailHash);
       if (!isExistingMember) {
         const expiresAt = target.expiresAt ? new Date(target.expiresAt).getTime() : Infinity;

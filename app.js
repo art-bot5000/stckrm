@@ -28153,6 +28153,14 @@ async function handleShareJoinLink(code) {
     const probe = await postKV(`${WORKER_URL}/share/join`, { code });
     const probeData = (await _readJsonSafe(probe)) || {};
     if (probe.status === 410) { toast('This invite link has expired — ask the owner for a new one'); updateSyncPill('error'); return; }
+    // Owner-self guard: if the signed-in user owns this share, don't try to
+    // join it — that would put the app into share-view mode pointed at their
+    // own data. The metadata probe carries ownerEmailHash even without creds.
+    if (_kvEmailHash && probeData.ownerEmailHash && probeData.ownerEmailHash === _kvEmailHash) {
+      updateSyncPill('idle');
+      toast("That's your own household — it's already yours, no need to join.");
+      return;
+    }
     if (!probe.ok && !probeData.requiresAuth) throw new Error(probeData.error || `Invalid link (${probe.status})`);
     _pendingJoinCode  = code.toUpperCase();
     _pendingShareMeta = probeData;
@@ -28351,6 +28359,16 @@ async function _tryUnwrapWithRewrapRetry(code) {
 async function completePendingJoin() {
   if (!_pendingJoinCode) return;
   const code = _pendingJoinCode;
+  // Owner-self guard: never join a share we own. _pendingShareMeta (from the
+  // link probe) carries ownerEmailHash; if it matches us, bail with a clear
+  // message rather than entering share-view mode over our own data.
+  if (_kvEmailHash && _pendingShareMeta && _pendingShareMeta.ownerEmailHash === _kvEmailHash) {
+    _pendingJoinCode  = null;
+    _pendingShareMeta = null;
+    updateSyncPill('idle');
+    toast("That's your own household — no need to join it.");
+    return;
+  }
   try {
     const res  = await postKV(`${WORKER_URL}/share/join`, {
         code,
@@ -28359,6 +28377,14 @@ async function completePendingJoin() {
       });
     const data = (await _readJsonSafe(res)) || {};
     if (!res.ok) {
+      // Server rejected an owner-self join (409 ownShare) — clear and inform.
+      if (res.status === 409 && data.ownShare) {
+        _pendingJoinCode  = null;
+        _pendingShareMeta = null;
+        updateSyncPill('idle');
+        toast("That's your own household — no need to join it.");
+        return;
+      }
       // A previously-rejected user who hasn't re-requested gets a 403. Under
       // the re-request model the server normally re-pends them, but guard the
       // explicit declined case so we can show a clear state rather than a
@@ -28407,6 +28433,16 @@ async function completePendingJoin() {
 // wizard, and sync. Used by both the immediate-join path and the
 // approval-poll path (Stage 4) once the owner has approved.
 async function _finalisePendingJoin(code, data, shareKey) {
+  // Hard owner-self guard (defense in depth). Never enter share-view mode for
+  // a share we own — doing so points the app at our own data and a share-pull
+  // can overwrite the personal account. If this fires, something upstream
+  // failed to guard; bail loudly rather than risk data loss.
+  if (_kvEmailHash && data && data.ownerEmailHash === _kvEmailHash) {
+    console.error('[share] refusing to finalise join on own share', code);
+    _pendingJoinCode = null; _pendingShareMeta = null;
+    toast("That's your own household — no need to join it.");
+    return;
+  }
   const shareKeyB64 = await exportShareKey(shareKey);
   try {
     const stored = await _getShareKeys();
@@ -28438,6 +28474,13 @@ async function _finalisePendingJoin(code, data, shareKey) {
 // decrypts because there's no share key yet. Persisted so a reload keeps the
 // pending state (the poller restarts on next boot via _resumePendingShare).
 function _enterPendingShareShell(code, data, declined) {
+  // Hard owner-self guard (defense in depth) — see _finalisePendingJoin.
+  if (_kvEmailHash && data && data.ownerEmailHash === _kvEmailHash) {
+    console.error('[share] refusing pending shell on own share', code);
+    _pendingJoinCode = null; _pendingShareMeta = null;
+    toast("That's your own household — no need to join it.");
+    return;
+  }
   _shareState = { ...data, code, _pending: !declined, _declined: !!declined };
   // No _shareKey — nothing decrypts until approval.
   _shareKey = null;
