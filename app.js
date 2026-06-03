@@ -26471,8 +26471,25 @@ async function pushSharedData(code, shareKey) {
     return;
   }
 
-  // Find which households this share code covers
-  const target = _shareTargets.find(t => t.code === code);
+  // Find which households this share code covers. _shareTargets is loaded
+  // lazily (on opening Share Access or certain sync paths), so it may be
+  // empty in a session where the user bulk-shared without having opened that
+  // UI. If the code isn't present, refresh from the server ONCE before
+  // resolving. Without this, target is undefined → every canSee* flag is
+  // false → an EMPTY payload is pushed, silently wiping the share blob for
+  // that section (this is exactly why grocery/reminders shared but never
+  // appeared: the push ran with an unloaded _shareTargets).
+  let target = _shareTargets.find(t => t.code === code);
+  if (!target) {
+    try { await loadShareTargets(); } catch(_) {}
+    target = _shareTargets.find(t => t.code === code);
+  }
+  if (!target) {
+    // Still unknown after a server refresh — we genuinely don't own/know this
+    // share. Do NOT push an empty payload (that would clobber the blob).
+    console.warn('pushSharedData: no target found for', code, 'even after reload — skipping to avoid wiping the share');
+    return;
+  }
   const households = target?.households ? Object.keys(target.households) : ['default'];
 
   // Grocery list tombstones live at user-level (not per-household), so load
