@@ -6779,6 +6779,60 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
+  // ── ECDH PRIVATE key backup store (recoverable-key model) ──
+  // Stores the user's OWN ECDH private key, already encrypted client-side
+  // under their _kvKey (passphrase-derived). The server only ever sees
+  // ciphertext it cannot read — same trust model as the owner share-key
+  // backup (/share/key/get) and the user's main encrypted dataset. This is
+  // what makes share access "once and done": on any new device or cleared
+  // cache the user restores the SAME private key, so every share key an
+  // owner ever wrapped for them stays decryptable without the owner being
+  // online. Auth-gated to the user themselves (it's their secret).
+  if (url.pathname === '/user/ecdh-private-backup/store' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken, encryptedPrivateKey, publicKeyJwk } = await request.json();
+      if (!emailHash || !encryptedPrivateKey || (!verifier && !sessionToken)) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      // Persist the encrypted private key. Also (re)store the matching public
+      // key in the same call so the two never drift — a backup without its
+      // matching pubkey on the server would be useless to owners wrapping for
+      // this user.
+      await kvSet(['user', emailHash, 'ecdh_private_backup'], encryptedPrivateKey);
+      if (publicKeyJwk) {
+        await kvSet(['user', emailHash, 'ecdh_public_key'], JSON.stringify(publicKeyJwk));
+      }
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── ECDH PRIVATE key backup get (auth-gated — user's own secret) ──
+  if (url.pathname === '/user/ecdh-private-backup/get' && request.method === 'POST') {
+    try {
+      const { emailHash, verifier, sessionToken } = await request.json();
+      if (!emailHash || (!verifier && !sessionToken)) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', emailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', emailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      const backup = await kvGet(['user', emailHash, 'ecdh_private_backup']);
+      if (!backup.value) return json({ error: 'No backup found' }, corsHeaders, 404);
+      return json({ ok: true, encryptedPrivateKey: backup.value }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
   // ── ECDH share key store (owner wraps share key for a specific guest) ──
   // Stores: share_ecdh_key/{code}/{guestEmailHash} = { wrappedKey, ownerPublicKeyJwk }
   if (url.pathname === '/share/ecdh-key/store' && request.method === 'POST') {
