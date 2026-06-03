@@ -4577,6 +4577,28 @@ window._loadBudgetUI = function() {
     document.head.appendChild(s);
   });
 };
+// Lazy-load notes-ui.js (the Notes VIEW: renderNotes, note cards, the full
+// editor, sharing panel, lock screens, tick-boxes, colour picker, undo/redo,
+// multi-select action bar, linked-reminder UI) only when the user first opens
+// the Notes view. The always-loaded notes.js (core) handles boot load, sync
+// save, tab-blur re-lock and the omnibox add-to-notes path, so the ~1,300-line
+// UI half stays out of every page's parse+execute for users who never open
+// Notes. Same load-once pattern as _loadScanner / _loadDemo / _loadBudgetUI.
+// app.js awaits this inside showView('notes') before calling renderNotes(),
+// and core pre-load shims (in notes.js) await it for the static Notes-view
+// buttons (New note / filter chips / Empty trash).
+window._notesUILoaded = false;
+window._loadNotesUI = function() {
+  if (window._notesUILoaded) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'notes-ui.js';
+    s.defer = true;
+    s.onload = () => { window._notesUILoaded = true; resolve(); };
+    s.onerror = (e) => { console.error('notes-ui.js failed to load:', e); reject(e); };
+    document.head.appendChild(s);
+  });
+};
 // Everything else (quickAdd, shareItem, logPicker, etc.) is now in app.js.
 // After _loadScanner() resolves, scanner.js redefines these on window,
 // so we re-call them — they're no longer the stub at that point.

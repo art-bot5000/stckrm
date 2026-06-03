@@ -2,7 +2,7 @@ FROM node:22-slim AS builder
 WORKDIR /build
 COPY package.json ./
 RUN npm install
-COPY app.js budget.js budget-ui.js notes.js demo.js scanner.js ./
+COPY app.js budget.js budget-ui.js notes.js notes-ui.js demo.js scanner.js ./
 COPY styles.css index.html landing.html ./
 COPY sw.js manifest.json admin.html diag-trusted.html ./
 COPY logo.png logo.webp ./
@@ -12,6 +12,7 @@ RUN mkdir -p public && \
     npx terser budget.js  --compress passes=3 --mangle --comments false -o public/budget.js && \
     npx terser budget-ui.js --compress passes=3 --mangle --comments false -o public/budget-ui.js && \
     npx terser notes.js   --compress passes=3 --mangle --comments false -o public/notes.js && \
+    npx terser notes-ui.js --compress passes=3 --mangle --comments false -o public/notes-ui.js && \
     npx terser demo.js    --compress passes=3 --mangle --comments false -o public/demo.js && \
     npx terser scanner.js --compress passes=3 --mangle --comments false -o public/scanner.js && \
     npx cleancss -o public/styles.css styles.css && \

@@ -12786,7 +12786,27 @@ function showView(name, btn) {
       renderBudget();
     }
   }
-  if (name === 'notes')     { if (billingLocked === 'notes') _renderBillingLockscreen('notes'); else { renderNotes(); setTimeout(_maybeShowMfaPrompt, 600); } }
+  if (name === 'notes') {
+    if (billingLocked === 'notes') {
+      _renderBillingLockscreen('notes');
+    } else {
+      // Notes view UI lives in the lazy-loaded notes-ui.js. Load it on first
+      // open (no-op once loaded), then render. renderNotes is defined in
+      // notes-ui.js, so it only exists after the load resolves.
+      const _afterNotesUI = () => {
+        if (typeof renderNotes === 'function') renderNotes();
+        setTimeout(_maybeShowMfaPrompt, 600);
+      };
+      if (typeof window._loadNotesUI === 'function') {
+        window._loadNotesUI().then(_afterNotesUI).catch(err => {
+          console.error('notes-ui.js failed to load:', err);
+          if (typeof toast === 'function') toast('Notes unavailable — please reload the page');
+        });
+      } else {
+        _afterNotesUI();
+      }
+    }
+  }
   if (name === 'account-security') renderAccountSecurity();
   if (name === 'accessibility') {
     // Sync the Theme and Text size segmented controls to the current
