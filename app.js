@@ -16852,13 +16852,59 @@ async function loadEcdhPrivateKey(emailHash) {
       req.onsuccess = () => resolve(req.result ?? null);
       req.onerror   = () => reject(req.error);
     });
-    if (!jwkStr) return null;
-    return crypto.subtle.importKey(
-      'jwk', JSON.parse(jwkStr),
-      { name: 'ECDH', namedCurve: 'P-256' },
-      false, ['deriveKey', 'deriveBits']
-    );
-  } catch(e) { console.warn('loadEcdhPrivateKey failed:', e.message); return null; }
+    if (jwkStr) {
+      return crypto.subtle.importKey(
+        'jwk', JSON.parse(jwkStr),
+        { name: 'ECDH', namedCurve: 'P-256' },
+        false, ['deriveKey', 'deriveBits']
+      );
+    }
+  } catch(e) { console.warn('loadEcdhPrivateKey (IDB) failed:', e.message); }
+  // IDB miss — recoverable-key model: restore the SAME private key from the
+  // server backup (ciphertext encrypted under _kvKey). This is what makes a
+  // new device / cleared cache work without the share owner being online.
+  try {
+    const restored = await _restoreEcdhPrivateKeyFromBackup(emailHash);
+    if (restored) return restored;
+  } catch(e) { console.warn('loadEcdhPrivateKey (backup) failed:', e.message); }
+  return null;
+}
+
+// Back up the ECDH private key to the server, encrypted under _kvKey. Stores
+// the matching public key in the same call so they never drift. Idempotent
+// and safe to call whenever we have an extractable private key + _kvKey.
+async function _backupEcdhPrivateKey(emailHash, privateKeyJwk, publicKeyJwk) {
+  if (!_kvKey || !emailHash || !privateKeyJwk) return false;
+  if (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return false;
+  try {
+    const encryptedPrivateKey = await kvEncrypt(_kvKey, JSON.stringify(privateKeyJwk));
+    const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+    const res = await postKV(`${WORKER_URL}/user/ecdh-private-backup/store`, {
+      emailHash, ...authFields, encryptedPrivateKey,
+      ...(publicKeyJwk ? { publicKeyJwk } : {}),
+    });
+    return res.ok;
+  } catch(e) { console.warn('[ecdh] backup failed:', e?.message || e); return false; }
+}
+
+// Restore the ECDH private key from the server backup. Decrypts under _kvKey,
+// re-imports, and re-seeds IDB so subsequent loads hit the fast path. Returns
+// a (non-extractable) CryptoKey for deriveKey/deriveBits, matching the IDB path.
+async function _restoreEcdhPrivateKeyFromBackup(emailHash) {
+  if (!_kvKey || !emailHash || (!_kvVerifier && !_kvSessionToken)) return null;
+  try {
+    const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+    const res = await postKV(`${WORKER_URL}/user/ecdh-private-backup/get`, { emailHash, ...authFields });
+    if (!res.ok) return null; // 404 = no backup (pre-migration / never created)
+    const { encryptedPrivateKey } = (await res.json()) || {};
+    if (!encryptedPrivateKey) return null;
+    const jwkStr = await kvDecrypt(_kvKey, encryptedPrivateKey);
+    const jwk = JSON.parse(jwkStr);
+    // Re-seed IDB so we don't round-trip again next time.
+    try { await storeEcdhPrivateKey(emailHash, await crypto.subtle.importKey('jwk', jwk, { name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey','deriveBits'])); } catch(e) {}
+    console.log('[ecdh] private key restored from server backup for', emailHash);
+    return crypto.subtle.importKey('jwk', jwk, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveKey', 'deriveBits']);
+  } catch(e) { console.warn('[ecdh] restore failed:', e?.message || e); return null; }
 }
 
 // Derive an AES-KW wrapping key from two ECDH keys via HKDF
@@ -16905,36 +16951,98 @@ async function ecdhUnwrapShareKey(myPrivateKey, theirPublicKeyJwk, wrappedB64) {
 
 // Idempotent: generate keypair if not in IDB, then upload public key if not on server.
 // Safe to call on every login — exits early if already done.
+//
+// Recoverable-key model: the private key is backed up server-side (encrypted
+// under _kvKey) at creation. loadEcdhPrivateKey transparently restores from
+// that backup on a fresh device. CRITICALLY we never silently regenerate the
+// keypair when the server pubkey is missing — regenerating would orphan every
+// share key an owner previously wrapped for this user (locking them out and
+// forcing "wait for owner online"). Instead we restore the original from
+// backup and re-publish its matching public key.
 async function ensureEcdhKeypair(emailHash) {
   if (!emailHash) return;
   try {
     let privateKey = await loadEcdhPrivateKey(emailHash);
-    let needsUpload = false;
 
     if (!privateKey) {
-      // First time on this device — generate
+      // First time anywhere (no IDB key AND no server backup to restore).
+      // Generate EXTRACTABLE so we can export both halves: pubkey to publish,
+      // privkey JWK to back up.
       const kp = await generateEcdhKeypair();
       await storeEcdhPrivateKey(emailHash, kp.privateKey);
-      privateKey = kp.privateKey;
-      // Upload public key
-      const pubJwk = await crypto.subtle.exportKey('jwk', kp.publicKey);
+      const pubJwk  = await crypto.subtle.exportKey('jwk', kp.publicKey);
+      const privJwk = await crypto.subtle.exportKey('jwk', kp.privateKey);
       await postKV(`${WORKER_URL}/user/ecdh-pubkey/store`, { emailHash, publicKeyJwk: pubJwk });
-      console.log('ECDH keypair generated and public key uploaded');
+      // Back up the private key (encrypted under _kvKey) so future devices
+      // recover the SAME key — this is the once-and-done guarantee.
+      await _backupEcdhPrivateKey(emailHash, privJwk, pubJwk);
+      console.log('ECDH keypair generated, public key uploaded, private key backed up');
       return;
     }
 
-    // Private key exists locally — check server has our public key
-    const check = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash });
-    if (!check.ok) needsUpload = true;
+    // We have a private key (from IDB or restored from backup). Make sure the
+    // server has BOTH our public key and a private-key backup. We may need the
+    // JWKs; fetch them from the backup (the canonical extractable copy) rather
+    // than from the non-extractable IDB import.
+    const pubCheck    = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash });
+    const backupCheck = await postKV(`${WORKER_URL}/user/ecdh-private-backup/get`, {
+      emailHash,
+      ...(_kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier }),
+    });
+    const havePub    = pubCheck.ok;
+    const haveBackup = backupCheck.ok;
 
-    if (needsUpload) {
-      // Re-derive public key from stored private key isn't possible with Web Crypto
-      // (private key is non-extractable after import). Regenerate the pair.
+    if (havePub && haveBackup) return; // fully provisioned — nothing to do
+
+    // Something's missing. Recover the canonical JWKs from the backup if we
+    // have one; otherwise we can't re-derive the pubkey from a non-extractable
+    // key, so as a LAST resort (no backup exists at all — pre-migration user
+    // on their original device) we read the extractable JWK we just re-seeded
+    // into IDB during loadEcdhPrivateKey, or regenerate only if truly absent.
+    let privJwk = null, pubJwk = null;
+    if (haveBackup) {
+      try {
+        const { encryptedPrivateKey } = (await backupCheck.json()) || {};
+        if (encryptedPrivateKey && _kvKey) {
+          privJwk = JSON.parse(await kvDecrypt(_kvKey, encryptedPrivateKey));
+          // Derive the matching public JWK from the private JWK (same coords,
+          // minus the private 'd' component).
+          pubJwk = { kty: privJwk.kty, crv: privJwk.crv, x: privJwk.x, y: privJwk.y, ext: true, key_ops: [] };
+        }
+      } catch(e) { console.warn('[ecdh] could not read backup for reprovision:', e.message); }
+    }
+
+    if (!privJwk) {
+      // No usable backup. Try the extractable copy in IDB (re-seeded on
+      // restore, or present if this device generated it).
+      try {
+        const db = await openEcdhDb();
+        const jwkStr = await new Promise((res, rej) => {
+          const tx = db.transaction(ECDH_STORE_NAME, 'readonly');
+          const rq = tx.objectStore(ECDH_STORE_NAME).get(emailHash);
+          rq.onsuccess = () => res(rq.result ?? null); rq.onerror = () => rej(rq.error);
+        });
+        if (jwkStr) {
+          const j = JSON.parse(jwkStr);
+          if (j.d) { privJwk = j; pubJwk = { kty: j.kty, crv: j.crv, x: j.x, y: j.y, ext: true, key_ops: [] }; }
+        }
+      } catch(e) {}
+    }
+
+    if (privJwk && pubJwk) {
+      if (!havePub)    await postKV(`${WORKER_URL}/user/ecdh-pubkey/store`, { emailHash, publicKeyJwk: pubJwk });
+      if (!haveBackup) await _backupEcdhPrivateKey(emailHash, privJwk, pubJwk);
+      console.log('[ecdh] reprovisioned missing server key material (no regeneration)');
+    } else {
+      // Genuinely nothing extractable anywhere — only now is regeneration safe
+      // (there are no prior wraps to orphan because we had no recoverable key).
       const kp = await generateEcdhKeypair();
       await storeEcdhPrivateKey(emailHash, kp.privateKey);
-      const pubJwk = await crypto.subtle.exportKey('jwk', kp.publicKey);
-      await postKV(`${WORKER_URL}/user/ecdh-pubkey/store`, { emailHash, publicKeyJwk: pubJwk });
-      console.log('ECDH public key re-uploaded');
+      const np = await crypto.subtle.exportKey('jwk', kp.publicKey);
+      const nd = await crypto.subtle.exportKey('jwk', kp.privateKey);
+      await postKV(`${WORKER_URL}/user/ecdh-pubkey/store`, { emailHash, publicKeyJwk: np });
+      await _backupEcdhPrivateKey(emailHash, nd, np);
+      console.warn('[ecdh] no recoverable key found — regenerated (prior wraps, if any, will need re-wrap)');
     }
   } catch(e) {
     console.warn('ensureEcdhKeypair failed (non-fatal):', e.message);
