@@ -26845,6 +26845,112 @@ async function _fulfilPendingRewraps(code) {
   } catch(e) { /* non-critical */ }
 }
 
+// ── Approve a single pending request (owner side) ───────────────
+// Reuses the exact ECDH wrap recipe from _fulfilPendingRewraps but for one
+// guest, then posts /share/request/approve (which stores the wrapped key AND
+// flips the member to 'active'). Returns true on success.
+//
+// guestPublicKeyJwk comes from t.pendingRequests[].guestPublicKeyJwk (folded
+// into /share/list). If it's somehow absent we bail rather than guess — the
+// server can't wrap, only the owner's unlocked session can.
+async function _approveShareRequest(code, guestEmailHash, guestPublicKeyJwk) {
+  if (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) {
+    toast('Sign in to approve'); return false;
+  }
+  if (!guestPublicKeyJwk) { toast('Cannot approve — requester key missing'); return false; }
+  const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+  try {
+    const ownerPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
+    if (!ownerPrivKey) { toast('Unlock your account to approve'); return false; }
+    const ownerPubRes = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: _kvEmailHash });
+    if (!ownerPubRes.ok) { toast('Approve failed (owner key)'); return false; }
+    const { publicKeyJwk: ownerPubKeyJwk } = await ownerPubRes.json();
+
+    // Recover the share key for this code (local copy first, then derive).
+    const sk = await (async () => {
+      try {
+        const stored = await _getShareKeys();
+        const b64 = stored[code];
+        if (b64) {
+          const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+          return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+        }
+      } catch(e) {}
+      return recoverShareKey(code);
+    })();
+    if (!sk) { toast('Approve failed — share key unavailable'); return false; }
+
+    const wrappedKey = await ecdhWrapShareKey(ownerPrivKey, guestPublicKeyJwk, sk);
+    const res = await postKV(`${WORKER_URL}/share/request/approve`, {
+      ownerEmailHash: _kvEmailHash, ...authFields, code,
+      guestEmailHash, wrappedKey, ownerPublicKeyJwk: ownerPubKeyJwk,
+    });
+    if (!res.ok) {
+      let msg = 'Approve failed';
+      try { const d = await res.json(); if (d.capReached) msg = 'Share is full (5 active members)'; else if (d.error) msg = d.error; } catch(e) {}
+      toast(msg); return false;
+    }
+    console.log('[share] approved request for guest:', guestEmailHash);
+    // Push current data so the newly-approved guest has something to pull.
+    try { await pushSharedData(code); } catch(e) { /* non-fatal */ }
+    return true;
+  } catch(e) {
+    console.warn('[share] approve failed for', guestEmailHash, e.message);
+    toast('Approve failed: ' + e.message); return false;
+  }
+}
+
+// ── Reject a single pending request (owner side) ────────────────
+// No crypto — just posts /share/request/reject (drops member + key, writes
+// revocation marker, stamps 'rejected' so a re-request is recognised).
+async function _rejectShareRequest(code, guestEmailHash) {
+  if (!_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) { toast('Sign in to manage requests'); return false; }
+  const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+  try {
+    const res = await postKV(`${WORKER_URL}/share/request/reject`, {
+      ownerEmailHash: _kvEmailHash, ...authFields, code, guestEmailHash,
+    });
+    if (!res.ok) { let m='Decline failed'; try{const d=await res.json(); if(d.error)m=d.error;}catch(e){} toast(m); return false; }
+    return true;
+  } catch(e) { toast('Decline failed: ' + e.message); return false; }
+}
+
+// ── Consume an ?approve= deep link once the owner is signed in ──
+// Loads the share-ui bundle, navigates to Settings → Share Access, refreshes
+// the targets (so pendingRequests is current), expands the relevant share row,
+// and flags it so renderShareTargetsList highlights/auto-expands the pending
+// section. The actual Approve/Reject buttons are rendered by share-ui.js.
+function _consumeShareApprovalDeepLink() {
+  const pend = window._pendingShareApproval;
+  if (!pend || !pend.code) return;
+  // Require an unlocked owner session (approval needs the share key). If not
+  // ready yet, leave the global in place for a later call.
+  if (!kvConnected || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return;
+  window._pendingShareApproval = null; // consume once
+  const go = () => {
+    try {
+      if (typeof _expandedShareCodes === 'object' && _expandedShareCodes) _expandedShareCodes[pend.code] = true; // auto-expand the row
+      if (typeof loadShareTargets === 'function') {
+        loadShareTargets().then(() => {
+          if (typeof openSettingsSection === 'function') openSettingsSection('share-targets-section');
+          if (typeof renderShareTargetsList === 'function') renderShareTargetsList();
+          const row = document.getElementById('share-pending-' + pend.code);
+          if (row && row.scrollIntoView) setTimeout(() => row.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300);
+        }).catch(()=>{});
+      } else {
+        if (typeof openSettingsSection === 'function') openSettingsSection('share-targets-section');
+      }
+    } catch(e) { console.warn('approval deep-link consume failed:', e.message); }
+  };
+  if (typeof renderShareTargetsList === 'function') { go(); }
+  else if (typeof window._loadShareUI === 'function') {
+    window._loadShareUI().then(go).catch(err => {
+      console.error('share-ui.js failed to load for approval:', err);
+      toast('Could not open approval — please open Settings → Share Access');
+    });
+  }
+}
+
 async function resyncSharedData(code) {
   toast('Syncing to guest…');
   try {
@@ -26998,6 +27104,11 @@ function initHouseholdSettingsUI() {
   applyTabPermissions();
   renderSettingsHouseholdList();
   if (WORKER_URL && (isOwner() || canViewShares())) loadShareTargets();
+  // If the owner arrived via an ?approve= deep link before signing in, the
+  // session is ready now — route them to the approval UI.
+  if (window._pendingShareApproval && typeof _consumeShareApprovalDeepLink === 'function') {
+    setTimeout(() => _consumeShareApprovalDeepLink(), 400);
+  }
 }
 
 // ── User ID ───────────────────────────────────────────────
@@ -28282,6 +28393,25 @@ async function completePendingJoin() {
 //  URL ACTION HANDLER — moved from scanner.js
 // ═══════════════════════════════════════════════════════════
 function handleURLAction() {
+  // ── Share approval deep link: ?approve=CODE&req=HASH ──────
+  // Owner-only. Lands here from the request email. We stash the (code, hash)
+  // pair, strip the query, and let the init/login flow route to Settings →
+  // Share Access once the owner is signed in and unlocked, where
+  // _consumeShareApprovalDeepLink() opens the approval for that request.
+  const approveParams = new URLSearchParams(location.search);
+  const approveCode = approveParams.get('approve');
+  const approveReq  = approveParams.get('req');
+  if (approveCode && approveReq) {
+    window._pendingShareApproval = { code: approveCode.toUpperCase(), req: approveReq };
+    history.replaceState(null, '', location.pathname);
+    // If already signed in with a key, consume it now; otherwise the
+    // post-login flow picks it up via _consumeShareApprovalDeepLink().
+    if (kvConnected && _kvEmailHash && (_kvVerifier || _kvSessionToken)) {
+      _consumeShareApprovalDeepLink();
+    }
+    return;
+  }
+
   // ── Share join link: ?join=CODE ──────────────────────────
   const joinParams = new URLSearchParams(location.search);
   const joinCode   = joinParams.get('join');

@@ -293,6 +293,57 @@ function json(data, headers = {}, status = 200) {
   });
 }
 
+// ── Share: email the owner that someone is requesting access ──────
+// Fired server-side from /share/join the moment a membership transitions
+// into 'pending' (and on a rate-limited re-request). The owner does NOT
+// need to be online to receive this — that's the whole UX win. The email
+// links to ${APP_URL}?approve=<CODE>&req=<guestEmailHash> which the client
+// turns into an in-app approval action once the owner is logged in/unlocked.
+// Mirrors the Resend pattern from /share/send-email.
+async function sendShareRequestEmail(env: any, target: any, guestEmailHash: string, code: string) {
+  if (!env.RESEND_API_KEY) return; // email not configured — silently skip
+  // Owner address
+  const ownerEmailRow = await kvGet(['user', target.ownerEmailHash, 'email']);
+  const ownerEmail = ownerEmailRow.value;
+  if (!ownerEmail) return; // can't notify an owner with no stored email
+  // Requester's human-readable email (for the message body only — never
+  // trusted for anything security-relevant; the hash in the link is the
+  // authoritative identifier).
+  const reqEmailRow = await kvGet(['user', guestEmailHash, 'email']);
+  const requesterEmail = reqEmailRow.value || 'A STOCKROOM user';
+  const householdLabel = Array.isArray(target.householdNames) && target.householdNames.length
+    ? target.householdNames.join(', ')
+    : (target.name || 'your shared household');
+
+  const approveUrl = `${env.APP_URL}?approve=${encodeURIComponent(code)}&req=${encodeURIComponent(guestEmailHash)}`;
+
+  const html = `<!DOCTYPE html><html><body style="background:#0f1117;color:#e0e0e0;font-family:sans-serif;padding:32px">
+    <div style="max-width:480px;margin:0 auto;background:#1a1d27;border-radius:14px;padding:28px">
+      <div style="font-size:11px;letter-spacing:3px;color:#e8a838;font-family:monospace;margin-bottom:8px">STOCKROOM</div>
+      <h2 style="color:#fff;margin:0 0 16px">Access request</h2>
+      <p><strong>${requesterEmail}</strong> is requesting access to <strong>${householdLabel}</strong>.</p>
+      <p style="font-size:13px;color:#bbb">To approve, open STOCKROOM and unlock your account — then tap Approve. Approval wraps the household's encryption key for them in your session (the server can't do this for you).</p>
+      <div style="margin:20px 0;text-align:center">
+        <a href="${approveUrl}" style="background:#e8a838;color:#111;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:16px">Review request →</a>
+      </div>
+      <p style="font-size:12px;color:#999;text-align:center">Or copy this link: <code>${approveUrl}</code></p>
+      <p style="color:#666;font-size:12px;margin-top:20px">If you don't recognise this request, you can ignore it or decline it in the app. No data is shared until you approve.</p>
+    </div>
+  </body></html>`;
+
+  const subject = `STOCKROOM — ${requesterEmail} is requesting access to ${householdLabel}`;
+
+  const r = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: env.FROM_EMAIL, to: [ownerEmail], subject, html }),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    throw new Error(d.message || 'request email send failed');
+  }
+}
+
 // ── Auth helpers ──────────────────────────────────────────
 // verifyUserAuth — accepts BOTH passphrase verifier AND passkey sessionToken.
 // Returns true on success, false on missing/invalid credentials.
@@ -5868,7 +5919,26 @@ Deno.serve(async (request) => {
         if (entry.key.length !== 2) continue; // skip share_data entries
         try {
           const data = JSON.parse(entry.value);
-          if (data.ownerEmailHash === ownerEmailHash) targets.push({ code: entry.key[1], ...data });
+          if (data.ownerEmailHash !== ownerEmailHash) continue;
+          // Fold in pending requests so the client can render the approval
+          // badge/list without a second endpoint. A pending request is any
+          // memberDetails entry with status === 'pending'. Resolve the
+          // requester's email for the human-readable row.
+          const pendingRequests = [];
+          const md = data.memberDetails || {};
+          for (const [hash, detail] of Object.entries(md)) {
+            if (detail && (detail as any).status === 'pending') {
+              const emailRow = await kvGet(['user', hash, 'email']);
+              const pubRow = await kvGet(['user', hash, 'ecdh_public_key']);
+              pendingRequests.push({
+                guestEmailHash: hash,
+                email: emailRow.value || null,
+                requestedAt: (detail as any).requestedAt || null,
+                guestPublicKeyJwk: pubRow.value ? JSON.parse(pubRow.value) : null,
+              });
+            }
+          }
+          targets.push({ code: entry.key[1], ...data, pendingRequests });
         } catch(e) {}
       }
       return json({ targets }, corsHeaders);
@@ -5972,35 +6042,83 @@ Deno.serve(async (request) => {
       }
       if (!target.members) target.members = [];
       if (!target.memberDetails) target.memberDetails = {};
-      const isNewMember = !target.members.includes(guestEmailHash);
-      if (isNewMember) {
-        target.members.push(guestEmailHash);
-        // If this share was created for a guest who didn't have an account
-        // at create time, joining is the moment we promote pendingInvite
-        // to guestEmail (so the owner UI shows a normal "linked" state)
-        // and clear pendingInvite. We only do this when the joining
-        // emailHash matches the pending one — a guest who signs up with a
-        // different email shouldn't silently consume someone else's pending invite.
-        if (target.pendingInvite && target.pendingInvite.guestEmailHash === guestEmailHash) {
-          if (target.pendingInvite.guestEmail) target.guestEmail = target.pendingInvite.guestEmail;
-          delete target.pendingInvite;
+
+      // ── Request → approve handshake ──────────────────────────────
+      // A join no longer grants access. It creates (or refreshes) a
+      // membership record whose `status` gates everything:
+      //   'pending'  — admitted to the members list and visible in the
+      //                guest's share list, but NO ECDH key is wrapped yet,
+      //                so no data decrypts. Owner must approve.
+      //   'active'   — approved; owner has wrapped the share key. Full access.
+      //                (Legacy members predating this change have NO status
+      //                 field and are treated as active — migration-free.)
+      //   'rejected' — owner declined. The guest may re-request (which clears
+      //                the flag and re-emails the owner, rate-limited below).
+      const nowIso = new Date().toISOString();
+      const existingMd = target.memberDetails[guestEmailHash] || {};
+      const existingStatus = existingMd.status; // undefined for legacy actives
+      const isActiveAlready = existingStatus === 'active' ||
+        (target.members.includes(guestEmailHash) && existingStatus === undefined);
+
+      // Already an approved/legacy member → behave exactly as before:
+      // return the full target so re-join / multi-device keeps working.
+      if (isActiveAlready) {
+        existingMd.lastActiveAt = nowIso;
+        if (!existingMd.firstSeenAt) existingMd.firstSeenAt = nowIso;
+        target.memberDetails[guestEmailHash] = existingMd;
+        await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
+        return json({ ok: true, ...target, code: code.toUpperCase() }, corsHeaders);
+      }
+
+      // Already pending → idempotent: don't re-email, just acknowledge.
+      if (existingStatus === 'pending') {
+        existingMd.lastActiveAt = nowIso;
+        target.memberDetails[guestEmailHash] = existingMd;
+        await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
+        return json({ ok: true, pending: true, ownerName: target.ownerName,
+          name: target.name, type: target.type, householdNames: target.householdNames,
+          code: code.toUpperCase() }, corsHeaders);
+      }
+
+      // Either brand-new requester OR a previously-rejected user re-requesting.
+      // Rate-limit the request email to stop an attacker spamming the owner's
+      // inbox by repeatedly hitting /share/join. One request email per
+      // requester+share per REQUEST_EMAIL_COOLDOWN_MS.
+      const REQUEST_EMAIL_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+      const lastReqAt = existingMd.requestedAt ? new Date(existingMd.requestedAt).getTime() : 0;
+      const withinCooldown = lastReqAt && (Date.now() - lastReqAt < REQUEST_EMAIL_COOLDOWN_MS);
+
+      // Create / reset the pending record.
+      if (!target.members.includes(guestEmailHash)) target.members.push(guestEmailHash);
+      existingMd.status = 'pending';
+      existingMd.requestedAt = nowIso;
+      existingMd.lastActiveAt = nowIso;
+      if (!existingMd.firstSeenAt) existingMd.firstSeenAt = nowIso;
+      delete existingMd.rejectedAt;
+      delete existingMd.approvedAt;
+      // pendingInvite is now vestigial under the pure-request model. We no
+      // longer promote/consume it here; it's left readable for any in-flight
+      // legacy shares but plays no role in the request handshake.
+      target.memberDetails[guestEmailHash] = existingMd;
+      await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
+      // Clear any stale revocation marker from a prior reject/eviction so the
+      // re-request's eventual approval can push data.
+      await kvDel(['share_revoked', code.toUpperCase(), guestEmailHash]);
+
+      // Fire the owner email — server-side, no owner presence needed to
+      // RECEIVE the prompt. Skipped silently if within the cooldown window.
+      if (!withinCooldown) {
+        try {
+          await sendShareRequestEmail(env, target, guestEmailHash, code.toUpperCase());
+        } catch (e) {
+          // Email failure must not block the request being recorded.
+          console.error('share request email failed:', e?.message || e);
         }
       }
-      // Record/refresh memberDetails on every successful join so the owner
-      // can see when each guest first connected and last accessed the share.
-      const nowIso = new Date().toISOString();
-      const md = target.memberDetails[guestEmailHash] || {};
-      if (!md.firstSeenAt) md.firstSeenAt = nowIso;
-      md.lastActiveAt = nowIso;
-      target.memberDetails[guestEmailHash] = md;
-      await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
-      // Re-joining a previously-evicted member clears the revocation marker
-      // (the owner can re-add them via /share/update or by sharing the link
-      // again — this just allows the rejoin path to succeed).
-      if (isNewMember) {
-        await kvDel(['share_revoked', code.toUpperCase(), guestEmailHash]);
-      }
-      return json({ ok: true, ...target, code: code.toUpperCase() }, corsHeaders);
+
+      return json({ ok: true, pending: true, ownerName: target.ownerName,
+        name: target.name, type: target.type, householdNames: target.householdNames,
+        code: code.toUpperCase() }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
@@ -6800,6 +6918,118 @@ Deno.serve(async (request) => {
       const stored = await kvGet(['share_ecdh_key', code.toUpperCase(), guestEmailHash]);
       if (!stored.value) return json({ error: 'No ECDH key found for this share' }, corsHeaders, 404);
       return json({ ok: true, ...JSON.parse(stored.value) }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Share: owner APPROVES a pending request ─────────────
+  // Thin wrapper around the existing wrap-and-store path. The client (owner,
+  // unlocked) performs the ECDH wrap exactly as it does in the manual rewrap
+  // path and posts the wrapped key here. We store it, flip the member to
+  // 'active', and clear any rewrap-request record. This is the moment data
+  // starts flowing for the guest (their next /share/ecdh-key/get succeeds).
+  if (url.pathname === '/share/request/approve' && request.method === 'POST') {
+    try {
+      const { ownerEmailHash, verifier, sessionToken, code, guestEmailHash, wrappedKey, ownerPublicKeyJwk } = await request.json();
+      if (!ownerEmailHash || !code || !guestEmailHash || !wrappedKey || !ownerPublicKeyJwk) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      // Auth owner (passkey session OR passphrase verifier)
+      if (sessionToken) {
+        const session = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else if (verifier) {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      } else {
+        return json({ error: 'Missing credentials' }, corsHeaders, 400);
+      }
+      const r = await kvGet(['share', code.toUpperCase()]);
+      if (!r.value) return json({ error: 'Share not found' }, corsHeaders, 404);
+      const target = JSON.parse(r.value);
+      if (target.ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
+
+      if (!target.memberDetails) target.memberDetails = {};
+      const md = target.memberDetails[guestEmailHash];
+      // Only a pending member can be approved. (Legacy actives have no status
+      // and need no approval; rejected members must re-request first.)
+      if (!md || md.status !== 'pending') {
+        return json({ error: 'No pending request for this user', notPending: true }, corsHeaders, 409);
+      }
+
+      // 5-person cap counts ACTIVE members only (pending don't consume a slot).
+      const activeCount = Object.values(target.memberDetails)
+        .filter((d: any) => d && (d.status === 'active' || d.status === undefined)).length;
+      // Note: legacy members (no status) are in memberDetails AND members. A
+      // pending member is in members but status==='pending', so they're not
+      // counted above. Approving this one would make activeCount + 1.
+      if (activeCount >= 5) {
+        return json({ error: 'This share already has the maximum of 5 active members', capReached: true }, corsHeaders, 409);
+      }
+
+      // Store the wrapped key (same slot /share/ecdh-key/store uses).
+      await kvSet(
+        ['share_ecdh_key', code.toUpperCase(), guestEmailHash],
+        JSON.stringify({ wrappedKey, ownerPublicKeyJwk })
+      );
+      // Flip to active.
+      md.status = 'active';
+      md.approvedAt = new Date().toISOString();
+      delete md.rejectedAt;
+      target.memberDetails[guestEmailHash] = md;
+      if (!target.members.includes(guestEmailHash)) target.members.push(guestEmailHash);
+      await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
+      // Clear any rewrap-request record + stale revocation marker.
+      await kvDel(['share_rewrap_request', code.toUpperCase(), guestEmailHash]);
+      await kvDel(['share_revoked', code.toUpperCase(), guestEmailHash]);
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
+  // ── Share: owner REJECTS a pending request ──────────────
+  // Essentially /share/member/remove plus a 'rejected' status stamp. We
+  // drop them from the members list and drop their ECDH key, write a
+  // revocation marker so any in-flight pulls 403 fast, but KEEP a
+  // memberDetails entry stamped 'rejected' so /share/join can recognise a
+  // re-request (and the client can show a 'declined' state).
+  if (url.pathname === '/share/request/reject' && request.method === 'POST') {
+    try {
+      const { ownerEmailHash, verifier, sessionToken, code, guestEmailHash } = await request.json();
+      if (!ownerEmailHash || !code || !guestEmailHash || (!verifier && !sessionToken)) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      if (sessionToken) {
+        const session = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
+        if (!session.value) return json({ error: 'Session expired' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', ownerEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      const r = await kvGet(['share', code.toUpperCase()]);
+      if (!r.value) return json({ error: 'Share not found' }, corsHeaders, 404);
+      const target = JSON.parse(r.value);
+      if (target.ownerEmailHash !== ownerEmailHash) return json({ error: 'Forbidden' }, corsHeaders, 403);
+
+      // Remove from members list (they no longer count or receive pushes).
+      target.members = (target.members || []).filter((m: string) => m !== guestEmailHash);
+      // Keep a rejected stamp so a re-request is recognised (and re-emails,
+      // rate-limited, per the /share/join cooldown).
+      if (!target.memberDetails) target.memberDetails = {};
+      const md = target.memberDetails[guestEmailHash] || {};
+      md.status = 'rejected';
+      md.rejectedAt = new Date().toISOString();
+      delete md.approvedAt;
+      target.memberDetails[guestEmailHash] = md;
+      await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
+      // Drop any wrapped key + write a revocation marker (mirrors eviction).
+      await kvDel(['share_ecdh_key', code.toUpperCase(), guestEmailHash]);
+      await kvSet(
+        ['share_revoked', code.toUpperCase(), guestEmailHash],
+        new Date().toISOString(),
+        { expireIn: 7 * 24 * 60 * 60 * 1000 }
+      );
+      // Clear any pending rewrap-request record.
+      await kvDel(['share_rewrap_request', code.toUpperCase(), guestEmailHash]);
+      return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 

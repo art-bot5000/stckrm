@@ -409,11 +409,23 @@ function renderShareTargetsList() {
   } else {
     list.innerHTML = _shareTargets.map(t => {
       const colour    = t.colour || '#e8a838';
-      const members   = t.members?.length || 0;
+      const memberDetails = t.memberDetails || {};
+      // Split members into active vs pending. A member is pending only when
+      // memberDetails[hash].status === 'pending'; everything else (active, or
+      // legacy with no status) is a real member. Pending requesters sit in
+      // t.members too, so we must exclude them from the Members list/count.
+      const allMembers = Array.isArray(t.members) ? t.members : [];
+      const activeMembers = allMembers.filter(h => (memberDetails[h]?.status || 'active') !== 'pending' && (memberDetails[h]?.status || 'active') !== 'rejected');
+      const members   = activeMembers.length;
+      // Pending requests come folded in from /share/list (with resolved email
+      // + pubkey). Fall back to deriving from memberDetails if absent.
+      const pendingReqs = Array.isArray(t.pendingRequests) && t.pendingRequests.length
+        ? t.pendingRequests
+        : allMembers.filter(h => memberDetails[h]?.status === 'pending')
+            .map(h => ({ guestEmailHash: h, email: null, requestedAt: memberDetails[h]?.requestedAt || null, guestPublicKeyJwk: null }));
       const expired   = t.expiresAt && Date.now() > new Date(t.expiresAt).getTime();
       const expiryStr = t.expiresAt ? (expired ? '<svg class="icon" aria-hidden="true"><use href="#i-alert-triangle"></use></svg> Link expired' : `Link valid until ${new Date(t.expiresAt).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`) : '';
       const isExpanded = !!_expandedShareCodes[t.code];
-      const memberDetails = t.memberDetails || {};
 
       // Member sub-rows — only meaningful when there are joined members.
       // Each row shows the member's email-hash prefix (we don't store the
@@ -422,7 +434,7 @@ function renderShareTargetsList() {
       const memberRows = members ? `
         <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:${isExpanded?'block':'none'}" id="share-members-${t.code}">
           <div style="font-size:11px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Members</div>
-          ${(t.members||[]).map(memberHash => {
+          ${activeMembers.map(memberHash => {
             const md = memberDetails[memberHash] || {};
             const lastActive = md.lastActiveAt ? _relTime(md.lastActiveAt) : 'Not yet active';
             const firstSeen  = md.firstSeenAt  ? new Date(md.firstSeenAt).toLocaleDateString() : '—';
@@ -437,6 +449,33 @@ function renderShareTargetsList() {
                 </div>
               </div>
               ${editable ? `<button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:4px 8px;font-size:11px" onclick="removeShareMember('${t.code}','${memberHash}')" title="Remove this member"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>` : ''}
+            </div>`;
+          }).join('')}
+        </div>` : '';
+
+      // ── Pending requests section ─────────────────────────────
+      // People who followed the link and are waiting for approval. Owner-only
+      // (editable). Always visible (not gated by the members expand toggle) so
+      // a request is impossible to miss. Approve wraps the share key in the
+      // owner's session; Reject declines + revokes.
+      const pendingRows = (editable && pendingReqs.length) ? `
+        <div id="share-pending-${t.code}" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--accent)">
+          <div style="font-size:11px;color:var(--accent);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;font-weight:700">
+            <svg class="icon" aria-hidden="true" style="width:11px;height:11px;vertical-align:-1px"><use href="#i-clock"></use></svg>
+            Pending requests (${pendingReqs.length})
+          </div>
+          ${pendingReqs.map(pr => {
+            const who = pr.email ? esc(pr.email) : esc((pr.guestEmailHash||'').slice(0,12)) + '…';
+            const when = pr.requestedAt ? _relTime(pr.requestedAt) : '';
+            const hasKey = !!pr.guestPublicKeyJwk;
+            return `<div style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--bg);border:1px solid var(--accent);border-radius:8px;margin-bottom:6px">
+              <svg class="icon icon-sm" aria-hidden="true" style="color:var(--accent);flex-shrink:0"><use href="#i-user"></use></svg>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${who}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:1px">Requested${when?' '+esc(when):''}${hasKey?'':' · key pending'}</div>
+              </div>
+              <button class="btn btn-primary btn-sm" style="padding:5px 12px;font-size:11px"${hasKey?'':' disabled'} onclick="_approveShareRequestUI('${t.code}','${pr.guestEmailHash}')" title="Approve — grant access">Approve</button>
+              <button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:5px 10px;font-size:11px" onclick="_rejectShareRequestUI('${t.code}','${pr.guestEmailHash}')" title="Decline this request">Decline</button>
             </div>`;
           }).join('')}
         </div>` : '';
@@ -462,12 +501,13 @@ function renderShareTargetsList() {
           <div style="width:12px;height:12px;border-radius:50%;background:${colour};flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;font-weight:700">${typeEmoji[t.type]||'👤'} ${esc(t.name)}</div>
-            <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${t.type}${members?' · '+members+' member'+(members!==1?'s':''):''}${t.shareManagement && t.shareManagement !== 'none' ? ' · share-'+t.shareManagement : ''}</div>
+            <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${t.type}${members?' · '+members+' member'+(members!==1?'s':''):''}${(editable && pendingReqs.length)?` · <span style="color:var(--accent);font-weight:700">${pendingReqs.length} pending</span>`:''}${t.shareManagement && t.shareManagement !== 'none' ? ' · share-'+t.shareManagement : ''}</div>
             ${expiryStr?`<div style="font-size:10px;color:${expired?'var(--danger)':'var(--muted)'};margin-top:2px">${expiryStr}</div>`:''}
           </div>
           ${expandBtn}
           ${actionsHtml}
         </div>
+        ${pendingRows}
         ${memberRows}
       </div>`;
     }).join('');
@@ -485,6 +525,37 @@ function renderShareTargetsList() {
 function toggleShareMembers(code) {
   _expandedShareCodes[code] = !_expandedShareCodes[code];
   renderShareTargetsList();
+}
+
+// ── Approve a pending request (button handler) ──────────────────
+// Looks up the requester's pubkey from the folded pendingRequests, delegates
+// the ECDH wrap + POST to _approveShareRequest (app.js), then refreshes.
+async function _approveShareRequestUI(code, guestEmailHash) {
+  const t = (_shareTargets || []).find(x => x.code === code);
+  const pr = t && Array.isArray(t.pendingRequests)
+    ? t.pendingRequests.find(p => p.guestEmailHash === guestEmailHash) : null;
+  const pubKey = pr ? pr.guestPublicKeyJwk : null;
+  if (!pubKey) { toast('Cannot approve yet — requester key not available'); return; }
+  if (typeof _approveShareRequest !== 'function') { toast('Approve unavailable — please reload'); return; }
+  toast('Approving…');
+  const ok = await _approveShareRequest(code, guestEmailHash, pubKey);
+  if (ok) {
+    toast('Approved ✓');
+    if (typeof loadShareTargets === 'function') await loadShareTargets();
+    else renderShareTargetsList();
+  }
+}
+
+// ── Decline a pending request (button handler) ──────────────────
+async function _rejectShareRequestUI(code, guestEmailHash) {
+  if (!confirm('Decline this access request? They will be notified they can request again.')) return;
+  if (typeof _rejectShareRequest !== 'function') { toast('Decline unavailable — please reload'); return; }
+  const ok = await _rejectShareRequest(code, guestEmailHash);
+  if (ok) {
+    toast('Request declined');
+    if (typeof loadShareTargets === 'function') await loadShareTargets();
+    else renderShareTargetsList();
+  }
 }
 
 // Human-readable relative time ("3 mins ago", "2 hours ago", etc).
