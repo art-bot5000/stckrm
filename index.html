@@ -4497,7 +4497,7 @@
 <script src="app.js" defer></script>
 <script src="budget.js" defer></script>
 <script src="notes.js" defer></script>
-<script src="demo.js" defer></script>
+<!-- demo.js is lazy-loaded on demand via window._loadDemo() (only when ?action=demo). -->
 <script>
 // Demo mode early detection — set the flag and hide the wizard before
 // app.js boots, so the wizard doesn't flash on screen during loadData().
@@ -4540,7 +4540,23 @@ window._loadScanner = function() {
     document.head.appendChild(s);
   });
 };
-// Only two functions still need scanner.js — the actual camera scanner.
+// Lazy-load demo.js only in demo mode (?action=demo). For the ~all visitors
+// who never hit the demo URL, this keeps ~1,500 lines out of every page's
+// parse+execute. Same load-once pattern as _loadScanner above. The demo boot
+// path in app.js awaits this before calling any _seedDemoData/_showDemoBanner/
+// _showDemoNudge/_demoCompleteConversion (all of which live in demo.js).
+window._demoLoaded = false;
+window._loadDemo = function() {
+  if (window._demoLoaded) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'demo.js';
+    s.defer = true;
+    s.onload = () => { window._demoLoaded = true; resolve(); };
+    s.onerror = (e) => { console.error('demo.js failed to load:', e); reject(e); };
+    document.head.appendChild(s);
+  });
+};
 // Everything else (quickAdd, shareItem, logPicker, etc.) is now in app.js.
 // After _loadScanner() resolves, scanner.js redefines these on window,
 // so we re-call them — they're no longer the stub at that point.

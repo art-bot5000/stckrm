@@ -12825,12 +12825,15 @@ function showView(name, btn) {
   if (window._demoMode) {
     const nudgeMap = { grocery: 'groceries', savings: 'savings', budget: 'budget' };
     const which = nudgeMap[name];
+    // demo.js is loaded at demo boot, so these resolve in practice. Guard with
+    // typeof anyway — showView isn't async (can't await the loader here), and a
+    // nudge is non-critical, so degrade silently rather than risk a throw.
     if (which) {
       // Small delay so the tab's content has rendered before the callout
       // tries to anchor to it
-      setTimeout(() => _showDemoNudge(which), 400);
+      setTimeout(() => { if (typeof _showDemoNudge === 'function') _showDemoNudge(which); }, 400);
     } else {
-      _hideAllDemoNudges();
+      if (typeof _hideAllDemoNudges === 'function') _hideAllDemoNudges();
     }
   }
 }
@@ -17458,8 +17461,17 @@ async function kvRegister() {
     // account's starting state. This must run AFTER kvStoreSession (so the
     // session is durable) but BEFORE the email-verification step writes
     // anything else to IDB, so the storage backend swap is clean.
-    if (window._demoMode && _demoConvertSeed) {
-      try { await _demoCompleteConversion(); } catch (e) { console.error('demo convert failed:', e); }
+    if (window._demoMode) {
+      // Ensure demo.js is present before touching its conversion state/fns.
+      // In practice the demo boot path already loaded it, but awaiting here
+      // makes this block self-sufficient and sidesteps any load-order risk.
+      try { await window._loadDemo(); } catch (e) { console.error('demo.js load failed at conversion:', e); }
+      // _demoConvertSeed is a top-level `let` in demo.js (a lexical global, not
+      // a window property), so read it bare. The await above guarantees demo.js
+      // has run, so this resolves to the real binding (no ReferenceError).
+      if (typeof _demoConvertSeed !== 'undefined' && _demoConvertSeed) {
+        try { await _demoCompleteConversion(); } catch (e) { console.error('demo convert failed:', e); }
+      }
     }
     // Verify email ownership before continuing to protect screen.
     // We mark this as a "fresh registration" so the verification screen
@@ -28242,6 +28254,18 @@ async function init() {
   console.log('[DIAG] init branch: seen=', seen, 'kvConnected=', kvConnected, '_kvKey=', !!_kvKey, 'protectSeen=', protectSeen);
 
   if (window._landingAction === 'demo') {
+    // Demo mode — lazy-load demo.js up front (it's not in the eager script
+    // list). Everything below in this branch — _seedDemoData, _showDemoBanner,
+    // _showDemoNudge — lives in demo.js, so this must resolve before any of
+    // them is called. For non-demo visitors this module is never fetched.
+    try {
+      await window._loadDemo();
+    } catch (e) {
+      console.error('demo.js failed to load — cannot start demo:', e);
+      if (typeof toast === 'function') toast('Could not load the demo — please reload.');
+      hideDataLoadingOverlay();
+      return;
+    }
     // Demo mode — skip wizard, skip login, skip MFA. Seed in-memory data and
     // render straight into the app. Nothing persists past this tab session
     // because the dbGet/dbPut/dbDelete shim routes to in-memory Maps.
