@@ -5095,20 +5095,39 @@ function _renderSearchCategoryChip(r, query) {
 // in a try/catch so a missing function doesn't strand the user with a
 // half-closed UI. Modal opens immediately after the omnibox collapse so
 // the focus transition feels seamless on mobile.
+// Budget editor actions reachable from global search live in the lazy-loaded
+// budget-ui.js. When a search chip targets one of these, the bundle may not be
+// loaded yet (the user can search and tap a budget result without ever opening
+// the Budget view), so we load it first, then dispatch.
+const _BUDGET_UI_CHIP_ACTIONS = new Set([
+  'openSpendTxEditor', 'openBudgetCategoryEditor', 'openAccountEditor',
+  'openUpdateBalanceModal', 'openBillEditor', 'openIncomeTemplateEditor',
+]);
 function _searchChipAction(fnName, ...args) {
   try { closeGlobalSearch(); } catch (_) {}
   if (typeof collapseOmnibox === 'function') {
     try { collapseOmnibox(); } catch (_) {}
   }
-  const fn = (typeof window !== 'undefined') ? window[fnName] : null;
-  if (typeof fn !== 'function') {
-    console.warn('[search-chip] action not available:', fnName);
-    return;
-  }
+  const _dispatch = () => {
+    const fn = (typeof window !== 'undefined') ? window[fnName] : null;
+    if (typeof fn !== 'function') {
+      console.warn('[search-chip] action not available:', fnName);
+      return;
+    }
+    try { fn(...args); } catch (e) { console.error('[search-chip] action failed:', fnName, e); }
+  };
   // Defer one tick so the omnibox collapse animation has begun before the
   // modal renders on top; avoids a brief overlay+modal stacking flash.
   setTimeout(() => {
-    try { fn(...args); } catch (e) { console.error('[search-chip] action failed:', fnName, e); }
+    if (_BUDGET_UI_CHIP_ACTIONS.has(fnName) && typeof window[fnName] !== 'function'
+        && typeof window._loadBudgetUI === 'function') {
+      window._loadBudgetUI().then(_dispatch).catch(err => {
+        console.error('[search-chip] budget-ui load failed:', err);
+        if (typeof toast === 'function') toast('Budget unavailable — please reload the page');
+      });
+    } else {
+      _dispatch();
+    }
   }, 30);
 }
 
@@ -12752,7 +12771,21 @@ function showView(name, btn) {
       renderGrocery();
     }
   }
-  if (name === 'budget')    renderBudget();
+  if (name === 'budget') {
+    // Budget view UI lives in the lazy-loaded budget-ui.js. Load it on
+    // first open (no-op once loaded), then render. renderBudget itself is
+    // defined in budget-ui.js, so it only exists after the load resolves.
+    if (typeof window._loadBudgetUI === 'function') {
+      window._loadBudgetUI().then(() => {
+        if (typeof renderBudget === 'function') renderBudget();
+      }).catch(err => {
+        console.error('budget-ui.js failed to load:', err);
+        if (typeof toast === 'function') toast('Budget unavailable — please reload the page');
+      });
+    } else if (typeof renderBudget === 'function') {
+      renderBudget();
+    }
+  }
   if (name === 'notes')     { if (billingLocked === 'notes') _renderBillingLockscreen('notes'); else { renderNotes(); setTimeout(_maybeShowMfaPrompt, 600); } }
   if (name === 'account-security') renderAccountSecurity();
   if (name === 'accessibility') {

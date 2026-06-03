@@ -4557,6 +4557,26 @@ window._loadDemo = function() {
     document.head.appendChild(s);
   });
 };
+// Lazy-load budget-ui.js (the Budget VIEW: all render/editor/modal/calendar/
+// Amazon-importer code) only when the user first opens the Budget view. The
+// always-loaded budget.js (core) handles boot data load, sync merges and the
+// omnibox quick-add, so the ~7,500-line UI half stays out of every page's
+// parse+execute for visitors who never open Budget. Same load-once pattern as
+// _loadScanner / _loadDemo. app.js awaits this inside showView('budget')
+// before calling renderBudget(), and the global-search budget chip actions
+// await it before opening a budget editor.
+window._budgetUILoaded = false;
+window._loadBudgetUI = function() {
+  if (window._budgetUILoaded) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'budget-ui.js';
+    s.defer = true;
+    s.onload = () => { window._budgetUILoaded = true; resolve(); };
+    s.onerror = (e) => { console.error('budget-ui.js failed to load:', e); reject(e); };
+    document.head.appendChild(s);
+  });
+};
 // Everything else (quickAdd, shareItem, logPicker, etc.) is now in app.js.
 // After _loadScanner() resolves, scanner.js redefines these on window,
 // so we re-call them — they're no longer the stub at that point.
