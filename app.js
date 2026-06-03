@@ -23626,12 +23626,6 @@ function renderGroceryChrome() {
 // `checkedBar` (they're cheap lookups) so this function is self-contained
 // and callable independently of the chrome. Only reached when the chrome
 // returned falsy (active single/multi list with a real list body present).
-<<<<<<< Updated upstream
-// Keyed-row diff master switch. The per-commit _canDiff guard restricts the
-// diff to the ALPHA path only (step 3); the dept path still full-rebuilds
-// until step 4 wires its collapse-snapshot handling. Flipping this on with the
-// alpha-only guard in place is safe — dept can't reach the diff branch.
-=======
 // Keyed-row diff master switch. Both diffable paths are now live: ALPHA
 // (step 3) diffs unchecked rows + rebuilds the small checked section; DEPT
 // (step 4) diffs at the group level with collapse snapshot/reapply. The
@@ -23639,7 +23633,6 @@ function renderGroceryChrome() {
 // target-mode, so any layout transition (alpha↔dept, edit/empty/nomatch)
 // falls back to a full rebuild. Set this to false to disable diffing entirely
 // (instant revert to full-rebuild behaviour, no other changes needed).
->>>>>>> Stashed changes
 const _GROCERY_BODY_DIFF_ON = true;
 
 function renderGroceryBody() {
@@ -23820,10 +23813,7 @@ function renderGroceryBody() {
   // Null in dept mode so the commit knows which path to take.
   let _alphaDesired = null;     // ordered [{id, sig, html}] of unchecked rows
   let _alphaCheckedHtml = null; // the "✓ Checked" section markup (or '')
-<<<<<<< Updated upstream
-=======
   let _deptDesired = null;      // ordered [{id, sig, html}] of dept GROUPS (step 4)
->>>>>>> Stashed changes
 
   if (grocerySort === 'dept') {
     _deptDesired = [];
@@ -23943,16 +23933,6 @@ function renderGroceryBody() {
   // ── Commit: full rebuild vs keyed diff (build-order steps 2–4) ──────
   // Diff only when the master switch is on AND the previous render was the
   // SAME diffable layout. Any structure swap (alpha↔dept, in from edit/empty/
-<<<<<<< Updated upstream
-  // nomatch) must full-rebuild — never diff across a layout change. Step 3
-  // enables the ALPHA path; dept still full-rebuilds (step 4 will wire it).
-  const _canDiff = _GROCERY_BODY_DIFF_ON
-                && _prevRenderMode === _targetRenderMode
-                && _targetRenderMode === 'alpha'
-                && _alphaDesired !== null;
-
-  if (_canDiff) {
-=======
   // nomatch) must full-rebuild — never diff across a layout change. Steps 3–4
   // enable the ALPHA and DEPT paths respectively.
   const _sameMode = _GROCERY_BODY_DIFF_ON && _prevRenderMode === _targetRenderMode;
@@ -23960,7 +23940,6 @@ function renderGroceryBody() {
   const _canDiffDept  = _sameMode && _targetRenderMode === 'dept'  && _deptDesired  !== null;
 
   if (_canDiffAlpha) {
->>>>>>> Stashed changes
     // ALPHA keyed diff.
     // 1. Detach the existing checked-section so the keyed unchecked rows form
     //    a clean run at the top of body (the reconciler diffs body's direct
@@ -23982,8 +23961,6 @@ function renderGroceryBody() {
       const sec = tmp.firstElementChild;
       if (sec) body.appendChild(sec);
     }
-<<<<<<< Updated upstream
-=======
   } else if (_canDiffDept) {
     // DEPT keyed diff — diff at the GROUP level (groups carry data-id=deptId
     // and a data-sig over shape+counts+member sigs). A changed group is
@@ -24024,7 +24001,6 @@ function renderGroceryBody() {
       el.style.display = wasCollapsed ? 'none' : '';
       if (chevron) chevron.style.transform = wasCollapsed ? '' : 'rotate(180deg)';
     });
->>>>>>> Stashed changes
   } else {
     body.innerHTML = html;
   }
