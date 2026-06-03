@@ -25811,6 +25811,37 @@ function showLockBanner(section) {
 }
 
 // Save/restore share state from localStorage
+// Guest-side share-key recovery via ECDH. The owner stores a key wrapped for
+// THIS guest at /share/ecdh-key/get; we fetch it and unwrap with our private
+// key. This is the guest analogue of recoverShareKey (which is owner-only —
+// it uses /share/key/get + the owner's own _kvKey). Returns a CryptoKey on
+// success, null otherwise. Caches the unwrapped key locally so subsequent
+// loads hit the fast path. Does NOT fire a rewrap-request — callers decide.
+async function _recoverShareKeyForGuest(code) {
+  if (!WORKER_URL || !_kvEmailHash || (!_kvVerifier && !_kvSessionToken)) return null;
+  try {
+    const guestPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
+    if (!guestPrivKey) return null;
+    const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+    const res = await postKV(`${WORKER_URL}/share/ecdh-key/get`, { guestEmailHash: _kvEmailHash, ...authFields, code });
+    if (!res.ok) return null; // 404 = not wrapped yet (still pending / owner offline)
+    const { wrappedKey, ownerPublicKeyJwk } = (await _readJsonSafe(res)) || {};
+    if (!wrappedKey || !ownerPublicKeyJwk) return null;
+    const sk = await ecdhUnwrapShareKey(guestPrivKey, ownerPublicKeyJwk, wrappedKey);
+    // Cache locally so subsequent loads don't need the round-trip.
+    try {
+      const b64 = await exportShareKey(sk);
+      const stored = await _getShareKeys();
+      stored[code] = b64;
+      await _setShareKeys(stored);
+    } catch(e) {}
+    return sk;
+  } catch(e) {
+    console.warn('[share] guest key recovery failed:', e?.message || e);
+    return null;
+  }
+}
+
 async function loadShareState() {
   try {
     const raw = localStorage.getItem('stockroom_share_state');
@@ -25839,6 +25870,29 @@ async function loadShareState() {
         _shareKey = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
       }
     } catch(e) { console.warn('Could not restore share key from cache:', e.message); }
+    // Local cache miss (new device, cleared storage, or approved in a prior
+    // session whose cache was lost) — recover the ECDH-wrapped key from the
+    // server. Without this, an approved guest whose local key cache is empty
+    // is stuck with _shareState set but _shareKey null, and every pull bails
+    // with "no share key in memory". Skip for pending shares (no key yet).
+    if (!_shareKey && !stored._pending && !stored._declined) {
+      try {
+        const sk = await _recoverShareKeyForGuest(stored.code);
+        if (sk) {
+          _shareKey = sk;
+          console.log('[share] recovered share key from server for', stored.code);
+          try { if (kvConnected) await kvSyncNow(true); } catch(_) {}
+          try { updateHouseholdShareUI(); } catch(_) {}
+          try { scheduleRender(...RENDER_REGIONS); } catch(_) {}
+        } else {
+          // No wrapped key on the server yet — fall back to the rewrap-request
+          // path so the owner's next sync (re)wraps for us.
+          const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+          try { await postKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, { guestEmailHash: _kvEmailHash, ...authFields, code: stored.code }); } catch(_) {}
+          console.warn('[share] no server key yet for', stored.code, '— rewrap requested');
+        }
+      } catch(e) { console.warn('[share] server key recovery error:', e?.message || e); }
+    }
   } catch(e) {}
 }
 
