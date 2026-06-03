@@ -23626,10 +23626,20 @@ function renderGroceryChrome() {
 // `checkedBar` (they're cheap lookups) so this function is self-contained
 // and callable independently of the chrome. Only reached when the chrome
 // returned falsy (active single/multi list with a real list body present).
+<<<<<<< Updated upstream
 // Keyed-row diff master switch. The per-commit _canDiff guard restricts the
 // diff to the ALPHA path only (step 3); the dept path still full-rebuilds
 // until step 4 wires its collapse-snapshot handling. Flipping this on with the
 // alpha-only guard in place is safe — dept can't reach the diff branch.
+=======
+// Keyed-row diff master switch. Both diffable paths are now live: ALPHA
+// (step 3) diffs unchecked rows + rebuilds the small checked section; DEPT
+// (step 4) diffs at the group level with collapse snapshot/reapply. The
+// per-commit _canDiffAlpha / _canDiffDept guards still require prev-mode ===
+// target-mode, so any layout transition (alpha↔dept, edit/empty/nomatch)
+// falls back to a full rebuild. Set this to false to disable diffing entirely
+// (instant revert to full-rebuild behaviour, no other changes needed).
+>>>>>>> Stashed changes
 const _GROCERY_BODY_DIFF_ON = true;
 
 function renderGroceryBody() {
@@ -23810,8 +23820,13 @@ function renderGroceryBody() {
   // Null in dept mode so the commit knows which path to take.
   let _alphaDesired = null;     // ordered [{id, sig, html}] of unchecked rows
   let _alphaCheckedHtml = null; // the "✓ Checked" section markup (or '')
+<<<<<<< Updated upstream
+=======
+  let _deptDesired = null;      // ordered [{id, sig, html}] of dept GROUPS (step 4)
+>>>>>>> Stashed changes
 
   if (grocerySort === 'dept') {
+    _deptDesired = [];
     // Use manual order within each department group
     const ordered = getGroceryItemsInOrder();
     let filteredOrdered = ordered.filter(i => !query || i.name.toLowerCase().includes(query) || (i.notes||'').toLowerCase().includes(query));
@@ -23842,9 +23857,24 @@ function renderGroceryBody() {
       const allChecked = bucket.unchecked.length === 0 && bucket.checked.length > 0;
       const totalCount = bucket.unchecked.length + bucket.checked.length;
 
+      // Per-group signature: any change here forces a wholesale group replace
+      // (we diff at the GROUP level, not inside a group — a dept can flip shape
+      // mixed↔collapsible as its last item is ticked, which restructures the
+      // group body; replacing the small group whole sidesteps that landmine
+      // while still avoiding a full-body rebuild). Captures shape, label/emoji,
+      // both counts, and every member row's sig in order.
+      const _grpSig = [
+        allChecked ? 'C' : 'M',
+        deptId, deptDef.emoji, deptDef.name,
+        bucket.unchecked.length, bucket.checked.length,
+        ...bucket.unchecked.map(_groceryRowSig),
+        ...bucket.checked.map(_groceryRowSig),
+      ].join('\x1f');
+
+      let _grpHtml;
       // Fully-checked dept: show collapsed with toggle
       if (allChecked) {
-        html += `<div class="grocery-dept-group">
+        _grpHtml = `<div class="grocery-dept-group" data-dept="${deptId}" data-id="${deptId}" data-sig="${esc(_grpSig)}">
           <div class="grocery-dept-header" onclick="_toggleDeptCollapse('${deptId}')" style="cursor:pointer">
             <span class="grocery-dept-label" style="color:var(--muted);text-decoration:line-through">${deptDef.emoji} ${esc(deptDef.name)}</span>
             <span style="display:flex;align-items:center;gap:6px">
@@ -23856,23 +23886,25 @@ function renderGroceryBody() {
             ${bucket.checked.map(item => groceryItemHTML(item)).join('')}
           </div>
         </div>`;
-        return;
+      } else {
+        // Mixed dept: unchecked first, then checked at bottom of this dept
+        _grpHtml = `<div class="grocery-dept-group" data-dept="${deptId}" data-id="${deptId}" data-sig="${esc(_grpSig)}">
+          <div class="grocery-dept-header">
+            <span class="grocery-dept-label">${deptDef.emoji} ${esc(deptDef.name)}</span>
+            <span style="display:flex;align-items:center;gap:8px">
+              <span class="grocery-dept-count">${bucket.unchecked.length}${bucket.checked.length ? ` · ${bucket.checked.length} done` : ''}</span>
+              <button onclick="event.stopPropagation();addGroceryItemToDept('${deptId}')"
+                style="background:none;border:none;cursor:pointer;color:var(--accent);font-size:22px;line-height:1;padding:0 2px;font-weight:300;transition:opacity 0.15s"
+                title="Add item to ${deptDef.name}">＋</button>
+            </span>
+          </div>
+          ${bucket.unchecked.map(item => groceryItemHTML(item)).join('')}
+          ${bucket.checked.length ? `<div style="border-top:1px dashed rgba(46,51,80,0.4);margin-top:2px">${bucket.checked.map(item => groceryItemHTML(item)).join('')}</div>` : ''}
+        </div>`;
       }
 
-      // Mixed dept: unchecked first, then checked at bottom of this dept
-      html += `<div class="grocery-dept-group">
-        <div class="grocery-dept-header">
-          <span class="grocery-dept-label">${deptDef.emoji} ${esc(deptDef.name)}</span>
-          <span style="display:flex;align-items:center;gap:8px">
-            <span class="grocery-dept-count">${bucket.unchecked.length}${bucket.checked.length ? ` · ${bucket.checked.length} done` : ''}</span>
-            <button onclick="event.stopPropagation();addGroceryItemToDept('${deptId}')"
-              style="background:none;border:none;cursor:pointer;color:var(--accent);font-size:22px;line-height:1;padding:0 2px;font-weight:300;transition:opacity 0.15s"
-              title="Add item to ${deptDef.name}">＋</button>
-          </span>
-        </div>
-        ${bucket.unchecked.map(item => groceryItemHTML(item)).join('')}
-        ${bucket.checked.length ? `<div style="border-top:1px dashed rgba(46,51,80,0.4);margin-top:2px">${bucket.checked.map(item => groceryItemHTML(item)).join('')}</div>` : ''}
-      </div>`;
+      _deptDesired.push({ id: deptId, sig: _grpSig, html: _grpHtml });
+      html += _grpHtml;
     });
   } else {
     // Alpha view — sort alphabetically but preserve manual sub-order within same letter
@@ -23911,6 +23943,7 @@ function renderGroceryBody() {
   // ── Commit: full rebuild vs keyed diff (build-order steps 2–4) ──────
   // Diff only when the master switch is on AND the previous render was the
   // SAME diffable layout. Any structure swap (alpha↔dept, in from edit/empty/
+<<<<<<< Updated upstream
   // nomatch) must full-rebuild — never diff across a layout change. Step 3
   // enables the ALPHA path; dept still full-rebuilds (step 4 will wire it).
   const _canDiff = _GROCERY_BODY_DIFF_ON
@@ -23919,6 +23952,15 @@ function renderGroceryBody() {
                 && _alphaDesired !== null;
 
   if (_canDiff) {
+=======
+  // nomatch) must full-rebuild — never diff across a layout change. Steps 3–4
+  // enable the ALPHA and DEPT paths respectively.
+  const _sameMode = _GROCERY_BODY_DIFF_ON && _prevRenderMode === _targetRenderMode;
+  const _canDiffAlpha = _sameMode && _targetRenderMode === 'alpha' && _alphaDesired !== null;
+  const _canDiffDept  = _sameMode && _targetRenderMode === 'dept'  && _deptDesired  !== null;
+
+  if (_canDiffAlpha) {
+>>>>>>> Stashed changes
     // ALPHA keyed diff.
     // 1. Detach the existing checked-section so the keyed unchecked rows form
     //    a clean run at the top of body (the reconciler diffs body's direct
@@ -23940,6 +23982,49 @@ function renderGroceryBody() {
       const sec = tmp.firstElementChild;
       if (sec) body.appendChild(sec);
     }
+<<<<<<< Updated upstream
+=======
+  } else if (_canDiffDept) {
+    // DEPT keyed diff — diff at the GROUP level (groups carry data-id=deptId
+    // and a data-sig over shape+counts+member sigs). A changed group is
+    // replaced WHOLE rather than diffed internally: a dept can flip shape
+    // (mixed↔collapsible) when its last item is ticked, which restructures the
+    // group body — wholesale replace of a small group is simpler and safer
+    // than intra-group structure-swap diffing, and still avoids a full-body
+    // rebuild (so scroll holds).
+    //
+    // Collapse is DOM-only state (no model field): _toggleDeptCollapse mutates
+    // dept-body-${id}.style.display and dept-chevron-${id}.style.transform on
+    // live nodes. Snapshot it BEFORE the diff and reapply AFTER, because any
+    // replaced collapsible group renders with its baked-in default (collapsed),
+    // losing a user's manual expand/collapse. Skipped (unchanged) groups keep
+    // their live state automatically — the snapshot only matters for replaced
+    // or newly-inserted collapsible groups.
+
+    // Snapshot: deptId -> true if collapsed (display:none), false if expanded.
+    // Only collapsible depts have a dept-body node.
+    const collapseState = new Map();
+    body.querySelectorAll('[id^="dept-body-"]').forEach(el => {
+      const id = el.id.slice('dept-body-'.length);
+      collapseState.set(id, el.style.display === 'none');
+    });
+
+    // Reconcile the dept GROUPS (reusing the same keyed reconciler — groups are
+    // just "rows" keyed by deptId).
+    _diffKeyedRows(body, _deptDesired);
+
+    // Reapply collapse to every collapsible group still present. Freshly-built
+    // collapsible groups default to display:none (collapsed) + chevron upright;
+    // restore the snapshot so an expanded dept stays expanded across the diff.
+    body.querySelectorAll('[id^="dept-body-"]').forEach(el => {
+      const id = el.id.slice('dept-body-'.length);
+      if (!collapseState.has(id)) return; // newly-appeared collapsible dept: keep default (collapsed)
+      const wasCollapsed = collapseState.get(id);
+      const chevron = document.getElementById(`dept-chevron-${id}`);
+      el.style.display = wasCollapsed ? 'none' : '';
+      if (chevron) chevron.style.transform = wasCollapsed ? '' : 'rotate(180deg)';
+    });
+>>>>>>> Stashed changes
   } else {
     body.innerHTML = html;
   }
