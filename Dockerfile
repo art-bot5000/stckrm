@@ -5,7 +5,7 @@ RUN npm install
 COPY app.js budget.js budget-ui.js notes.js notes-ui.js share-ui.js demo.js scanner.js ./
 COPY styles.css index.html landing.html ./
 COPY sw.js manifest.json admin.html diag-trusted.html ./
-COPY logo.png logo.webp ./
+COPY logo.png logo.webp favicon.ico ./
 COPY zxing.min.js ./
 RUN mkdir -p public && \
     npx terser app.js     --compress passes=3 --mangle --comments false -o public/app.js && \
@@ -33,6 +33,7 @@ RUN mkdir -p public && \
     cp diag-trusted.html public/diag-trusted.html && \
     cp logo.png public/logo.png && \
     cp logo.webp public/logo.webp && \
+    cp favicon.ico public/favicon.ico && \
     cp zxing.min.js public/zxing.min.js
 
 FROM denoland/deno:2.3.1

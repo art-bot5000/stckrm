@@ -218,7 +218,7 @@ RUN npm install
 COPY app.js budget.js budget-ui.js notes.js notes-ui.js demo.js scanner.js ./
 COPY styles.css index.html landing.html ./
 COPY sw.js manifest.json admin.html diag-trusted.html ./
-COPY logo.png logo.webp ./
+COPY logo.png logo.webp favicon.ico ./
 RUN mkdir -p public && \\
     npx terser app.js     --compress passes=3 --mangle --comments false -o public/app.js && \\
     npx terser budget.js  --compress passes=3 --mangle --comments false -o public/budget.js && \\
@@ -243,7 +243,8 @@ RUN mkdir -p public && \\
     cp admin.html public/admin.html && \\
     cp diag-trusted.html public/diag-trusted.html && \\
     cp logo.png public/logo.png && \\
-    cp logo.webp public/logo.webp
+    cp logo.webp public/logo.webp && \\
+    cp favicon.ico public/favicon.ico
 
 FROM denoland/deno:2.3.1
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && \\
