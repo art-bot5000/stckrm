@@ -459,6 +459,24 @@ function renderShareTargetsList() {
   }
   if (section) section.style.display = '';
 
+  // Auto-resync: when the owner opens the Share Access view, push fresh data
+  // to every share they own so guests get current data without the owner
+  // having to tap "Re-sync data to guest" manually. Debounced to once per
+  // 30s so repeated re-renders don't spam pushes. Owner-only (guests have no
+  // _shareTargets to push). Fire-and-forget — never blocks the render.
+  if (!_shareState && Array.isArray(_shareTargets) && _shareTargets.length) {
+    const nowTs = Date.now();
+    if (!window.__lastShareAutoResync || (nowTs - window.__lastShareAutoResync) > 30000) {
+      window.__lastShareAutoResync = nowTs;
+      (async () => {
+        for (const t of _shareTargets) {
+          try { await pushSharedData(t.code); } catch(e) { console.warn('[share] auto-resync failed for', t.code, e?.message || e); }
+        }
+        console.log('[share] auto-resynced', _shareTargets.length, 'share(s) on opening Share Access');
+      })();
+    }
+  }
+
   // Treat the user as effective owner of the Share Access section if they
   // either are not in guest mode at all, OR they have at least one owned
   // share. Without this, an owner-who-also-joined-another-share would see

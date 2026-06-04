@@ -20415,7 +20415,13 @@ async function kvSyncNow(silent = false) {
       }
       const localLastSynced  = settings.lastSynced ? new Date(settings.lastSynced).getTime() : 0;
       const remoteLastSynced = remote.lastSynced   ? new Date(remote.lastSynced).getTime()   : 0;
-      const remoteWins       = remoteLastSynced > localLastSynced;
+      // When we're a GUEST viewing a share (_shareState set), the remote blob
+      // IS the source of truth — we're displaying the owner's data, not merging
+      // our own peer edits. Timestamp comparison is unreliable here (the guest's
+      // own lastSynced can easily be newer than the share blob's); if remoteWins
+      // came out false the shared lists/items/reminders would only be partially
+      // merged or skipped. Force remote-authoritative in share-view mode.
+      const remoteWins       = (!!_shareState) || (remoteLastSynced > localLastSynced);
       // ── Guest-side share diff snapshot ──
       // When this pull is coming from a share blob (i.e. we're a guest),
       // snapshot items BEFORE the merge so we can emit notifications for
@@ -24132,15 +24138,14 @@ function renderGroceryBody() {
 // body) it returns truthy and we stop. Otherwise we render the body.
 function renderGrocery() {
   // Guest share-view: the active list defaults to the guest's own 'default'
-  // list, but the SHARED list (e.g. "Asda 30 May") is a different list id.
-  // If we're viewing a share and the current active list has no visible items
-  // while another (shared) list does, switch to the populated shared list so
-  // the guest actually sees what was shared instead of an empty default list.
+  // list, but the SHARED list is a different list id. If we're viewing a share
+  // and the current active list has no visible items while a shared list does,
+  // switch to the populated shared list so the guest sees the shared content
+  // instead of an empty default list. Guarded to guests; never affects owner.
   if (_shareState && Array.isArray(groceryItems) && Array.isArray(groceryLists)) {
     const liveItems = groceryItems.filter(i => !i._deletedAt);
     const activeHasItems = liveItems.some(i => (i.listId || 'default') === activeGroceryListId);
     if (!activeHasItems && liveItems.length) {
-      // Find the list that actually holds shared items.
       const populatedListId = (liveItems[0].listId) || 'default';
       const targetList = groceryLists.find(l => l.id === populatedListId && !l._deletedAt);
       if (targetList && activeGroceryListId !== populatedListId) {
@@ -26088,11 +26093,40 @@ async function loadShareState() {
           try { updateHouseholdShareUI(); } catch(_) {}
           try { scheduleRender(...RENDER_REGIONS); } catch(_) {}
         } else {
-          // No wrapped key on the server yet — fall back to the rewrap-request
-          // path so the owner's next sync (re)wraps for us.
+          // No wrapped key recovered. EITHER the key isn't wrapped for us yet,
+          // OR the share was deleted / we were removed — both look like a 404
+          // from the key endpoint. Probe /share/join to disambiguate: a live
+          // share where we're still a member returns the target; a gone/removed
+          // share returns 404 or notGranted. If dead, CLEAR the stale state and
+          // drop back to our own data rather than looping "no share key in
+          // memory" forever (the symptom after an owner deletes a share).
           const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
-          try { await postKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, { guestEmailHash: _kvEmailHash, ...authFields, code: stored.code }); } catch(_) {}
-          console.warn('[share] no server key yet for', stored.code, '— rewrap requested');
+          let shareIsDead = false;
+          try {
+            const probe = await postKV(`${WORKER_URL}/share/join`, { code: stored.code, guestEmailHash: _kvEmailHash, ...authFields });
+            if (probe.status === 404) {
+              shareIsDead = true;
+            } else if (probe.status === 403) {
+              const pj = await probe.json().catch(() => ({}));
+              if (pj.notGranted) shareIsDead = true;
+            }
+          } catch(_) { /* network error — leave state, retry next load */ }
+
+          if (shareIsDead) {
+            console.warn('[share] share', stored.code, 'is gone or access revoked — clearing stale state');
+            _shareState = null; _shareKey = null; _sharedFileId = null;
+            try { saveShareState(); } catch(_) {}
+            try {
+              const sk2 = await _getShareKeys();
+              if (sk2 && sk2[stored.code]) { delete sk2[stored.code]; await _setShareKeys(sk2); }
+            } catch(_) {}
+            try { if (typeof loadProfile === 'function') await loadProfile('default'); } catch(_) {}
+            try { applyTabPermissions(); } catch(_) {}
+          } else {
+            // Share is live but not yet wrapped for us — request a rewrap.
+            try { await postKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, { guestEmailHash: _kvEmailHash, ...authFields, code: stored.code }); } catch(_) {}
+            console.warn('[share] no server key yet for', stored.code, '— rewrap requested');
+          }
         }
       } catch(e) { console.warn('[share] server key recovery error:', e?.message || e); }
     }
@@ -26620,6 +26654,10 @@ async function pushSharedData(code, shareKey) {
       // "inherit section perm" to "not shared" — so only explicitly
       // allow-listed records go in the blob, not the whole section.
       const recordScoped = !!target?.recordScoped;
+      // Whole-section budget data (bills, accounts, income, settings) only
+      // flows for a SECTION budget share — never for a record-scoped "share
+      // this category" share, which must expose only the shared category.
+      const budgetSectionLevel = canSeeBudget && !recordScoped;
       const filteredItems     = canSeeStockroom
         ? _filterRecordsForShare(hItems, code, perms.stockroom, recordScoped)
         : [];
@@ -26659,9 +26697,16 @@ async function pushSharedData(code, shareKey) {
         groceryListDeletedIds:   canSeeGroceries ? [...groceryListTombstones] : [],
         // Budget — Phase 1 (bills) + Phase 2 (categories, transactions) + Phase 3 (accounts, income).
         // Lives at user-level (not per-household), so the same data goes to every share with budget perm.
-        bills:                       canSeeBudget ? bills           : [],
-        billInstances:               canSeeBudget ? billInstances   : {},
-        budgetSettings:              canSeeBudget ? budgetSettings  : {},
+        // RECORD-SCOPED budget shares ("share this spend category") must NOT
+        // leak the rest of the budget section — bills, accounts, income and
+        // settings are whole-section data and only belong in a SECTION budget
+        // share (e.g. a family "Add Person" share with Budget enabled). For a
+        // record-scoped share we send ONLY the shared categories + their
+        // transactions (handled by budgetFiltered below). budgetSectionLevel
+        // gates the whole-section extras.
+        bills:                       budgetSectionLevel ? bills           : [],
+        billInstances:               budgetSectionLevel ? billInstances   : {},
+        budgetSettings:              budgetSectionLevel ? budgetSettings  : {},
         // Categories + transactions filtered by per-category share state.
         // Tombstones flow unfiltered — knowing an unknown id was deleted
         // tells the guest nothing they didn't already know nothing about.
@@ -26669,12 +26714,12 @@ async function pushSharedData(code, shareKey) {
         transactions:                budgetFiltered.transactions,
         budgetCategoryDeletedIds:    canSeeBudget ? [...budgetCategoryDeletedIds]    : [],
         budgetTransactionDeletedIds: canSeeBudget ? [...budgetTransactionDeletedIds] : [],
-        budgetAccounts:              canSeeBudget ? budgetAccounts  : [],
-        incomeTemplates:             canSeeBudget ? incomeTemplates : [],
-        incomeEntries:               canSeeBudget ? incomeEntries   : {},
-        budgetAccountDeletedIds:     canSeeBudget ? [...budgetAccountDeletedIds]   : [],
-        incomeTemplateDeletedIds:    canSeeBudget ? [...incomeTemplateDeletedIds]  : [],
-        incomeEntryDeletedIds:       canSeeBudget ? [...incomeEntryDeletedIds]    : [],
+        budgetAccounts:              budgetSectionLevel ? budgetAccounts  : [],
+        incomeTemplates:             budgetSectionLevel ? incomeTemplates : [],
+        incomeEntries:               budgetSectionLevel ? incomeEntries   : {},
+        budgetAccountDeletedIds:     budgetSectionLevel ? [...budgetAccountDeletedIds]   : [],
+        incomeTemplateDeletedIds:    budgetSectionLevel ? [...incomeTemplateDeletedIds]  : [],
+        incomeEntryDeletedIds:       budgetSectionLevel ? [...incomeEntryDeletedIds]    : [],
         // Per-note sharing. Notes don't sit under a section perm — each
         // note's `share` field is the sole gate. _filterNotesForShare
         // walks the notes array, includes any whose share resolves to
