@@ -5735,7 +5735,7 @@ Deno.serve(async (request) => {
   if (url.pathname === '/share/create' && request.method === 'POST') {
     try {
       const body = await request.json();
-      const { ownerEmailHash, verifier, sessionToken, name, type, ownerName, households, householdNames, colour, shareManagement, guestEmail, pendingInvite, recordScoped } = body;
+      const { ownerEmailHash, verifier, sessionToken, name, type, ownerName, households, householdNames, colour, shareManagement, guestEmail, pendingInvite, recordScoped, grantedMember } = body;
       if (!ownerEmailHash || (!verifier && !sessionToken) || !name || !households) return json({ error: 'Missing required fields' }, corsHeaders, 400);
       if (sessionToken) {
         const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
@@ -5757,6 +5757,17 @@ Deno.serve(async (request) => {
         && typeof pendingInvite.guestEmailHash === 'string'
         ? { guestEmailHash: pendingInvite.guestEmailHash, guestEmail: pendingInvite.guestEmail || null }
         : null;
+      // GRANT→ACCEPT model: the owner grants a specific person at create time
+      // and has already wrapped the share key for them (stored separately via
+      // /share/ecdh-key/store). Seed that person into members as ACTIVE so
+      // their first join admits them directly — no request/approve step.
+      const nowIso = new Date().toISOString();
+      const seededMembers: string[] = [];
+      const seededDetails: Record<string, any> = {};
+      if (typeof grantedMember === 'string' && grantedMember && grantedMember !== ownerEmailHash) {
+        seededMembers.push(grantedMember);
+        seededDetails[grantedMember] = { status: 'active', grantedAt: nowIso, firstSeenAt: null };
+      }
       const target = {
         name, type: type||'guest', ownerName: ownerName||'Owner', ownerEmailHash,
         households, householdNames: householdNames||{}, colour: colour||'#e8a838',
@@ -5764,10 +5775,10 @@ Deno.serve(async (request) => {
         ...(recordScoped === true ? { recordScoped: true } : {}),
         ...(typeof guestEmail === 'string' && guestEmail ? { guestEmail } : {}),
         ...(validPending ? { pendingInvite: validPending } : {}),
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso,
         expiresAt: new Date(Date.now() + 60*60*1000).toISOString(),
-        members: [],
-        memberDetails: {},
+        members: seededMembers,
+        memberDetails: seededDetails,
       };
       await kvSet(['share', code], JSON.stringify(target));
       const link = `${env.APP_URL}?join=${code}`;
@@ -6076,82 +6087,38 @@ Deno.serve(async (request) => {
       if (!target.members) target.members = [];
       if (!target.memberDetails) target.memberDetails = {};
 
-      // ── Request → approve handshake ──────────────────────────────
-      // A join no longer grants access. It creates (or refreshes) a
-      // membership record whose `status` gates everything:
-      //   'pending'  — admitted to the members list and visible in the
-      //                guest's share list, but NO ECDH key is wrapped yet,
-      //                so no data decrypts. Owner must approve.
-      //   'active'   — approved; owner has wrapped the share key. Full access.
-      //                (Legacy members predating this change have NO status
-      //                 field and are treated as active — migration-free.)
-      //   'rejected' — owner declined. The guest may re-request (which clears
-      //                the flag and re-emails the owner, rate-limited below).
+      // ── GRANT→ACCEPT model ───────────────────────────────────────
+      // Access is granted by the owner at share-creation time: the granted
+      // person is seeded into members as 'active' and their share key is
+      // already wrapped server-side. Joining is therefore just "accept" —
+      // we admit the already-granted member and return the full target so
+      // the client can fetch the wrapped key and sync. There is no request,
+      // no pending state, and no owner-approval step.
+      //
+      // Anyone who follows the link but was NOT granted access is refused:
+      // the owner grants to a specific account, not to "whoever has the link".
       const nowIso = new Date().toISOString();
-      const existingMd = target.memberDetails[guestEmailHash] || {};
-      const existingStatus = existingMd.status; // undefined for legacy actives
-      const isActiveAlready = existingStatus === 'active' ||
-        (target.members.includes(guestEmailHash) && existingStatus === undefined);
+      const md = target.memberDetails[guestEmailHash];
+      const isGrantedMember = target.members.includes(guestEmailHash) &&
+        (!md || md.status === undefined || md.status === 'active');
 
-      // Already an approved/legacy member → behave exactly as before:
-      // return the full target so re-join / multi-device keeps working.
-      if (isActiveAlready) {
-        existingMd.lastActiveAt = nowIso;
-        if (!existingMd.firstSeenAt) existingMd.firstSeenAt = nowIso;
-        target.memberDetails[guestEmailHash] = existingMd;
-        await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
-        return json({ ok: true, ...target, code: code.toUpperCase() }, corsHeaders);
+      if (!isGrantedMember) {
+        return json({
+          error: "You haven't been granted access to this household. Ask the owner to add your email.",
+          notGranted: true,
+        }, corsHeaders, 403);
       }
 
-      // Already pending → idempotent: don't re-email, just acknowledge.
-      if (existingStatus === 'pending') {
-        existingMd.lastActiveAt = nowIso;
-        target.memberDetails[guestEmailHash] = existingMd;
-        await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
-        return json({ ok: true, pending: true, ownerName: target.ownerName,
-          name: target.name, type: target.type, householdNames: target.householdNames,
-          code: code.toUpperCase() }, corsHeaders);
-      }
-
-      // Either brand-new requester OR a previously-rejected user re-requesting.
-      // Rate-limit the request email to stop an attacker spamming the owner's
-      // inbox by repeatedly hitting /share/join. One request email per
-      // requester+share per REQUEST_EMAIL_COOLDOWN_MS.
-      const REQUEST_EMAIL_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
-      const lastReqAt = existingMd.requestedAt ? new Date(existingMd.requestedAt).getTime() : 0;
-      const withinCooldown = lastReqAt && (Date.now() - lastReqAt < REQUEST_EMAIL_COOLDOWN_MS);
-
-      // Create / reset the pending record.
-      if (!target.members.includes(guestEmailHash)) target.members.push(guestEmailHash);
-      existingMd.status = 'pending';
-      existingMd.requestedAt = nowIso;
-      existingMd.lastActiveAt = nowIso;
-      if (!existingMd.firstSeenAt) existingMd.firstSeenAt = nowIso;
-      delete existingMd.rejectedAt;
-      delete existingMd.approvedAt;
-      // pendingInvite is now vestigial under the pure-request model. We no
-      // longer promote/consume it here; it's left readable for any in-flight
-      // legacy shares but plays no role in the request handshake.
-      target.memberDetails[guestEmailHash] = existingMd;
-      await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
-      // Clear any stale revocation marker from a prior reject/eviction so the
-      // re-request's eventual approval can push data.
+      // Admit: stamp first-seen / last-active, ensure status active.
+      const detail = md || {};
+      detail.status = 'active';
+      if (!detail.firstSeenAt) detail.firstSeenAt = nowIso;
+      detail.lastActiveAt = nowIso;
+      target.memberDetails[guestEmailHash] = detail;
+      // Clear any stale revocation marker (e.g. re-granted after a prior removal).
       await kvDel(['share_revoked', code.toUpperCase(), guestEmailHash]);
-
-      // Fire the owner email — server-side, no owner presence needed to
-      // RECEIVE the prompt. Skipped silently if within the cooldown window.
-      if (!withinCooldown) {
-        try {
-          await sendShareRequestEmail(env, target, guestEmailHash, code.toUpperCase());
-        } catch (e) {
-          // Email failure must not block the request being recorded.
-          console.error('share request email failed:', e?.message || e);
-        }
-      }
-
-      return json({ ok: true, pending: true, ownerName: target.ownerName,
-        name: target.name, type: target.type, householdNames: target.householdNames,
-        code: code.toUpperCase() }, corsHeaders);
+      await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
+      return json({ ok: true, ...target, code: code.toUpperCase() }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 

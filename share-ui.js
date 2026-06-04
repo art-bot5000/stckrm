@@ -59,34 +59,6 @@ function bulkShare() {
 
 // Merge shareCode into each selected record's share.allow. Items already
 // explicitly denied to this share are skipped (count flagged in toast).
-// Ensure a share's SECTION permission for `sectionPermKey` is enabled (>= 'r')
-// across all its households, and persist to the server. Called when records
-// from a section are tagged into a share — without this the push filters the
-// section out (canSee<Section> is false) and the guest never receives the
-// records even though they're correctly allow-tagged. Idempotent: leaves an
-// existing 'rw' alone, only upgrades 'none'/absent → 'r'.
-async function _ensureShareSectionPerm(shareCode, sectionPermKey) {
-  const t = _shareTargets.find(s => s.code === shareCode);
-  if (!t) return;
-  const households = t.households || { default: {} };
-  let changed = false;
-  for (const hKey of Object.keys(households)) {
-    const cur = households[hKey] && households[hKey][sectionPermKey];
-    if (!cur || cur === 'none') {
-      households[hKey] = { ...(households[hKey] || {}), [sectionPermKey]: 'r' };
-      changed = true;
-    }
-  }
-  if (!changed) return;
-  t.households = households; // reflect locally so the very next pushSharedData sees it
-  const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
-  const res = await postKV(`${WORKER_URL}/share/update`, {
-    ownerEmailHash: _kvEmailHash, ...authFields, code: shareCode, households,
-  });
-  if (!res.ok) console.warn('[share] failed to persist section perm for', sectionPermKey, 'on', shareCode);
-  else console.log('[share] enabled section perm', sectionPermKey, 'on', shareCode);
-}
-
 async function bulkShareAppendToExisting(shareCode) {
   document.getElementById('bulk-share-overlay')?.remove();
   const spec = _getActiveSpec();
@@ -121,16 +93,6 @@ async function bulkShareAppendToExisting(shareCode) {
     appended++;
   }
   await spec.save();
-  // CRITICAL: tagging records into a share does NOT by itself let the guest
-  // see them — the push gates each section on the share's SECTION permission
-  // (canSeeReminders / canSeeGroceries / …). When you append records from a
-  // section the share didn't previously include (e.g. adding a reminder to a
-  // share originally created for a grocery list), that section's perm is still
-  // 'none', so the records are filtered out of the blob and never reach the
-  // guest. Enable the section perm on the share before pushing.
-  if (appended > 0 && spec.sectionPermKey) {
-    try { await _ensureShareSectionPerm(shareCode, spec.sectionPermKey); } catch(e) { console.warn('[bulk-share] section perm enable failed:', e); }
-  }
   exitBulkSelectMode();
   if (spec.rerender) spec.rerender();
   _syncQueue?.enqueue?.('Updating sharing…');
@@ -931,41 +893,57 @@ async function saveShareTarget() {
       closeModal('share-target-modal');
       toast(`✓ ${name}'s access updated`);
     } else {
-      // Create new — pure request-to-join model. The link is GENERIC: we
-      // generate the share's AES-GCM key now and store it locally, but we do
-      // NOT wrap it for any specific recipient at create time. Whoever follows
-      // the link requests access; the owner approves (which wraps the key for
-      // that requester then). The guest email is now OPTIONAL — used only for
-      // the deny/allow check and to optionally email the invite link.
+      // Create new — GRANT→ACCEPT model. The owner grants a SPECIFIC person
+      // access here: we generate the share key and wrap it for that person's
+      // ECDH public key NOW (the owner is by definition online at grant time),
+      // store the wrapped key server-side, and hand over a link. The recipient
+      // just signs in and accepts — the key is already waiting for them, so
+      // there is no "request" and no "owner must come back online to approve".
+      // The recoverable-key model means the recipient can re-derive their
+      // private key on any device, so the wrap stays decryptable forever.
       const guestEmail = document.getElementById('share-target-email')?.value.trim() || '';
+      if (!guestEmail) { throw new Error("Enter the person's email address — access is granted to a specific account"); }
 
-      // Forward-only deny/allow enforcement — only when an email is supplied.
-      // (Client-side only by design; protects the owner from themselves.)
-      if (guestEmail) {
-        const sacCheck = checkShareAccessControl(guestEmail);
-        if (!sacCheck.ok) throw new Error(sacCheck.reason);
+      // Deny / allow enforcement (client-side, protects the owner from themselves).
+      const sacCheck = checkShareAccessControl(guestEmail);
+      if (!sacCheck.ok) throw new Error(sacCheck.reason);
+
+      // The recipient must already have a STOCKROOM account so we can wrap the
+      // key for their public key right now. (No deferred/pending-invite path.)
+      const guestEmailHash = await kvHashEmail(guestEmail);
+      const pubRes = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: guestEmailHash });
+      if (!pubRes.ok) {
+        if (pubRes.status === 404) throw new Error(`${guestEmail} doesn't have a STOCKROOM account yet. Ask them to sign up first, then grant access.`);
+        throw new Error('Could not fetch their encryption key — try again');
       }
+      const { publicKeyJwk: guestPubKeyJwk } = await pubRes.json();
 
-      // Generate the AES-GCM share key (kept by the owner; wrapped per-guest
-      // at approval time, not now).
+      // Owner's own ECDH keys (private to wrap with, public to send alongside).
+      const ownerPrivKey = await loadEcdhPrivateKey(_kvEmailHash);
+      if (!ownerPrivKey) throw new Error('Your encryption key is unavailable — sign out and back in, then retry');
+      const ownerPubRes = await postKV(`${WORKER_URL}/user/ecdh-pubkey/get`, { emailHash: _kvEmailHash });
+      if (!ownerPubRes.ok) throw new Error('Could not fetch your encryption key — try again');
+      const { publicKeyJwk: ownerPubKeyJwk } = await ownerPubRes.json();
+
+      // Generate the AES-GCM share key and wrap it for the guest.
       const shareKey    = await generateShareKey();
       const shareKeyB64 = await exportShareKey(shareKey);
+      const wrappedKey  = await ecdhWrapShareKey(ownerPrivKey, guestPubKeyJwk, shareKey);
 
-      // Create the share record. No pendingInvite under the pure-request
-      // model — the link doesn't belong to a pre-named recipient.
-      // recordScoped marks a "share these specific items" share: the per-record
-      // allow-list is authoritative and untagged records are NOT inherited
-      // from the section perm (the section perm only exists so the recipient
-      // can see the section at all). Set when this create came from the bulk
-      // selection flow (_bulkShareSelectionPending is still set at this point;
-      // _applyBulkSharePending consumes it just after).
+      // recordScoped: set when this create came from the bulk selection flow.
       const _isRecordScoped = !!(_bulkShareSelectionPending && Array.isArray(_bulkShareSelectionPending.ids) && _bulkShareSelectionPending.ids.length);
+
+      // Create the share record. guestEmail is stored so the owner UI shows who
+      // it's for; members starts with the granted guest so they're admitted on
+      // first join with no approval step.
       const res = await postKV(`${WORKER_URL}/share/create`, {
           ownerEmailHash: _kvEmailHash,
           ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
           name, type: _shareTargetType, colour, ownerName,
           households: _shareTargetPerms,
           shareManagement: _shareTargetMgmt,
+          guestEmail,
+          grantedMember: guestEmailHash,
           ...(_isRecordScoped ? { recordScoped: true } : {}),
           householdNames: Object.fromEntries(
             Object.entries(profiles).map(([k,p]) => [k, p.name||(k==='default'?'Home':k)])
@@ -973,6 +951,14 @@ async function saveShareTarget() {
         });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed');
+
+      // Store the wrapped key for the guest (server-side, persists until revoked).
+      const ecdhRes = await postKV(`${WORKER_URL}/share/ecdh-key/store`, {
+        ownerEmailHash: _kvEmailHash,
+        ..._kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier },
+        code: data.code, guestEmailHash, wrappedKey, ownerPublicKeyJwk: ownerPubKeyJwk,
+      });
+      if (!ecdhRes.ok) throw new Error('Could not store the encrypted key for them — try again');
 
       // Cache share key locally and back it up (owner cross-device recovery).
       try {
@@ -995,8 +981,8 @@ async function saveShareTarget() {
       const inviteLink = data.link || `${location.origin}${location.pathname}?join=${data.code}`;
       try { await navigator.clipboard.writeText(inviteLink); } catch(e) {}
 
-      // Optionally email the invite link if an address was provided.
-      if (guestEmail && WORKER_URL) {
+      // Email the invite link.
+      if (WORKER_URL) {
         await _sendShareEmail(guestEmail, {
           code: data.code, name, type: _shareTargetType,
           households: _shareTargetPerms, isUpdate: false, inviteLink,
@@ -1012,7 +998,7 @@ async function saveShareTarget() {
       try { await _applyBulkSharePending(data.code); } catch(e) { console.warn('_applyBulkSharePending failed:', e); }
       document.getElementById('bulk-share-pending-banner')?.remove();
 
-      toast(`✓ Share created — link copied!${guestEmail ? ` Sent to ${name}.` : ` Send it to ${name}.`} They'll request access and you approve.`);
+      toast(`✓ ${name} granted access — link copied & emailed. They just sign in to accept.`);
       if (kvConnected) setTimeout(syncAll, 600);
     }
   } catch(err) {

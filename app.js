@@ -28541,10 +28541,10 @@ function showShareAuthGate(meta) {
   const groupName = meta.name ? `the <strong>${esc(meta.name)}</strong> group` : 'this household';
   step1.innerHTML = `
     <div style="margin-bottom:12px;color:var(--accent)"><svg aria-hidden="true" style="width:44px;height:44px"><use href="#i-home"></use></svg></div>
-    <h1 style="font-size:22px;font-weight:700;margin-bottom:6px">Request access</h1>
+    <h1 style="font-size:22px;font-weight:700;margin-bottom:6px">You've been given access</h1>
     <p style="color:var(--muted);font-size:13px;line-height:1.6;margin-bottom:16px">
-      <strong style="color:var(--text)">${esc(meta.ownerName||'Someone')}</strong> has shared ${hCount} household${hCount!==1?'s':''} (${groupName}).
-      Sign in or create an account to request access — they'll approve it.
+      <strong style="color:var(--text)">${esc(meta.ownerName||'Someone')}</strong> has shared ${hCount} household${hCount!==1?'s':''} (${groupName}) with you.
+      Sign in to the account this was shared with to accept.
     </p>
     <div style="text-align:left;margin-bottom:12px">
       <div class="form-group" style="margin-bottom:10px">
@@ -28556,8 +28556,8 @@ function showShareAuthGate(meta) {
         <input class="form-input" id="share-gate-pass" type="password" placeholder="Your passphrase" autocomplete="current-password">
       </div>
     </div>
-    <button class="btn btn-primary btn-xl full" style="margin-bottom:8px" onclick="shareGateSignIn()">Sign in &amp; Request →</button>
-    <button class="btn btn-ghost btn-xl full" style="font-size:13px;margin-bottom:8px" onclick="shareGateRegister()">Create new account &amp; Request →</button>
+    <button class="btn btn-primary btn-xl full" style="margin-bottom:8px" onclick="shareGateSignIn()">Sign in &amp; Accept →</button>
+    <button class="btn btn-ghost btn-xl full" style="font-size:13px;margin-bottom:8px" onclick="shareGateRegister()">Create new account &amp; Accept →</button>
     <p id="share-gate-error" style="font-size:12px;color:var(--danger);margin-top:6px;display:none"></p>
   `;
   step1.classList.add('active');
@@ -28739,7 +28739,7 @@ async function completePendingJoin() {
       });
     const data = (await _readJsonSafe(res)) || {};
     if (!res.ok) {
-      // Server rejected an owner-self join (409 ownShare) — clear and inform.
+      // Owner-self join (409 ownShare) — clear and inform.
       if (res.status === 409 && data.ownShare) {
         _pendingJoinCode  = null;
         _pendingShareMeta = null;
@@ -28747,41 +28747,26 @@ async function completePendingJoin() {
         toast("That's your own household — no need to join it.");
         return;
       }
-      // A previously-rejected user who hasn't re-requested gets a 403. Under
-      // the re-request model the server normally re-pends them, but guard the
-      // explicit declined case so we can show a clear state rather than a
-      // generic error.
-      if (res.status === 403 && data.rejected) {
-        _enterPendingShareShell(code, data, /*declined=*/true);
+      // Not granted access (grant→accept: only people the owner added can join).
+      if (res.status === 403 && data.notGranted) {
+        _pendingJoinCode  = null;
+        _pendingShareMeta = null;
+        updateSyncPill('idle');
+        toast("You haven't been granted access — ask the owner to add your email, then try again.");
         return;
       }
       throw new Error(data.error || `Invalid invite link (${res.status}) — it may have expired`);
     }
-    // Server returned 200 but with ok:false — means it needs auth (shouldn't happen here but guard it)
     if (data.requiresAuth) throw new Error('Authentication required — please sign in first');
 
-    // ── Pending request → labelled waiting state ─────────────────
-    // Under the request→approve model, a fresh join is admitted as 'pending'
-    // with NO wrapped key yet. We must NOT fall into _tryUnwrapWithRewrapRetry
-    // (which fires an auto request-rewrap and shows "refreshing invite"). The
-    // owner approving is now the mechanism. Enter the app shell with the
-    // household listed as "Waiting for approval", and poll for the wrapped key
-    // to appear (= owner approved). The first success finalises the join.
-    if (data.pending) {
-      _enterPendingShareShell(code, data, /*declined=*/false);
-      _pollShareApproval(code);
-      return;
-    }
-
-    // Attempt the unwrap. If it fails because of stale wrap, request a rewrap
-    // and poll for up to ~30s for the owner's app to fulfil it. This avoids
-    // forcing the user to manually click the invite link a second time.
+    // GRANT→ACCEPT: the share key was wrapped for us at grant time and is
+    // already on the server. Fetch+unwrap it (recoverable-key model means this
+    // works on any device, no owner needed), then finalise. If the unwrap
+    // momentarily fails (e.g. our key just rotated), the rewrap-retry handles
+    // it, but in the normal path this is a single fetch.
     const shareKey = await _tryUnwrapWithRewrapRetry(code);
     if (!shareKey) {
-      // Couldn't unwrap even after waiting — leave the rewrap request queued
-      // and instruct the user. _tryUnwrapWithRewrapRetry already triggered
-      // the request-rewrap call on the first failure.
-      throw new Error('Your invite is being refreshed — ask the owner to open STOCKROOM, then tap this link again');
+      throw new Error('Could not unlock the shared data — try reloading. If it persists, ask the owner to re-grant access.');
     }
     await _finalisePendingJoin(code, data, shareKey);
   } catch(err) {
