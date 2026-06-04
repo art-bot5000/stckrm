@@ -155,7 +155,7 @@ function bulkShareCreateNew() {
       banner = document.createElement('div');
       banner.id = 'bulk-share-pending-banner';
       banner.style.cssText = 'margin:0 0 12px 0;padding:10px 12px;background:rgba(232,168,56,0.08);border:1px solid rgba(232,168,56,0.3);border-radius:8px;font-size:12px;color:var(--text);line-height:1.4';
-      banner.innerHTML = `<svg class="icon icon-sm" aria-hidden="true" style="color:var(--accent);vertical-align:-2px"><use href="#i-share-2"></use></svg> Sharing <strong>${n} selected ${nounLabel}</strong>. Section perms are pre-set; the recipient will see only ${spec.pluralNoun==='items'?'these items':'this selection'}.`;
+      banner.innerHTML = `<svg class="icon icon-sm" aria-hidden="true" style="color:var(--accent);vertical-align:-2px"><use href="#i-share-2"></use></svg> Sharing <strong>${n} selected ${nounLabel}</strong> with one person. Enter their email below (they must have a STOCKROOM account) — they'll see only ${spec.pluralNoun==='items'?'these items':'this selection'}.`;
       const modalEl = modal.querySelector('.modal');
       if (modalEl) modalEl.insertBefore(banner, modalEl.firstChild?.nextSibling || null);
     }
@@ -883,8 +883,16 @@ async function saveShareTarget() {
   // can wrap the key for that specific account. Fail loudly and visibly rather
   // than deep inside the try (where a missed toast looked like "nothing happened").
   if (!code && !emailVal) {
+    console.warn('[share] create blocked — no recipient email entered');
     toast("Enter the person's email address - access is granted to a specific account");
-    emailEl?.focus?.();
+    if (emailEl) {
+      emailEl.style.borderColor = 'var(--danger, #e35)';
+      emailEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      emailEl.focus?.();
+      // Clear the red flag once they start typing.
+      const clear = () => { emailEl.style.borderColor = ''; emailEl.removeEventListener('input', clear); };
+      emailEl.addEventListener('input', clear);
+    }
     return;
   }
   const colour    = _shareTargetColour;
