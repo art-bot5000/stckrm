@@ -59,6 +59,34 @@ function bulkShare() {
 
 // Merge shareCode into each selected record's share.allow. Items already
 // explicitly denied to this share are skipped (count flagged in toast).
+// Ensure a share's SECTION permission for `sectionPermKey` is enabled (>= 'r')
+// across all its households, and persist to the server. Called when records
+// from a section are tagged into a share — without this the push filters the
+// section out (canSee<Section> is false) and the guest never receives the
+// records even though they're correctly allow-tagged. Idempotent: leaves an
+// existing 'rw' alone, only upgrades 'none'/absent → 'r'.
+async function _ensureShareSectionPerm(shareCode, sectionPermKey) {
+  const t = _shareTargets.find(s => s.code === shareCode);
+  if (!t) return;
+  const households = t.households || { default: {} };
+  let changed = false;
+  for (const hKey of Object.keys(households)) {
+    const cur = households[hKey] && households[hKey][sectionPermKey];
+    if (!cur || cur === 'none') {
+      households[hKey] = { ...(households[hKey] || {}), [sectionPermKey]: 'r' };
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  t.households = households; // reflect locally so the very next pushSharedData sees it
+  const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+  const res = await postKV(`${WORKER_URL}/share/update`, {
+    ownerEmailHash: _kvEmailHash, ...authFields, code: shareCode, households,
+  });
+  if (!res.ok) console.warn('[share] failed to persist section perm for', sectionPermKey, 'on', shareCode);
+  else console.log('[share] enabled section perm', sectionPermKey, 'on', shareCode);
+}
+
 async function bulkShareAppendToExisting(shareCode) {
   document.getElementById('bulk-share-overlay')?.remove();
   const spec = _getActiveSpec();
@@ -93,6 +121,16 @@ async function bulkShareAppendToExisting(shareCode) {
     appended++;
   }
   await spec.save();
+  // CRITICAL: tagging records into a share does NOT by itself let the guest
+  // see them — the push gates each section on the share's SECTION permission
+  // (canSeeReminders / canSeeGroceries / …). When you append records from a
+  // section the share didn't previously include (e.g. adding a reminder to a
+  // share originally created for a grocery list), that section's perm is still
+  // 'none', so the records are filtered out of the blob and never reach the
+  // guest. Enable the section perm on the share before pushing.
+  if (appended > 0 && spec.sectionPermKey) {
+    try { await _ensureShareSectionPerm(shareCode, spec.sectionPermKey); } catch(e) { console.warn('[bulk-share] section perm enable failed:', e); }
+  }
   exitBulkSelectMode();
   if (spec.rerender) spec.rerender();
   _syncQueue?.enqueue?.('Updating sharing…');
