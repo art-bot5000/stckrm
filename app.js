@@ -16805,7 +16805,18 @@ async function kvEncrypt(key, plaintext) {
   const combined = new Uint8Array(iv.length + ciphertext.byteLength);
   combined.set(iv, 0);
   combined.set(new Uint8Array(ciphertext), iv.length);
-  return btoa(String.fromCharCode(...combined));
+  // Convert to base64 in fixed-size chunks. The previous one-shot
+  // `String.fromCharCode(...combined)` spreads every byte as a separate
+  // function argument, which blows the call-stack limit once a blob gets
+  // large (e.g. a note carrying a drawing PNG → "Maximum call stack size
+  // exceeded"). Chunking keeps the argument count bounded regardless of
+  // payload size. 0x8000 (32 KB) is comfortably under engine arg limits.
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < combined.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, combined.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
 }
 
 async function kvDecrypt(key, ciphertext) {

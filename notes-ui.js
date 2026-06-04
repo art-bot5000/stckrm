@@ -1439,6 +1439,10 @@ function _initNoteDrawCanvas(n) {
     colour: keep ? keep.colour : '#e8a838',
     size:   keep ? keep.size   : 5,
     drawing: false,
+    // Track ink presence with a flag instead of reading pixels back with
+    // getImageData (which triggers the "willReadFrequently" perf warning
+    // and forces a software canvas). Seeded from whether we loaded artwork.
+    hasInk: keep ? keep.hasInk : !!prevUrl,
     lastX: 0, lastY: 0,
     undo: keep ? keep.undo : [],
     redo: keep ? keep.redo : [],
@@ -1516,6 +1520,7 @@ function _noteDrawSegment(x0, y0, x1, y1, pressure) {
     ctx.globalCompositeOperation = 'source-over';
     ctx.strokeStyle = s.colour;
     ctx.lineWidth = w;
+    s.hasInk = true;  // a pen stroke adds ink (used for blank-check)
   }
   ctx.beginPath();
   ctx.moveTo(x0, y0);
@@ -1523,14 +1528,13 @@ function _noteDrawSegment(x0, y0, x1, y1, pressure) {
   ctx.stroke();
 }
 
-// Returns true if the canvas has no non-transparent pixels.
+// Returns true if the canvas has no drawn content. Uses a tracked flag
+// rather than getImageData so we don't trip the "willReadFrequently" perf
+// path on the live drawing context. hasInk goes true on any pen stroke and
+// is reset by clear / set on restore from history.
 function _noteDrawIsBlank() {
   const s = _noteDrawState; if (!s) return true;
-  try {
-    const { data } = s.ctx.getImageData(0, 0, s.canvas.width, s.canvas.height);
-    for (let i = 3; i < data.length; i += 4) { if (data[i] !== 0) return false; }
-    return true;
-  } catch (_) { return false; }  // tainted/edge — assume not blank
+  return !s.hasInk;
 }
 
 // Stroke committed → mark dirty + autosave through the normal note path.
@@ -1558,6 +1562,7 @@ function _noteDrawRestore(url) {
   const s = _noteDrawState; if (!s) return;
   s.ctx.globalCompositeOperation = 'source-over';
   s.ctx.clearRect(0, 0, s.cssW, s.cssH);
+  s.hasInk = !!url;  // restored state has ink iff the snapshot was non-empty
   if (url) {
     const img = new Image();
     img.onload = () => { s.ctx.drawImage(img, 0, 0, s.cssW, s.cssH); };
@@ -1605,6 +1610,7 @@ function noteDrawClear() {
   s.redo = [];
   s.ctx.globalCompositeOperation = 'source-over';
   s.ctx.clearRect(0, 0, s.cssW, s.cssH);
+  s.hasInk = false;
   _noteDrawCommit();
 }
 
