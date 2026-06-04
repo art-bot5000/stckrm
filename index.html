@@ -9,12 +9,13 @@
 <title>STOCKROOM — Household Consumables Tracker (KV)</title>
 <meta name="description" content="Stockroom — track household consumables, predict when they'll run out, and batch-order to save time and reduce deliveries.">
 <link rel="manifest" href="manifest.json">
-<!-- Favicon — points at the existing logo so the browser stops probing
-     /favicon.ico (which 404s). PNG declared first as the universal
-     fallback, WebP second so modern browsers prefer the smaller file.
-     apple-touch-icon gives iOS a home-screen icon. -->
-<link rel="icon" type="image/png" href="/logo.png">
-<link rel="icon" type="image/webp" href="/logo.webp">
+<!-- Favicon — a square inline SVG so the browser never squashes a
+     non-square raster into the square tab slot (the previous /logo.png is
+     364×280; Chrome stretched it vertically to fit). SVG scales without
+     distortion. Amber package mark on the brand near-black, matching the
+     in-app #i-package icon. Raster PNG kept only as the apple-touch-icon
+     (iOS home screen uses a separate square export). -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f1117'/%3E%3Cg fill='none' stroke='%23e8a838' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 26.3a2 2 0 0 0 2 0l7-4A2 2 0 0 0 25 20.6V11.4a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 7 11.4v9.2a2 2 0 0 0 1 1.7z'/%3E%3Cpath d='M16 27V16'/%3E%3Cpolyline points='7.3 10.5 16 16 24.7 10.5'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="apple-touch-icon" href="/logo.png">
 <meta name="theme-color" content="#0f1117">
 <!-- ─────────── ACCESSIBILITY PRE-PAINT BOOTSTRAP ───────────
@@ -1924,6 +1925,11 @@
     </div>
   </div>
   <div id="tabs-sticky-wrap">
+  <!-- Tablet greeting slot (601–899px). Populated by updateHeaderGreeting()
+       alongside #header-greeting. Hidden by default; CSS shows it only in the
+       tablet range so a long "Hi, name" sits above the tabs instead of
+       wrapping under the logo in the crowded top header. -->
+  <div id="tabs-greeting" style="display:none;font-size:12px;color:var(--muted);align-items:center;gap:4px"></div>
   <div id="tabs" role="tablist" aria-label="Main sections">
     <button class="tab active" role="tab" aria-selected="true" aria-controls="view-stock" onclick="showView('stock',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-package"></use></svg> <span>Stockroom</span></button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="view-budget" onclick="showView('budget',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>

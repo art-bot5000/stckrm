@@ -1698,6 +1698,42 @@
   #app-header { gap:4px; }
 }
 
+/* Tablet (601–899px): move the greeting out of the crowded header row and
+   onto its own line just above the tab bar, so a long name no longer wraps
+   under the logo. The header slot is hidden here; the tab-bar slot shows.
+   Below 601px the header slot (flush with the logo) is the right place, so
+   the tab-bar slot stays hidden there. */
+@media (min-width:601px) and (max-width:899px) {
+  #header-greeting { display:none !important; }
+  #tabs-greeting {
+    display:flex !important;
+    padding:6px 6px 0;
+    min-width:0;
+  }
+  #tabs-greeting strong { white-space:nowrap; }
+}
+@media (max-width:600px) {
+  #tabs-greeting { display:none !important; }
+}
+@media (min-width:900px) {
+  #tabs-greeting { display:none !important; }
+}
+
+/* Desktop sidebar greeting tidy: the 220px sidebar can't fit a long
+   "Hi, Christopher" on one line next to the logo, so let it drop to its own
+   full-width line within the logo strip and ellipsize rather than overflow
+   or push the layout. The parent .app-nav-logo row already wraps. */
+@media (min-width:900px) {
+  #app-nav-profile {
+    flex-basis:100%;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    max-width:100%;
+    margin-top:2px;
+  }
+}
+
 /* ── Note list single-column row layout ── */
 /* Desktop notes: grid layout matching stockroom items, full available width */
 #notes-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; }

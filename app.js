@@ -1366,16 +1366,23 @@ function wizardNameInput(raw) {
 }
 
 function updateHeaderGreeting() {
-  const el = document.getElementById('header-greeting');
-  if (!el) return;
   const name = settings.displayName ? _capitaliseFirst(settings.displayName) : '';
-  if (name) {
+  const html = name
+    ? `Hi, <strong style="color:var(--text);margin-left:3px">${esc(name)}</strong>`
+    : `Hi, <strong style="color:var(--text);margin-left:3px">there</strong> — <a href="#" onclick="event.preventDefault();openSettingsSection('settings-prefs-body')" style="color:var(--accent);margin-left:4px;font-size:11px">add your name</a>`;
+  // The greeting renders in two slots so it can live in the right place per
+  // breakpoint without moving the DOM element across parents (CSS can't do
+  // that). #header-greeting sits in the top header (shown ≤600px); the
+  // #tabs-greeting slot sits just above the tab bar (shown 601–899px) so a
+  // long name no longer wraps under the logo in the crowded header row.
+  // CSS media queries in styles.css decide which slot is visible; we just
+  // set both to flex here and keep the content identical.
+  ['header-greeting', 'tabs-greeting'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
     el.style.display = 'flex';
-    el.innerHTML = `Hi, <strong style="color:var(--text);margin-left:3px">${esc(name)}</strong>`;
-  } else {
-    el.style.display = 'flex';
-    el.innerHTML = `Hi, <strong style="color:var(--text);margin-left:3px">there</strong> — <a href="#" onclick="event.preventDefault();openSettingsSection('settings-prefs-body')" style="color:var(--accent);margin-left:4px;font-size:11px">add your name</a>`;
-  }
+    el.innerHTML = html;
+  });
 }
 
 // renderAccountSecurity moved to Account & Security section below
@@ -21593,7 +21600,11 @@ function setTheme(pref) {
   if (!['system', 'light', 'dark', 'hc'].includes(pref)) pref = 'system';
   settings.theme = pref;
   // Save without re-rendering everything — applyTheme handles UI.
-  _saveSettings();
+  // Push to the server too: the login pull-merge treats remote theme as
+  // authoritative (see kvPull, "remote.settings.theme != null wins"), so a
+  // local-only save would be overwritten by the stale server value on the
+  // next login. _saveSettings writes IDB; kvPush serialises live settings.
+  _saveSettings().then(() => { if (typeof kvPush === 'function') kvPush().catch(() => {}); });
   applyTheme();
 }
 
@@ -21718,7 +21729,11 @@ function applyTextScale() {
 function setTextScale(pref) {
   if (!['s', 'm', 'l', 'xl'].includes(pref)) pref = 'm';
   settings.textScale = pref;
-  _saveSettings();
+  // Same rationale as setTheme: the login pull-merge treats remote textScale
+  // as authoritative, so without a push the change reverts to the stale
+  // server value on next login. _saveSettings writes IDB; kvPush serialises
+  // live settings (which now carries the new textScale) to the server.
+  _saveSettings().then(() => { if (typeof kvPush === 'function') kvPush().catch(() => {}); });
   applyTextScale();
 }
 
