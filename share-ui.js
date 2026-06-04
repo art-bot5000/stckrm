@@ -764,6 +764,14 @@ async function openAddShareTarget() {
     return;
   }
   if (_shareTargets.length >= 5) { toast('Maximum 5 share targets reached'); return; }
+  // Clear any stale bulk-share selection. If the user previously started a
+  // "share these specific items" flow and abandoned it (closed the modal
+  // without completing), _bulkShareSelectionPending could still be set — and
+  // saveShareTarget reads it to decide recordScoped. An abandoned selection
+  // would silently make this plain "Add Person" share record-scoped (sections
+  // enabled but no records visible). A normal Add Person is always a SECTION
+  // share, so clear the pending selection here.
+  _bulkShareSelectionPending = null;
   _shareTargetType   = 'family';
   _shareTargetPerms  = {};
   _shareTargetColour = HOUSEHOLD_COLOURS[_shareTargets.length % HOUSEHOLD_COLOURS.length];
