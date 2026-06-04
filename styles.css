@@ -1719,18 +1719,24 @@
   #tabs-greeting { display:none !important; }
 }
 
-/* Desktop sidebar greeting tidy: the 220px sidebar can't fit a long
-   "Hi, Christopher" on one line next to the logo, so let it drop to its own
-   full-width line within the logo strip and ellipsize rather than overflow
-   or push the layout. The parent .app-nav-logo row already wraps. */
+/* Desktop sidebar greeting: its own full-width row below the logo strip and
+   just above the nav links (where the logo can never be pushed by a long
+   name). Slightly larger than the old inline treatment; ellipsises if a name
+   is too long for the 220px sidebar. Hidden on mobile/tablet (the top header
+   and tab-bar slots handle the greeting there). */
+#app-nav-profile { display:none; }
 @media (min-width:900px) {
   #app-nav-profile {
-    flex-basis:100%;
+    display:block;
+    font-size:13px;
+    color:var(--muted);
+    font-family:var(--sans);
+    padding:2px 16px 8px;
     white-space:nowrap;
     overflow:hidden;
     text-overflow:ellipsis;
     max-width:100%;
-    margin-top:2px;
+    box-sizing:border-box;
   }
 }
 

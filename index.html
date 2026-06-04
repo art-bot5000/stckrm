@@ -1799,15 +1799,19 @@
 <!-- ═══ APP SIDEBAR (desktop only) ═══ -->
 <nav id="app-nav">
   <div class="app-nav-logo">
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:8px">
       <picture>
         <source srcset="/logo.webp" type="image/webp">
         <img src="/logo.png" alt="" class="brand-logo brand-logo-sidebar" width="29" height="21" onclick="openProfilePicker()" style="cursor:pointer">
       </picture>
       <div class="logo" style="font-size:14px;letter-spacing:3px;cursor:pointer;flex-shrink:0" onclick="openProfilePicker()">STCKRM</div>
-      <span id="app-nav-profile" style="font-size:12px;color:var(--muted);font-family:var(--sans);cursor:pointer;white-space:nowrap" onclick="openProfilePicker()"></span>
     </div>
   </div>
+  <!-- Greeting on its own row below the logo strip (desktop sidebar). Kept
+       out of the logo flex row so a long name can never push the logo onto
+       a second line — it wraps/ellipsises in its own full-width slot just
+       above the nav links. -->
+  <span id="app-nav-profile" onclick="openProfilePicker()"></span>
   <div class="app-nav-links">
     <button class="app-nav-link active" data-view="stock"      onclick="navTo('stock')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-package"></use></svg> <span>Stockroom</span></button>
     <button class="app-nav-link"        data-view="grocery"    onclick="navTo('grocery')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> <span>Groceries</span></button>
