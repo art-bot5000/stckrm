@@ -24131,6 +24131,24 @@ function renderGroceryBody() {
 // first; if chrome fully handled the render (picker view or missing list
 // body) it returns truthy and we stop. Otherwise we render the body.
 function renderGrocery() {
+  // Guest share-view: the active list defaults to the guest's own 'default'
+  // list, but the SHARED list (e.g. "Asda 30 May") is a different list id.
+  // If we're viewing a share and the current active list has no visible items
+  // while another (shared) list does, switch to the populated shared list so
+  // the guest actually sees what was shared instead of an empty default list.
+  if (_shareState && Array.isArray(groceryItems) && Array.isArray(groceryLists)) {
+    const liveItems = groceryItems.filter(i => !i._deletedAt);
+    const activeHasItems = liveItems.some(i => (i.listId || 'default') === activeGroceryListId);
+    if (!activeHasItems && liveItems.length) {
+      // Find the list that actually holds shared items.
+      const populatedListId = (liveItems[0].listId) || 'default';
+      const targetList = groceryLists.find(l => l.id === populatedListId && !l._deletedAt);
+      if (targetList && activeGroceryListId !== populatedListId) {
+        activeGroceryListId = populatedListId;
+        try { localStorage.setItem('stockroom_active_grocery_list', activeGroceryListId); } catch(e) {}
+      }
+    }
+  }
   if (renderGroceryChrome()) return;
   renderGroceryBody();
 }
