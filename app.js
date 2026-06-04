@@ -26021,6 +26021,15 @@ async function loadShareState() {
     }
     _shareState   = stored;
     _sharedFileId = stored._sharedFileId || null;
+    // GRANT→ACCEPT has no pending state. Strip any stale _pending/_declined
+    // left over from the old request→approve model so they don't block key
+    // recovery below (the recovery guard skips pending shares) or trigger the
+    // dead approval poll. The share is granted; just recover its key.
+    if (stored._pending || stored._declined) {
+      delete _shareState._pending;
+      delete _shareState._declined;
+      try { saveShareState(); } catch(_) {}
+    }
     // Restore share key from local cache (ECDH system — key is never stored in state)
     try {
       const localKeys = await _getShareKeys();
@@ -28946,11 +28955,17 @@ async function _pollShareApproval(code) {
   _shareApprovalPollTimer = setTimeout(tick, 3000);
 }
 
-// On boot, if a persisted share is still pending, resume polling so approval
-// is picked up without the user re-following the link.
+// GRANT→ACCEPT model has no "pending" state — access is granted by the owner
+// up front and the key is wrapped at grant time. A persisted _shareState with
+// _pending/_declined is leftover from the OLD request→approve model and must
+// not trigger the (now-dead) approval poll, which surfaces as a spurious
+// "waiting for owner to be online" state. Clear the stale flags so the share
+// loads normally (it'll recover its key via _recoverShareKeyForGuest).
 function _resumePendingShare() {
-  if (_shareState && _shareState._pending && _shareState.code) {
-    _pollShareApproval(_shareState.code);
+  if (_shareState && (_shareState._pending || _shareState._declined)) {
+    delete _shareState._pending;
+    delete _shareState._declined;
+    try { saveShareState(); } catch(_) {}
   }
 }
 

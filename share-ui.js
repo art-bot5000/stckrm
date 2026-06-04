@@ -115,11 +115,18 @@ function bulkShareCreateNew() {
   if (!spec || !set || !set.size) return;
   // Capture the selection AND the active section — exitBulkSelectMode
   // clears the live state, so saveShareTarget needs both pieces.
-  _bulkShareSelectionPending = {
+  const _pendingSelection = {
     section: _bulkSelectActiveSection,
     ids: [...set],
   };
+  // openAddShareTarget clears _bulkShareSelectionPending (to prevent a stale
+  // abandoned selection from making a plain "Add Person" share record-scoped).
+  // So we MUST set our legitimate pending selection AFTER that call, not
+  // before — otherwise openAddShareTarget wipes it and the banner/section
+  // setup below reads null. (This ordering bug previously crashed the
+  // "Create & get link" button with "Cannot read properties of null".)
   openAddShareTarget();
+  _bulkShareSelectionPending = _pendingSelection;
   setTimeout(() => {
     const targetPerm = spec.sectionPermKey;
     const hhKeys = Object.keys(_shareTargetPerms || {});
@@ -143,7 +150,7 @@ function bulkShareCreateNew() {
     // Banner
     const modal = document.getElementById('share-target-modal');
     let banner = document.getElementById('bulk-share-pending-banner');
-    if (modal && !banner) {
+    if (modal && !banner && _bulkShareSelectionPending) {
       const n = _bulkShareSelectionPending.ids.length;
       const nounLabel = (n === 1) ? spec.noun : spec.pluralNoun;
       banner = document.createElement('div');
