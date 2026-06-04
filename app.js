@@ -498,39 +498,50 @@ function resolveRecordShare(record, shareCode, sectionPerm, recordScoped) {
   // Rule 2: no override.
   const share = record?.share;
   if (share == null) {
-    // For a RECORD-SCOPED share (created via "share these specific items"),
-    // an untagged record is NOT visible — only explicitly allow-listed
-    // records are shared. This is the opposite default from a normal
-    // section share, where no-override means inherit. Without this, every
-    // untagged item leaks into a per-item share that merely needed section
-    // permission set so the recipient could see the section at all.
+    // RECORD-SCOPED share ("share these specific items"): an untagged record
+    // is NOT visible — only records explicitly allow-listed for this share's
+    // code are shared. SECTION share (family/guest): untagged records inherit
+    // the section perm (the "sees everything in enabled sections" model).
     if (recordScoped) return 'none';
-    return sectionPerm; // normal section share — inherit
+    return sectionPerm;
   }
 
-  // Rule 3: explicit private
+  // Rule 3: explicit private — hidden from all shares, always.
   if (share === 'private') return 'none';
 
   // Object form
   if (typeof share === 'object') {
-    // Rule 4: deny list — short-circuit if this share is denied
-    if (Array.isArray(share.deny)) {
-      if (share.deny.includes(shareCode)) return 'none';
+    // Rule 4: deny list — explicit owner intent to hide from THIS share.
+    // Honoured in both models.
+    if (Array.isArray(share.deny) && share.deny.includes(shareCode)) return 'none';
+
+    // Rule 5: allow list — exclusivity depends on share type.
+    //
+    //   • RECORD-SCOPED share: the allow list is authoritative. The record is
+    //     visible ONLY if this share's code is in it; otherwise hidden. A
+    //     record with a share object but no allow list was never explicitly
+    //     shared into a record-scoped share, so it's hidden too.
+    //
+    //   • SECTION share (NOT record-scoped): an allow list naming OTHER shares
+    //     is irrelevant — it must NOT hide the record from a section share.
+    //     The section permission governs; the record inherits it. (This is the
+    //     fix for the cross-contamination bug where bulk-sharing an item into
+    //     share A made it invisible to family share B. A section share shows
+    //     all its section's records regardless of other shares' allow tags.)
+    if (recordScoped) {
+      if (Array.isArray(share.allow)) {
+        if (!share.allow.includes(shareCode)) return 'none';
+      } else {
+        return 'none'; // record-scoped but never allow-tagged for anything
+      }
     }
-    // Rule 5: allow list — only listed shares see it
-    if (Array.isArray(share.allow)) {
-      if (!share.allow.includes(shareCode)) return 'none';
-    } else if (recordScoped) {
-      // Record-scoped share but this record has a share object with NO allow
-      // list (e.g. only a deny/readOnly entry) — it was never explicitly
-      // shared into this scoped share, so it's not visible.
-      return 'none';
-    }
-    // Rule 6: readOnly downgrade — force 'r' even if section says 'rw'
+    // (section share: allow list ignored — fall through to inherit)
+
+    // Rule 6: readOnly downgrade — force 'r' even if section says 'rw'.
     if (Array.isArray(share.readOnly) && share.readOnly.includes(shareCode)) {
       return 'r';
     }
-    // Made it through all object checks — inherit section perm
+    // Inherit section perm.
     return sectionPerm;
   }
 
