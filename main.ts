@@ -6500,6 +6500,48 @@ Deno.serve(async (request) => {
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
   }
 
+  // ── Share: guest leaves voluntarily (self-removal) ────
+  // The guest authenticates with their OWN credentials and removes themselves
+  // from the share. Without this, "Leave shared household" only cleared local
+  // state — the server membership persisted, so the next sync re-entered the
+  // share and re-pulled the data ("items come back after leaving"). This is
+  // the guest-side analogue of /share/member/remove (which is owner-only).
+  if (url.pathname === '/share/leave' && request.method === 'POST') {
+    try {
+      const { guestEmailHash, verifier, sessionToken, code } = await request.json();
+      if (!code || !guestEmailHash || (!verifier && !sessionToken)) {
+        return json({ error: 'Missing fields' }, corsHeaders, 400);
+      }
+      // Authenticate as the GUEST themselves.
+      if (sessionToken) {
+        const sess = await kvGet(['passkey_session', guestEmailHash, sessionToken]);
+        if (!sess.value) return json({ error: 'Session expired — sign in again' }, corsHeaders, 401);
+      } else {
+        const stored = await kvGet(['user', guestEmailHash, 'verifier']);
+        if (!stored.value || stored.value !== verifier) return json({ error: 'Unauthorised' }, corsHeaders, 401);
+      }
+      const r = await kvGet(['share', code.toUpperCase()]);
+      // If the share is already gone, treat leave as success (idempotent).
+      if (!r.value) return json({ ok: true }, corsHeaders);
+      const target = JSON.parse(r.value);
+      // Remove self from members + memberDetails.
+      target.members = (target.members || []).filter((m: string) => m !== guestEmailHash);
+      if (target.memberDetails && typeof target.memberDetails === 'object') {
+        delete target.memberDetails[guestEmailHash];
+      }
+      await kvSet(['share', code.toUpperCase()], JSON.stringify(target));
+      // Drop our wrapped key and write a revocation marker so any in-flight
+      // pull self-cleans rather than re-hydrating the share.
+      await kvDel(['share_ecdh_key', code.toUpperCase(), guestEmailHash]);
+      await kvSet(
+        ['share_revoked', code.toUpperCase(), guestEmailHash],
+        new Date().toISOString(),
+        { expireIn: 7 * 24 * 60 * 60 * 1000 }
+      );
+      return json({ ok: true }, corsHeaders);
+    } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
+  }
+
   // ── Share: refresh link (new 24h window) ─────────────
   if (url.pathname === '/share/refresh' && request.method === 'POST') {
     try {
