@@ -6395,7 +6395,7 @@ Deno.serve(async (request) => {
   // ── Share: update permissions ─────────────────────────
   if (url.pathname === '/share/update' && request.method === 'POST') {
     try {
-      const { ownerEmailHash, verifier, sessionToken, code, name, type, colour, households, shareManagement } = await request.json();
+      const { ownerEmailHash, verifier, sessionToken, code, name, type, colour, households, shareManagement, recordScoped } = await request.json();
       if (!code || !ownerEmailHash || (!verifier && !sessionToken)) return json({ error: 'Missing fields' }, corsHeaders, 400);
       if (sessionToken) {
         const sess = await kvGet(['passkey_session', ownerEmailHash, sessionToken]);
@@ -6417,6 +6417,12 @@ Deno.serve(async (request) => {
         ...(households&&{households}),
         ...(validMgmt!==null && { shareManagement: validMgmt }),
       };
+      // recordScoped: accept an explicit boolean so the owner can convert a
+      // share between "specific items" (true) and "whole sections" (false).
+      // Only act when the field is actually present and boolean — undefined
+      // leaves the existing value untouched.
+      if (recordScoped === true) updated.recordScoped = true;
+      else if (recordScoped === false) delete updated.recordScoped;
       await kvSet(['share', code.toUpperCase()], JSON.stringify(updated));
       return json({ ok: true }, corsHeaders);
     } catch(err) { return json({ error: err.message }, corsHeaders, 500); }
