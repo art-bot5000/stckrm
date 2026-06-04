@@ -255,7 +255,17 @@ function openSharedNoteViewer(shareCode, noteId) {
   attribEl.innerHTML = `<svg class="icon icon-sm" aria-hidden="true"><use href="#i-share-2"></use></svg> shared by ${esc(sharerName)} · ${esc(permLabel)}`;
   // Body. innerHTML because notes are stored as HTML (rich text in the
   // editor). Container is NOT contenteditable; viewer is strictly read.
-  bodyEl.innerHTML = n.body || '';
+  // Draw notes carry artwork in n.drawing (or the encrypted sentinel body);
+  // render it as an image rather than dumping the raw payload as HTML.
+  if (n.drawMode) {
+    const url = n.drawing
+      || ((n.body || '').startsWith('\u0001DRAW\u0001') ? n.body.slice('\u0001DRAW\u0001'.length) : '');
+    bodyEl.innerHTML = url
+      ? `<img src="${url}" alt="Drawing" style="max-width:100%;height:auto;border-radius:8px;background:var(--bg)">`
+      : '<p style="color:var(--muted)">This note is a drawing.</p>';
+  } else {
+    bodyEl.innerHTML = n.body || '';
+  }
   bodyEl.style.background = n.colour || 'transparent';
   overlay.style.display = 'flex';
   document.body.classList.add('note-open');
@@ -275,7 +285,13 @@ function _noteCardHTML(n) {
   const isUnlocked = _noteUnlocked.has(n.id);
   const bgStyle    = n.colour ? `background:${n.colour};` : '';
   const unlocked   = _noteUnlocked.get(n.id);
-  const rawPreview = n.locked && !isUnlocked ? '' : (unlocked?.body || n.body || '');
+  // Draw notes carry a PNG, not text. For unlocked draw notes show a
+  // thumbnail; for locked ones (drawing is encrypted) just the lock hint.
+  const isDraw     = !!n.drawMode;
+  const drawThumb  = (isDraw && !(n.locked && !isUnlocked))
+    ? (n.drawing || ((unlocked?.body || '').startsWith('\u0001DRAW\u0001') ? (unlocked.body.slice(6)) : ''))
+    : '';
+  const rawPreview = (isDraw || (n.locked && !isUnlocked)) ? '' : (unlocked?.body || n.body || '');
   const _tmpDiv = document.createElement('div'); _tmpDiv.innerHTML = rawPreview;
   const previewText = (_tmpDiv.innerText || _tmpDiv.textContent || '').trim();
   // Show up to 2 lines worth (~120 chars)
@@ -311,6 +327,7 @@ function _noteCardHTML(n) {
     const checked = Object.values(n.tickBoxes).filter(Boolean).length;
     if (total > 0) icons.push(`<span style="font-size:10px;color:var(--ok);font-family:var(--mono)">☑${checked}/${total}</span>`);
   }
+  if (isDraw) icons.push('<svg class="icon" aria-hidden="true" title="Drawing"><use href="#i-pencil"></use></svg>');
   const iconHtml = icons.length ? `<span style="display:flex;align-items:center;gap:4px;flex-shrink:0">${icons.join('')}</span>` : '';
 
   // Secure-now button for unlocked secure notes
@@ -335,7 +352,11 @@ function _noteCardHTML(n) {
         </div>
         ${n.locked && !isUnlocked
           ? `<div style="font-size:12px;color:var(--muted);margin-top:3px">🔒 Tap to unlock</div>`
-          : preview ? `<div class="note-row-preview">${esc(preview)}</div>` : ''}
+          : isDraw
+            ? (drawThumb
+                ? `<img src="${drawThumb}" alt="Drawing" class="note-row-drawing" style="margin-top:6px;max-height:120px;max-width:100%;border-radius:6px;background:var(--bg);display:block">`
+                : `<div style="font-size:12px;color:var(--muted);margin-top:3px">✏️ Drawing</div>`)
+            : preview ? `<div class="note-row-preview">${esc(preview)}</div>` : ''}
       </div>
     </div>
     ${secureNowBtn}
@@ -503,6 +524,7 @@ async function openNoteEditor(noteId) {
       id: _noteUid(), title: '', body: '', locked: false,
       pinned: false, archived: false, colour: null,
       tickBoxesVisible: false, tickBoxes: {},
+      drawMode: false, drawing: null,
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       deletedAt: null,
     };
@@ -574,6 +596,7 @@ function _renderNoteEditor(n, showLock) {
     ? '<svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>'
     : '<svg class="icon" aria-hidden="true"><use href="#i-unlock"></use></svg>';
   document.getElementById('note-btn-tick')?.classList.toggle('active', !!n.tickBoxesVisible);
+  document.getElementById('note-btn-draw')?.classList.toggle('active', !!n.drawMode);
   const secureBadge = document.getElementById('note-secure-badge');
   const secureBadgeLabel = document.getElementById('note-secure-badge-label');
   if (secureBadge) {
@@ -665,6 +688,27 @@ function _showNoteBody(n) {
 
   const unlocked = _noteUnlocked.get(n.id);
   const body = unlocked ? unlocked.body : (n.body || '');
+  const drawWrap = document.getElementById('note-draw-wrap');
+
+  if (n.drawMode) {
+    // Drawing mode is mutually exclusive with text/tick bodies.
+    const ta = document.getElementById('note-body-input');
+    if (ta) ta.style.display = 'none';
+    const ticksBody = document.getElementById('note-ticks-body');
+    if (ticksBody) ticksBody.style.display = 'none';
+    const fmt = document.getElementById('note-fmt-toolbar');
+    if (fmt) fmt.style.display = 'none';
+    if (drawWrap) drawWrap.style.display = 'flex';
+    // Defer canvas init to next frame so the host has its final size
+    // (the overlay/editor-body may have only just become visible).
+    requestAnimationFrame(() => _initNoteDrawCanvas(n));
+    return;
+  }
+  if (drawWrap) drawWrap.style.display = 'none';
+  // Leaving draw mode (or never in it): restore the formatting toolbar.
+  // Tick mode keeps the toolbar shown exactly as before this feature.
+  const fmt = document.getElementById('note-fmt-toolbar');
+  if (fmt) fmt.style.display = 'flex';
 
   if (n.tickBoxesVisible) {
     // If tickItems isn't yet populated (legacy notes saved before this refactor),
@@ -697,11 +741,18 @@ async function closeNoteEditor() {
   // Discard untitled empty notes — don't litter the grid with blank cards
   if (id) {
     const n = notes.find(x => x.id === id);
-    if (n && !n.title?.trim() && !n.body?.trim() && !(document.getElementById('note-body-input')?.innerHTML?.trim())) {
+    // A draw-mode note is "empty" if it has no artwork (no n.drawing and a
+    // blank canvas), regardless of the auto-applied "Drawing" title.
+    const drawEmpty = n && n.drawMode && !n.drawing
+      && !(_noteDrawState && _noteDrawState.noteId === id && !_noteDrawIsBlank());
+    if (n && n.drawMode) {
+      if (drawEmpty) { notes = notes.filter(x => x.id !== id); await saveNotes(); }
+    } else if (n && !n.title?.trim() && !n.body?.trim() && !(document.getElementById('note-body-input')?.innerHTML?.trim())) {
       notes = notes.filter(x => x.id !== id);
       await saveNotes();
     }
   }
+  _noteDrawState = null;
   renderNotes();
 }
 
@@ -893,7 +944,13 @@ async function toggleNoteLock() {
     if (!confirm('Remove security from this note? The body will be stored with your other data.')) return;
     const unlocked = _noteUnlocked.get(n.id);
     if (!unlocked) { toast('Unlock the note first before removing security'); return; }
-    n.body   = unlocked.body; // stored as innerHTML
+    if (n.drawMode && (unlocked.body || '').startsWith('\u0001DRAW\u0001')) {
+      // Restore the plaintext artwork so cards/preview can show it again.
+      n.drawing = unlocked.body.slice('\u0001DRAW\u0001'.length) || null;
+      n.body = '';
+    } else {
+      n.body = unlocked.body; // stored as innerHTML
+    }
     n.locked = false;
     _noteUnlocked.delete(n.id);
     // Delete the server-side body
@@ -905,8 +962,18 @@ async function toggleNoteLock() {
     toast('Note is no longer secured');
   } else {
     // Locking — push body to server and strip from local
-    if (!n.body && !_noteUnlocked.get(n.id)?.body) { toast('Add some content first'); return; }
-    const body = _noteUnlocked.get(n.id)?.body || n.body || '';
+    // For a draw note the encryptable payload is the drawing sentinel, not
+    // n.body (which is empty in draw mode). Build it the same way the
+    // editor save path does so locked drawings round-trip correctly.
+    if (n.drawMode) {
+      if (_noteBodyDirty) { try { await _autoSaveNote(); } catch (_) {} }
+    }
+    const drawBody = n.drawMode
+      ? (_noteUnlocked.get(n.id)?.body || (n.drawing ? `\u0001DRAW\u0001${n.drawing}` : ''))
+      : null;
+    if (n.drawMode && !drawBody) { toast('Draw something first'); return; }
+    if (!n.drawMode && !n.body && !_noteUnlocked.get(n.id)?.body) { toast('Add some content first'); return; }
+    const body = n.drawMode ? drawBody : (_noteUnlocked.get(n.id)?.body || n.body || '');
     // Pre-flight: secure note bodies require sync credentials. Without these,
     // the body cannot be uploaded to the server — bail with a clear message
     // rather than letting the request fail mysteriously.
@@ -967,6 +1034,7 @@ async function toggleNoteLock() {
       return;
     }
     n.body   = undefined;
+    n.drawing = undefined;  // plaintext artwork now lives encrypted server-side
     n.locked = true;
     _noteUnlocked.set(n.id, { body, lastActivity: Date.now(), inactivityTimer: null });
     _startNoteInactivityTimer(n.id);
@@ -1021,6 +1089,15 @@ function _flattenContentEditableToLines(html) {
 
 async function toggleNoteTicks() {
   const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  // Tick mode and draw mode are mutually exclusive. If we're drawing,
+  // leave draw mode (artwork preserved) before turning ticks on.
+  if (n.drawMode) {
+    n.drawMode = false;
+    _noteDrawState = null;
+    document.getElementById('note-btn-draw')?.classList.toggle('active', false);
+    const drawWrap = document.getElementById('note-draw-wrap');
+    if (drawWrap) drawWrap.style.display = 'none';
+  }
   n.tickBoxesVisible = !n.tickBoxesVisible;
   if (!n.tickBoxes) n.tickBoxes = {};
   document.getElementById('note-btn-tick')?.classList.toggle('active', n.tickBoxesVisible);
@@ -1233,6 +1310,21 @@ async function setNoteColour(colour) {
 
 function copyNoteBody() {
   const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  // Draw notes: copy the canvas image to the clipboard, not the sentinel.
+  if (n.drawMode) {
+    const canvas = document.getElementById('note-draw-canvas');
+    if (canvas && navigator.clipboard?.write && window.ClipboardItem) {
+      canvas.toBlob((blob) => {
+        if (!blob) { toast('Nothing to copy'); return; }
+        navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+          .then(() => toast('Drawing copied ✓'))
+          .catch(() => toast('Copy not supported here'));
+      }, 'image/png');
+    } else {
+      toast('Copy not supported here');
+    }
+    return;
+  }
   const rawBody = _getCurrentEditorBody(n);
   // Convert HTML to plain text preserving newlines
   const tmp = document.createElement('div'); tmp.innerHTML = rawBody;
@@ -1285,7 +1377,332 @@ async function deleteCurrentNote() {
 }
 
 // ── Body editing ──────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+//  DRAWING / STYLUS MODE
+// ═══════════════════════════════════════════════════════════════════
+// Per-note hand-drawn mode. A note is EITHER text/ticks OR a drawing —
+// toggleNoteDraw() switches between them (mutually exclusive, mirroring
+// toggleNoteTicks). The canvas bitmap is persisted as a PNG data-URL:
+//   • unlocked notes → plaintext n.drawing (so cards can show a hint)
+//   • locked notes   → folded into the encrypted body via the \u0001DRAW\u0001
+//     sentinel in _getCurrentEditorBody, so it rides /note/body/push.
+// All input is via Pointer Events (stylus, touch, mouse) with pressure
+// where the device reports it. Stroke-level undo/redo keeps a stack of
+// canvas snapshots (capped) so it stays simple and reliable.
+
+let _noteDrawState = null;  // { noteId, ctx, canvas, tool, colour, size,
+                            //   drawing, lastX, lastY, undo:[], redo:[] }
+const _NOTE_DRAW_MAX_SNAPSHOTS = 30;
+
+// Extract a drawing data-URL from whatever the note currently holds:
+// the \u0001DRAW\u0001-sentinel body (locked notes, once unlocked) or the
+// plaintext n.drawing (unlocked notes).
+function _noteDrawingDataUrl(n) {
+  const unlocked = _noteUnlocked.get(n.id);
+  const rawBody  = unlocked ? unlocked.body : null;
+  if (rawBody && rawBody.startsWith('\u0001DRAW\u0001')) {
+    return rawBody.slice('\u0001DRAW\u0001'.length);
+  }
+  return n.drawing || '';
+}
+
+function _initNoteDrawCanvas(n) {
+  const canvas = document.getElementById('note-draw-canvas');
+  const host   = document.getElementById('note-draw-canvas-host');
+  if (!canvas || !host) return;
+
+  // Size the backing store to the host's CSS pixels × DPR for crisp lines.
+  const dpr = window.devicePixelRatio || 1;
+  const rect = host.getBoundingClientRect();
+  const w = Math.max(1, Math.round(rect.width));
+  const h = Math.max(1, Math.round(rect.height));
+
+  // Preserve any existing artwork across a resize/reinit.
+  const prevUrl = (_noteDrawState && _noteDrawState.noteId === n.id)
+    ? canvas.toDataURL('image/png')
+    : _noteDrawingDataUrl(n);
+
+  canvas.width  = w * dpr;
+  canvas.height = h * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // Reuse prior tool/colour/size if we're re-initing the same note.
+  const keep = (_noteDrawState && _noteDrawState.noteId === n.id) ? _noteDrawState : null;
+  _noteDrawState = {
+    noteId: n.id,
+    ctx, canvas,
+    cssW: w, cssH: h, dpr,
+    tool:   keep ? keep.tool   : 'pen',
+    colour: keep ? keep.colour : '#e8a838',
+    size:   keep ? keep.size   : 5,
+    drawing: false,
+    lastX: 0, lastY: 0,
+    undo: keep ? keep.undo : [],
+    redo: keep ? keep.redo : [],
+  };
+
+  const paint = () => {
+    if (prevUrl) {
+      const img = new Image();
+      img.onload = () => { ctx.drawImage(img, 0, 0, w, h); };
+      img.src = prevUrl;
+    }
+  };
+  paint();
+
+  _bindNoteDrawPointer(canvas);
+  _updateNoteDrawToolUI();
+  _updateNoteDrawUndoRedoBtns();
+}
+
+function _bindNoteDrawPointer(canvas) {
+  if (canvas._noteDrawBound) return;  // bind once per element
+  canvas._noteDrawBound = true;
+
+  const pos = (e) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+
+  canvas.addEventListener('pointerdown', (e) => {
+    const s = _noteDrawState; if (!s) return;
+    e.preventDefault();
+    canvas.setPointerCapture(e.pointerId);
+    // Snapshot BEFORE the stroke for undo.
+    _noteDrawPushUndo();
+    const p = pos(e);
+    s.drawing = true; s.lastX = p.x; s.lastY = p.y;
+    // A tap (pointerdown with no move) should leave a dot.
+    _noteDrawSegment(p.x, p.y, p.x, p.y, e.pressure || 0.5);
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    const s = _noteDrawState; if (!s || !s.drawing) return;
+    e.preventDefault();
+    // Use coalesced events for smoother high-frequency stylus input.
+    const events = (typeof e.getCoalescedEvents === 'function') ? e.getCoalescedEvents() : [e];
+    for (const ev of (events.length ? events : [e])) {
+      const p = pos(ev);
+      _noteDrawSegment(s.lastX, s.lastY, p.x, p.y, ev.pressure || 0.5);
+      s.lastX = p.x; s.lastY = p.y;
+    }
+  });
+
+  const end = (e) => {
+    const s = _noteDrawState; if (!s || !s.drawing) return;
+    s.drawing = false;
+    try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+    _noteDrawCommit();
+  };
+  canvas.addEventListener('pointerup', end);
+  canvas.addEventListener('pointercancel', end);
+  canvas.addEventListener('pointerleave', end);
+}
+
+function _noteDrawSegment(x0, y0, x1, y1, pressure) {
+  const s = _noteDrawState; if (!s) return;
+  const ctx = s.ctx;
+  // Pressure scales line width between 50%–150% of the chosen size; a
+  // device without pressure reports 0.5 and draws at the nominal size.
+  const w = s.size * (0.5 + (pressure || 0.5));
+  if (s.tool === 'eraser') {
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.strokeStyle = 'rgba(0,0,0,1)';
+    ctx.lineWidth = Math.max(w, s.size) * 2;
+  } else {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = s.colour;
+    ctx.lineWidth = w;
+  }
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x1, y1);
+  ctx.stroke();
+}
+
+// Returns true if the canvas has no non-transparent pixels.
+function _noteDrawIsBlank() {
+  const s = _noteDrawState; if (!s) return true;
+  try {
+    const { data } = s.ctx.getImageData(0, 0, s.canvas.width, s.canvas.height);
+    for (let i = 3; i < data.length; i += 4) { if (data[i] !== 0) return false; }
+    return true;
+  } catch (_) { return false; }  // tainted/edge — assume not blank
+}
+
+// Stroke committed → mark dirty + autosave through the normal note path.
+function _noteDrawCommit() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  const s = _noteDrawState;
+  if (s) { s.redo = []; }  // new stroke invalidates redo
+  _updateNoteDrawUndoRedoBtns();
+  if (!n.locked) n.drawing = _noteDrawIsBlank() ? null : s.canvas.toDataURL('image/png');
+  _noteBodyDirty = true;
+  clearTimeout(_noteAutoSaveTimer);
+  _noteAutoSaveTimer = setTimeout(_autoSaveNote, 1200);
+  if (n.locked) _resetNoteActivity(n.id);
+}
+
+function _noteDrawPushUndo() {
+  const s = _noteDrawState; if (!s) return;
+  try {
+    s.undo.push(s.canvas.toDataURL('image/png'));
+    if (s.undo.length > _NOTE_DRAW_MAX_SNAPSHOTS) s.undo.shift();
+  } catch (_) {}
+}
+
+function _noteDrawRestore(url) {
+  const s = _noteDrawState; if (!s) return;
+  s.ctx.globalCompositeOperation = 'source-over';
+  s.ctx.clearRect(0, 0, s.cssW, s.cssH);
+  if (url) {
+    const img = new Image();
+    img.onload = () => { s.ctx.drawImage(img, 0, 0, s.cssW, s.cssH); };
+    img.src = url;
+  }
+}
+
+function noteDrawUndo() {
+  const s = _noteDrawState; if (!s || !s.undo.length) return;
+  const current = s.canvas.toDataURL('image/png');
+  const prev = s.undo.pop();
+  s.redo.push(current);
+  if (s.redo.length > _NOTE_DRAW_MAX_SNAPSHOTS) s.redo.shift();
+  _noteDrawRestore(prev);
+  _afterNoteDrawHistory();
+}
+
+function noteDrawRedo() {
+  const s = _noteDrawState; if (!s || !s.redo.length) return;
+  const current = s.canvas.toDataURL('image/png');
+  const next = s.redo.pop();
+  s.undo.push(current);
+  if (s.undo.length > _NOTE_DRAW_MAX_SNAPSHOTS) s.undo.shift();
+  _noteDrawRestore(next);
+  _afterNoteDrawHistory();
+}
+
+function _afterNoteDrawHistory() {
+  const n = notes.find(x => x.id === _editingNoteId);
+  _updateNoteDrawUndoRedoBtns();
+  // Defer save until after the async image redraw has painted.
+  setTimeout(() => {
+    const s = _noteDrawState;
+    if (n && !n.locked && s) n.drawing = _noteDrawIsBlank() ? null : s.canvas.toDataURL('image/png');
+    _noteBodyDirty = true;
+    clearTimeout(_noteAutoSaveTimer);
+    _noteAutoSaveTimer = setTimeout(_autoSaveNote, 600);
+  }, 60);
+}
+
+function noteDrawClear() {
+  const s = _noteDrawState; if (!s) return;
+  if (!confirm('Clear this drawing?')) return;
+  _noteDrawPushUndo();
+  s.redo = [];
+  s.ctx.globalCompositeOperation = 'source-over';
+  s.ctx.clearRect(0, 0, s.cssW, s.cssH);
+  _noteDrawCommit();
+}
+
+function setNoteDrawTool(tool) {
+  const s = _noteDrawState; if (!s) return;
+  s.tool = tool;
+  _updateNoteDrawToolUI();
+}
+
+function setNoteDrawColour(colour) {
+  const s = _noteDrawState; if (!s) return;
+  s.colour = colour;
+  if (s.tool === 'eraser') s.tool = 'pen';  // picking a colour implies pen
+  _updateNoteDrawToolUI();
+}
+
+function setNoteDrawSize(size) {
+  const s = _noteDrawState; if (!s) return;
+  s.size = size;
+  _updateNoteDrawToolUI();
+}
+
+function _updateNoteDrawToolUI() {
+  const s = _noteDrawState; if (!s) return;
+  document.getElementById('note-draw-pen')?.classList.toggle('active', s.tool === 'pen');
+  document.getElementById('note-draw-eraser')?.classList.toggle('active', s.tool === 'eraser');
+  document.querySelectorAll('.note-draw-size').forEach(b => {
+    b.classList.toggle('active', Number(b.dataset.size) === s.size);
+  });
+  document.querySelectorAll('.note-draw-swatch').forEach(b => {
+    b.classList.toggle('active', b.dataset.dcolour === s.colour && s.tool === 'pen');
+  });
+}
+
+function _updateNoteDrawUndoRedoBtns() {
+  const s = _noteDrawState;
+  const u = document.getElementById('note-draw-undo');
+  const r = document.getElementById('note-draw-redo');
+  if (u) u.disabled = !s || !s.undo.length;
+  if (r) r.disabled = !s || !s.redo.length;
+  if (u) u.style.opacity = (!s || !s.undo.length) ? '0.4' : '';
+  if (r) r.style.opacity = (!s || !s.redo.length) ? '0.4' : '';
+}
+
+async function toggleNoteDraw() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+
+  if (!n.drawMode) {
+    // Switching INTO draw mode. If the note already has typed text, warn —
+    // draw and text are mutually exclusive, and we don't discard the text
+    // (it's preserved in n.body and restored if they toggle back off), but
+    // it won't be visible while drawing.
+    const hasText = n.tickBoxesVisible
+      ? !!(n.tickItems && n.tickItems.length)
+      : !!(document.getElementById('note-body-input')?.innerText || '').trim();
+    if (hasText && !confirm('Switch to drawing mode? Your typed text is kept but hidden while you draw — toggle back to see it.')) {
+      return;
+    }
+    // Persist any pending text edits before we hide the text body.
+    if (_noteBodyDirty) { try { await _autoSaveNote(); } catch (_) {} }
+    n.drawMode = true;
+    if (n.tickBoxesVisible) {
+      // Leave tick mode without destroying tick data; just stop showing it.
+      n.tickBoxesVisible = false;
+      document.getElementById('note-btn-tick')?.classList.toggle('active', false);
+      const ticksEl = document.getElementById('note-ticks-body');
+      if (ticksEl) ticksEl.style.display = 'none';
+    }
+  } else {
+    // Switching OUT of draw mode back to text. Drawing is preserved in
+    // n.drawing / encrypted body; the text body (n.body) reappears.
+    n.drawMode = false;
+    _noteDrawState = null;
+  }
+
+  document.getElementById('note-btn-draw')?.classList.toggle('active', n.drawMode);
+  _showNoteBody(n);
+  n.updatedAt = new Date().toISOString();
+  await saveNotes();
+  _noteBodyDirty = true;
+  clearTimeout(_noteAutoSaveTimer);
+  _noteAutoSaveTimer = setTimeout(_autoSaveNote, 600);
+}
+
 function _getCurrentEditorBody(n) {
+  if (n.drawMode) {
+    // In draw mode the "body" is the canvas bitmap as a data-URL, wrapped
+    // in a sentinel so locked-note sync (which only carries the body
+    // string) round-trips the drawing. For unlocked notes we also mirror
+    // it onto n.drawing so cards/preview can read it without decrypting.
+    const canvas = document.getElementById('note-draw-canvas');
+    let dataUrl = n.drawing || '';
+    if (canvas && _noteDrawState && _noteDrawState.noteId === n.id) {
+      dataUrl = _noteDrawIsBlank() ? '' : canvas.toDataURL('image/png');
+    }
+    if (!n.locked) n.drawing = dataUrl || null;
+    return dataUrl ? `\u0001DRAW\u0001${dataUrl}` : '';
+  }
   if (n.tickBoxesVisible) {
     // Source of truth in tick mode is n.tickItems (original order) so saves
     // don't depend on the visual sort that puts checked items at the bottom.
@@ -1344,7 +1761,14 @@ async function _autoSaveNote() {
   const n = notes.find(x => x.id === _editingNoteId);
   if (!n) return;
   const titleEl = document.getElementById('note-title-input');
-  const title   = (titleEl?.value || '').trim();
+  let   title   = (titleEl?.value || '').trim();
+  // Drawings often have no title. Rather than silently dropping the
+  // artwork (the title gate below would return early), give an untitled
+  // drawing a sensible default so the canvas data persists and syncs.
+  if (!title && n.drawMode) {
+    title = 'Drawing';
+    if (titleEl) titleEl.value = title;
+  }
   if (!title) return; // require title
 
   const body = _getCurrentEditorBody(n);

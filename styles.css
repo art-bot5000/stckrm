@@ -1642,6 +1642,23 @@
 .note-fmt-btn { background:transparent; border:1px solid transparent; border-radius:6px; padding:4px 8px; font-size:13px; font-weight:700; cursor:pointer; color:var(--text); transition:background 0.12s; line-height:1.4; min-width:28px; text-align:center; }
 .note-fmt-btn:hover { background:var(--border); }
 .note-fmt-btn.active { background:rgba(232,168,56,0.2); border-color:var(--accent); color:var(--accent); }
+/* Drawing / stylus mode tools */
+.note-draw-tool { background:var(--surface2); border:1px solid var(--border); border-radius:8px;
+  width:34px; height:34px; display:inline-flex; align-items:center; justify-content:center;
+  cursor:pointer; color:var(--text); font-size:15px; font-weight:700; transition:background 0.12s, border-color 0.12s; flex-shrink:0; }
+.note-draw-tool:hover { background:var(--border); }
+.note-draw-tool.active { background:rgba(232,168,56,0.2); border-color:var(--accent); color:var(--accent); }
+.note-draw-tool:disabled { cursor:not-allowed; }
+.note-draw-size { background:var(--surface2); border:1px solid var(--border); border-radius:8px;
+  width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center;
+  cursor:pointer; color:var(--text); transition:background 0.12s, border-color 0.12s; flex-shrink:0; padding:0; }
+.note-draw-size:hover { background:var(--border); }
+.note-draw-size.active { background:rgba(232,168,56,0.2); border-color:var(--accent); color:var(--accent); }
+.note-draw-swatch { width:24px; height:24px; border-radius:50%; cursor:pointer;
+  border:2px solid transparent; transition:border-color 0.15s; padding:0; flex-shrink:0; }
+.note-draw-swatch:hover, .note-draw-swatch.active { border-color:var(--accent); }
+#note-draw-canvas { cursor:crosshair; }
+.note-row-drawing { object-fit:contain; }
 /* Contenteditable placeholder */
 #note-body-input:empty:before { content:attr(data-placeholder); color:var(--muted); pointer-events:none; }
 /* Rich text content styling inside editor */

@@ -4745,6 +4745,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     <button class="note-tool-btn" id="note-btn-archive"  onclick="toggleNoteArchive()"      title="Archive"><svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg></button>
     <button class="note-tool-btn" id="note-btn-lock"     onclick="toggleNoteLock()"         title="Secure note"><svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg></button>
     <button class="note-tool-btn" id="note-btn-tick"     onclick="toggleNoteTicks()"        title="Tick boxes"><svg class="icon" aria-hidden="true"><use href="#i-square-check"></use></svg></button>
+    <button class="note-tool-btn" id="note-btn-draw"     onclick="toggleNoteDraw()"         title="Drawing / stylus mode"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
     <button class="note-tool-btn" id="note-btn-reminder" onclick="openNoteReminder()"       title="Reminder"><svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg></button>
     <div id="note-colour-wrap" style="position:relative">
       <button class="note-tool-btn" id="note-btn-colour" onclick="toggleNoteColourPicker()" title="Colour"><svg class="icon" aria-hidden="true"><use href="#i-palette"></use></svg></button>
@@ -4812,6 +4813,40 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
       role="textbox" aria-multiline="true" aria-label="Note body"
       style="flex:1;padding:14px 16px;background:transparent;color:var(--text);font-size:15px;line-height:1.7;outline:none;font-family:var(--sans);overflow-y:auto;min-height:0;word-break:break-word"
       oninput="onNoteBodyInput()"></div>
+    <!-- Drawing / stylus mode (Tier: notes drawing). Hidden unless the
+         note has drawMode on. Mutually exclusive with the text body and
+         tick body above — toggleNoteDraw() shows exactly one. The canvas
+         bitmap is stored on the note record (n.drawing for unlocked notes,
+         folded into the encrypted body for locked notes) and rides the
+         existing note sync; no backend change. -->
+    <div id="note-draw-wrap" style="display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0">
+      <div id="note-draw-tools" style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0;flex-wrap:wrap">
+        <button class="note-draw-tool" id="note-draw-pen"    onclick="setNoteDrawTool('pen')"    title="Pen"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
+        <button class="note-draw-tool" id="note-draw-eraser" onclick="setNoteDrawTool('eraser')" title="Eraser"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>
+        <div style="width:1px;height:18px;background:var(--border);margin:0 2px;flex-shrink:0"></div>
+        <span style="display:flex;align-items:center;gap:4px" title="Brush size">
+          <button class="note-draw-size" data-size="2"  onclick="setNoteDrawSize(2)"  title="Fine"><span style="width:4px;height:4px;border-radius:50%;background:currentColor;display:block"></span></button>
+          <button class="note-draw-size" data-size="5"  onclick="setNoteDrawSize(5)"  title="Medium"><span style="width:8px;height:8px;border-radius:50%;background:currentColor;display:block"></span></button>
+          <button class="note-draw-size" data-size="10" onclick="setNoteDrawSize(10)" title="Thick"><span style="width:13px;height:13px;border-radius:50%;background:currentColor;display:block"></span></button>
+        </span>
+        <div style="width:1px;height:18px;background:var(--border);margin:0 2px;flex-shrink:0"></div>
+        <span id="note-draw-colours" style="display:flex;align-items:center;gap:5px">
+          <button class="note-draw-swatch" data-dcolour="#e8a838" style="background:#e8a838" onclick="setNoteDrawColour('#e8a838')" title="Amber"></button>
+          <button class="note-draw-swatch" data-dcolour="#ffffff" style="background:#ffffff" onclick="setNoteDrawColour('#ffffff')" title="White"></button>
+          <button class="note-draw-swatch" data-dcolour="#111111" style="background:#111111" onclick="setNoteDrawColour('#111111')" title="Black"></button>
+          <button class="note-draw-swatch" data-dcolour="#e05c5c" style="background:#e05c5c" onclick="setNoteDrawColour('#e05c5c')" title="Red"></button>
+          <button class="note-draw-swatch" data-dcolour="#5cc77d" style="background:#5cc77d" onclick="setNoteDrawColour('#5cc77d')" title="Green"></button>
+          <button class="note-draw-swatch" data-dcolour="#5c9fe0" style="background:#5c9fe0" onclick="setNoteDrawColour('#5c9fe0')" title="Blue"></button>
+        </span>
+        <div style="flex:1"></div>
+        <button class="note-draw-tool" id="note-draw-undo"  onclick="noteDrawUndo()"  title="Undo stroke">↩</button>
+        <button class="note-draw-tool" id="note-draw-redo"  onclick="noteDrawRedo()"  title="Redo stroke">↪</button>
+        <button class="note-draw-tool" id="note-draw-clear" onclick="noteDrawClear()" title="Clear drawing" style="color:var(--danger)"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>
+      </div>
+      <div id="note-draw-canvas-host" style="flex:1;position:relative;overflow:hidden;min-height:0;background:var(--bg)">
+        <canvas id="note-draw-canvas" style="position:absolute;inset:0;touch-action:none;width:100%;height:100%"></canvas>
+      </div>
+    </div>
   </div>
   <button id="note-secure-badge" type="button" onclick="_badgeLockNow()" title="Click to lock now" style="display:none;position:absolute;bottom:16px;right:16px;background:rgba(232,168,56,0.15);border:1px solid rgba(232,168,56,0.3);border-radius:8px;padding:4px 10px;font-size:11px;color:var(--accent);font-family:var(--mono);cursor:pointer;align-items:center;gap:6px"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-lock"></use></svg> <span id="note-secure-badge-label">SECURE NOTE</span></button>
 </div>
