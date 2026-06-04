@@ -124,6 +124,14 @@ async function bulkShareAppendToExisting(shareCode) {
     appended++;
   }
   await spec.save();
+  // Enable the section's permission on the share BEFORE pushing — without this
+  // an appended record from a section the share didn't previously include
+  // (e.g. adding a reminder/budget category to a grocery share) stays gated
+  // off (canSee<Section> false) and the guest sees "Ask home for access".
+  // (Same reason as the create path in _applyBulkSharePending.)
+  if (appended > 0 && spec.sectionPermKey) {
+    try { await _ensureShareSectionPerm(shareCode, spec.sectionPermKey); } catch(e) { console.warn('[bulk-share] section perm enable failed:', e); }
+  }
   exitBulkSelectMode();
   if (spec.rerender) spec.rerender();
   _syncQueue?.enqueue?.('Updating sharing…');

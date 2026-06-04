@@ -20415,7 +20415,14 @@ async function kvSyncNow(silent = false) {
       }
       const localLastSynced  = settings.lastSynced ? new Date(settings.lastSynced).getTime() : 0;
       const remoteLastSynced = remote.lastSynced   ? new Date(remote.lastSynced).getTime()   : 0;
-      const remoteWins       = remoteLastSynced > localLastSynced;
+      // When we're a GUEST viewing a share (_shareState set), the remote blob
+      // IS the source of truth — we're displaying the owner's data, not merging
+      // our own peer edits. Timestamp comparison is unreliable here (the guest's
+      // own lastSynced can easily be newer than the share blob's), and if
+      // remoteWins came out false the shared lists/items/reminders would only be
+      // partially merged or skipped — the "section opens but the shared list
+      // doesn't show" symptom. Force remote-authoritative in share-view mode.
+      const remoteWins       = (!!_shareState) || (remoteLastSynced > localLastSynced);
       // ── Guest-side share diff snapshot ──
       // When this pull is coming from a share blob (i.e. we're a guest),
       // snapshot items BEFORE the merge so we can emit notifications for
