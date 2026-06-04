@@ -877,6 +877,18 @@ async function saveShareTarget() {
       // Update existing — re-use existing share key
       const res = await postKV(`${WORKER_URL}/share/update`, { ownerEmailHash: _kvEmailHash, verifier: _kvVerifier, sessionToken: _kvSessionToken, code, name, type: _shareTargetType, colour, households: _shareTargetPerms, shareManagement: _shareTargetMgmt });
       if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || 'Update failed'); }
+      // CRITICAL: reflect the new permissions in the local _shareTargets entry
+      // BEFORE pushing. pushSharedData reads _shareTargets to decide which
+      // sections to include (canSeeGroceries / canSeeReminders / …). Without
+      // this, the push below runs with the STALE pre-edit perms (loadShareTargets
+      // doesn't refresh until later), so newly-enabled sections push empty and
+      // the guest never receives them — exactly the "section unlocks but no data"
+      // symptom. Mutating the in-memory target makes the push see the new perms.
+      const _editedTgt = _shareTargets.find(t => t.code === code);
+      if (_editedTgt) {
+        _editedTgt.households = JSON.parse(JSON.stringify(_shareTargetPerms));
+        _editedTgt.shareManagement = _shareTargetMgmt;
+      }
       await pushSharedData(code);
 
       // Always persist the email address; only send notification if checkbox ticked
