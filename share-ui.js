@@ -57,6 +57,37 @@ function bulkShare() {
   document.body.appendChild(overlay);
 }
 
+// Ensure a share's SECTION permission for `sectionPermKey` is enabled (>= 'r')
+// across all its households, and persist to the server. Called when records
+// from a section are tagged into a share — without this the push filters the
+// section out (canSee<Section> is false) and the guest never receives the
+// records even though they're correctly allow-tagged (the "Ask home for
+// access" / empty-section symptom). Idempotent: leaves an existing 'rw' alone,
+// only upgrades 'none'/absent → 'r'. Updates _shareTargets locally first so the
+// pushSharedData that follows sees the new perm.
+async function _ensureShareSectionPerm(shareCode, sectionPermKey) {
+  if (!sectionPermKey) return;
+  const t = _shareTargets.find(s => s.code === shareCode);
+  if (!t) return;
+  const households = t.households || { default: {} };
+  let changed = false;
+  for (const hKey of Object.keys(households)) {
+    const cur = households[hKey] && households[hKey][sectionPermKey];
+    if (!cur || cur === 'none') {
+      households[hKey] = { ...(households[hKey] || {}), [sectionPermKey]: 'r' };
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  t.households = households; // reflect locally so the next pushSharedData sees it
+  const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+  const res = await postKV(`${WORKER_URL}/share/update`, {
+    ownerEmailHash: _kvEmailHash, ...authFields, code: shareCode, households,
+  });
+  if (!res.ok) console.warn('[share] failed to persist section perm', sectionPermKey, 'on', shareCode);
+  else console.log('[share] enabled section perm', sectionPermKey, 'on', shareCode);
+}
+
 // Merge shareCode into each selected record's share.allow. Items already
 // explicitly denied to this share are skipped (count flagged in toast).
 async function bulkShareAppendToExisting(shareCode) {
