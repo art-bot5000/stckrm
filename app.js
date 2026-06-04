@@ -26270,6 +26270,17 @@ async function joinViaShareCode(code) {
 async function leaveShare() {
   if (!confirm('Leave this shared household?\n\nYou can rejoin with the same link. Your own households are unaffected.')) return;
   const code = _shareState?.code;
+  // Remove ourselves from the share SERVER-SIDE first. Without this, leaving
+  // only cleared local state and the next sync re-entered the share and
+  // re-pulled the data ("items come back after leaving"). Best-effort: if the
+  // call fails we still clear locally, but log it.
+  if (code && WORKER_URL && _kvEmailHash && (_kvVerifier || _kvSessionToken)) {
+    try {
+      const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
+      const res = await postKV(`${WORKER_URL}/share/leave`, { guestEmailHash: _kvEmailHash, ...authFields, code });
+      if (!res.ok) console.warn('[share] server-side leave failed:', res.status);
+    } catch(e) { console.warn('[share] leave call error:', e?.message || e); }
+  }
   _shareState   = null;
   _sharedFileId = null;
   _shareKey     = null;

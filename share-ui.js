@@ -115,18 +115,11 @@ function bulkShareCreateNew() {
   if (!spec || !set || !set.size) return;
   // Capture the selection AND the active section — exitBulkSelectMode
   // clears the live state, so saveShareTarget needs both pieces.
-  const _pendingSelection = {
+  _bulkShareSelectionPending = {
     section: _bulkSelectActiveSection,
     ids: [...set],
   };
-  // openAddShareTarget clears _bulkShareSelectionPending (to prevent a stale
-  // abandoned selection from making a plain "Add Person" share record-scoped).
-  // So we MUST set our legitimate pending selection AFTER that call, not
-  // before — otherwise openAddShareTarget wipes it and the banner/section
-  // setup below reads null. (This ordering bug previously crashed the
-  // "Create & get link" button with "Cannot read properties of null".)
   openAddShareTarget();
-  _bulkShareSelectionPending = _pendingSelection;
   setTimeout(() => {
     const targetPerm = spec.sectionPermKey;
     const hhKeys = Object.keys(_shareTargetPerms || {});
@@ -150,7 +143,7 @@ function bulkShareCreateNew() {
     // Banner
     const modal = document.getElementById('share-target-modal');
     let banner = document.getElementById('bulk-share-pending-banner');
-    if (modal && !banner && _bulkShareSelectionPending) {
+    if (modal && !banner) {
       const n = _bulkShareSelectionPending.ids.length;
       const nounLabel = (n === 1) ? spec.noun : spec.pluralNoun;
       banner = document.createElement('div');
@@ -872,14 +865,28 @@ async function openEditShareTarget(code) {
 }
 
 async function saveShareTarget() {
-  const name = document.getElementById('share-target-name').value.trim();
-  if (!name) { toast('Enter a name for this person'); return; }
-  const code      = document.getElementById('share-target-code').value;
+  const nameEl = document.getElementById('share-target-name');
+  if (!nameEl) { console.error('saveShareTarget: name field not found in DOM'); toast('Form not ready — reopen the dialog'); return; }
+  const name = nameEl.value.trim();
+  if (!name) { toast('Enter a name for this person'); nameEl.focus?.(); return; }
+  const emailEl = document.getElementById('share-target-email');
+  const emailVal = emailEl?.value.trim() || '';
+  const codeEl   = document.getElementById('share-target-code');
+  const code     = codeEl ? codeEl.value : '';
+  // Up-front guard for the create path: grant->accept requires an email so we
+  // can wrap the key for that specific account. Fail loudly and visibly rather
+  // than deep inside the try (where a missed toast looked like "nothing happened").
+  if (!code && !emailVal) {
+    toast("Enter the person's email address - access is granted to a specific account");
+    emailEl?.focus?.();
+    return;
+  }
   const colour    = _shareTargetColour;
   const profiles  = await getProfiles();
   const ownerName = settings.email?.split('@')[0] || profiles['default']?.name || 'Home';
   const btn = document.getElementById('share-target-save-btn');
-  if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+  if (btn) { btn.textContent = '\u23f3'; btn.disabled = true; }
+  console.log('[share] saveShareTarget start - code:', code || '(new)', 'email:', emailVal || '(none)');
 
   try {
     if (code) {
