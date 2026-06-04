@@ -1314,6 +1314,15 @@ async function loadData() {
 async function saveData() {
   if (!Array.isArray(items)) { console.error('stockroom: items is not an array, aborting save'); return; }
   _remAggVersion++; // items can hold replacementReminders — invalidate the reminders aggregation memo
+  // Share-isolation: while viewing a shared household, `items` holds the
+  // owner's shared data. Don't persist it into the guest's own 'items' store
+  // (or profile) — it's transient view state re-pulled from the server each
+  // sync. Persisting would leak shared items into the guest's own data and
+  // survive leaving the share. (saveCurrentProfile has the same guard.)
+  if (_shareState) {
+    bcPost({ type: 'DATA_CHANGED' });
+    return;
+  }
   await dbPut('items', 'items', items);
   if (activeProfile) await saveCurrentProfile();
   registerBackgroundSync();
@@ -3151,6 +3160,7 @@ async function loadReminders() {
 
 async function saveReminders() {
   _remAggVersion++; // invalidate the renderReminders aggregation memo
+  if (_shareState) { return; } // share-isolation: don't persist shared reminders into own store
   await dbPut('reminders', 'reminders', reminders);
   if (activeProfile) await saveCurrentProfile();
   // Recompute future push schedule — debounced so rapid edits coalesce.
@@ -7849,6 +7859,16 @@ async function loadProfile(key) {
 }
 
 async function saveCurrentProfile() {
+  // CRITICAL share-isolation guard: when the guest is viewing a shared
+  // household (_shareState set), the live items/groceries/reminders arrays
+  // hold the OWNER'S shared data, not the guest's own. Writing them into the
+  // guest's profile blob would contaminate their personal data — and because
+  // loadProfile('default') reads this blob back, the shared items would
+  // persist even after the guest leaves the share or the owner removes it
+  // (the "removed-share items still visible" leak). Shared data is transient
+  // view state sourced from the server blob on every sync; it must never be
+  // persisted into the guest's own profile. No-op here while in a share.
+  if (_shareState) return;
   const deletedIds = await loadDeletedIds();
   const profiles = await getProfiles();
   const existing = profiles[activeProfile] || {};
@@ -23272,6 +23292,7 @@ async function _saveGroceryLocal() {
   // Strip blank entries that are NOT currently being edited inline
   // Items with _isNew flag are mid-creation and must not be stripped
   groceryItems = groceryItems.filter(i => i._isNew || (i.name && i.name.trim().length > 0));
+  if (_shareState) { return; } // share-isolation: don't persist shared groceries into own store
   await dbPut('groceries', 'items', groceryItems);
   await _saveGroceryLists();
   if (activeProfile) await saveCurrentProfile();

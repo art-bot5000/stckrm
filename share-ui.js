@@ -204,6 +204,14 @@ async function _applyBulkSharePending(newShareCode) {
     }
   }
   await spec.save();
+  // Ensure the share's section permission for this section is enabled, so the
+  // pushed records are actually visible to the guest. The create flow seeds a
+  // perm for the create-section, but enabling here is idempotent and also
+  // covers the case where the share spans sections. (Same reason as the
+  // append path — see _ensureShareSectionPerm.)
+  if (spec.sectionPermKey) {
+    try { await _ensureShareSectionPerm(newShareCode, spec.sectionPermKey); } catch(e) { console.warn('[bulk-share] section perm enable failed:', e); }
+  }
   if (spec.rerender) spec.rerender();
   try { await pushSharedData(newShareCode); } catch(_) {}
   const noun = (ids.length === 1) ? spec.noun : spec.pluralNoun;
