@@ -20423,6 +20423,22 @@ async function kvSyncNow(silent = false) {
       // Owners pulling their own data don't take this path — they use
       // absorbSharedData for share diffs and don't notify themselves about
       // their own writes here.
+      // Refresh the guest's local share permissions from the blob. The owner
+      // may have enabled a section (or changed perms) AFTER we joined; without
+      // this our permission gate (canView/getSectionPerm) stays frozen at
+      // join-time and a newly-granted section reads as locked even though its
+      // data is arriving. Update the perms for the household this blob is for.
+      if (_shareState && remote._sharePerms && typeof remote._sharePerms === 'object') {
+        const hKey = activeProfile || 'default';
+        if (!_shareState.households) _shareState.households = {};
+        _shareState.households[hKey] = { ..._shareState.households[hKey], ...remote._sharePerms };
+        if (remote._shareMeta && typeof remote._shareMeta === 'object') {
+          if (remote._shareMeta.ownerName) _shareState.ownerName = remote._shareMeta.ownerName;
+          if (typeof remote._shareMeta.recordScoped === 'boolean') _shareState.recordScoped = remote._shareMeta.recordScoped;
+        }
+        try { saveShareState(); } catch(_) {}
+        try { applyTabPermissions(); } catch(_) {}
+      }
       const _guestNotifSnapshot = _shareState
         ? _snapshotItemsForDiff(items)
         : null;
@@ -26054,42 +26070,11 @@ async function loadShareState() {
           try { updateHouseholdShareUI(); } catch(_) {}
           try { scheduleRender(...RENDER_REGIONS); } catch(_) {}
         } else {
-          // No wrapped key recovered. This is EITHER (a) the key isn't wrapped
-          // for us yet, OR (b) the share was deleted / we were removed — both
-          // look identical from the key endpoint (404). Probe /share/join to
-          // disambiguate: a live share where we're still a member returns the
-          // target; a gone/removed share returns 404 or notGranted. If the
-          // share is dead, CLEAR the stale state and drop back to our own data
-          // rather than looping "no share key in memory" forever (the symptom
-          // after an owner deletes a share or after stale state from testing).
+          // No wrapped key on the server yet — fall back to the rewrap-request
+          // path so the owner's next sync (re)wraps for us.
           const authFields = _kvSessionToken ? { sessionToken: _kvSessionToken } : { verifier: _kvVerifier };
-          let shareIsDead = false;
-          try {
-            const probe = await postKV(`${WORKER_URL}/share/join`, { code: stored.code, guestEmailHash: _kvEmailHash, ...authFields });
-            if (probe.status === 404) {
-              shareIsDead = true; // share no longer exists
-            } else if (probe.status === 403) {
-              const pj = await probe.json().catch(() => ({}));
-              if (pj.notGranted) shareIsDead = true; // we were removed
-            }
-          } catch(_) { /* network error — leave state, retry next load */ }
-
-          if (shareIsDead) {
-            console.warn('[share] share', stored.code, 'is gone or access revoked — clearing stale state');
-            _shareState = null; _shareKey = null; _sharedFileId = null;
-            try { saveShareState(); } catch(_) {}
-            try {
-              const sk2 = await _getShareKeys();
-              if (sk2 && sk2[stored.code]) { delete sk2[stored.code]; await _setShareKeys(sk2); }
-            } catch(_) {}
-            try { if (typeof loadProfile === 'function') await loadProfile('default'); } catch(_) {}
-            try { applyTabPermissions(); } catch(_) {}
-          } else {
-            // Share is live but not yet wrapped for us — request a rewrap so the
-            // owner's next sync wraps it.
-            try { await postKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, { guestEmailHash: _kvEmailHash, ...authFields, code: stored.code }); } catch(_) {}
-            console.warn('[share] no server key yet for', stored.code, '— rewrap requested');
-          }
+          try { await postKV(`${WORKER_URL}/share/ecdh-key/request-rewrap`, { guestEmailHash: _kvEmailHash, ...authFields, code: stored.code }); } catch(_) {}
+          console.warn('[share] no server key yet for', stored.code, '— rewrap requested');
         }
       } catch(e) { console.warn('[share] server key recovery error:', e?.message || e); }
     }
@@ -26681,6 +26666,15 @@ async function pushSharedData(code, shareKey) {
         // whether the note is read-only or editable. (Pass 3a: no rw
         // semantics enforced yet on the guest side — that lands in 3b.)
         sharedNotes: _filterNotesForShare(notes, code),
+        // Current section permissions for THIS household, so the guest can
+        // refresh its local _shareState.households on pull. Without this the
+        // guest's permission gate (canView → getSectionPerm) is frozen at
+        // join time, so a section the owner enables AFTER the guest joined
+        // stays locked on the guest ("Ask the owner for access") even though
+        // the data is being pushed. Carrying the live perms here keeps the
+        // guest's gate in sync with the owner's grants.
+        _sharePerms: perms,
+        _shareMeta: { name: target?.name, ownerName: target?.ownerName, recordScoped: !!target?.recordScoped },
         lastSynced:  new Date().toISOString(),
       });
       const ciphertext  = await encryptWithShareKey(sk, payload);
