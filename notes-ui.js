@@ -1558,7 +1558,13 @@ function _strokesToSvg(strokes, aspect, boxW, boxH, bg, photo, photoT, photoNatA
       const tx = ((st.x - minX) / spanX) * w;
       let ty = ((st.y - minY) / spanY) * h;
       const lines = String(st.str).split('\n');
-      const rotAttr = st.rot ? ` transform="rotate(${(st.rot * 180 / Math.PI).toFixed(2)} ${tx.toFixed(1)} ${ty.toFixed(1)})"` : '';
+      let xfParts = '';
+      if (st.rot) xfParts += `rotate(${(st.rot * 180 / Math.PI).toFixed(2)} ${tx.toFixed(1)} ${ty.toFixed(1)}) `;
+      if (st.skx || st.sky) {
+        // Shear about the anchor: translate→matrix→translate back.
+        xfParts += `translate(${tx.toFixed(1)} ${ty.toFixed(1)}) matrix(1 ${(st.sky||0).toFixed(4)} ${(st.skx||0).toFixed(4)} 1 0 0) translate(${(-tx).toFixed(1)} ${(-ty).toFixed(1)}) `;
+      }
+      const rotAttr = xfParts ? ` transform="${xfParts.trim()}"` : '';
       let inner = '';
       for (const ln of lines) {
         inner += `<text x="${tx.toFixed(1)}" y="${(ty + fpx).toFixed(1)}" font-family="system-ui, sans-serif" font-weight="600" font-size="${fpx.toFixed(1)}" fill="${esc(st.c || '#e8a838')}">${esc(ln)}</text>`;
@@ -1962,6 +1968,7 @@ function exportNoteDrawingPng() {
       ctx.textBaseline = 'top';
       const ax = mapX(st.x), ay0 = mapY(st.y);
       if (st.rot) { ctx.translate(ax, ay0); ctx.rotate(st.rot); ctx.translate(-ax, -ay0); }
+      if (st.skx || st.sky) { ctx.translate(ax, ay0); ctx.transform(1, st.sky || 0, st.skx || 0, 1, 0, 0); ctx.translate(-ax, -ay0); }
       let ty = ay0;
       for (const ln of String(st.str).split('\n')) { ctx.fillText(ln, ax, ty); ty += fpx * 1.25; }
       ctx.restore();
@@ -2145,10 +2152,12 @@ function _initNoteDrawCanvas(n) {
 }
 
 function _cloneStroke(st) {
-  // Text element: { t:'t', x, y, str, fs, c, rot? }. Strokes: { t:'p', c, w, pts }.
+  // Text element: { t:'t', x, y, str, fs, c, rot?, skx?, sky? }. Strokes: { t:'p', c, w, pts }.
   if (st.t === 't') {
     const o = { t: 't', x: st.x, y: st.y, str: st.str, fs: st.fs, c: st.c };
     if (st.rot) o.rot = st.rot;
+    if (st.skx) o.skx = st.skx;
+    if (st.sky) o.sky = st.sky;
     return o;
   }
   return { t: st.t || 'p', c: st.c, w: st.w, pts: st.pts.map(p => p.slice()) };
@@ -2270,6 +2279,9 @@ function _selHandleAt(s, v, sx, sy) {
   if (near(x + w, y + h)) return 'se';
   if (near(x, y + h)) return 'sw';
   if (near(x + w / 2, y - 24)) return 'rotate';
+  // Edge midpoints → skew. Top/bottom skew horizontally; left/right vertically.
+  if (near(x + w / 2, y) || near(x + w / 2, y + h)) return 'skewH';
+  if (near(x, y + h / 2) || near(x + w, y + h / 2)) return 'skewV';
   if (sx >= x - tol && sx <= x + w + tol && sy >= y - tol && sy <= y + h + tol) return 'move';
   return null;
 }
@@ -2327,6 +2339,21 @@ function _paintSelectionOverlay(ctx, s, v) {
   ctx.setLineDash([]);
   // Corner scale handles at the (possibly rotated) corners.
   for (const c of [c_nw, c_ne, c_se, c_sw]) { ctx.fillRect(c[0] - hs, c[1] - hs, hs * 2, hs * 2); }
+  // Edge midpoint skew handles (drawn as diamonds to distinguish from the
+  // square scale corners). Left/right edges skew vertically; top/bottom skew
+  // horizontally. Only meaningful while not actively rotating.
+  if (!rot) {
+    const e_t = [(c_nw[0] + c_ne[0]) / 2, (c_nw[1] + c_ne[1]) / 2];
+    const e_b = [(c_sw[0] + c_se[0]) / 2, (c_sw[1] + c_se[1]) / 2];
+    const e_l = [(c_nw[0] + c_sw[0]) / 2, (c_nw[1] + c_sw[1]) / 2];
+    const e_r = [(c_ne[0] + c_se[0]) / 2, (c_ne[1] + c_se[1]) / 2];
+    for (const m of [e_t, e_b, e_l, e_r]) {
+      ctx.beginPath();
+      ctx.moveTo(m[0], m[1] - hs); ctx.lineTo(m[0] + hs, m[1]);
+      ctx.lineTo(m[0], m[1] + hs); ctx.lineTo(m[0] - hs, m[1]); ctx.closePath();
+      ctx.fill();
+    }
+  }
   // Rotate handle: above the top edge midpoint, offset along the box's
   // (rotated) "up" direction so it tracks the rotation too.
   const topMidX = (c_nw[0] + c_ne[0]) / 2, topMidY = (c_nw[1] + c_ne[1]) / 2;
@@ -2354,6 +2381,12 @@ function _paintStroke(ctx, st, cssW, cssH, aspect) {
     ctx.textBaseline = 'top';
     const ax = st.x * cssW, ay = st.y * cssH;
     if (st.rot) { ctx.translate(ax, ay); ctx.rotate(st.rot); ctx.translate(-ax, -ay); }
+    if (st.skx || st.sky) {
+      // Shear about the anchor: x' = x + skx*y, y' = y + sky*x.
+      ctx.translate(ax, ay);
+      ctx.transform(1, st.sky || 0, st.skx || 0, 1, 0, 0);
+      ctx.translate(-ax, -ay);
+    }
     const lines = String(st.str).split('\n');
     let y = ay;
     for (const ln of lines) { ctx.fillText(ln, ax, y); y += px * 1.25; }
@@ -2957,12 +2990,37 @@ function _selectionBounds(indices) {
 // every point mapped. Text maps its anchor; scale is derived from how much
 // the mapping stretches a unit step, and rotation is accumulated. `sc` is the
 // uniform scale factor and `dRot` the rotation delta to fold into text.
-function _transformElem(st, fn, sc, dRot) {
+function _transformElem(st, fn, sc, dRot, rotCentre, skMode, kSkew) {
   if (st.t === 't') {
-    const [nx, ny] = fn(st.x, st.y);
-    st.x = nx; st.y = ny;
+    if (skMode && kSkew) {
+      // Skew text via its shear fields. The point-shear fn shifts a point in
+      // normalised space by kSkew * (centre-distance); the canvas renders text
+      // with ctx.transform(1, sky, skx, 1) in PIXEL space, so convert the
+      // normalised shear rate using the canvas aspect. Also move the anchor so
+      // the text shears about the selection centre, not its own corner.
+      const aspect = (_noteDrawState && _noteDrawState.aspect) || 1;
+      const [nx, ny] = fn(st.x, st.y);
+      st.x = nx; st.y = ny;
+      if (skMode === 'skewH') st.skx = (st.skx || 0) - kSkew * aspect; // x sheared by y
+      else                    st.sky = (st.sky || 0) - kSkew / aspect; // y sheared by x
+    } else if (dRot && rotCentre) {
+      // Rotate the text about the gesture centre. The glyphs render with a raw
+      // ctx.rotate (screen space), so orbit the anchor in screen-consistent
+      // space too: scale normalised-x by aspect so x and y share a unit, apply
+      // the raw rotation, then scale back. Composition = true on-screen
+      // rotation of the whole text about centre.
+      const cos = Math.cos(dRot), sin = Math.sin(dRot);
+      const aspect = (_noteDrawState && _noteDrawState.aspect) || 1;
+      const dx = (st.x - rotCentre[0]) * aspect, dy = (st.y - rotCentre[1]);
+      const ox = dx * cos - dy * sin, oy = dx * sin + dy * cos;
+      st.x = rotCentre[0] + ox / aspect;
+      st.y = rotCentre[1] + oy;
+      st.rot = (st.rot || 0) + dRot;
+    } else {
+      const [nx, ny] = fn(st.x, st.y);
+      st.x = nx; st.y = ny;
+    }
     if (sc && sc > 0) st.fs = Math.max(0.008, Math.min(0.5, (st.fs || 0.04) * sc));
-    if (dRot) st.rot = (st.rot || 0) + dRot;
     return;
   }
   for (const p of st.pts) { const m = fn(p[0], p[1]); p[0] = m[0]; p[1] = m[1]; }
@@ -2999,7 +3057,7 @@ function _elemAt(nx, ny) {
 function _applyNoteSelTransform(p) {
   const s = _noteDrawState, xf = s && s._selXf; if (!xf) return;
   const aspect = s.aspect || 1;
-  let fn, sc = 1, dRot = 0;
+  let fn, sc = 1, dRot = 0, kSkew = 0, skMode = null;
   if (xf.mode === 'move') {
     const dx = p[0] - xf.startNx, dy = p[1] - xf.startNy;
     fn = (x, y) => [x + dx, y + dy];
@@ -3015,6 +3073,24 @@ function _applyNoteSelTransform(p) {
       const nx = rx * cos - ry * sin, ny = rx * sin + ry * cos;
       return [xf.cx + nx / aspect, xf.cy + ny];
     };
+  } else if (xf.mode === 'skewH' || xf.mode === 'skewV') {
+    // Skew (shear) about the selection centre. Horizontal: x shifts by k*(cy-y)
+    // where k derives from how far the edge handle dragged sideways relative to
+    // the box half-height. Vertical: y shifts by k*(cx-x) over half-width.
+    const b = xf.box;
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    if (xf.mode === 'skewH') {
+      const half = Math.max(1e-4, b.h / 2);
+      kSkew = (p[0] - xf.startNx) / half;
+      kSkew = Math.max(-3, Math.min(3, kSkew));
+      fn = (x, y) => [x + kSkew * (cy - y), y];
+    } else {
+      const half = Math.max(1e-4, b.w / 2);
+      kSkew = (p[1] - xf.startNy) / half;
+      kSkew = Math.max(-3, Math.min(3, kSkew));
+      fn = (x, y) => [x, y + kSkew * (cx - x)];
+    }
+    skMode = xf.mode;
   } else {
     // Corner scale: the opposite corner stays anchored; the dragged corner
     // tracks the pointer. Uniform scale = larger of the x/y ratios so the
@@ -3031,10 +3107,11 @@ function _applyNoteSelTransform(p) {
     fn = (x, y) => [anchor[0] + (x - anchor[0]) * sc, anchor[1] + (y - anchor[1]) * sc];
   }
   // Rebuild each selected element from its snapshot, then transform.
+  const rotCentre = (xf.mode === 'rotate') ? [xf.cx, xf.cy] : null;
   for (let k = 0; k < s._sel.length; k++) {
     const idx = s._sel[k];
     const fresh = _cloneStroke(xf.snapshot[k]);
-    _transformElem(fresh, fn, sc, dRot);
+    _transformElem(fresh, fn, sc, dRot, rotCentre, skMode, kSkew);
     s.strokes[idx] = fresh;
   }
   xf.moved = true;
