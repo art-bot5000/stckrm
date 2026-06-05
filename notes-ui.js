@@ -262,7 +262,7 @@ function openSharedNoteViewer(shareCode, noteId) {
   if (n.drawMode) {
     const vd = _noteVectorData(n);
     if (vd.strokes.length) {
-      bodyEl.innerHTML = `<div style="display:flex;justify-content:center">${_strokesToSvg(vd.strokes, vd.aspect, 760, 560)}</div>`;
+      bodyEl.innerHTML = `<div style="display:flex;justify-content:center">${_strokesToSvg(vd.strokes, vd.aspect, 760, 560, n.drawBg)}</div>`;
     } else {
       const url = _noteLegacyPngUrl(n);
       bodyEl.innerHTML = url
@@ -302,7 +302,7 @@ function _noteCardHTML(n) {
   if (isDraw && !(n.locked && !isUnlocked)) {
     const vd = _noteVectorData(n);
     if (vd.strokes.length) {
-      drawThumb = _strokesToSvg(vd.strokes, vd.aspect, 300, 160);
+      drawThumb = _strokesToSvg(vd.strokes, vd.aspect, 300, 160, n.drawBg);
       drawThumbIsSvg = true;
     } else {
       drawThumb = _noteLegacyPngUrl(n);  // legacy PNG data-URL or ''
@@ -543,7 +543,7 @@ async function openNoteEditor(noteId) {
       id: _noteUid(), title: '', body: '', locked: false,
       pinned: false, archived: false, colour: null,
       tickBoxesVisible: false, tickBoxes: {},
-      drawMode: false, drawStrokes: null, drawAspect: 1, drawing: null,
+      drawMode: false, drawStrokes: null, drawAspect: 1, drawBg: 'none', drawing: null,
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       deletedAt: null,
     };
@@ -1480,14 +1480,15 @@ function _noteLegacyPngUrl(n) {
 // preserving the drawing's original aspect ratio (aspect = cssW/cssH at
 // draw time). Points are normalised per-axis (x∈[0,1] vs width, y∈[0,1]
 // vs height), so we map the unit square to a w×h box of the right shape.
-function _strokesToSvg(strokes, aspect, boxW, boxH) {
-  if (!strokes || !strokes.length) return '';
+function _strokesToSvg(strokes, aspect, boxW, boxH, bg) {
+  if ((!strokes || !strokes.length) && (!bg || bg === 'none')) return '';
   const a = aspect && aspect > 0 ? aspect : 1;  // width/height
   // Fit an a:1 (w:h) box inside boxW×boxH.
   let w = boxW, h = boxW / a;
   if (h > boxH) { h = boxH; w = boxH * a; }
+  const bgFrag = _noteDrawBgSvg(bg, w, h, Math.max(10, w / 14));
   let paths = '';
-  for (const st of strokes) {
+  for (const st of (strokes || [])) {
     if (!st.pts || !st.pts.length) continue;
     const sw = Math.max(0.6, (st.w || 5) * (w / 320) * 1.0); // scale stroke to box
     let d = '';
@@ -1498,7 +1499,158 @@ function _strokesToSvg(strokes, aspect, boxW, boxH) {
     }
     paths += `<path d="${d.trim()}" fill="none" stroke="${esc(st.c || '#e8a838')}" stroke-width="${sw.toFixed(1)}" stroke-linecap="round" stroke-linejoin="round"/>`;
   }
-  return `<svg width="${w.toFixed(0)}" height="${h.toFixed(0)}" viewBox="0 0 ${w.toFixed(1)} ${h.toFixed(1)}" xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto">${paths}</svg>`;
+  return `<svg width="${w.toFixed(0)}" height="${h.toFixed(0)}" viewBox="0 0 ${w.toFixed(1)} ${h.toFixed(1)}" xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto">${bgFrag}${paths}</svg>`;
+}
+
+// ── Background guides (ruled / grid / dots) ──────────────────────────
+// Stored as n.drawBg (cosmetic enum, not part of the stroke data, so it
+// costs no storage and is plaintext even on locked notes). Rendered three
+// ways: as a CSS background on the canvas host (live editor), and as SVG
+// rects/lines/dots in _strokesToSvg + the export canvas, so cards, the
+// shared viewer and exported PNGs all match what the user drew on.
+const _NOTE_DRAW_BG_ORDER = ['none', 'ruled', 'grid', 'dots'];
+const _NOTE_DRAW_BG_LABEL = { none: 'None', ruled: 'Ruled', grid: 'Grid', dots: 'Dots' };
+
+// CSS background-image value for a given style. Uses a muted line colour so
+// guides sit behind the art in any theme. `step` is the grid spacing in px.
+function _noteDrawBgCss(style, step) {
+  const s = step || 26;
+  const line = 'var(--border)';
+  if (style === 'ruled') {
+    return { backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent ${s-1}px, ${line} ${s-1}px, ${line} ${s}px)`, backgroundSize: 'auto' };
+  }
+  if (style === 'grid') {
+    return { backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent ${s-1}px, ${line} ${s-1}px, ${line} ${s}px), repeating-linear-gradient(to right, transparent 0, transparent ${s-1}px, ${line} ${s-1}px, ${line} ${s}px)`, backgroundSize: 'auto' };
+  }
+  if (style === 'dots') {
+    return { backgroundImage: `radial-gradient(${line} 1.2px, transparent 1.3px)`, backgroundSize: `${s}px ${s}px` };
+  }
+  return { backgroundImage: 'none', backgroundSize: 'auto' };
+}
+
+function _applyNoteDrawBg(style) {
+  const host = document.getElementById('note-draw-canvas-host');
+  if (!host) return;
+  const css = _noteDrawBgCss(style, 26);
+  host.style.backgroundImage = css.backgroundImage;
+  host.style.backgroundSize  = css.backgroundSize;
+  host.style.backgroundPosition = '0 0';
+}
+
+async function cycleNoteDrawBg() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  const cur = n.drawBg || 'none';
+  const next = _NOTE_DRAW_BG_ORDER[(_NOTE_DRAW_BG_ORDER.indexOf(cur) + 1) % _NOTE_DRAW_BG_ORDER.length];
+  n.drawBg = next;
+  _applyNoteDrawBg(next);
+  const btn = document.getElementById('note-draw-bg');
+  if (btn) btn.title = `Background: ${_NOTE_DRAW_BG_LABEL[next]} (tap to change)`;
+  toast(`Background: ${_NOTE_DRAW_BG_LABEL[next]}`);
+  n.updatedAt = new Date().toISOString();
+  _noteBodyDirty = true;
+  clearTimeout(_noteAutoSaveTimer);
+  _noteAutoSaveTimer = setTimeout(_autoSaveNote, 600);
+}
+
+// SVG fragment for the background guides, sized to a w×h box. Returned as a
+// <defs>+<rect> pair to prepend inside an existing SVG. Empty for 'none'.
+function _noteDrawBgSvg(style, w, h, step) {
+  if (!style || style === 'none') return '';
+  const s = step || 26;
+  const line = '#888';
+  const op = 0.28;
+  if (style === 'dots') {
+    return `<defs><pattern id="ndbg" width="${s}" height="${s}" patternUnits="userSpaceOnUse"><circle cx="1.3" cy="1.3" r="1.1" fill="${line}" opacity="${op}"/></pattern></defs><rect width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="url(#ndbg)"/>`;
+  }
+  let lines = '';
+  for (let y = s; y < h; y += s) lines += `<line x1="0" y1="${y}" x2="${w.toFixed(1)}" y2="${y}" stroke="${line}" stroke-width="0.6" opacity="${op}"/>`;
+  if (style === 'grid') {
+    for (let x = s; x < w; x += s) lines += `<line x1="${x}" y1="0" x2="${x}" y2="${h.toFixed(1)}" stroke="${line}" stroke-width="0.6" opacity="${op}"/>`;
+  }
+  return lines;
+}
+
+// Export the current drawing as a PNG file. Rasterises strokes + the
+// background guide onto an offscreen canvas at a fixed high resolution
+// (independent of the on-screen canvas size, since strokes are vector),
+// then triggers a download. Works for locked notes too — it reads the
+// live in-memory strokes from _noteDrawState.
+function exportNoteDrawingPng() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  const s = (_noteDrawState && _noteDrawState.noteId === n.id) ? _noteDrawState : null;
+  const strokes = s ? s.strokes : _noteVectorData(n).strokes;
+  const aspect  = s ? s.aspect  : (_noteVectorData(n).aspect || 1);
+  if (!strokes || !strokes.length) { toast('Nothing to export'); return; }
+
+  // Target ~1600px on the long edge for a crisp export.
+  const long = 1600;
+  let w, h;
+  if (aspect >= 1) { w = long; h = Math.round(long / aspect); }
+  else { h = long; w = Math.round(long * aspect); }
+
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  // Opaque background so the PNG isn't transparent. Use the app surface
+  // colour resolved from CSS so it matches the editor.
+  const surface = getComputedStyle(document.body).getPropertyValue('--bg').trim() || '#0d0d0d';
+  ctx.fillStyle = surface || '#0d0d0d';
+  ctx.fillRect(0, 0, w, h);
+
+  // Background guides.
+  _paintBgOnCanvas(ctx, n.drawBg, w, h);
+
+  // Strokes (denormalise against the export size).
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const st of strokes) {
+    ctx.strokeStyle = st.c || '#e8a838';
+    ctx.fillStyle   = st.c || '#e8a838';
+    const scale = w / 320;  // match the on-screen stroke scaling feel
+    for (let i = 1; i < st.pts.length; i++) {
+      const x0 = st.pts[i-1][0]*w, y0 = st.pts[i-1][1]*h;
+      const x1 = st.pts[i][0]*w,   y1 = st.pts[i][1]*h;
+      const pr = st.pts[i][2] != null ? st.pts[i][2] : 0.5;
+      ctx.lineWidth = (st.w || 5) * (0.5 + pr) * scale * 0.5;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    }
+    if (st.pts.length === 1) {
+      const x = st.pts[0][0]*w, y = st.pts[0][1]*h;
+      const pr = st.pts[0][2] != null ? st.pts[0][2] : 0.5;
+      ctx.beginPath();
+      ctx.arc(x, y, ((st.w || 5) * (0.5 + pr) * (w/320) * 0.5) / 2, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+
+  const safeTitle = (n.title || 'drawing').replace(/[^a-z0-9_-]+/gi, '_').slice(0, 40) || 'drawing';
+  cv.toBlob((blob) => {
+    if (!blob) { toast('Export failed'); return; }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${safeTitle}.png`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast('Drawing exported ✓');
+  }, 'image/png');
+}
+
+// Paint background guides onto an arbitrary 2D context (used by export).
+function _paintBgOnCanvas(ctx, style, w, h) {
+  if (!style || style === 'none') return;
+  const step = Math.max(14, Math.round(w / 26));
+  ctx.save();
+  ctx.strokeStyle = 'rgba(136,136,136,0.28)';
+  ctx.fillStyle   = 'rgba(136,136,136,0.28)';
+  ctx.lineWidth = Math.max(1, w / 1400);
+  if (style === 'dots') {
+    for (let y = step; y < h; y += step)
+      for (let x = step; x < w; x += step) { ctx.beginPath(); ctx.arc(x, y, Math.max(1.2, w/900), 0, Math.PI*2); ctx.fill(); }
+  } else {
+    for (let y = step; y < h; y += step) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+    if (style === 'grid')
+      for (let x = step; x < w; x += step) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+  }
+  ctx.restore();
 }
 
 function _initNoteDrawCanvas(n) {
@@ -1555,6 +1707,9 @@ function _initNoteDrawCanvas(n) {
   // vector art that becomes the source of truth on save.
 
   _redrawNoteStrokes();
+  _applyNoteDrawBg(n.drawBg || 'none');
+  const bgBtn = document.getElementById('note-draw-bg');
+  if (bgBtn) bgBtn.title = `Background: ${_NOTE_DRAW_BG_LABEL[n.drawBg || 'none']} (tap to change)`;
   _bindNoteDrawPointer(canvas);
   _updateNoteDrawToolUI();
   _updateNoteDrawUndoRedoBtns();
@@ -1832,9 +1987,18 @@ function _updateNoteDrawToolUI() {
   document.querySelectorAll('.note-draw-size').forEach(b => {
     b.classList.toggle('active', Number(b.dataset.size) === s.size);
   });
+  const presets = ['#e8a838', '#ffffff', '#111111', '#e05c5c', '#5cc77d', '#5c9fe0'];
   document.querySelectorAll('.note-draw-swatch').forEach(b => {
+    if (b.classList.contains('note-draw-custom')) return;
     b.classList.toggle('active', b.dataset.dcolour === s.colour && s.tool === 'pen');
   });
+  // Custom colour: reflect the chosen value into the picker, and mark it
+  // active when the current colour isn't one of the presets.
+  const custom = document.getElementById('note-draw-custom-wrap');
+  const customInput = document.getElementById('note-draw-custom');
+  const isCustom = s.tool === 'pen' && !presets.includes((s.colour || '').toLowerCase());
+  if (custom) custom.classList.toggle('active', isCustom);
+  if (customInput && /^#[0-9a-fA-F]{6}$/.test(s.colour || '')) customInput.value = s.colour;
 }
 
 function _updateNoteDrawUndoRedoBtns() {

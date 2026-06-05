@@ -4824,6 +4824,8 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
         <button class="note-draw-tool" id="note-draw-pen"    onclick="setNoteDrawTool('pen')"    title="Pen"><svg class="icon" aria-hidden="true"><use href="#i-pencil"></use></svg></button>
         <button class="note-draw-tool" id="note-draw-eraser" onclick="setNoteDrawTool('eraser')" title="Eraser"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>
         <div style="width:1px;height:18px;background:var(--border);margin:0 2px;flex-shrink:0"></div>
+        <button class="note-draw-tool" id="note-draw-bg" onclick="cycleNoteDrawBg()" title="Background: none → ruled → grid → dots">▦</button>
+        <div style="width:1px;height:18px;background:var(--border);margin:0 2px;flex-shrink:0"></div>
         <span style="display:flex;align-items:center;gap:4px" title="Brush size">
           <button class="note-draw-size" data-size="2"  onclick="setNoteDrawSize(2)"  title="Fine"><span style="width:4px;height:4px;border-radius:50%;background:currentColor;display:block"></span></button>
           <button class="note-draw-size" data-size="5"  onclick="setNoteDrawSize(5)"  title="Medium"><span style="width:8px;height:8px;border-radius:50%;background:currentColor;display:block"></span></button>
@@ -4837,10 +4839,14 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
           <button class="note-draw-swatch" data-dcolour="#e05c5c" style="background:#e05c5c" onclick="setNoteDrawColour('#e05c5c')" title="Red"></button>
           <button class="note-draw-swatch" data-dcolour="#5cc77d" style="background:#5cc77d" onclick="setNoteDrawColour('#5cc77d')" title="Green"></button>
           <button class="note-draw-swatch" data-dcolour="#5c9fe0" style="background:#5c9fe0" onclick="setNoteDrawColour('#5c9fe0')" title="Blue"></button>
+          <label class="note-draw-swatch note-draw-custom" id="note-draw-custom-wrap" title="Custom colour" style="position:relative;overflow:hidden;background:conic-gradient(red,#ff0,#0f0,#0ff,#00f,#f0f,red);display:inline-flex;align-items:center;justify-content:center">
+            <input type="color" id="note-draw-custom" value="#e8a838" oninput="setNoteDrawColour(this.value)" style="position:absolute;inset:-4px;width:200%;height:200%;border:0;padding:0;cursor:pointer;opacity:0">
+          </label>
         </span>
         <div style="flex:1"></div>
         <button class="note-draw-tool" id="note-draw-undo"  onclick="noteDrawUndo()"  title="Undo stroke">↩</button>
         <button class="note-draw-tool" id="note-draw-redo"  onclick="noteDrawRedo()"  title="Redo stroke">↪</button>
+        <button class="note-draw-tool" id="note-draw-export" onclick="exportNoteDrawingPng()" title="Export as PNG"><svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg></button>
         <button class="note-draw-tool" id="note-draw-clear" onclick="noteDrawClear()" title="Clear drawing" style="color:var(--danger)"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>
       </div>
       <div id="note-draw-canvas-host" style="flex:1;position:relative;overflow:hidden;min-height:0;background:var(--bg)">
