@@ -4864,7 +4864,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
         <button class="note-draw-tool" id="note-draw-reset-view" onclick="resetNoteDrawView()" title="Reset view (fit to screen)" style="display:none">⤢</button>
         <button class="note-draw-tool" id="note-draw-undo"  onclick="noteDrawUndo()"  title="Undo stroke">↩</button>
         <button class="note-draw-tool" id="note-draw-redo"  onclick="noteDrawRedo()"  title="Redo stroke">↪</button>
-        <button class="note-draw-tool" id="note-draw-export" onclick="exportNoteDrawingPng()" title="Export as PNG"><svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg></button>
+        <button class="note-draw-tool" id="note-draw-export" onclick="openNoteDrawExportModal()" title="Export drawing (PNG or layered SVG)"><svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg></button>
         <button class="note-draw-tool" id="note-draw-clear" onclick="noteDrawClear()" title="Clear drawing" style="color:var(--danger)"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>
       </div>
       <div id="note-draw-canvas-host" style="flex:1;position:relative;overflow:hidden;min-height:0;background:var(--bg)">

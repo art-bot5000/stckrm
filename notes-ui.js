@@ -2005,6 +2005,172 @@ function exportNoteDrawingPng() {
   }, 'image/png');
 }
 
+// Export the current drawing as a LAYERED .svg file for editing in other
+// graphics software (Illustrator / Inkscape / Affinity). Strokes become
+// <path> objects, text stays editable <text> (with a font-family fallback
+// chain so it substitutes gracefully if Inter isn't installed), the photo is
+// an embedded <image>, and the guides their own group. Content is organised
+// into named layer groups using both Inkscape (inkscape:groupmode/label) and
+// generic id conventions so the layers are recognised across editors.
+function exportNoteDrawingSvg() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  const s = (_noteDrawState && _noteDrawState.noteId === n.id) ? _noteDrawState : null;
+  const strokes = s ? s.strokes : _noteVectorData(n).strokes;
+  const aspect  = s ? s.aspect  : (_noteVectorData(n).aspect || 1);
+  const photo   = s ? (s.photoData || '') : (_noteVectorData(n).photo || '');
+  const photoT  = s ? s.photoT : (_noteVectorData(n).photoT || null);
+  const pna     = s ? (s.photoNatAspect || 1) : ((photoT && photoT.na) || 1);
+  if ((!strokes || !strokes.length) && !photo) { toast('Nothing to export'); return; }
+
+  const a = aspect && aspect > 0 ? aspect : 1;
+  // Content bounds (union with unit page, photo, and text extents).
+  let minX = 0, minY = 0, maxX = 1, maxY = 1;
+  for (const st of strokes) {
+    if (st.t === 't') {
+      const b = _textElemBounds(st);
+      if (b) {
+        if (b.x < minX) minX = b.x; if (b.x + b.w > maxX) maxX = b.x + b.w;
+        if (b.y < minY) minY = b.y; if (b.y + b.h > maxY) maxY = b.y + b.h;
+      }
+      continue;
+    }
+    for (const p of (st.pts || [])) {
+      if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+      if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+    }
+  }
+  if (photo && photoT) {
+    const pw = photoT.scale, ph = (photoT.scale / pna) * a;
+    minX = Math.min(minX, photoT.x); minY = Math.min(minY, photoT.y);
+    maxX = Math.max(maxX, photoT.x + pw); maxY = Math.max(maxY, photoT.y + ph);
+  }
+  const spanX = maxX - minX, spanY = maxY - minY;
+  const contentAspect = (spanX * a) / spanY;
+  // Canvas long edge ~1600 user units (SVG is scalable; this just sets a sane
+  // coordinate scale matching the PNG export).
+  const long = 1600;
+  let w, h;
+  if (contentAspect >= 1) { w = long; h = Math.round(long / contentAspect); }
+  else { h = long; w = Math.round(long * contentAspect); }
+  const mapX = (nx) => (((nx - minX) / spanX) * w);
+  const mapY = (ny) => (((ny - minY) / spanY) * h);
+
+  const FONT = "'Inter', 'Helvetica Neue', Arial, system-ui, sans-serif";
+  const layer = (id, label, inner) =>
+    `<g id="${id}" inkscape:groupmode="layer" inkscape:label="${label}">${inner}</g>`;
+
+  // ── Photo layer ──
+  let photoLayer = '';
+  if (photo && photoT) {
+    const pxw = (photoT.scale / spanX) * w;
+    const pxh = (((photoT.scale / pna) * a) / spanY) * h;
+    const pxx = mapX(photoT.x), pxy = mapY(photoT.y);
+    photoLayer = layer('layer-photo', 'Photo',
+      `<image x="${pxx.toFixed(1)}" y="${pxy.toFixed(1)}" width="${pxw.toFixed(1)}" height="${pxh.toFixed(1)}" preserveAspectRatio="none" xlink:href="${photo}" href="${photo}"/>`);
+  }
+
+  // ── Guides layer ──
+  const bgInner = _noteDrawBgSvg(n.drawBg, w, h, Math.max(10, w / 14));
+  const guidesLayer = bgInner ? layer('layer-guides', 'Guides', bgInner) : '';
+
+  // ── Drawing (strokes) + Text layers ──
+  let strokeInner = '', textInner = '';
+  for (const st of strokes) {
+    if (st.t === 't') {
+      if (!st.str) continue;
+      const fpx = (st.fs || 0.04) * h * (1 / spanY);
+      const tx = mapX(st.x); let ty = mapY(st.y);
+      let xfParts = '';
+      if (st.rot) xfParts += `rotate(${(st.rot * 180 / Math.PI).toFixed(2)} ${tx.toFixed(1)} ${ty.toFixed(1)}) `;
+      if (st.skx || st.sky) {
+        xfParts += `translate(${tx.toFixed(1)} ${ty.toFixed(1)}) matrix(1 ${(st.sky||0).toFixed(4)} ${(st.skx||0).toFixed(4)} 1 0 0) translate(${(-tx).toFixed(1)} ${(-ty).toFixed(1)}) `;
+      }
+      const xfAttr = xfParts ? ` transform="${xfParts.trim()}"` : '';
+      let lines = '';
+      for (const ln of String(st.str).split('\n')) {
+        lines += `<text x="${tx.toFixed(1)}" y="${(ty + fpx).toFixed(1)}" font-family="${FONT}" font-weight="600" font-size="${fpx.toFixed(1)}" fill="${esc(st.c || '#e8a838')}">${esc(ln)}</text>`;
+        ty += fpx * 1.25;
+      }
+      textInner += xfAttr ? `<g${xfAttr}>${lines}</g>` : lines;
+      continue;
+    }
+    if (!st.pts || !st.pts.length) continue;
+    const sw = Math.max(0.6, (st.w || 5) * (w / 320) * 1.0);
+    let d = '';
+    for (let i = 0; i < st.pts.length; i++) {
+      d += (i === 0 ? 'M' : 'L') + mapX(st.pts[i][0]).toFixed(1) + ',' + mapY(st.pts[i][1]).toFixed(1) + ' ';
+    }
+    strokeInner += `<path d="${d.trim()}" fill="none" stroke="${esc(st.c || '#e8a838')}" stroke-width="${sw.toFixed(1)}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  }
+  const drawingLayer = strokeInner ? layer('layer-drawing', 'Drawing', strokeInner) : '';
+  const textLayer = textInner ? layer('layer-text', 'Text', textInner) : '';
+
+  // Opaque background rect (matches the editor surface) as the bottom layer.
+  const surface = getComputedStyle(document.body).getPropertyValue('--bg').trim() || '#0d0d0d';
+  const bgRect = layer('layer-background', 'Background',
+    `<rect x="0" y="0" width="${w}" height="${h}" fill="${esc(surface || '#0d0d0d')}"/>`);
+
+  const svg =
+`<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+${bgRect}
+${photoLayer}
+${guidesLayer}
+${drawingLayer}
+${textLayer}
+</svg>`;
+
+  const safeTitle = (n.title || 'drawing').replace(/[^a-z0-9_-]+/gi, '_').slice(0, 40) || 'drawing';
+  try {
+    const blob = new Blob([svg], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const aEl = document.createElement('a');
+    aEl.href = url; aEl.download = `${safeTitle}.svg`;
+    document.body.appendChild(aEl); aEl.click(); aEl.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast('Saved as layered SVG ✓');
+  } catch (_) { toast('SVG export failed'); }
+}
+
+// Open the export format chooser (PNG or layered SVG).
+function openNoteDrawExportModal() {
+  const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
+  const s = (_noteDrawState && _noteDrawState.noteId === n.id) ? _noteDrawState : null;
+  const hasContent = s ? (s.strokes.length || s.photoData) : _noteHasVector(n);
+  if (!hasContent) { toast('Nothing to export'); return; }
+  let ov = document.getElementById('note-draw-export-modal');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'note-draw-export-modal';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:24px';
+    ov.innerHTML =
+      `<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;max-width:340px;width:100%;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,0.5)">
+        <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:4px">Export drawing</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Choose a format to save this drawing.</div>
+        <button id="nde-png" class="btn" style="width:100%;justify-content:flex-start;margin-bottom:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:12px 14px">
+          <span style="display:flex;flex-direction:column;align-items:flex-start;gap:2px">
+            <span style="font-weight:700">PNG image</span>
+            <span style="font-size:11px;color:var(--muted);font-weight:500">Flat picture — same as before</span>
+          </span>
+        </button>
+        <button id="nde-svg" class="btn" style="width:100%;justify-content:flex-start;margin-bottom:14px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:12px 14px">
+          <span style="display:flex;flex-direction:column;align-items:flex-start;gap:2px">
+            <span style="font-weight:700">Layered SVG</span>
+            <span style="font-size:11px;color:var(--muted);font-weight:500">Editable vectors for Illustrator / Inkscape</span>
+          </span>
+        </button>
+        <button id="nde-cancel" class="btn" style="width:100%;background:transparent;border:1px solid var(--border);color:var(--muted)">Cancel</button>
+      </div>`;
+    document.body.appendChild(ov);
+    const close = () => { ov.style.display = 'none'; };
+    ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+    ov.querySelector('#nde-cancel').addEventListener('click', close);
+    ov.querySelector('#nde-png').addEventListener('click', () => { close(); exportNoteDrawingPng(); });
+    ov.querySelector('#nde-svg').addEventListener('click', () => { close(); exportNoteDrawingSvg(); });
+  }
+  ov.style.display = 'flex';
+}
+
 // Paint background guides onto an arbitrary 2D context (used by export).
 function _paintBgOnCanvas(ctx, style, w, h) {
   if (!style || style === 'none') return;
