@@ -1558,10 +1558,13 @@ function _strokesToSvg(strokes, aspect, boxW, boxH, bg, photo, photoT, photoNatA
       const tx = ((st.x - minX) / spanX) * w;
       let ty = ((st.y - minY) / spanY) * h;
       const lines = String(st.str).split('\n');
+      const rotAttr = st.rot ? ` transform="rotate(${(st.rot * 180 / Math.PI).toFixed(2)} ${tx.toFixed(1)} ${ty.toFixed(1)})"` : '';
+      let inner = '';
       for (const ln of lines) {
-        paths += `<text x="${tx.toFixed(1)}" y="${(ty + fpx).toFixed(1)}" font-family="system-ui, sans-serif" font-weight="600" font-size="${fpx.toFixed(1)}" fill="${esc(st.c || '#e8a838')}">${esc(ln)}</text>`;
+        inner += `<text x="${tx.toFixed(1)}" y="${(ty + fpx).toFixed(1)}" font-family="system-ui, sans-serif" font-weight="600" font-size="${fpx.toFixed(1)}" fill="${esc(st.c || '#e8a838')}">${esc(ln)}</text>`;
         ty += fpx * 1.25;
       }
+      paths += rotAttr ? `<g${rotAttr}>${inner}</g>` : inner;
       continue;
     }
     if (!st.pts || !st.pts.length) continue;
@@ -1953,11 +1956,15 @@ function exportNoteDrawingPng() {
     if (st.t === 't') {
       if (!st.str) continue;
       const fpx = (st.fs || 0.04) * (h / spanY);
+      ctx.save();
       ctx.fillStyle = st.c || '#e8a838';
       ctx.font = `600 ${fpx}px system-ui, sans-serif`;
       ctx.textBaseline = 'top';
-      let ty = mapY(st.y);
-      for (const ln of String(st.str).split('\n')) { ctx.fillText(ln, mapX(st.x), ty); ty += fpx * 1.25; }
+      const ax = mapX(st.x), ay0 = mapY(st.y);
+      if (st.rot) { ctx.translate(ax, ay0); ctx.rotate(st.rot); ctx.translate(-ax, -ay0); }
+      let ty = ay0;
+      for (const ln of String(st.str).split('\n')) { ctx.fillText(ln, ax, ty); ty += fpx * 1.25; }
+      ctx.restore();
       continue;
     }
     ctx.strokeStyle = st.c || '#e8a838';
@@ -2084,6 +2091,12 @@ function _initNoteDrawCanvas(n) {
     textSize:   keep ? keep.textSize   : 0.045,  // normalised-height units
     _textEdit:  null,
     _textDrag:  null,    // dragging an existing text element
+    // Select + transform tool: _sel is an array of selected element indices;
+    // _selXf is the active transform gesture (move/scale/rotate); _marquee is
+    // an in-progress selection box {x0,y0,x1,y1} in normalised space.
+    _sel: [],
+    _selXf: null,
+    _marquee: null,
   };
 
   // Load any existing photo backdrop for this note.
@@ -2132,9 +2145,11 @@ function _initNoteDrawCanvas(n) {
 }
 
 function _cloneStroke(st) {
-  // Text element: { t:'t', x, y, str, fs, c }. Strokes: { t:'p', c, w, pts }.
+  // Text element: { t:'t', x, y, str, fs, c, rot? }. Strokes: { t:'p', c, w, pts }.
   if (st.t === 't') {
-    return { t: 't', x: st.x, y: st.y, str: st.str, fs: st.fs, c: st.c };
+    const o = { t: 't', x: st.x, y: st.y, str: st.str, fs: st.fs, c: st.c };
+    if (st.rot) o.rot = st.rot;
+    return o;
   }
   return { t: st.t || 'p', c: st.c, w: st.w, pts: st.pts.map(p => p.slice()) };
 }
@@ -2235,13 +2250,73 @@ function _redrawNoteStrokes() {
     _paintStroke(ctx, preview, s.cssW, s.cssH, s.aspect);
   }
   _updateNoteDrawZoomReadout();
+  _paintSelectionOverlay(ctx, s, v);
+}
+
+// Hit-test the selection handles at a screen-space point (sx,sy in css px,
+// already adjusted for the canvas origin). Returns 'nw'|'ne'|'se'|'sw'
+// (scale corners), 'rotate', 'move' (inside box), or null. Uses the current
+// view to map the normalised selection bounds to screen px.
+function _selHandleAt(s, v, sx, sy) {
+  if (!s._sel || !s._sel.length) return null;
+  const b = _selectionBounds(s._sel); if (!b) return null;
+  const X = (nx) => (nx - v.panX) * v.zoom * s.cssW;
+  const Y = (ny) => (ny - v.panY) * v.zoom * s.cssH;
+  const x = X(b.x), y = Y(b.y), w = b.w * v.zoom * s.cssW, h = b.h * v.zoom * s.cssH;
+  const tol = 12;
+  const near = (px, py) => Math.abs(sx - px) <= tol && Math.abs(sy - py) <= tol;
+  if (near(x, y)) return 'nw';
+  if (near(x + w, y)) return 'ne';
+  if (near(x + w, y + h)) return 'se';
+  if (near(x, y + h)) return 'sw';
+  if (near(x + w / 2, y - 24)) return 'rotate';
+  if (sx >= x - tol && sx <= x + w + tol && sy >= y - tol && sy <= y + h + tol) return 'move';
+  return null;
+}
+
+// Draw the selection bounding box with scale handles (corners) and a rotate
+// handle (above top-centre), plus the in-progress marquee rectangle. All in
+// the already view-transformed canvas space; sizes divided by zoom so they
+// stay constant on screen.
+function _paintSelectionOverlay(ctx, s, v) {
+  const accent = getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#e8a838';
+  // Marquee (selection drag box).
+  if (s._marquee) {
+    const m = s._marquee;
+    const x = Math.min(m.x0, m.x1) * s.cssW, y = Math.min(m.y0, m.y1) * s.cssH;
+    const w = Math.abs(m.x1 - m.x0) * s.cssW, h = Math.abs(m.y1 - m.y0) * s.cssH;
+    ctx.save();
+    ctx.strokeStyle = accent; ctx.fillStyle = accent;
+    ctx.globalAlpha = 0.12; ctx.fillRect(x, y, w, h);
+    ctx.globalAlpha = 0.9; ctx.lineWidth = 1 / v.zoom; ctx.setLineDash([4 / v.zoom, 3 / v.zoom]);
+    ctx.strokeRect(x, y, w, h);
+    ctx.restore();
+  }
+  if (!s._sel || !s._sel.length) return;
+  const b = _selectionBounds(s._sel); if (!b) return;
+  const x = b.x * s.cssW, y = b.y * s.cssH, w = b.w * s.cssW, h = b.h * s.cssH;
+  const hs = 7 / v.zoom;  // handle half-size on screen
+  ctx.save();
+  ctx.strokeStyle = accent; ctx.fillStyle = accent;
+  ctx.lineWidth = 1.5 / v.zoom; ctx.setLineDash([5 / v.zoom, 4 / v.zoom]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.setLineDash([]);
+  // Corner scale handles.
+  const corners = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+  for (const [cx, cy] of corners) { ctx.fillRect(cx - hs, cy - hs, hs * 2, hs * 2); }
+  // Rotate handle: a small circle above the top-centre, with a connector.
+  const rcx = x + w / 2, rcy = y - 24 / v.zoom;
+  ctx.beginPath(); ctx.moveTo(x + w / 2, y); ctx.lineTo(rcx, rcy); ctx.stroke();
+  ctx.beginPath(); ctx.arc(rcx, rcy, hs, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
 }
 
 // Paint one stroke onto the live canvas, denormalising its points.
 // Points are stored normalised: x in [0,1] vs width, y in [0,1] vs height.
 function _paintStroke(ctx, st, cssW, cssH, aspect) {
   // Text element: draw the string at (x,y) top-left, font size in
-  // normalised-height units so it scales with the canvas.
+  // normalised-height units so it scales with the canvas. Optional rot
+  // (radians) rotates around the (x,y) anchor.
   if (st.t === 't') {
     if (!st.str || st._editing) return;
     const px = (st.fs || 0.04) * cssH;
@@ -2249,9 +2324,11 @@ function _paintStroke(ctx, st, cssW, cssH, aspect) {
     ctx.fillStyle = st.c || '#e8a838';
     ctx.font = `600 ${px}px 'Inter', system-ui, sans-serif`;
     ctx.textBaseline = 'top';
+    const ax = st.x * cssW, ay = st.y * cssH;
+    if (st.rot) { ctx.translate(ax, ay); ctx.rotate(st.rot); ctx.translate(-ax, -ay); }
     const lines = String(st.str).split('\n');
-    let y = st.y * cssH;
-    for (const ln of lines) { ctx.fillText(ln, st.x * cssW, y); y += px * 1.25; }
+    let y = ay;
+    for (const ln of lines) { ctx.fillText(ln, ax, y); y += px * 1.25; }
     ctx.restore();
     return;
   }
@@ -2432,6 +2509,36 @@ function _bindNoteDrawPointer(canvas) {
       return;
     }
 
+    // ── Transform tool ── select elements and scale/rotate/move them.
+    if (s.tool === 'transform') {
+      if (active.size > 1) return;  // ignore extra fingers during a transform
+      const p = npos(e);
+      const handle = _selHandleAt(s, s.view, sp.x, sp.y);
+      if (handle && s._sel.length) {
+        // Grabbed a handle (or inside the box) → begin a transform gesture.
+        const b = _selectionBounds(s._sel);
+        s._selXf = {
+          mode: handle, pointerId: e.pointerId,
+          startNx: p[0], startNy: p[1],
+          box: b,
+          cx: b.x + b.w / 2, cy: b.y + b.h / 2,
+          snapshot: s._sel.map(i => _cloneStroke(s.strokes[i])),
+          startAngle: Math.atan2(p[1] - (b.y + b.h / 2), p[0] - (b.x + b.w / 2)),
+          moved: false,
+        };
+        return;
+      }
+      // No handle: tap an element to select it, or start a marquee.
+      const hit = _elemAt(p[0], p[1]);
+      if (hit >= 0) {
+        s._sel = [hit];
+        _redrawNoteStrokes();
+      } else {
+        s._marquee = { x0: p[0], y0: p[1], x1: p[0], y1: p[1], pointerId: e.pointerId };
+      }
+      return;
+    }
+
     // Track stylus activity for palm rejection.
     if (e.pointerType === 'pen') {
       s.penDown++; s.lastPenAt = performance.now();
@@ -2526,6 +2633,23 @@ function _bindNoteDrawPointer(canvas) {
       return;
     }
 
+    // Transform tool: update marquee or apply move/scale/rotate to selection.
+    if (s.tool === 'transform') {
+      if (s._marquee && e.pointerId === s._marquee.pointerId) {
+        e.preventDefault();
+        const p = npos(e);
+        s._marquee.x1 = p[0]; s._marquee.y1 = p[1];
+        _redrawNoteStrokes();
+        return;
+      }
+      if (s._selXf && e.pointerId === s._selXf.pointerId) {
+        e.preventDefault();
+        _applyNoteSelTransform(npos(e));
+        return;
+      }
+      return;
+    }
+
     // Text drag: move an existing text element under the pointer.
     if (s._textDrag && e.pointerId === s._textDrag.pointerId) {
       e.preventDefault();
@@ -2566,6 +2690,38 @@ function _bindNoteDrawPointer(canvas) {
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
 
     if (e.pointerType === 'pen') { s.penDown = Math.max(0, s.penDown - 1); s.lastPenAt = performance.now(); }
+
+    // Transform tool: finish a marquee selection or a transform gesture.
+    if (s._marquee && e.pointerId === s._marquee.pointerId) {
+      const m = s._marquee; s._marquee = null;
+      const r = { x0: Math.min(m.x0, m.x1), y0: Math.min(m.y0, m.y1), x1: Math.max(m.x0, m.x1), y1: Math.max(m.y0, m.y1) };
+      // A tiny marquee = a tap on empty space → clear selection.
+      if (Math.abs(r.x1 - r.x0) < 0.01 && Math.abs(r.y1 - r.y0) < 0.01) {
+        s._sel = [];
+      } else {
+        s._sel = [];
+        for (let i = 0; i < s.strokes.length; i++) if (_elemInRect(s.strokes[i], r)) s._sel.push(i);
+        if (s._sel.length) toast(`${s._sel.length} selected`);
+      }
+      _redrawNoteStrokes();
+      return;
+    }
+    if (s._selXf && e.pointerId === s._selXf.pointerId) {
+      const xf = s._selXf; s._selXf = null;
+      if (xf.moved) {
+        // Undo step: restore the pre-transform versions of the moved elements.
+        const snap = s.strokes.map(_cloneStroke);
+        // Replace the selected indices in the snapshot with their originals so
+        // undo reverts only the transform.
+        for (let k = 0; k < s._sel.length; k++) snap[s._sel[k]] = _cloneStroke(xf.snapshot[k]);
+        s.history.push(snap);
+        if (s.history.length > _NOTE_DRAW_MAX_HISTORY) s.history.shift();
+        s.redo = [];
+        _redrawNoteStrokes();
+        _noteDrawCommit();
+      }
+      return;
+    }
 
     // Text drag finished: if it moved, record an undo step; if it was a tap
     // (no movement), open the editor on that element instead.
@@ -2741,6 +2897,121 @@ function _textElemBounds(st) {
   const hPx = lines.length * px * 1.25;
   return { x: st.x, y: st.y, w: maxW / cssW, h: hPx / cssH };
 }
+
+// ── Selection & transform geometry ───────────────────────────────────
+// Unified normalised bounding box {x,y,w,h} for any element (stroke or text).
+function _elemBounds(st) {
+  if (st.t === 't') return _textElemBounds(st);
+  const pts = st.pts || [];
+  if (!pts.length) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) {
+    if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+    if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+// Bounding box (normalised) enclosing the given element indices.
+function _selectionBounds(indices) {
+  const s = _noteDrawState; if (!s || !indices || !indices.length) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const i of indices) {
+    const b = _elemBounds(s.strokes[i]); if (!b) continue;
+    if (b.x < minX) minX = b.x; if (b.y < minY) minY = b.y;
+    if (b.x + b.w > maxX) maxX = b.x + b.w; if (b.y + b.h > maxY) maxY = b.y + b.h;
+  }
+  if (minX === Infinity) return null;
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+// Apply a point-mapping fn(x,y)->[x,y] to an element in place. Strokes have
+// every point mapped. Text maps its anchor; scale is derived from how much
+// the mapping stretches a unit step, and rotation is accumulated. `sc` is the
+// uniform scale factor and `dRot` the rotation delta to fold into text.
+function _transformElem(st, fn, sc, dRot) {
+  if (st.t === 't') {
+    const [nx, ny] = fn(st.x, st.y);
+    st.x = nx; st.y = ny;
+    if (sc && sc > 0) st.fs = Math.max(0.008, Math.min(0.5, (st.fs || 0.04) * sc));
+    if (dRot) st.rot = (st.rot || 0) + dRot;
+    return;
+  }
+  for (const p of st.pts) { const m = fn(p[0], p[1]); p[0] = m[0]; p[1] = m[1]; }
+}
+
+// Is a normalised point inside an element (for tap-select)? Reuses the
+// eraser's segment/box test with a small tolerance.
+function _pointInElem(st, nx, ny) {
+  if (st.t === 't') {
+    const b = _textElemBounds(st);
+    return b && nx >= b.x && nx <= b.x + b.w && ny >= b.y && ny <= b.y + b.h;
+  }
+  return _strokeNearPoint(st, nx, ny, 0.02, 1);
+}
+
+// Does an element's bounding box intersect the marquee rect (for box-select)?
+function _elemInRect(st, r) {
+  const b = _elemBounds(st); if (!b) return false;
+  return !(b.x > r.x1 || b.x + b.w < r.x0 || b.y > r.y1 || b.y + b.h < r.y0);
+}
+
+// Topmost element index under a point, or -1.
+function _elemAt(nx, ny) {
+  const s = _noteDrawState; if (!s) return -1;
+  for (let i = s.strokes.length - 1; i >= 0; i--) {
+    if (_pointInElem(s.strokes[i], nx, ny)) return i;
+  }
+  return -1;
+}
+
+// Apply the active transform gesture (move/scale corner/rotate) to the
+// selected elements, rebuilding from the gesture snapshot each frame so the
+// transform is absolute (no cumulative drift). p = current pointer [nx,ny].
+function _applyNoteSelTransform(p) {
+  const s = _noteDrawState, xf = s && s._selXf; if (!xf) return;
+  const aspect = s.aspect || 1;
+  let fn, sc = 1, dRot = 0;
+  if (xf.mode === 'move') {
+    const dx = p[0] - xf.startNx, dy = p[1] - xf.startNy;
+    fn = (x, y) => [x + dx, y + dy];
+  } else if (xf.mode === 'rotate') {
+    const ang = Math.atan2(p[1] - xf.cy, p[0] - xf.cx);
+    dRot = ang - xf.startAngle;
+    const cos = Math.cos(dRot), sin = Math.sin(dRot);
+    // Rotate about centre; correct for aspect so rotation looks circular on
+    // screen (normalised x and y have different px scales).
+    fn = (x, y) => {
+      const rx = (x - xf.cx) * aspect, ry = (y - xf.cy);
+      const nx = rx * cos - ry * sin, ny = rx * sin + ry * cos;
+      return [xf.cx + nx / aspect, xf.cy + ny];
+    };
+  } else {
+    // Corner scale: the opposite corner stays anchored; the dragged corner
+    // tracks the pointer. Uniform scale = larger of the x/y ratios so the
+    // selection keeps its proportions.
+    const b = xf.box;
+    const anchor = {
+      nw: [b.x + b.w, b.y + b.h], ne: [b.x, b.y + b.h],
+      se: [b.x, b.y], sw: [b.x + b.w, b.y],
+    }[xf.mode];
+    const w0 = Math.max(1e-4, b.w), h0 = Math.max(1e-4, b.h);
+    const sx = Math.abs(p[0] - anchor[0]) / w0;
+    const sy = Math.abs(p[1] - anchor[1]) / h0;
+    sc = Math.max(0.05, Math.min(20, Math.max(sx, sy)));  // uniform
+    fn = (x, y) => [anchor[0] + (x - anchor[0]) * sc, anchor[1] + (y - anchor[1]) * sc];
+  }
+  // Rebuild each selected element from its snapshot, then transform.
+  for (let k = 0; k < s._sel.length; k++) {
+    const idx = s._sel[k];
+    const fresh = _cloneStroke(xf.snapshot[k]);
+    _transformElem(fresh, fn, sc, dRot);
+    s.strokes[idx] = fresh;
+  }
+  xf.moved = true;
+  _redrawNoteStrokes();
+}
+
 function _dist2(x0, y0, x1, y1) { const dx = x1-x0, dy = y1-y0; return dx*dx + dy*dy; }
 function _distToSeg2(px, py, ax, ay, bx, by) {
   const dx = bx-ax, dy = by-ay;
@@ -2931,9 +3202,14 @@ function setNoteDrawTool(tool) {
   const s = _noteDrawState; if (!s) return;
   // Leaving the text tool while an inline editor is open → commit it first.
   if (s._textEdit && tool !== 'text') _commitNoteTextEdit();
+  // Leaving the transform tool → clear any selection/overlay.
+  if (s.tool === 'transform' && tool !== 'transform') {
+    s._sel = []; s._selXf = null; s._marquee = null;
+  }
   s.tool = tool;
   _updateNoteDrawToolUI();
   _updateNoteDrawTextControls();
+  _redrawNoteStrokes();
 }
 
 // Text styling setters (separate from pen colour/size).
@@ -2950,11 +3226,19 @@ function setNoteTextSize(fs) {
   _updateNoteDrawTextControls();
 }
 
-// Show the text colour/size controls only when the Text tool is active.
+// Show the text colour/size controls only when the Text tool is active, and
+// hide the pen size/colour controls (which don't apply to text) to reduce
+// clutter. The transform tool also hides pen controls.
 function _updateNoteDrawTextControls() {
   const s = _noteDrawState;
   const wrap = document.getElementById('note-draw-text-controls');
-  if (wrap) wrap.style.display = (s && s.tool === 'text') ? 'flex' : 'none';
+  const isText = !!(s && s.tool === 'text');
+  if (wrap) wrap.style.display = isText ? 'flex' : 'none';
+  // Pen size/colour are irrelevant for text & transform tools → hide them.
+  const hidePen = !!(s && (s.tool === 'text' || s.tool === 'transform'));
+  const flexEls = ['note-draw-sizes', 'note-draw-colours'];
+  flexEls.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = hidePen ? 'none' : 'flex'; });
+  ['note-draw-div-pen1', 'note-draw-div-pen2'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = hidePen ? 'none' : ''; });
   if (!s) return;
   document.querySelectorAll('.note-draw-tsize').forEach(b => {
     b.classList.toggle('active', Math.abs(Number(b.dataset.tsize) - s.textSize) < 0.001);
@@ -2981,6 +3265,7 @@ function _updateNoteDrawToolUI() {
   document.getElementById('note-draw-pen')?.classList.toggle('active', s.tool === 'pen');
   document.getElementById('note-draw-eraser')?.classList.toggle('active', s.tool === 'eraser');
   document.getElementById('note-draw-text')?.classList.toggle('active', s.tool === 'text');
+  document.getElementById('note-draw-transform')?.classList.toggle('active', s.tool === 'transform');
   document.querySelectorAll('.note-draw-size').forEach(b => {
     b.classList.toggle('active', Number(b.dataset.size) === s.size);
   });
