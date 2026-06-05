@@ -1647,6 +1647,15 @@ function toggleNoteDrawHand() {
   if (cv) cv.classList.toggle('hand', s.handMode);
 }
 
+// Straightedge: while on, every stroke is forced to a straight line.
+function toggleNoteDrawRuler() {
+  const s = _noteDrawState; if (!s) return;
+  s.rulerMode = !s.rulerMode;
+  const btn = document.getElementById('note-draw-ruler');
+  if (btn) btn.classList.toggle('active', s.rulerMode);
+  toast(s.rulerMode ? 'Ruler on — strokes snap to straight lines' : 'Ruler off');
+}
+
 // Reset pan & zoom to the default 1:1 view.
 function resetNoteDrawView() {
   const s = _noteDrawState; if (!s) return;
@@ -2051,6 +2060,7 @@ function _initNoteDrawCanvas(n) {
     // shown and where input lands while editing.
     view: keep ? keep.view : { zoom: 1, panX: 0, panY: 0 },
     handMode: keep ? keep.handMode : false,  // Hand-tool toggle (one-finger pan)
+    rulerMode: keep ? keep.rulerMode : false, // Straightedge: force strokes to straight lines
     _gesture: null,      // active pinch/two-finger gesture state
     // Palm rejection (Auto): once a stylus (pen pointer) is used, touch
     // input stops drawing and only pans. Reverts to finger-draw a few
@@ -2111,6 +2121,8 @@ function _initNoteDrawCanvas(n) {
   const handBtn = document.getElementById('note-draw-hand');
   if (handBtn) handBtn.classList.toggle('active', !!_noteDrawState.handMode);
   if (canvas) canvas.classList.toggle('hand', !!_noteDrawState.handMode);
+  const rulerBtn = document.getElementById('note-draw-ruler');
+  if (rulerBtn) rulerBtn.classList.toggle('active', !!_noteDrawState.rulerMode);
   _bindNoteDrawPointer(canvas);
   _updateNoteDrawToolUI();
   _updateNoteDrawUndoRedoBtns();
@@ -2215,7 +2227,13 @@ function _redrawNoteStrokes() {
   }
   for (const st of s.strokes) _paintStroke(ctx, st, s.cssW, s.cssH, s.aspect);
   // Paint the in-progress stroke last so it appears on top while drawing.
-  if (s.cur) _paintStroke(ctx, s.cur, s.cssW, s.cssH, s.aspect);
+  // In ruler mode, preview it as a straight line (matching what commit does).
+  if (s.cur) {
+    const preview = (s.rulerMode && s.cur.pts && s.cur.pts.length >= 2)
+      ? { t: 'p', c: s.cur.c, w: s.cur.w, pts: _forceStraightLine(s.cur.pts) }
+      : s.cur;
+    _paintStroke(ctx, preview, s.cssW, s.cssH, s.aspect);
+  }
   _updateNoteDrawZoomReadout();
 }
 
@@ -2613,12 +2631,28 @@ function _bindNoteDrawPointer(canvas) {
       return;
     }
     if (s.cur && s.cur.pts.length) {
-      // Simplify the captured points before storing — a high-frequency
-      // stylus emits far more points than needed; thinning them is what
-      // makes the vector format genuinely smaller than a PNG and keeps
-      // redraw cheap, with no visible quality loss. Tolerance is divided
-      // by zoom so detail drawn while zoomed-in isn't flattened away.
-      s.cur.pts = _simplifyPoints(s.cur.pts, 0.0015 / (s.view ? s.view.zoom : 1));
+      // Straightedge / shape snapping (input constraints — storage unchanged,
+      // the result is still a normal point list).
+      if (s.rulerMode && s.cur.pts.length >= 2) {
+        // Ruler forces a straight line; no shape detection.
+        s.cur.pts = _forceStraightLine(s.cur.pts);
+      } else {
+        // Always-on shape snap: clean up confident rectangles/ellipses/lines,
+        // otherwise keep the freehand stroke (then simplify it as usual).
+        const shape = _recognizeShape(s.cur.pts);
+        if (shape) {
+          s.cur.pts = shape.pts;
+          const label = shape.kind === 'rectangle' ? 'rectangle'
+            : shape.kind === 'ellipse' ? 'ellipse' : 'line';
+          toast(`Snapped to ${label}`);
+        } else {
+          // Simplify the captured points before storing — a high-frequency
+          // stylus emits far more points than needed; thinning them keeps the
+          // vector format small and redraw cheap, with no visible quality loss.
+          // Tolerance ÷ zoom so detail drawn while zoomed-in isn't flattened.
+          s.cur.pts = _simplifyPoints(s.cur.pts, 0.0015 / (s.view ? s.view.zoom : 1));
+        }
+      }
       s.history.push(s.strokes.map(_cloneStroke));
       if (s.history.length > _NOTE_DRAW_MAX_HISTORY) s.history.shift();
       s.strokes.push(s.cur);
@@ -2743,6 +2777,100 @@ function _simplifyPoints(pts, tol) {
   for (let i = 0; i < pts.length; i++) if (keep[i]) out.push(pts[i]);
   return out;
 }
+
+// ── Straightedge & shape snapping ────────────────────────────────────
+// Force a freehand point list into a straight line from first to last point.
+// Keeps the average pressure so width feels consistent.
+function _forceStraightLine(pts) {
+  if (!pts || pts.length < 2) return pts;
+  const a = pts[0], b = pts[pts.length - 1];
+  const pr = (a[2] != null ? a[2] : 0.5);
+  return [[a[0], a[1], pr], [b[0], b[1], pr]];
+}
+
+// Try to recognise a clean shape from a freehand stroke. Returns a new point
+// array (line / rectangle / ellipse) on a confident match, or null to keep
+// the freehand stroke. Conservative thresholds avoid intrusive false snaps
+// since snapping is always-on. Works in normalised space.
+function _recognizeShape(pts) {
+  if (!pts || pts.length < 4) return null;
+  // Bounding box and diagonal (scale reference).
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) {
+    if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+    if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+  }
+  const bw = maxX - minX, bh = maxY - minY;
+  const diag = Math.hypot(bw, bh);
+  if (diag < 0.04) return null;           // too small to be intentional
+  const pr = (pts[0][2] != null ? pts[0][2] : 0.5);
+
+  const start = pts[0], endp = pts[pts.length - 1];
+  const gap = Math.hypot(endp[0] - start[0], endp[1] - start[1]);
+  const closed = gap < diag * 0.22;       // endpoints meet → closed shape
+
+  // ── Open shape: candidate straight line ──
+  if (!closed) {
+    // Max deviation of interior points from the start→end segment.
+    let maxD2 = 0;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const d2 = _distToSeg2(pts[i][0], pts[i][1], start[0], start[1], endp[0], endp[1]);
+      if (d2 > maxD2) maxD2 = d2;
+    }
+    const dev = Math.sqrt(maxD2) / diag;
+    if (dev < 0.06) {                      // hugs the straight line tightly
+      return { kind: 'line', pts: [[start[0], start[1], pr], [endp[0], endp[1], pr]] };
+    }
+    return null;                           // open & curvy → leave freehand
+  }
+
+  // ── Closed shape: rectangle vs ellipse ──
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  const rx = bw / 2, ry = bh / 2;
+  if (rx < 0.01 || ry < 0.01) return null; // degenerate
+
+  // Ellipse fit: every point should sit near the inscribed ellipse, i.e.
+  // ((x-cx)/rx)^2 + ((y-cy)/ry)^2 ≈ 1.
+  let ellErr = 0;
+  for (const p of pts) {
+    const u = (p[0] - cx) / rx, v = (p[1] - cy) / ry;
+    ellErr += Math.abs(Math.hypot(u, v) - 1);
+  }
+  ellErr /= pts.length;
+
+  // Rectangle fit: every point should sit near the bounding-box perimeter
+  // (distance to the nearest of the four edges, normalised by diag).
+  let rectErr = 0;
+  for (const p of pts) {
+    const dl = Math.abs(p[0] - minX), dr = Math.abs(p[0] - maxX);
+    const dt = Math.abs(p[1] - minY), db = Math.abs(p[1] - maxY);
+    // distance to nearest edge line, but only counting the edge it's closest to
+    const dxEdge = Math.min(dl, dr), dyEdge = Math.min(dt, db);
+    rectErr += Math.min(dxEdge, dyEdge);
+  }
+  rectErr = (rectErr / pts.length) / diag;
+
+  const ELL_OK = 0.10, RECT_OK = 0.035;
+  const ellOk = ellErr < ELL_OK, rectOk = rectErr < RECT_OK;
+  if (!ellOk && !rectOk) return null;
+
+  // Prefer whichever fits better (normalise the two error scales roughly).
+  const preferRect = rectOk && (!ellOk || (rectErr / RECT_OK) <= (ellErr / ELL_OK));
+  if (preferRect) {
+    return { kind: 'rectangle', pts: [
+      [minX, minY, pr], [maxX, minY, pr], [maxX, maxY, pr], [minX, maxY, pr], [minX, minY, pr],
+    ] };
+  }
+  // Ellipse: sample ~40 points.
+  const ell = [];
+  const N = 40;
+  for (let i = 0; i <= N; i++) {
+    const t = (i / N) * Math.PI * 2;
+    ell.push([cx + rx * Math.cos(t), cy + ry * Math.sin(t), pr]);
+  }
+  return { kind: 'ellipse', pts: ell };
+}
+
 
 // True if the note has no drawable content.
 function _noteDrawIsBlank() {

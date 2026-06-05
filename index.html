@@ -4827,6 +4827,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
         <div style="width:1px;height:18px;background:var(--border);margin:0 2px;flex-shrink:0"></div>
         <button class="note-draw-tool" id="note-draw-bg" onclick="cycleNoteDrawBg()" title="Background: none → ruled → grid → dots">▦</button>
         <button class="note-draw-tool" id="note-draw-hand" onclick="toggleNoteDrawHand()" title="Pan / hand tool (or use two fingers / pinch to zoom)">✋</button>
+        <button class="note-draw-tool" id="note-draw-ruler" onclick="toggleNoteDrawRuler()" title="Ruler — force strokes to straight lines">📏</button>
         <button class="note-draw-tool" id="note-draw-photo" onclick="insertNoteDrawPhoto()" title="Insert a photo to draw over"><svg class="icon" aria-hidden="true"><use href="#i-image"></use></svg></button>
         <button class="note-draw-tool" id="note-draw-photo-remove" onclick="removeNoteDrawPhoto()" title="Remove photo backdrop" style="display:none;color:var(--danger)"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
         <button class="note-draw-tool" id="note-draw-photo-done" onclick="finishNoteDrawPhotoPlacement()" title="Done placing photo" style="display:none;color:var(--ok);border-color:var(--ok)"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg></button>
