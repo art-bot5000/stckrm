@@ -2996,6 +2996,7 @@ function _textElemBounds(st) {
 // ── Selection & transform geometry ───────────────────────────────────
 // Unified normalised bounding box {x,y,w,h} for any element (stroke or text).
 function _elemBounds(st) {
+  if (!st) return null;
   if (st.t === 't') return _textElemBounds(st);
   const pts = st.pts || [];
   if (!pts.length) return null;
@@ -3012,7 +3013,8 @@ function _selectionBounds(indices) {
   const s = _noteDrawState; if (!s || !indices || !indices.length) return null;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const i of indices) {
-    const b = _elemBounds(s.strokes[i]); if (!b) continue;
+    const el = s.strokes[i]; if (!el) continue;   // stale index (e.g. after clear)
+    const b = _elemBounds(el); if (!b) continue;
     if (b.x < minX) minX = b.x; if (b.y < minY) minY = b.y;
     if (b.x + b.w > maxX) maxX = b.x + b.w; if (b.y + b.h > maxY) maxY = b.y + b.h;
   }
@@ -3312,6 +3314,9 @@ function noteDrawUndo() {
   if (s.redo.length > _NOTE_DRAW_MAX_HISTORY) s.redo.shift();
   s.strokes = s.history.pop();
   s.cur = null;
+  // The element list changed under any active selection — clear it so the
+  // overlay can't reference stale indices.
+  s._sel = []; s._selXf = null; s._marquee = null;
   _redrawNoteStrokes();
   _noteDrawCommit();
 }
@@ -3322,6 +3327,7 @@ function noteDrawRedo() {
   if (s.history.length > _NOTE_DRAW_MAX_HISTORY) s.history.shift();
   s.strokes = s.redo.pop();
   s.cur = null;
+  s._sel = []; s._selXf = null; s._marquee = null;
   _redrawNoteStrokes();
   _noteDrawCommit();
 }
@@ -3334,6 +3340,9 @@ function noteDrawClear() {
   if (s.history.length > _NOTE_DRAW_MAX_HISTORY) s.history.shift();
   s.redo = [];
   s.strokes = [];
+  // The selection/gesture referenced elements that no longer exist — clear
+  // them so the overlay doesn't try to bound now-missing elements.
+  s._sel = []; s._selXf = null; s._marquee = null;
   _redrawNoteStrokes();
   _noteDrawCommit();
 }
