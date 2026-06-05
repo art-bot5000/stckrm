@@ -1539,22 +1539,12 @@ function _initNoteDrawCanvas(n) {
     colour: keep ? keep.colour : '#e8a838',
     size:   keep ? keep.size   : 5,
     drawing: false,
-<<<<<<< Updated upstream
-    // Track ink presence with a flag instead of reading pixels back with
-    // getImageData (which triggers the "willReadFrequently" perf warning
-    // and forces a software canvas). Seeded from whether we loaded artwork.
-    hasInk: keep ? keep.hasInk : !!prevUrl,
-    lastX: 0, lastY: 0,
-    undo: keep ? keep.undo : [],
-    redo: keep ? keep.redo : [],
-=======
     strokes,
     history,             // snapshots of the stroke list for undo
     redo,                // snapshots for redo
     cur: null,           // stroke currently being drawn
     _preGesture: null,   // pre-erase-gesture snapshot
     erasedSomething: false,
->>>>>>> Stashed changes
   };
 
   // Legacy PNG notes (old engine, no vector strokes) are not editable as
@@ -1703,21 +1693,6 @@ function _bindNoteDrawPointer(canvas) {
 // undo step — the pre-gesture stroke list is snapshotted on pointerdown.
 function _eraseAt(nx, ny) {
   const s = _noteDrawState; if (!s) return;
-<<<<<<< Updated upstream
-  const ctx = s.ctx;
-  // Pressure scales line width between 50%–150% of the chosen size; a
-  // device without pressure reports 0.5 and draws at the nominal size.
-  const w = s.size * (0.5 + (pressure || 0.5));
-  if (s.tool === 'eraser') {
-    ctx.globalCompositeOperation = 'destination-out';
-    ctx.strokeStyle = 'rgba(0,0,0,1)';
-    ctx.lineWidth = Math.max(w, s.size) * 2;
-  } else {
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.strokeStyle = s.colour;
-    ctx.lineWidth = w;
-    s.hasInk = true;  // a pen stroke adds ink (used for blank-check)
-=======
   const a = s.aspect || 1;
   const hitR = (s.size * 1.5) / Math.max(s.cssW, s.cssH); // normalised radius
   const before = s.strokes.length;
@@ -1725,19 +1700,9 @@ function _eraseAt(nx, ny) {
   if (s.strokes.length !== before) {
     s.erasedSomething = true;
     _redrawNoteStrokes();
->>>>>>> Stashed changes
   }
 }
 
-<<<<<<< Updated upstream
-// Returns true if the canvas has no drawn content. Uses a tracked flag
-// rather than getImageData so we don't trip the "willReadFrequently" perf
-// path on the live drawing context. hasInk goes true on any pen stroke and
-// is reset by clear / set on restore from history.
-function _noteDrawIsBlank() {
-  const s = _noteDrawState; if (!s) return true;
-  return !s.hasInk;
-=======
 // Distance test: is point (nx,ny) within r of any segment of the stroke?
 function _strokeNearPoint(st, nx, ny, r, aspect) {
   const pts = st.pts; if (!pts || !pts.length) return false;
@@ -1790,7 +1755,6 @@ function _simplifyPoints(pts, tol) {
 function _noteDrawIsBlank() {
   const s = _noteDrawState; if (!s) return true;
   return !s.strokes.length;
->>>>>>> Stashed changes
 }
 
 // Stroke committed (or erase gesture ended) → persist + autosave.
@@ -1810,29 +1774,6 @@ function _noteDrawCommit() {
   if (n.locked) _resetNoteActivity(n.id);
 }
 
-<<<<<<< Updated upstream
-function _noteDrawPushUndo() {
-  const s = _noteDrawState; if (!s) return;
-  try {
-    s.undo.push(s.canvas.toDataURL('image/png'));
-    if (s.undo.length > _NOTE_DRAW_MAX_SNAPSHOTS) s.undo.shift();
-  } catch (_) {}
-}
-
-function _noteDrawRestore(url) {
-  const s = _noteDrawState; if (!s) return;
-  s.ctx.globalCompositeOperation = 'source-over';
-  s.ctx.clearRect(0, 0, s.cssW, s.cssH);
-  s.hasInk = !!url;  // restored state has ink iff the snapshot was non-empty
-  if (url) {
-    const img = new Image();
-    img.onload = () => { s.ctx.drawImage(img, 0, 0, s.cssW, s.cssH); };
-    img.src = url;
-  }
-}
-
-=======
->>>>>>> Stashed changes
 function noteDrawUndo() {
   const s = _noteDrawState; if (!s || !s.history.length) return;
   s.redo.push(s.strokes.map(_cloneStroke));
@@ -1860,14 +1801,8 @@ function noteDrawClear() {
   s.history.push(s.strokes.map(_cloneStroke));   // clear is one undo step
   if (s.history.length > _NOTE_DRAW_MAX_HISTORY) s.history.shift();
   s.redo = [];
-<<<<<<< Updated upstream
-  s.ctx.globalCompositeOperation = 'source-over';
-  s.ctx.clearRect(0, 0, s.cssW, s.cssH);
-  s.hasInk = false;
-=======
   s.strokes = [];
   _redrawNoteStrokes();
->>>>>>> Stashed changes
   _noteDrawCommit();
 }
 
