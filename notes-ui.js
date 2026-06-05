@@ -2171,6 +2171,69 @@ function openNoteDrawExportModal() {
   ov.style.display = 'flex';
 }
 
+// Friendly labels for the shape selector.
+const _NOTE_SHAPE_LABEL = {
+  'line':'Line','rectangle':'Rectangle','rounded-rect':'Rounded','ellipse':'Ellipse',
+  'triangle':'Triangle','diamond':'Diamond','pentagon':'Pentagon','hexagon':'Hexagon',
+  'star':'Star','arrow':'Arrow',
+};
+
+// Build a tiny SVG preview of a shape for the selector grid (40×40 box).
+function _noteShapePreviewSvg(kind) {
+  // Generate the shape centred in a unit box, aspect 1, then map to 40px.
+  const pts = _buildShapePoints(kind, 0.5, 0.5, 0.32, 1, 0.32, 0);
+  let d = '';
+  for (let i = 0; i < pts.length; i++) {
+    d += (i === 0 ? 'M' : 'L') + (pts[i][0] * 40).toFixed(1) + ',' + (pts[i][1] * 40).toFixed(1) + ' ';
+  }
+  return `<svg width="40" height="40" viewBox="0 0 40 40"><path d="${d.trim()}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+// Open the shape selector. Picking a shape selects it and activates the
+// shape tool (sticky — stamp as many as you like until switching tools).
+function openNoteShapeModal() {
+  const s = _noteDrawState; if (!s) return;
+  let ov = document.getElementById('note-draw-shape-modal');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'note-draw-shape-modal';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:24px';
+    let grid = '';
+    for (const kind of _NOTE_SHAPE_KINDS) {
+      grid += `<button class="note-shape-pick" data-shape="${kind}" title="${_NOTE_SHAPE_LABEL[kind]}" style="display:flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;transition:all 0.15s">${_noteShapePreviewSvg(kind)}</button>`;
+    }
+    ov.innerHTML =
+      `<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;max-width:340px;width:100%;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,0.5)">
+        <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:4px">Pick a shape</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Tap the canvas to set the centre, then drag out to size it.</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:14px">${grid}</div>
+        <button id="nsh-cancel" class="btn" style="width:100%;background:transparent;border:1px solid var(--border);color:var(--muted)">Cancel</button>
+      </div>`;
+    document.body.appendChild(ov);
+    const close = () => { ov.style.display = 'none'; };
+    ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+    ov.querySelector('#nsh-cancel').addEventListener('click', close);
+    ov.querySelectorAll('.note-shape-pick').forEach(btn => {
+      btn.addEventListener('click', () => { close(); setNoteDrawShape(btn.dataset.shape); });
+    });
+  }
+  // Reflect the current selection.
+  ov.querySelectorAll('.note-shape-pick').forEach(btn => {
+    btn.style.borderColor = (btn.dataset.shape === s.shapeKind) ? 'var(--accent)' : 'var(--border)';
+    btn.style.color = (btn.dataset.shape === s.shapeKind) ? 'var(--accent)' : 'var(--text)';
+  });
+  ov.style.display = 'flex';
+}
+
+// Select a shape and switch to the shape tool.
+function setNoteDrawShape(kind) {
+  const s = _noteDrawState; if (!s) return;
+  if (_NOTE_SHAPE_KINDS.indexOf(kind) < 0) return;
+  s.shapeKind = kind;
+  setNoteDrawTool('shape');
+  toast(`${_NOTE_SHAPE_LABEL[kind]} — tap centre, drag to size`);
+}
+
 // Paint background guides onto an arbitrary 2D context (used by export).
 function _paintBgOnCanvas(ctx, style, w, h) {
   if (!style || style === 'none') return;
@@ -2241,6 +2304,8 @@ function _initNoteDrawCanvas(n) {
     view: keep ? keep.view : { zoom: 1, panX: 0, panY: 0 },
     handMode: keep ? keep.handMode : false,  // Hand-tool toggle (one-finger pan)
     rulerMode: keep ? keep.rulerMode : false, // Straightedge: force strokes to straight lines
+    shapeKind: keep ? keep.shapeKind : 'rectangle', // selected shape for the shape tool
+    _shapeStamp: null,   // in-progress shape stamp { cx, cy, pointerId }
     _gesture: null,      // active pinch/two-finger gesture state
     // Palm rejection (Auto): once a stylus (pen pointer) is used, touch
     // input stops drawing and only pans. Reverts to finger-draw a few
@@ -2647,6 +2712,7 @@ function _bindNoteDrawPointer(canvas) {
     if (s.cur) { s.cur = null; }
     s.drawing = false;
     s._activePointerId = null;
+    s._shapeStamp = null;
     // Pinch uses the two non-pen contacts so a stylus never warps the view.
     const pts = [...active.values()].filter(p => p.type !== 'pen');
     if (pts.length < 2) return;
@@ -2865,6 +2931,16 @@ function _bindNoteDrawPointer(canvas) {
       }
       return;
     }
+    // ── Shape tool ── click sets the centre; drag outward sizes it. The
+    // live preview is built into s.cur each move and committed on release.
+    if (s.tool === 'shape') {
+      s.drawing = true;
+      s._activePointerId = e.pointerId;
+      s._shapeStamp = { cx: p[0], cy: p[1], pointerId: e.pointerId };
+      s.cur = { t: 'p', c: s.colour, w: s.size, pts: [[p[0], p[1], 0.5]] };
+      _redrawNoteStrokes();
+      return;
+    }
     if (s.tool === 'eraser') {
       s.drawing = true;
       s._activePointerId = e.pointerId;
@@ -2938,6 +3014,19 @@ function _bindNoteDrawPointer(canvas) {
     const list = events.length ? events : [e];
     if (s.tool === 'eraser') {
       for (const ev of list) { const p = npos(ev); _eraseAt(p[0], p[1]); }
+      return;
+    }
+    // Shape tool: rebuild the preview from centre → current cursor distance.
+    if (s.tool === 'shape' && s._shapeStamp) {
+      const p = npos(e);
+      const dx = p[0] - s._shapeStamp.cx, dy = p[1] - s._shapeStamp.cy;
+      // Radius in normalised x-units = screen distance from centre, converting
+      // the y-offset (y-units) into x-units via aspect so dragging any
+      // direction grows the shape evenly on screen.
+      const rx = Math.max(0.005, Math.hypot(dx, dy / (s.aspect || 1)));
+      s.cur = { t: 'p', c: s.colour, w: s.size,
+        pts: _buildShapePoints(s.shapeKind, s._shapeStamp.cx, s._shapeStamp.cy, rx, s.aspect, dx, dy) };
+      _redrawNoteStrokes();
       return;
     }
     if (!s.cur) return;
@@ -3036,6 +3125,23 @@ function _bindNoteDrawPointer(canvas) {
     if (s._activePointerId != null && e.pointerId !== s._activePointerId) return;
     s.drawing = false;
     s._activePointerId = null;
+    // Shape tool: commit the stamped shape as a normal stroke. Skip the
+    // straightedge/snap path (it's already a clean shape). Sticky — stays in
+    // shape mode for repeated stamping.
+    if (s.tool === 'shape') {
+      const stamp = s._shapeStamp; s._shapeStamp = null;
+      // Ignore a zero-size tap (no drag) so a stray click doesn't drop a dot.
+      if (s.cur && s.cur.pts && s.cur.pts.length > 1) {
+        s.history.push(s.strokes.map(_cloneStroke));
+        if (s.history.length > _NOTE_DRAW_MAX_HISTORY) s.history.shift();
+        s.strokes.push(s.cur);
+        s.redo = [];
+      }
+      s.cur = null;
+      _redrawNoteStrokes();
+      _noteDrawCommit();
+      return;
+    }
     if (s.tool === 'eraser') {
       if (s.erasedSomething && s._preGesture) {
         s.history.push(s._preGesture);
@@ -3357,6 +3463,103 @@ function _simplifyPoints(pts, tol) {
   return out;
 }
 
+// ── Shape stamping ───────────────────────────────────────────────────
+// The list of stampable shapes (also drives the selector modal). Each is
+// generated as a normal point list, so a stamped shape is just a {t:'p'}
+// stroke — it inherits storage, undo, transform, and SVG export for free.
+const _NOTE_SHAPE_KINDS = [
+  'line', 'rectangle', 'rounded-rect', 'ellipse', 'triangle',
+  'diamond', 'pentagon', 'hexagon', 'star', 'arrow',
+];
+
+// Build a normalised point loop for a shape centred at (cx,cy) with radius r
+// (in normalised x-units). aspect = cssW/cssH, used so circles/squares look
+// symmetric on screen (y-extent scaled by aspect, matching the draw space).
+// `ex`,`ey` are the cursor's current offset from centre (normalised) — only
+// used by 'line'/'arrow' to orient them toward the cursor.
+function _buildShapePoints(kind, cx, cy, r, aspect, ex, ey) {
+  const ry = r * (aspect || 1);       // vertical radius so shapes look even
+  const poly = (n, rot) => {          // regular n-gon, rot = start angle
+    const out = [];
+    for (let i = 0; i <= n; i++) {
+      const t = rot + (i / n) * Math.PI * 2;
+      out.push([cx + r * Math.cos(t), cy + ry * Math.sin(t), 0.5]);
+    }
+    return out;
+  };
+  switch (kind) {
+    case 'line': {
+      // Centre-out: a line through the centre, length 2r toward the cursor.
+      const len = Math.hypot(ex || 0, ey || 0) || 1;
+      const ux = (ex || 1) / len, uy = (ey || 0) / len;
+      return [[cx - ux * r, cy - uy * ry, 0.5], [cx + ux * r, cy + uy * ry, 0.5]];
+    }
+    case 'rectangle':
+      return [[cx-r,cy-ry,0.5],[cx+r,cy-ry,0.5],[cx+r,cy+ry,0.5],[cx-r,cy+ry,0.5],[cx-r,cy-ry,0.5]];
+    case 'rounded-rect': {
+      // Rectangle with quarter-circle corners. Corner radius = 30% of min side.
+      const k = Math.min(r, ry) * 0.4;
+      const kx = Math.min(k, r), kyy = Math.min(k, ry);
+      const x0 = cx - r, x1 = cx + r, y0 = cy - ry, y1 = cy + ry;
+      const out = [];
+      const arc = (acx, acy, a0, a1) => {
+        const seg = 6;
+        for (let i = 0; i <= seg; i++) {
+          const t = a0 + (a1 - a0) * (i / seg);
+          out.push([acx + kx * Math.cos(t), acy + kyy * Math.sin(t), 0.5]);
+        }
+      };
+      arc(x1 - kx, y0 + kyy, -Math.PI/2, 0);     // top-right
+      arc(x1 - kx, y1 - kyy, 0, Math.PI/2);       // bottom-right
+      arc(x0 + kx, y1 - kyy, Math.PI/2, Math.PI); // bottom-left
+      arc(x0 + kx, y0 + kyy, Math.PI, Math.PI*1.5);// top-left
+      out.push(out[0].slice());
+      return out;
+    }
+    case 'ellipse': {
+      const out = [], N = 40;
+      for (let i = 0; i <= N; i++) {
+        const t = (i / N) * Math.PI * 2;
+        out.push([cx + r * Math.cos(t), cy + ry * Math.sin(t), 0.5]);
+      }
+      return out;
+    }
+    case 'triangle':   return poly(3, -Math.PI/2);
+    case 'diamond':    return poly(4, -Math.PI/2);
+    case 'pentagon':   return poly(5, -Math.PI/2);
+    case 'hexagon':    return poly(6, -Math.PI/2);
+    case 'star': {
+      const out = [], spikes = 5, inner = 0.45;
+      for (let i = 0; i <= spikes * 2; i++) {
+        const rad = (i % 2 === 0) ? 1 : inner;
+        const t = -Math.PI/2 + (i / (spikes * 2)) * Math.PI * 2;
+        out.push([cx + r * rad * Math.cos(t), cy + ry * rad * Math.sin(t), 0.5]);
+      }
+      return out;
+    }
+    case 'arrow': {
+      // Arrow from centre toward the cursor, length 2r. Shaft + chevron head.
+      const len = Math.hypot(ex || 0, ey || 0) || 1;
+      const ux = (ex || 1) / len, uy = (ey || 0) / len;
+      // Perpendicular (in aspect-aware space for an even head).
+      const px = -uy, py = ux;
+      const tail = [cx - ux * r, cy - uy * ry];
+      const tip  = [cx + ux * r, cy + uy * ry];
+      const headLen = r * 0.5, headW = r * 0.35;
+      const hx = tip[0] - ux * headLen, hy = tip[1] - uy * headLen * (aspect || 1);
+      return [
+        [tail[0], tail[1], 0.5],
+        [tip[0], tip[1], 0.5],
+        [hx + px * headW, hy + py * headW * (aspect || 1), 0.5],
+        [tip[0], tip[1], 0.5],
+        [hx - px * headW, hy - py * headW * (aspect || 1), 0.5],
+      ];
+    }
+    default:
+      return [[cx-r,cy-ry,0.5],[cx+r,cy-ry,0.5],[cx+r,cy+ry,0.5],[cx-r,cy+ry,0.5],[cx-r,cy-ry,0.5]];
+  }
+}
+
 // ── Straightedge & shape snapping ────────────────────────────────────
 // Force a freehand point list into a straight line from first to last point.
 // Keeps the average pressure so width feels consistent.
@@ -3581,6 +3784,7 @@ function _updateNoteDrawToolUI() {
   document.getElementById('note-draw-eraser')?.classList.toggle('active', s.tool === 'eraser');
   document.getElementById('note-draw-text')?.classList.toggle('active', s.tool === 'text');
   document.getElementById('note-draw-transform')?.classList.toggle('active', s.tool === 'transform');
+  document.getElementById('note-draw-shape')?.classList.toggle('active', s.tool === 'shape');
   document.querySelectorAll('.note-draw-size').forEach(b => {
     b.classList.toggle('active', Number(b.dataset.size) === s.size);
   });
