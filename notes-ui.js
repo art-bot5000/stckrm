@@ -261,8 +261,8 @@ function openSharedNoteViewer(shareCode, noteId) {
   // size). Legacy PNG notes (old engine) fall back to the stored image.
   if (n.drawMode) {
     const vd = _noteVectorData(n);
-    if (vd.strokes.length) {
-      bodyEl.innerHTML = `<div style="display:flex;justify-content:center">${_strokesToSvg(vd.strokes, vd.aspect, 760, 560, n.drawBg)}</div>`;
+    if (vd.strokes.length || vd.photo) {
+      bodyEl.innerHTML = `<div style="display:flex;justify-content:center">${_strokesToSvg(vd.strokes, vd.aspect, 760, 560, n.drawBg, vd.photo, vd.photoT, vd.photoT && vd.photoT.na)}</div>`;
     } else {
       const url = _noteLegacyPngUrl(n);
       bodyEl.innerHTML = url
@@ -301,8 +301,8 @@ function _noteCardHTML(n) {
   let drawThumbIsSvg = false;
   if (isDraw && !(n.locked && !isUnlocked)) {
     const vd = _noteVectorData(n);
-    if (vd.strokes.length) {
-      drawThumb = _strokesToSvg(vd.strokes, vd.aspect, 300, 160, n.drawBg);
+    if (vd.strokes.length || vd.photo) {
+      drawThumb = _strokesToSvg(vd.strokes, vd.aspect, 300, 160, n.drawBg, vd.photo, vd.photoT, vd.photoT && vd.photoT.na);
       drawThumbIsSvg = true;
     } else {
       drawThumb = _noteLegacyPngUrl(n);  // legacy PNG data-URL or ''
@@ -543,7 +543,8 @@ async function openNoteEditor(noteId) {
       id: _noteUid(), title: '', body: '', locked: false,
       pinned: false, archived: false, colour: null,
       tickBoxesVisible: false, tickBoxes: {},
-      drawMode: false, drawStrokes: null, drawAspect: 1, drawBg: 'none', drawing: null,
+      drawMode: false, drawStrokes: null, drawAspect: 1, drawBg: 'none',
+      drawPhoto: null, drawPhotoT: null, drawing: null,
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       deletedAt: null,
     };
@@ -760,12 +761,12 @@ async function closeNoteEditor() {
   // Discard untitled empty notes — don't litter the grid with blank cards
   if (id) {
     const n = notes.find(x => x.id === id);
-    // A draw-mode note is "empty" if it has no strokes (and no legacy PNG),
-    // regardless of the auto-applied "Drawing" title.
-    const liveStrokes = (_noteDrawState && _noteDrawState.noteId === id)
-      ? _noteDrawState.strokes.length : null;
+    // A draw-mode note is "empty" only if it has no strokes AND no photo
+    // (and no legacy PNG), regardless of the auto-applied "Drawing" title.
+    const live = (_noteDrawState && _noteDrawState.noteId === id) ? _noteDrawState : null;
+    const liveEmpty = live ? (live.strokes.length === 0 && !live.photoData) : null;
     const drawEmpty = n && n.drawMode
-      && (liveStrokes !== null ? liveStrokes === 0 : !_noteHasVector(n) && !_noteLegacyPngUrl(n));
+      && (liveEmpty !== null ? liveEmpty : (!_noteHasVector(n) && !_noteLegacyPngUrl(n)));
     if (n && n.drawMode) {
       if (drawEmpty) { notes = notes.filter(x => x.id !== id); await saveNotes(); }
     } else if (n && !n.title?.trim() && !n.body?.trim() && !(document.getElementById('note-body-input')?.innerHTML?.trim())) {
@@ -966,12 +967,14 @@ async function toggleNoteLock() {
     const unlocked = _noteUnlocked.get(n.id);
     if (!unlocked) { toast('Unlock the note first before removing security'); return; }
     if (n.drawMode && (unlocked.body || '').startsWith('\u0001VDRAW\u0001')) {
-      // Restore the plaintext vector strokes so cards/preview can render.
+      // Restore the plaintext vector strokes + photo so cards/preview render.
       try {
         const obj = JSON.parse(unlocked.body.slice('\u0001VDRAW\u0001'.length));
         n.drawStrokes = obj.s || [];
         n.drawAspect  = obj.a || 1;
-      } catch (_) { n.drawStrokes = []; n.drawAspect = 1; }
+        n.drawPhoto   = obj.p || null;
+        n.drawPhotoT  = obj.pt || null;
+      } catch (_) { n.drawStrokes = []; n.drawAspect = 1; n.drawPhoto = null; n.drawPhotoT = null; }
       n.drawing = undefined;
       n.body = '';
     } else if (n.drawMode && (unlocked.body || '').startsWith('\u0001DRAW\u0001')) {
@@ -1000,7 +1003,7 @@ async function toggleNoteLock() {
     }
     const drawBody = n.drawMode
       ? (_noteUnlocked.get(n.id)?.body
-         || (_noteHasVector(n) ? `\u0001VDRAW\u0001${JSON.stringify({ s: n.drawStrokes, a: n.drawAspect || 1 })}` : ''))
+         || (_noteHasVector(n) ? _serializeVDraw(n.drawStrokes, n.drawAspect || 1, n.drawPhoto, n.drawPhotoT) : ''))
       : null;
     if (n.drawMode && !drawBody) { toast('Draw something first'); return; }
     if (!n.drawMode && !n.body && !_noteUnlocked.get(n.id)?.body) { toast('Add some content first'); return; }
@@ -1067,6 +1070,7 @@ async function toggleNoteLock() {
     n.body   = undefined;
     n.drawing = undefined;     // legacy plaintext PNG, if any
     n.drawStrokes = undefined; // plaintext strokes now live encrypted server-side
+    n.drawPhoto = undefined; n.drawPhotoT = undefined; // photo too
     n.locked = true;
     _noteUnlocked.set(n.id, { body, lastActivity: Date.now(), inactivityTimer: null });
     _startNoteInactivityTimer(n.id);
@@ -1446,24 +1450,40 @@ let _noteDrawState = null;  // { noteId, ctx, canvas, cssW, cssH, dpr,
                             //   strokes:[], history:[], redo:[], cur:null }
 const _NOTE_DRAW_MAX_HISTORY = 100;  // undo/redo depth (stroke-list snapshots)
 
-// True if the note has editable vector strokes (vs a legacy PNG or empty).
+// True if the note has editable vector content — strokes or a photo
+// backdrop (vs a legacy PNG or empty).
 function _noteHasVector(n) {
-  return !!(n && Array.isArray(n.drawStrokes) && n.drawStrokes.length);
+  return !!(n && ((Array.isArray(n.drawStrokes) && n.drawStrokes.length) || n.drawPhoto));
+}
+
+// Build the \u0001VDRAW\u0001 body string from drawing parts. Single source of
+// truth for the locked-note / sync payload so the two write sites can't
+// drift. Omits empty fields to keep the payload tight.
+function _serializeVDraw(strokes, aspect, photo, photoT) {
+  const obj = { s: strokes || [], a: aspect || 1 };
+  if (photo) { obj.p = photo; if (photoT) obj.pt = photoT; }
+  return `\u0001VDRAW\u0001${JSON.stringify(obj)}`;
 }
 
 // Read a note's stroke list from wherever it lives (plaintext for unlocked
 // notes, the \u0001VDRAW\u0001 sentinel body for unlocked-in-memory locked notes).
-// Returns { strokes:[], aspect:number } — empty strokes if none/legacy.
+// Returns { strokes, aspect, photo, photoT } — photo is a compressed
+// data-URL backdrop ('' if none), photoT its {x,y,scale} placement.
 function _noteVectorData(n) {
   const unlocked = _noteUnlocked.get(n.id);
   const rawBody  = unlocked ? unlocked.body : null;
   if (rawBody && rawBody.startsWith('\u0001VDRAW\u0001')) {
     try {
       const obj = JSON.parse(rawBody.slice('\u0001VDRAW\u0001'.length));
-      return { strokes: obj.s || [], aspect: obj.a || 1 };
-    } catch (_) { return { strokes: [], aspect: 1 }; }
+      return { strokes: obj.s || [], aspect: obj.a || 1, photo: obj.p || '', photoT: obj.pt || null };
+    } catch (_) { return { strokes: [], aspect: 1, photo: '', photoT: null }; }
   }
-  return { strokes: Array.isArray(n.drawStrokes) ? n.drawStrokes : [], aspect: n.drawAspect || 1 };
+  return {
+    strokes: Array.isArray(n.drawStrokes) ? n.drawStrokes : [],
+    aspect: n.drawAspect || 1,
+    photo: n.drawPhoto || '',
+    photoT: n.drawPhotoT || null,
+  };
 }
 
 // Legacy PNG fallback URL for display only (old engine notes). '' if none.
@@ -1482,10 +1502,11 @@ function _noteLegacyPngUrl(n) {
 // square [0,1]², but because zoom-out drawing can place strokes outside
 // that range, we expand the rendered region to include all content so
 // nothing is clipped in cards / the shared viewer / export.
-function _strokesToSvg(strokes, aspect, boxW, boxH, bg) {
-  if ((!strokes || !strokes.length) && (!bg || bg === 'none')) return '';
+function _strokesToSvg(strokes, aspect, boxW, boxH, bg, photo, photoT, photoNatAspect) {
+  if ((!strokes || !strokes.length) && (!bg || bg === 'none') && !photo) return '';
   const a = aspect && aspect > 0 ? aspect : 1;  // width/height
-  // Content bounds in normalised space, unioned with the unit page.
+  // Content bounds in normalised space, unioned with the unit page and the
+  // photo extent so nothing is clipped.
   let minX = 0, minY = 0, maxX = 1, maxY = 1;
   for (const st of (strokes || [])) {
     for (const p of (st.pts || [])) {
@@ -1493,11 +1514,27 @@ function _strokesToSvg(strokes, aspect, boxW, boxH, bg) {
       if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
     }
   }
+  const pna = photoNatAspect && photoNatAspect > 0 ? photoNatAspect : 1;
+  if (photo && photoT) {
+    const pw = photoT.scale;
+    const ph = (photoT.scale / pna) * a; // height in normalised-x units * aspect → normalised-y
+    minX = Math.min(minX, photoT.x); minY = Math.min(minY, photoT.y);
+    maxX = Math.max(maxX, photoT.x + pw); maxY = Math.max(maxY, photoT.y + ph);
+  }
   const spanX = maxX - minX, spanY = maxY - minY;
   // Fit the content span (width:height = spanX*a : spanY) into the box.
   const contentAspect = (spanX * a) / spanY;
   let w = boxW, h = boxW / contentAspect;
   if (h > boxH) { h = boxH; w = boxH * contentAspect; }
+  // Photo first (behind), then guides, then strokes.
+  let photoFrag = '';
+  if (photo && photoT) {
+    const pxw = (photoT.scale / spanX) * w;
+    const pxh = (((photoT.scale / pna) * a) / spanY) * h;
+    const pxx = ((photoT.x - minX) / spanX) * w;
+    const pxy = ((photoT.y - minY) / spanY) * h;
+    photoFrag = `<image href="${photo}" x="${pxx.toFixed(1)}" y="${pxy.toFixed(1)}" width="${pxw.toFixed(1)}" height="${pxh.toFixed(1)}" preserveAspectRatio="none"/>`;
+  }
   const bgFrag = _noteDrawBgSvg(bg, w, h, Math.max(10, w / 14));
   let paths = '';
   for (const st of (strokes || [])) {
@@ -1511,7 +1548,7 @@ function _strokesToSvg(strokes, aspect, boxW, boxH, bg) {
     }
     paths += `<path d="${d.trim()}" fill="none" stroke="${esc(st.c || '#e8a838')}" stroke-width="${sw.toFixed(1)}" stroke-linecap="round" stroke-linejoin="round"/>`;
   }
-  return `<svg width="${w.toFixed(0)}" height="${h.toFixed(0)}" viewBox="0 0 ${w.toFixed(1)} ${h.toFixed(1)}" xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto">${bgFrag}${paths}</svg>`;
+  return `<svg width="${w.toFixed(0)}" height="${h.toFixed(0)}" viewBox="0 0 ${w.toFixed(1)} ${h.toFixed(1)}" xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto">${photoFrag}${bgFrag}${paths}</svg>`;
 }
 
 // ── Background guides (ruled / grid / dots) ──────────────────────────
@@ -1543,6 +1580,13 @@ function _noteDrawBgCss(style, step) {
 function _applyNoteDrawBg(style, view, cssW, cssH) {
   const host = document.getElementById('note-draw-canvas-host');
   if (!host) return;
+  // When a photo backdrop is present, guides are painted on-canvas (over the
+  // photo) by _redrawNoteStrokes, so clear the CSS host guides to avoid
+  // double-drawing them behind the photo.
+  if (_noteDrawState && _noteDrawState.photoData) {
+    host.style.backgroundImage = 'none';
+    return;
+  }
   const v = view || (_noteDrawState && _noteDrawState.view) || { zoom: 1, panX: 0, panY: 0 };
   const baseStep = 26;
   const step = baseStep * v.zoom;  // guides scale with zoom to track strokes
@@ -1597,6 +1641,141 @@ function _updateNoteDrawZoomReadout() {
   }
 }
 
+// ── Photo backdrop (insert / compress / place) ───────────────────────
+const _NOTE_PHOTO_MAX_EDGE = 1600;   // downscale long edge to this
+const _NOTE_PHOTO_QUALITY  = 0.7;    // WebP/JPEG quality
+const _NOTE_PHOTO_WARN     = 800 * 1024;   // warn above ~800 KB
+const _NOTE_PHOTO_REFUSE   = 3 * 1024 * 1024; // hard cap ~3 MB
+
+// Open the file picker to insert a photo backdrop.
+function insertNoteDrawPhoto() {
+  const s = _noteDrawState; if (!s) return;
+  let input = document.getElementById('note-draw-photo-input');
+  if (!input) {
+    input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.id = 'note-draw-photo-input';
+    input.style.display = 'none';
+    input.addEventListener('change', _onNoteDrawPhotoChosen);
+    document.body.appendChild(input);
+  }
+  input.value = '';
+  input.click();
+}
+
+async function _onNoteDrawPhotoChosen(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  if (!/^image\//.test(file.type)) { toast('Please choose an image'); return; }
+  toast('Processing photo…');
+  try {
+    const { dataUrl, bytes, natAspect } = await _compressNotePhoto(file);
+    if (bytes > _NOTE_PHOTO_REFUSE) {
+      toast('Photo is too large even after compression — try a smaller image');
+      return;
+    }
+    if (bytes > _NOTE_PHOTO_WARN) {
+      const kb = Math.round(bytes / 1024);
+      if (!confirm(`This photo is ${kb} KB after compression and will make the note heavier to sync. Add it anyway?`)) return;
+    }
+    const s = _noteDrawState; if (!s) return;
+    s.photoData = dataUrl;
+    s.photoNatAspect = natAspect;
+    // Default placement: fit the photo to the canvas width, centred vertically.
+    const fitH = (1 / natAspect);  // height in normalised-x units when width = 1
+    s.photoT = { x: 0, y: Math.max(0, (1 - fitH * (s.cssW / s.cssH)) / 2), scale: 1, na: natAspect };
+    const img = new Image();
+    img.onload = () => {
+      if (_noteDrawState === s) {
+        s.photoImg = img;
+        s.placingPhoto = true;
+        _applyNoteDrawBg((notes.find(x => x.id === _editingNoteId) || {}).drawBg || 'none', s.view, s.cssW, s.cssH);
+        _updateNoteDrawPhotoUI();
+        _redrawNoteStrokes();
+        toast('Drag to move, pinch the photo to resize, then tap ✓');
+      }
+    };
+    img.src = dataUrl;
+  } catch (err) {
+    toast('Could not process photo');
+    console.error('[note photo] compress error:', err);
+  }
+}
+
+// Downscale + re-encode an image File to a compact data-URL. Prefers WebP
+// (much smaller for photos) with a JPEG fallback. Returns the data-URL, its
+// byte size, and the natural aspect ratio.
+function _compressNotePhoto(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        let w = img.naturalWidth, h = img.naturalHeight;
+        const long = Math.max(w, h);
+        if (long > _NOTE_PHOTO_MAX_EDGE) {
+          const k = _NOTE_PHOTO_MAX_EDGE / long;
+          w = Math.round(w * k); h = Math.round(h * k);
+        }
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        const cx = cv.getContext('2d');
+        cx.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        // Try WebP; if unsupported the result won't start with data:image/webp.
+        let dataUrl = cv.toDataURL('image/webp', _NOTE_PHOTO_QUALITY);
+        if (!/^data:image\/webp/.test(dataUrl)) {
+          dataUrl = cv.toDataURL('image/jpeg', _NOTE_PHOTO_QUALITY);
+        }
+        // Approx byte size of the base64 payload.
+        const b64 = dataUrl.split(',')[1] || '';
+        const bytes = Math.floor(b64.length * 3 / 4);
+        resolve({ dataUrl, bytes, natAspect: w / Math.max(1, h) });
+      } catch (e) { URL.revokeObjectURL(url); reject(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode failed')); };
+    img.src = url;
+  });
+}
+
+// Finish placing the photo: lock it in as the backdrop and persist.
+function finishNoteDrawPhotoPlacement() {
+  const s = _noteDrawState; if (!s) return;
+  s.placingPhoto = false;
+  _updateNoteDrawPhotoUI();
+  _redrawNoteStrokes();
+  const n = notes.find(x => x.id === _editingNoteId);
+  if (n && !n.locked) { n.drawPhoto = s.photoData || null; n.drawPhotoT = s.photoT || null; }
+  _noteBodyDirty = true;
+  clearTimeout(_noteAutoSaveTimer);
+  _noteAutoSaveTimer = setTimeout(_autoSaveNote, 400);
+}
+
+function removeNoteDrawPhoto() {
+  const s = _noteDrawState; if (!s) return;
+  if (!s.photoData) return;
+  if (!confirm('Remove the photo backdrop? Your drawing stays.')) return;
+  s.photoData = null; s.photoImg = null; s.photoT = null; s.placingPhoto = false;
+  const n = notes.find(x => x.id === _editingNoteId);
+  if (n && !n.locked) { n.drawPhoto = null; n.drawPhotoT = null; }
+  _applyNoteDrawBg((n || {}).drawBg || 'none', s.view, s.cssW, s.cssH);
+  _updateNoteDrawPhotoUI();
+  _redrawNoteStrokes();
+  _noteBodyDirty = true;
+  clearTimeout(_noteAutoSaveTimer);
+  _noteAutoSaveTimer = setTimeout(_autoSaveNote, 400);
+}
+
+// Show/hide the photo-related toolbar buttons based on current state.
+function _updateNoteDrawPhotoUI() {
+  const s = _noteDrawState;
+  const removeBtn = document.getElementById('note-draw-photo-remove');
+  const doneBtn   = document.getElementById('note-draw-photo-done');
+  if (removeBtn) removeBtn.style.display = (s && s.photoData) ? '' : 'none';
+  if (doneBtn)   doneBtn.style.display   = (s && s.placingPhoto) ? '' : 'none';
+}
+
 async function cycleNoteDrawBg() {
   const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
   const cur = n.drawBg || 'none';
@@ -1630,6 +1809,36 @@ function _noteDrawBgSvg(style, w, h, step) {
   return lines;
 }
 
+// Paint background guides directly onto the (already view-transformed) live
+// canvas, covering a generous normalised range so they fill the viewport at
+// any pan/zoom. Used only when a photo backdrop is present, so guides sit
+// above the photo; otherwise the cheaper CSS host background is used.
+function _paintGuidesOnCanvas(ctx, style, cssW, cssH, view) {
+  if (!style || style === 'none') return;
+  const baseStep = 26; // css px at zoom 1, matching the CSS guides
+  const stepX = baseStep / cssW;  // normalised
+  const stepY = baseStep / cssH;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(136,136,136,0.30)';
+  ctx.fillStyle   = 'rgba(136,136,136,0.30)';
+  ctx.lineWidth = 1 / (view ? view.zoom : 1);
+  ctx.setLineDash([]);
+  const from = -1, to = 2;  // cover well beyond the unit page
+  if (style === 'dots') {
+    for (let gy = 0; gy <= to; gy += stepY) { for (let gx = 0; gx <= to; gx += stepX) {
+      ctx.beginPath(); ctx.arc(gx * cssW, gy * cssH, Math.max(1, 1.2 / (view ? view.zoom : 1)), 0, Math.PI*2); ctx.fill();
+    } }
+  } else {
+    for (let gy = 0; gy <= to; gy += stepY) {
+      ctx.beginPath(); ctx.moveTo(from * cssW, gy * cssH); ctx.lineTo(to * cssW, gy * cssH); ctx.stroke();
+    }
+    if (style === 'grid') for (let gx = 0; gx <= to; gx += stepX) {
+      ctx.beginPath(); ctx.moveTo(gx * cssW, from * cssH); ctx.lineTo(gx * cssW, to * cssH); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
 // Export the current drawing as a PNG file. Rasterises strokes + the
 // background guide onto an offscreen canvas at a fixed high resolution
 // (independent of the on-screen canvas size, since strokes are vector),
@@ -1640,14 +1849,22 @@ function exportNoteDrawingPng() {
   const s = (_noteDrawState && _noteDrawState.noteId === n.id) ? _noteDrawState : null;
   const strokes = s ? s.strokes : _noteVectorData(n).strokes;
   const aspect  = s ? s.aspect  : (_noteVectorData(n).aspect || 1);
-  if (!strokes || !strokes.length) { toast('Nothing to export'); return; }
+  const photoImg = s ? s.photoImg : null;
+  const photoT   = s ? s.photoT   : (_noteVectorData(n).photoT || null);
+  if ((!strokes || !strokes.length) && !photoImg) { toast('Nothing to export'); return; }
 
-  // Content bounds (union with the unit page) so zoom-out strokes outside
-  // [0,1] are still exported, mirroring _strokesToSvg.
+  // Content bounds (union with the unit page and the photo extent) so
+  // zoom-out strokes and the photo are fully included.
   let minX = 0, minY = 0, maxX = 1, maxY = 1;
   for (const st of strokes) for (const p of (st.pts || [])) {
     if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
     if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+  }
+  if (photoImg && photoT) {
+    const pw = photoT.scale;
+    const ph = (photoT.scale / (s.photoNatAspect || 1)) * (s.cssW / s.cssH);
+    minX = Math.min(minX, photoT.x); minY = Math.min(minY, photoT.y);
+    maxX = Math.max(maxX, photoT.x + pw); maxY = Math.max(maxY, photoT.y + ph);
   }
   const spanX = maxX - minX, spanY = maxY - minY;
   const contentAspect = (spanX * aspect) / spanY;
@@ -1667,13 +1884,20 @@ function exportNoteDrawingPng() {
   ctx.fillStyle = surface || '#0d0d0d';
   ctx.fillRect(0, 0, w, h);
 
+  const mapX = (nx) => ((nx - minX) / spanX) * w;
+  const mapY = (ny) => ((ny - minY) / spanY) * h;
+
+  // Photo backdrop (behind guides and strokes).
+  if (photoImg && photoT) {
+    const pw = photoT.scale, ph = (photoT.scale / (s.photoNatAspect || 1)) * (s.cssW / s.cssH);
+    try { ctx.drawImage(photoImg, mapX(photoT.x), mapY(photoT.y), (pw / spanX) * w, (ph / spanY) * h); } catch (_) {}
+  }
+
   // Background guides.
   _paintBgOnCanvas(ctx, n.drawBg, w, h);
 
   // Strokes (map content bounds → export size).
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  const mapX = (nx) => ((nx - minX) / spanX) * w;
-  const mapY = (ny) => ((ny - minY) / spanY) * h;
   for (const st of strokes) {
     ctx.strokeStyle = st.c || '#e8a838';
     ctx.fillStyle   = st.c || '#e8a838';
@@ -1782,7 +2006,37 @@ function _initNoteDrawCanvas(n) {
     penDown: 0,          // count of active pen pointers
     lastPenAt: 0,        // performance.now() of last pen down/move
     _activePointerId: null,  // pointer that owns the in-progress stroke
+    // Photo backdrop: photoData is the compressed data-URL, photoImg the
+    // decoded <img> for painting, photoT the placement {x,y,scale} in
+    // normalised space (x,y = top-left in 0–1 units, scale relative to a
+    // width-fit). placingPhoto = true while the user is moving/scaling it.
+    photoData: null,
+    photoImg: null,
+    photoT: null,
+    photoNatAspect: 1,   // natural width/height of the photo
+    placingPhoto: false,
   };
+
+  // Load any existing photo backdrop for this note.
+  {
+    const vd = _noteVectorData(n);
+    if (vd && vd.photo) {
+      _noteDrawState.photoData = vd.photo;
+      _noteDrawState.photoT = vd.photoT || { x: 0, y: 0, scale: 1 };
+      // Seed natural aspect from the stored placement so SVG/sizing is right
+      // even before the image finishes decoding.
+      if (vd.photoT && vd.photoT.na) _noteDrawState.photoNatAspect = vd.photoT.na;
+      const img = new Image();
+      img.onload = () => {
+        if (_noteDrawState && _noteDrawState.noteId === n.id) {
+          _noteDrawState.photoImg = img;
+          _noteDrawState.photoNatAspect = img.naturalWidth / Math.max(1, img.naturalHeight);
+          _redrawNoteStrokes();
+        }
+      };
+      img.src = vd.photo;
+    }
+  }
 
   // Legacy PNG notes (old engine, no vector strokes) are not editable as
   // vectors — opening one starts an empty stroke list. The old PNG still
@@ -1802,6 +2056,7 @@ function _initNoteDrawCanvas(n) {
   _updateNoteDrawToolUI();
   _updateNoteDrawUndoRedoBtns();
   _updateNoteDrawZoomReadout();
+  _updateNoteDrawPhotoUI();
 }
 
 function _cloneStroke(st) {
@@ -1863,6 +2118,37 @@ function _redrawNoteStrokes() {
     -v.panX * v.zoom * s.cssW * s.dpr,
     -v.panY * v.zoom * s.cssH * s.dpr,
   );
+  // Photo backdrop (behind strokes). Placed via photoT {x,y,scale} in
+  // normalised units: width = scale (1 = canvas width), height keeps the
+  // photo's natural aspect. Painted under the same view transform so it
+  // pans/zooms with the drawing.
+  if (s.photoImg && s.photoT) {
+    const pw = s.photoT.scale * s.cssW;
+    const ph = (s.photoT.scale / (s.photoNatAspect || 1)) * s.cssW;
+    const px = s.photoT.x * s.cssW;
+    const py = s.photoT.y * s.cssH;
+    ctx.save();
+    if (s.placingPhoto) ctx.globalAlpha = 0.92;
+    try { ctx.drawImage(s.photoImg, px, py, pw, ph); } catch (_) {}
+    ctx.restore();
+    // While placing, outline the photo bounds so the user sees its extent.
+    if (s.placingPhoto) {
+      ctx.save();
+      ctx.strokeStyle = 'var(--accent)';
+      ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#e8a838';
+      ctx.lineWidth = 2 / v.zoom;
+      ctx.setLineDash([6 / v.zoom, 4 / v.zoom]);
+      ctx.strokeRect(px, py, pw, ph);
+      ctx.restore();
+    }
+  }
+  // Background guides over the photo (when a photo is present we draw guides
+  // on-canvas so they sit above the image; without a photo the cheaper CSS
+  // host background is used instead, see _applyNoteDrawBg).
+  if (s.photoImg) {
+    const n2 = notes.find(x => x.id === s.noteId);
+    _paintGuidesOnCanvas(ctx, (n2 && n2.drawBg) || 'none', s.cssW, s.cssH, v);
+  }
   for (const st of s.strokes) _paintStroke(ctx, st, s.cssW, s.cssH, s.aspect);
   // Paint the in-progress stroke last so it appears on top while drawing.
   if (s.cur) _paintStroke(ctx, s.cur, s.cssW, s.cssH, s.aspect);
@@ -1984,12 +2270,70 @@ function _bindNoteDrawPointer(canvas) {
     _redrawNoteStrokes();
   };
 
+  // ── Photo placement: drag to move, pinch to scale (operates on photoT) ──
+  const _updatePhotoPanFn = (e) => {
+    const s = _noteDrawState; if (!s || !s._photoPan) return;
+    const sp = screenPos(e);
+    // Convert screen delta to normalised, accounting for the view zoom so a
+    // drag tracks the finger 1:1 on screen.
+    const dxN = (sp.x - s._photoPan.startX) / s.cssW / s.view.zoom;
+    const dyN = (sp.y - s._photoPan.startY) / s.cssH / s.view.zoom;
+    s.photoT.x = s._photoPan.startT.x + dxN;
+    s.photoT.y = s._photoPan.startT.y + dyN;
+    _redrawNoteStrokes();
+  };
+  const _beginPhotoGesture = () => {
+    const s = _noteDrawState; if (!s) return;
+    s._photoPan = null;
+    const pts = [...active.values()].filter(p => p.type !== 'pen');
+    if (pts.length < 2) return;
+    const dx = pts[1].x - pts[0].x, dy = pts[1].y - pts[0].y;
+    s._photoGesture = {
+      startDist: Math.hypot(dx, dy) || 1,
+      startMidX: (pts[0].x + pts[1].x) / 2,
+      startMidY: (pts[0].y + pts[1].y) / 2,
+      startT: { ...s.photoT },
+    };
+  };
+  const _updatePhotoGesture = () => {
+    const s = _noteDrawState; if (!s || !s._photoGesture) return;
+    const pts = [...active.values()].filter(p => p.type !== 'pen');
+    if (pts.length < 2) return;
+    const g = s._photoGesture;
+    const dx = pts[1].x - pts[0].x, dy = pts[1].y - pts[0].y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const factor = dist / g.startDist;
+    const newScale = Math.max(0.05, Math.min(6, g.startT.scale * factor));
+    // Keep the gesture midpoint anchored on the photo while scaling.
+    const midX = (pts[0].x + pts[1].x) / 2, midY = (pts[0].y + pts[1].y) / 2;
+    const midNxView = (g.startMidX / s.cssW) / s.view.zoom + s.view.panX;
+    const midNyView = (g.startMidY / s.cssH) / s.view.zoom + s.view.panY;
+    // Photo-local fraction of the midpoint at gesture start.
+    const fx = (midNxView - g.startT.x) / Math.max(1e-6, g.startT.scale);
+    const fy = (midNyView - g.startT.y) / Math.max(1e-6, (g.startT.scale / (s.photoNatAspect || 1)) * (s.cssW / s.cssH));
+    const curMidNx = (midX / s.cssW) / s.view.zoom + s.view.panX;
+    const curMidNy = (midY / s.cssH) / s.view.zoom + s.view.panY;
+    s.photoT.scale = newScale;
+    const newHN = (newScale / (s.photoNatAspect || 1)) * (s.cssW / s.cssH);
+    s.photoT.x = curMidNx - fx * newScale;
+    s.photoT.y = curMidNy - fy * newHN;
+    _redrawNoteStrokes();
+  };
+
   canvas.addEventListener('pointerdown', (e) => {
     const s = _noteDrawState; if (!s) return;
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
     const sp = screenPos(e);
     active.set(e.pointerId, { x: sp.x, y: sp.y, type: e.pointerType });
+
+    // ── Photo placement mode ── drags move the photo; two fingers scale it.
+    if (s.placingPhoto && s.photoT) {
+      if (active.size === 2) { _beginPhotoGesture(); return; }
+      if (active.size > 2) return;
+      s._photoPan = { startX: sp.x, startY: sp.y, startT: { ...s.photoT } };
+      return;
+    }
 
     // Track stylus activity for palm rejection.
     if (e.pointerType === 'pen') {
@@ -2059,6 +2403,13 @@ function _bindNoteDrawPointer(canvas) {
     }
     if (e.pointerType === 'pen') s.lastPenAt = performance.now();
 
+    // Photo placement gestures take priority while placing.
+    if (s.placingPhoto) {
+      if (s._photoGesture && active.size >= 2) { e.preventDefault(); _updatePhotoGesture(); return; }
+      if (s._photoPan)                         { e.preventDefault(); _updatePhotoPanFn(e); return; }
+      return;
+    }
+
     // Active multi-touch gesture takes priority.
     if (s._gesture && active.size >= 2) { e.preventDefault(); updateGesture(); return; }
     if (s._pan)                         { e.preventDefault(); updatePan(e); return; }
@@ -2085,6 +2436,23 @@ function _bindNoteDrawPointer(canvas) {
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
 
     if (e.pointerType === 'pen') { s.penDown = Math.max(0, s.penDown - 1); s.lastPenAt = performance.now(); }
+
+    // Photo placement: end of a move/scale gesture.
+    if (s.placingPhoto) {
+      if (s._photoGesture && active.size < 2) {
+        s._photoGesture = null;
+        // If a finger is still down, let it continue as a drag.
+        if (active.size === 1) {
+          const sp = [...active.values()][0];
+          s._photoPan = { startX: sp.x, startY: sp.y, startT: { ...s.photoT } };
+        }
+      }
+      if (s._photoPan && active.size === 0) s._photoPan = null;
+      // Persist placement as it settles (cheap; final lock-in on ✓).
+      const n2 = notes.find(x => x.id === _editingNoteId);
+      if (n2 && !n2.locked) { n2.drawPhotoT = s.photoT; }
+      return;
+    }
 
     // End of a pinch/pan gesture (a finger lifted).
     if (s._gesture) {
@@ -2363,13 +2731,17 @@ function _getCurrentEditorBody(n) {
     const s = (_noteDrawState && _noteDrawState.noteId === n.id) ? _noteDrawState : null;
     const strokes = s ? s.strokes : (Array.isArray(n.drawStrokes) ? n.drawStrokes : []);
     const aspect  = s ? s.aspect  : (n.drawAspect || 1);
+    const photo   = s ? (s.photoData || '') : (n.drawPhoto || '');
+    const photoT  = s ? (s.photoT || null)  : (n.drawPhotoT || null);
     if (!n.locked) {
       n.drawStrokes = strokes.map(_cloneStroke);
       n.drawAspect  = aspect;
+      n.drawPhoto   = photo || null;
+      n.drawPhotoT  = photo ? photoT : null;
       n.drawing = undefined;
     }
-    if (!strokes.length) return '';
-    return `\u0001VDRAW\u0001${JSON.stringify({ s: strokes, a: aspect })}`;
+    if (!strokes.length && !photo) return '';
+    return _serializeVDraw(strokes, aspect, photo, photoT);
   }
   if (n.tickBoxesVisible) {
     // Source of truth in tick mode is n.tickItems (original order) so saves
