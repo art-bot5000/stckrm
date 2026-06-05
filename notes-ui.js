@@ -1706,36 +1706,43 @@ async function _onNoteDrawPhotoChosen(e) {
 // Downscale + re-encode an image File to a compact data-URL. Prefers WebP
 // (much smaller for photos) with a JPEG fallback. Returns the data-URL, its
 // byte size, and the natural aspect ratio.
+// NOTE: the source image is loaded via a FileReader `data:` URL rather than
+// URL.createObjectURL(). The app's Content-Security-Policy allows
+// `img-src 'self' data: https:` but NOT `blob:`, so an object URL trips a
+// CSP violation. A data: URL is permitted and needs no cleanup.
 function _compressNotePhoto(file) {
   return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      try {
-        let w = img.naturalWidth, h = img.naturalHeight;
-        const long = Math.max(w, h);
-        if (long > _NOTE_PHOTO_MAX_EDGE) {
-          const k = _NOTE_PHOTO_MAX_EDGE / long;
-          w = Math.round(w * k); h = Math.round(h * k);
-        }
-        const cv = document.createElement('canvas');
-        cv.width = w; cv.height = h;
-        const cx = cv.getContext('2d');
-        cx.drawImage(img, 0, 0, w, h);
-        URL.revokeObjectURL(url);
-        // Try WebP; if unsupported the result won't start with data:image/webp.
-        let dataUrl = cv.toDataURL('image/webp', _NOTE_PHOTO_QUALITY);
-        if (!/^data:image\/webp/.test(dataUrl)) {
-          dataUrl = cv.toDataURL('image/jpeg', _NOTE_PHOTO_QUALITY);
-        }
-        // Approx byte size of the base64 payload.
-        const b64 = dataUrl.split(',')[1] || '';
-        const bytes = Math.floor(b64.length * 3 / 4);
-        resolve({ dataUrl, bytes, natAspect: w / Math.max(1, h) });
-      } catch (e) { URL.revokeObjectURL(url); reject(e); }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('read failed'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          let w = img.naturalWidth, h = img.naturalHeight;
+          const long = Math.max(w, h);
+          if (long > _NOTE_PHOTO_MAX_EDGE) {
+            const k = _NOTE_PHOTO_MAX_EDGE / long;
+            w = Math.round(w * k); h = Math.round(h * k);
+          }
+          const cv = document.createElement('canvas');
+          cv.width = w; cv.height = h;
+          const cx = cv.getContext('2d');
+          cx.drawImage(img, 0, 0, w, h);
+          // Try WebP; if unsupported the result won't start with data:image/webp.
+          let dataUrl = cv.toDataURL('image/webp', _NOTE_PHOTO_QUALITY);
+          if (!/^data:image\/webp/.test(dataUrl)) {
+            dataUrl = cv.toDataURL('image/jpeg', _NOTE_PHOTO_QUALITY);
+          }
+          // Approx byte size of the base64 payload.
+          const b64 = dataUrl.split(',')[1] || '';
+          const bytes = Math.floor(b64.length * 3 / 4);
+          resolve({ dataUrl, bytes, natAspect: w / Math.max(1, h) });
+        } catch (e) { reject(e); }
+      };
+      img.onerror = () => reject(new Error('decode failed'));
+      img.src = reader.result;  // data: URL — CSP-safe
     };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode failed')); };
-    img.src = url;
+    reader.readAsDataURL(file);
   });
 }
 
