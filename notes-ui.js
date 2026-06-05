@@ -255,14 +255,20 @@ function openSharedNoteViewer(shareCode, noteId) {
   attribEl.innerHTML = `<svg class="icon icon-sm" aria-hidden="true"><use href="#i-share-2"></use></svg> shared by ${esc(sharerName)} · ${esc(permLabel)}`;
   // Body. innerHTML because notes are stored as HTML (rich text in the
   // editor). Container is NOT contenteditable; viewer is strictly read.
-  // Draw notes carry artwork in n.drawing (or the encrypted sentinel body);
-  // render it as an image rather than dumping the raw payload as HTML.
+  // Draw notes carry vector strokes; render them as inline SVG rather than
+  // dumping the raw payload as HTML.
+  // Draw notes: render the vector strokes as inline SVG (scales to any
+  // size). Legacy PNG notes (old engine) fall back to the stored image.
   if (n.drawMode) {
-    const url = n.drawing
-      || ((n.body || '').startsWith('\u0001DRAW\u0001') ? n.body.slice('\u0001DRAW\u0001'.length) : '');
-    bodyEl.innerHTML = url
-      ? `<img src="${url}" alt="Drawing" style="max-width:100%;height:auto;border-radius:8px;background:var(--bg)">`
-      : '<p style="color:var(--muted)">This note is a drawing.</p>';
+    const vd = _noteVectorData(n);
+    if (vd.strokes.length) {
+      bodyEl.innerHTML = `<div style="display:flex;justify-content:center">${_strokesToSvg(vd.strokes, vd.aspect, 760, 560)}</div>`;
+    } else {
+      const url = _noteLegacyPngUrl(n);
+      bodyEl.innerHTML = url
+        ? `<img src="${url}" alt="Drawing" style="max-width:100%;height:auto;border-radius:8px;background:var(--bg)">`
+        : '<p style="color:var(--muted)">This note is a drawing.</p>';
+    }
   } else {
     bodyEl.innerHTML = n.body || '';
   }
@@ -288,9 +294,20 @@ function _noteCardHTML(n) {
   // Draw notes carry a PNG, not text. For unlocked draw notes show a
   // thumbnail; for locked ones (drawing is encrypted) just the lock hint.
   const isDraw     = !!n.drawMode;
-  const drawThumb  = (isDraw && !(n.locked && !isUnlocked))
-    ? (n.drawing || ((unlocked?.body || '').startsWith('\u0001DRAW\u0001') ? (unlocked.body.slice(6)) : ''))
-    : '';
+  // Card thumbnail: render vector strokes as inline SVG (resolution-free).
+  // Locked & still-locked notes show only the lock hint. Legacy PNG notes
+  // (old engine, no strokes) fall back to the stored image.
+  let drawThumb = '';
+  let drawThumbIsSvg = false;
+  if (isDraw && !(n.locked && !isUnlocked)) {
+    const vd = _noteVectorData(n);
+    if (vd.strokes.length) {
+      drawThumb = _strokesToSvg(vd.strokes, vd.aspect, 300, 160);
+      drawThumbIsSvg = true;
+    } else {
+      drawThumb = _noteLegacyPngUrl(n);  // legacy PNG data-URL or ''
+    }
+  }
   const rawPreview = (isDraw || (n.locked && !isUnlocked)) ? '' : (unlocked?.body || n.body || '');
   const _tmpDiv = document.createElement('div'); _tmpDiv.innerHTML = rawPreview;
   const previewText = (_tmpDiv.innerText || _tmpDiv.textContent || '').trim();
@@ -354,7 +371,9 @@ function _noteCardHTML(n) {
           ? `<div style="font-size:12px;color:var(--muted);margin-top:3px">🔒 Tap to unlock</div>`
           : isDraw
             ? (drawThumb
-                ? `<img src="${drawThumb}" alt="Drawing" class="note-row-drawing" style="margin-top:6px;max-height:120px;max-width:100%;border-radius:6px;background:var(--bg);display:block">`
+                ? (drawThumbIsSvg
+                    ? `<div class="note-row-drawing" style="margin-top:6px;max-height:120px;overflow:hidden;border-radius:6px;background:var(--bg);display:flex;justify-content:center">${drawThumb}</div>`
+                    : `<img src="${drawThumb}" alt="Drawing" class="note-row-drawing" style="margin-top:6px;max-height:120px;max-width:100%;border-radius:6px;background:var(--bg);display:block">`)
                 : `<div style="font-size:12px;color:var(--muted);margin-top:3px">✏️ Drawing</div>`)
             : preview ? `<div class="note-row-preview">${esc(preview)}</div>` : ''}
       </div>
@@ -524,7 +543,7 @@ async function openNoteEditor(noteId) {
       id: _noteUid(), title: '', body: '', locked: false,
       pinned: false, archived: false, colour: null,
       tickBoxesVisible: false, tickBoxes: {},
-      drawMode: false, drawing: null,
+      drawMode: false, drawStrokes: null, drawAspect: 1, drawing: null,
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       deletedAt: null,
     };
@@ -741,10 +760,12 @@ async function closeNoteEditor() {
   // Discard untitled empty notes — don't litter the grid with blank cards
   if (id) {
     const n = notes.find(x => x.id === id);
-    // A draw-mode note is "empty" if it has no artwork (no n.drawing and a
-    // blank canvas), regardless of the auto-applied "Drawing" title.
-    const drawEmpty = n && n.drawMode && !n.drawing
-      && !(_noteDrawState && _noteDrawState.noteId === id && !_noteDrawIsBlank());
+    // A draw-mode note is "empty" if it has no strokes (and no legacy PNG),
+    // regardless of the auto-applied "Drawing" title.
+    const liveStrokes = (_noteDrawState && _noteDrawState.noteId === id)
+      ? _noteDrawState.strokes.length : null;
+    const drawEmpty = n && n.drawMode
+      && (liveStrokes !== null ? liveStrokes === 0 : !_noteHasVector(n) && !_noteLegacyPngUrl(n));
     if (n && n.drawMode) {
       if (drawEmpty) { notes = notes.filter(x => x.id !== id); await saveNotes(); }
     } else if (n && !n.title?.trim() && !n.body?.trim() && !(document.getElementById('note-body-input')?.innerHTML?.trim())) {
@@ -944,8 +965,17 @@ async function toggleNoteLock() {
     if (!confirm('Remove security from this note? The body will be stored with your other data.')) return;
     const unlocked = _noteUnlocked.get(n.id);
     if (!unlocked) { toast('Unlock the note first before removing security'); return; }
-    if (n.drawMode && (unlocked.body || '').startsWith('\u0001DRAW\u0001')) {
-      // Restore the plaintext artwork so cards/preview can show it again.
+    if (n.drawMode && (unlocked.body || '').startsWith('\u0001VDRAW\u0001')) {
+      // Restore the plaintext vector strokes so cards/preview can render.
+      try {
+        const obj = JSON.parse(unlocked.body.slice('\u0001VDRAW\u0001'.length));
+        n.drawStrokes = obj.s || [];
+        n.drawAspect  = obj.a || 1;
+      } catch (_) { n.drawStrokes = []; n.drawAspect = 1; }
+      n.drawing = undefined;
+      n.body = '';
+    } else if (n.drawMode && (unlocked.body || '').startsWith('\u0001DRAW\u0001')) {
+      // Legacy locked PNG drawing — keep it as display-only artwork.
       n.drawing = unlocked.body.slice('\u0001DRAW\u0001'.length) || null;
       n.body = '';
     } else {
@@ -969,7 +999,8 @@ async function toggleNoteLock() {
       if (_noteBodyDirty) { try { await _autoSaveNote(); } catch (_) {} }
     }
     const drawBody = n.drawMode
-      ? (_noteUnlocked.get(n.id)?.body || (n.drawing ? `\u0001DRAW\u0001${n.drawing}` : ''))
+      ? (_noteUnlocked.get(n.id)?.body
+         || (_noteHasVector(n) ? `\u0001VDRAW\u0001${JSON.stringify({ s: n.drawStrokes, a: n.drawAspect || 1 })}` : ''))
       : null;
     if (n.drawMode && !drawBody) { toast('Draw something first'); return; }
     if (!n.drawMode && !n.body && !_noteUnlocked.get(n.id)?.body) { toast('Add some content first'); return; }
@@ -1034,7 +1065,8 @@ async function toggleNoteLock() {
       return;
     }
     n.body   = undefined;
-    n.drawing = undefined;  // plaintext artwork now lives encrypted server-side
+    n.drawing = undefined;     // legacy plaintext PNG, if any
+    n.drawStrokes = undefined; // plaintext strokes now live encrypted server-side
     n.locked = true;
     _noteUnlocked.set(n.id, { body, lastActivity: Date.now(), inactivityTimer: null });
     _startNoteInactivityTimer(n.id);
@@ -1378,26 +1410,64 @@ async function deleteCurrentNote() {
 
 // ── Body editing ──────────────────────────
 // ═══════════════════════════════════════════════════════════════════
-//  DRAWING / STYLUS MODE
+//  DRAWING / STYLUS MODE  (vector strokes)
 // ═══════════════════════════════════════════════════════════════════
 // Per-note hand-drawn mode. A note is EITHER text/ticks OR a drawing —
 // toggleNoteDraw() switches between them (mutually exclusive, mirroring
-// toggleNoteTicks). The canvas bitmap is persisted as a PNG data-URL:
-//   • unlocked notes → plaintext n.drawing (so cards can show a hint)
-//   • locked notes   → folded into the encrypted body via the \u0001DRAW\u0001
-//     sentinel in _getCurrentEditorBody, so it rides /note/body/push.
-// All input is via Pointer Events (stylus, touch, mouse) with pressure
-// where the device reports it. Stroke-level undo/redo keeps a stack of
-// canvas snapshots (capped) so it stays simple and reliable.
+// toggleNoteTicks).
+//
+// STORAGE — pure vector. The source of truth is a list of strokes, NOT a
+// rasterised PNG. Each stroke records its tool, colour, width and a list
+// of points in NORMALISED coordinates (0–1 against a unit space, scaled
+// by n.drawAspect = width/height at draw time) so it redraws crisply at
+// any canvas size and zoom.
+//   n.drawStrokes : [ { t:'p', c:'#e8a838', w:5, pts:[[x,y,pr], …] }, … ]
+//   n.drawAspect  : number (cssW / cssH) captured when first drawn
+//   • unlocked notes → n.drawStrokes / n.drawAspect stored in plaintext
+//   • locked notes   → JSON folded into the encrypted body via the
+//     \u0001VDRAW\u0001 sentinel in _getCurrentEditorBody (rides /note/body/push)
+//
+// Benefits over the old PNG approach: per-stroke undo/redo with no bitmap
+// snapshot stack, resolution-independent rendering (cards/sharing draw
+// inline SVG straight from the strokes), recolouring, and far smaller
+// encrypted payloads. The eraser DELETES whole strokes it touches.
+//
+// LEGACY: notes saved by the old PNG engine still carry n.drawing (a PNG
+// data-URL) with no n.drawStrokes. Those still DISPLAY (card + viewer fall
+// back to the PNG) but are not editable as vectors — opening one starts a
+// fresh stroke list over the shown background is NOT done; instead we treat
+// a legacy PNG note as read-only artwork until redrawn. See _noteHasVector.
+//
+// Input is via Pointer Events (stylus, touch, mouse) with pressure where
+// the device reports it; coalesced events smooth high-frequency styli.
 
-let _noteDrawState = null;  // { noteId, ctx, canvas, tool, colour, size,
-                            //   drawing, lastX, lastY, undo:[], redo:[] }
-const _NOTE_DRAW_MAX_SNAPSHOTS = 30;
+let _noteDrawState = null;  // { noteId, ctx, canvas, cssW, cssH, dpr,
+                            //   tool, colour, size, drawing(bool),
+                            //   strokes:[], history:[], redo:[], cur:null }
+const _NOTE_DRAW_MAX_HISTORY = 100;  // undo/redo depth (stroke-list snapshots)
 
-// Extract a drawing data-URL from whatever the note currently holds:
-// the \u0001DRAW\u0001-sentinel body (locked notes, once unlocked) or the
-// plaintext n.drawing (unlocked notes).
-function _noteDrawingDataUrl(n) {
+// True if the note has editable vector strokes (vs a legacy PNG or empty).
+function _noteHasVector(n) {
+  return !!(n && Array.isArray(n.drawStrokes) && n.drawStrokes.length);
+}
+
+// Read a note's stroke list from wherever it lives (plaintext for unlocked
+// notes, the \u0001VDRAW\u0001 sentinel body for unlocked-in-memory locked notes).
+// Returns { strokes:[], aspect:number } — empty strokes if none/legacy.
+function _noteVectorData(n) {
+  const unlocked = _noteUnlocked.get(n.id);
+  const rawBody  = unlocked ? unlocked.body : null;
+  if (rawBody && rawBody.startsWith('\u0001VDRAW\u0001')) {
+    try {
+      const obj = JSON.parse(rawBody.slice('\u0001VDRAW\u0001'.length));
+      return { strokes: obj.s || [], aspect: obj.a || 1 };
+    } catch (_) { return { strokes: [], aspect: 1 }; }
+  }
+  return { strokes: Array.isArray(n.drawStrokes) ? n.drawStrokes : [], aspect: n.drawAspect || 1 };
+}
+
+// Legacy PNG fallback URL for display only (old engine notes). '' if none.
+function _noteLegacyPngUrl(n) {
   const unlocked = _noteUnlocked.get(n.id);
   const rawBody  = unlocked ? unlocked.body : null;
   if (rawBody && rawBody.startsWith('\u0001DRAW\u0001')) {
@@ -1406,21 +1476,40 @@ function _noteDrawingDataUrl(n) {
   return n.drawing || '';
 }
 
+// Render a stroke list to an inline SVG string sized to fit a box, while
+// preserving the drawing's original aspect ratio (aspect = cssW/cssH at
+// draw time). Points are normalised per-axis (x∈[0,1] vs width, y∈[0,1]
+// vs height), so we map the unit square to a w×h box of the right shape.
+function _strokesToSvg(strokes, aspect, boxW, boxH) {
+  if (!strokes || !strokes.length) return '';
+  const a = aspect && aspect > 0 ? aspect : 1;  // width/height
+  // Fit an a:1 (w:h) box inside boxW×boxH.
+  let w = boxW, h = boxW / a;
+  if (h > boxH) { h = boxH; w = boxH * a; }
+  let paths = '';
+  for (const st of strokes) {
+    if (!st.pts || !st.pts.length) continue;
+    const sw = Math.max(0.6, (st.w || 5) * (w / 320) * 1.0); // scale stroke to box
+    let d = '';
+    for (let i = 0; i < st.pts.length; i++) {
+      const px = st.pts[i][0] * w;
+      const py = st.pts[i][1] * h;
+      d += (i === 0 ? 'M' : 'L') + px.toFixed(1) + ',' + py.toFixed(1) + ' ';
+    }
+    paths += `<path d="${d.trim()}" fill="none" stroke="${esc(st.c || '#e8a838')}" stroke-width="${sw.toFixed(1)}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  }
+  return `<svg width="${w.toFixed(0)}" height="${h.toFixed(0)}" viewBox="0 0 ${w.toFixed(1)} ${h.toFixed(1)}" xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto">${paths}</svg>`;
+}
+
 function _initNoteDrawCanvas(n) {
   const canvas = document.getElementById('note-draw-canvas');
   const host   = document.getElementById('note-draw-canvas-host');
   if (!canvas || !host) return;
 
-  // Size the backing store to the host's CSS pixels × DPR for crisp lines.
   const dpr = window.devicePixelRatio || 1;
   const rect = host.getBoundingClientRect();
   const w = Math.max(1, Math.round(rect.width));
   const h = Math.max(1, Math.round(rect.height));
-
-  // Preserve any existing artwork across a resize/reinit.
-  const prevUrl = (_noteDrawState && _noteDrawState.noteId === n.id)
-    ? canvas.toDataURL('image/png')
-    : _noteDrawingDataUrl(n);
 
   canvas.width  = w * dpr;
   canvas.height = h * dpr;
@@ -1429,16 +1518,28 @@ function _initNoteDrawCanvas(n) {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  // Reuse prior tool/colour/size if we're re-initing the same note.
+  // Load existing strokes (preserve in-flight edits if re-initing same note).
   const keep = (_noteDrawState && _noteDrawState.noteId === n.id) ? _noteDrawState : null;
+  let strokes, redo, history;
+  if (keep) {
+    strokes = keep.strokes; redo = keep.redo; history = keep.history;
+  } else {
+    const vd = _noteVectorData(n);
+    strokes = vd.strokes.map(_cloneStroke);  // own copy so undo is isolated
+    redo = [];
+    history = [];
+  }
+
   _noteDrawState = {
     noteId: n.id,
     ctx, canvas,
     cssW: w, cssH: h, dpr,
+    aspect: w / Math.max(1, h),
     tool:   keep ? keep.tool   : 'pen',
     colour: keep ? keep.colour : '#e8a838',
     size:   keep ? keep.size   : 5,
     drawing: false,
+<<<<<<< Updated upstream
     // Track ink presence with a flag instead of reading pixels back with
     // getImageData (which triggers the "willReadFrequently" perf warning
     // and forces a software canvas). Seeded from whether we loaded artwork.
@@ -1446,59 +1547,150 @@ function _initNoteDrawCanvas(n) {
     lastX: 0, lastY: 0,
     undo: keep ? keep.undo : [],
     redo: keep ? keep.redo : [],
+=======
+    strokes,
+    history,             // snapshots of the stroke list for undo
+    redo,                // snapshots for redo
+    cur: null,           // stroke currently being drawn
+    _preGesture: null,   // pre-erase-gesture snapshot
+    erasedSomething: false,
+>>>>>>> Stashed changes
   };
 
-  const paint = () => {
-    if (prevUrl) {
-      const img = new Image();
-      img.onload = () => { ctx.drawImage(img, 0, 0, w, h); };
-      img.src = prevUrl;
-    }
-  };
-  paint();
+  // Legacy PNG notes (old engine, no vector strokes) are not editable as
+  // vectors — opening one starts an empty stroke list. The old PNG still
+  // shows on the card and shared viewer via the fallback path, but we don't
+  // paint it into the editor canvas because the first new stroke's redraw
+  // would clear it, which looks like a glitch. Drawing here creates fresh
+  // vector art that becomes the source of truth on save.
 
+  _redrawNoteStrokes();
   _bindNoteDrawPointer(canvas);
   _updateNoteDrawToolUI();
   _updateNoteDrawUndoRedoBtns();
+}
+
+function _cloneStroke(st) {
+  return { t: st.t || 'p', c: st.c, w: st.w, pts: st.pts.map(p => p.slice()) };
+}
+
+// Repaint the whole canvas from the stroke list. Cheap for typical notes
+// (a few hundred segments); called on every commit, undo/redo, erase.
+function _redrawNoteStrokes() {
+  const s = _noteDrawState; if (!s) return;
+  const ctx = s.ctx;
+  ctx.clearRect(0, 0, s.cssW, s.cssH);
+  ctx.globalCompositeOperation = 'source-over';
+  for (const st of s.strokes) _paintStroke(ctx, st, s.cssW, s.cssH, s.aspect);
+  // Paint the in-progress stroke last so it appears on top while drawing.
+  if (s.cur) _paintStroke(ctx, s.cur, s.cssW, s.cssH, s.aspect);
+}
+
+// Paint one stroke onto the live canvas, denormalising its points.
+// Points are stored normalised: x in [0,1] vs width, y in [0,1] vs height.
+function _paintStroke(ctx, st, cssW, cssH, aspect) {
+  if (!st.pts || !st.pts.length) return;
+  ctx.strokeStyle = st.c || '#e8a838';
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (let i = 1; i < st.pts.length; i++) {
+    const x0 = st.pts[i-1][0] * cssW, y0 = st.pts[i-1][1] * cssH;
+    const x1 = st.pts[i][0]   * cssW, y1 = st.pts[i][1]   * cssH;
+    const pr = st.pts[i][2] != null ? st.pts[i][2] : 0.5;
+    ctx.lineWidth = (st.w || 5) * (0.5 + pr);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+  }
+  // Single-point stroke (a tap) → draw a dot.
+  if (st.pts.length === 1) {
+    const x = st.pts[0][0] * cssW, y = st.pts[0][1] * cssH;
+    const pr = st.pts[0][2] != null ? st.pts[0][2] : 0.5;
+    ctx.fillStyle = st.c || '#e8a838';
+    ctx.beginPath();
+    ctx.arc(x, y, ((st.w || 5) * (0.5 + pr)) / 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 function _bindNoteDrawPointer(canvas) {
   if (canvas._noteDrawBound) return;  // bind once per element
   canvas._noteDrawBound = true;
 
-  const pos = (e) => {
+  // Normalised position: x in [0,1] against width, y in [0,1] against height.
+  const npos = (e) => {
     const r = canvas.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
+    return [
+      Math.min(1, Math.max(0, (e.clientX - r.left) / Math.max(1, r.width))),
+      Math.min(1, Math.max(0, (e.clientY - r.top)  / Math.max(1, r.height))),
+      (e.pressure && e.pressure > 0) ? e.pressure : 0.5,
+    ];
   };
 
   canvas.addEventListener('pointerdown', (e) => {
     const s = _noteDrawState; if (!s) return;
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
-    // Snapshot BEFORE the stroke for undo.
-    _noteDrawPushUndo();
-    const p = pos(e);
-    s.drawing = true; s.lastX = p.x; s.lastY = p.y;
-    // A tap (pointerdown with no move) should leave a dot.
-    _noteDrawSegment(p.x, p.y, p.x, p.y, e.pressure || 0.5);
+    const p = npos(e);
+    if (s.tool === 'eraser') {
+      s.drawing = true;
+      s._preGesture = s.strokes.map(_cloneStroke);  // for one-step undo
+      s.erasedSomething = false;
+      _eraseAt(p[0], p[1]);
+      return;
+    }
+    // Begin a new pen stroke.
+    s.drawing = true;
+    s.cur = { t: 'p', c: s.colour, w: s.size, pts: [p] };
+    _redrawNoteStrokes();
   });
 
   canvas.addEventListener('pointermove', (e) => {
     const s = _noteDrawState; if (!s || !s.drawing) return;
     e.preventDefault();
-    // Use coalesced events for smoother high-frequency stylus input.
     const events = (typeof e.getCoalescedEvents === 'function') ? e.getCoalescedEvents() : [e];
-    for (const ev of (events.length ? events : [e])) {
-      const p = pos(ev);
-      _noteDrawSegment(s.lastX, s.lastY, p.x, p.y, ev.pressure || 0.5);
-      s.lastX = p.x; s.lastY = p.y;
+    const list = events.length ? events : [e];
+    if (s.tool === 'eraser') {
+      for (const ev of list) { const p = npos(ev); _eraseAt(p[0], p[1]); }
+      return;
     }
+    if (!s.cur) return;
+    for (const ev of list) s.cur.pts.push(npos(ev));
+    _redrawNoteStrokes();
   });
 
   const end = (e) => {
     const s = _noteDrawState; if (!s || !s.drawing) return;
     s.drawing = false;
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+    if (s.tool === 'eraser') {
+      // Commit the erase gesture as one history step (only if it changed
+      // anything — the pre-gesture snapshot was taken on pointerdown).
+      if (s.erasedSomething && s._preGesture) {
+        s.history.push(s._preGesture);
+        if (s.history.length > _NOTE_DRAW_MAX_HISTORY) s.history.shift();
+        s.redo = [];
+      }
+      s._preGesture = null;
+      s.erasedSomething = false;
+      _noteDrawCommit();
+      return;
+    }
+    if (s.cur && s.cur.pts.length) {
+      // Simplify the captured points before storing — a high-frequency
+      // stylus emits far more points than needed; thinning them is what
+      // makes the vector format genuinely smaller than a PNG and keeps
+      // redraw cheap, with no visible quality loss.
+      s.cur.pts = _simplifyPoints(s.cur.pts, 0.0015);
+      // Push the pre-stroke list as a history step, then add the new stroke.
+      s.history.push(s.strokes.map(_cloneStroke));
+      if (s.history.length > _NOTE_DRAW_MAX_HISTORY) s.history.shift();
+      s.strokes.push(s.cur);
+      s.redo = [];        // a new action invalidates redo
+    }
+    s.cur = null;
+    _redrawNoteStrokes();
     _noteDrawCommit();
   };
   canvas.addEventListener('pointerup', end);
@@ -1506,8 +1698,12 @@ function _bindNoteDrawPointer(canvas) {
   canvas.addEventListener('pointerleave', end);
 }
 
-function _noteDrawSegment(x0, y0, x1, y1, pressure) {
+// Eraser: remove any stroke whose path passes near the point, using a hit
+// radius scaled by the current brush size. The whole erase gesture is one
+// undo step — the pre-gesture stroke list is snapshotted on pointerdown.
+function _eraseAt(nx, ny) {
   const s = _noteDrawState; if (!s) return;
+<<<<<<< Updated upstream
   const ctx = s.ctx;
   // Pressure scales line width between 50%–150% of the chosen size; a
   // device without pressure reports 0.5 and draws at the nominal size.
@@ -1521,13 +1717,19 @@ function _noteDrawSegment(x0, y0, x1, y1, pressure) {
     ctx.strokeStyle = s.colour;
     ctx.lineWidth = w;
     s.hasInk = true;  // a pen stroke adds ink (used for blank-check)
+=======
+  const a = s.aspect || 1;
+  const hitR = (s.size * 1.5) / Math.max(s.cssW, s.cssH); // normalised radius
+  const before = s.strokes.length;
+  s.strokes = s.strokes.filter(st => !_strokeNearPoint(st, nx, ny, hitR, a));
+  if (s.strokes.length !== before) {
+    s.erasedSomething = true;
+    _redrawNoteStrokes();
+>>>>>>> Stashed changes
   }
-  ctx.beginPath();
-  ctx.moveTo(x0, y0);
-  ctx.lineTo(x1, y1);
-  ctx.stroke();
 }
 
+<<<<<<< Updated upstream
 // Returns true if the canvas has no drawn content. Uses a tracked flag
 // rather than getImageData so we don't trip the "willReadFrequently" perf
 // path on the live drawing context. hasInk goes true on any pen stroke and
@@ -1535,21 +1737,80 @@ function _noteDrawSegment(x0, y0, x1, y1, pressure) {
 function _noteDrawIsBlank() {
   const s = _noteDrawState; if (!s) return true;
   return !s.hasInk;
+=======
+// Distance test: is point (nx,ny) within r of any segment of the stroke?
+function _strokeNearPoint(st, nx, ny, r, aspect) {
+  const pts = st.pts; if (!pts || !pts.length) return false;
+  if (pts.length === 1) {
+    return _dist2(pts[0][0], pts[0][1], nx, ny) <= r * r;
+  }
+  for (let i = 1; i < pts.length; i++) {
+    if (_distToSeg2(nx, ny, pts[i-1][0], pts[i-1][1], pts[i][0], pts[i][1]) <= r * r) return true;
+  }
+  return false;
+}
+function _dist2(x0, y0, x1, y1) { const dx = x1-x0, dy = y1-y0; return dx*dx + dy*dy; }
+function _distToSeg2(px, py, ax, ay, bx, by) {
+  const dx = bx-ax, dy = by-ay;
+  const len2 = dx*dx + dy*dy;
+  if (len2 === 0) return _dist2(px, py, ax, ay);
+  let t = ((px-ax)*dx + (py-ay)*dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return _dist2(px, py, ax + t*dx, ay + t*dy);
 }
 
-// Stroke committed → mark dirty + autosave through the normal note path.
+// Ramer–Douglas–Peucker point thinning. Drops points that sit within
+// `tol` (normalised units) of the line between their kept neighbours.
+// Keeps endpoints and pressure values on surviving points. Iterative
+// (no recursion) so a long stroke can't overflow the stack.
+function _simplifyPoints(pts, tol) {
+  if (!pts || pts.length <= 2) return pts;
+  const tol2 = tol * tol;
+  const keep = new Uint8Array(pts.length);
+  keep[0] = 1; keep[pts.length - 1] = 1;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [first, last] = stack.pop();
+    let maxD = -1, idx = -1;
+    for (let i = first + 1; i < last; i++) {
+      const d = _distToSeg2(pts[i][0], pts[i][1], pts[first][0], pts[first][1], pts[last][0], pts[last][1]);
+      if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (maxD > tol2 && idx !== -1) {
+      keep[idx] = 1;
+      stack.push([first, idx], [idx, last]);
+    }
+  }
+  const out = [];
+  for (let i = 0; i < pts.length; i++) if (keep[i]) out.push(pts[i]);
+  return out;
+}
+
+// True if the note has no drawable content.
+function _noteDrawIsBlank() {
+  const s = _noteDrawState; if (!s) return true;
+  return !s.strokes.length;
+>>>>>>> Stashed changes
+}
+
+// Stroke committed (or erase gesture ended) → persist + autosave.
 function _noteDrawCommit() {
   const n = notes.find(x => x.id === _editingNoteId); if (!n) return;
   const s = _noteDrawState;
-  if (s) { s.redo = []; }  // new stroke invalidates redo
   _updateNoteDrawUndoRedoBtns();
-  if (!n.locked) n.drawing = _noteDrawIsBlank() ? null : s.canvas.toDataURL('image/png');
+  if (s) s.erasedSomething = false;
+  if (!n.locked) {
+    n.drawStrokes = s ? s.strokes.map(_cloneStroke) : [];
+    n.drawAspect  = s ? s.aspect : 1;
+    n.drawing = undefined;  // vector is now the source of truth; drop legacy PNG
+  }
   _noteBodyDirty = true;
   clearTimeout(_noteAutoSaveTimer);
-  _noteAutoSaveTimer = setTimeout(_autoSaveNote, 1200);
+  _noteAutoSaveTimer = setTimeout(_autoSaveNote, 1000);
   if (n.locked) _resetNoteActivity(n.id);
 }
 
+<<<<<<< Updated upstream
 function _noteDrawPushUndo() {
   const s = _noteDrawState; if (!s) return;
   try {
@@ -1570,47 +1831,43 @@ function _noteDrawRestore(url) {
   }
 }
 
+=======
+>>>>>>> Stashed changes
 function noteDrawUndo() {
-  const s = _noteDrawState; if (!s || !s.undo.length) return;
-  const current = s.canvas.toDataURL('image/png');
-  const prev = s.undo.pop();
-  s.redo.push(current);
-  if (s.redo.length > _NOTE_DRAW_MAX_SNAPSHOTS) s.redo.shift();
-  _noteDrawRestore(prev);
-  _afterNoteDrawHistory();
+  const s = _noteDrawState; if (!s || !s.history.length) return;
+  s.redo.push(s.strokes.map(_cloneStroke));
+  if (s.redo.length > _NOTE_DRAW_MAX_HISTORY) s.redo.shift();
+  s.strokes = s.history.pop();
+  s.cur = null;
+  _redrawNoteStrokes();
+  _noteDrawCommit();
 }
 
 function noteDrawRedo() {
   const s = _noteDrawState; if (!s || !s.redo.length) return;
-  const current = s.canvas.toDataURL('image/png');
-  const next = s.redo.pop();
-  s.undo.push(current);
-  if (s.undo.length > _NOTE_DRAW_MAX_SNAPSHOTS) s.undo.shift();
-  _noteDrawRestore(next);
-  _afterNoteDrawHistory();
-}
-
-function _afterNoteDrawHistory() {
-  const n = notes.find(x => x.id === _editingNoteId);
-  _updateNoteDrawUndoRedoBtns();
-  // Defer save until after the async image redraw has painted.
-  setTimeout(() => {
-    const s = _noteDrawState;
-    if (n && !n.locked && s) n.drawing = _noteDrawIsBlank() ? null : s.canvas.toDataURL('image/png');
-    _noteBodyDirty = true;
-    clearTimeout(_noteAutoSaveTimer);
-    _noteAutoSaveTimer = setTimeout(_autoSaveNote, 600);
-  }, 60);
+  s.history.push(s.strokes.map(_cloneStroke));
+  if (s.history.length > _NOTE_DRAW_MAX_HISTORY) s.history.shift();
+  s.strokes = s.redo.pop();
+  s.cur = null;
+  _redrawNoteStrokes();
+  _noteDrawCommit();
 }
 
 function noteDrawClear() {
   const s = _noteDrawState; if (!s) return;
+  if (!s.strokes.length) return;
   if (!confirm('Clear this drawing?')) return;
-  _noteDrawPushUndo();
+  s.history.push(s.strokes.map(_cloneStroke));   // clear is one undo step
+  if (s.history.length > _NOTE_DRAW_MAX_HISTORY) s.history.shift();
   s.redo = [];
+<<<<<<< Updated upstream
   s.ctx.globalCompositeOperation = 'source-over';
   s.ctx.clearRect(0, 0, s.cssW, s.cssH);
   s.hasInk = false;
+=======
+  s.strokes = [];
+  _redrawNoteStrokes();
+>>>>>>> Stashed changes
   _noteDrawCommit();
 }
 
@@ -1649,10 +1906,10 @@ function _updateNoteDrawUndoRedoBtns() {
   const s = _noteDrawState;
   const u = document.getElementById('note-draw-undo');
   const r = document.getElementById('note-draw-redo');
-  if (u) u.disabled = !s || !s.undo.length;
-  if (r) r.disabled = !s || !s.redo.length;
-  if (u) u.style.opacity = (!s || !s.undo.length) ? '0.4' : '';
-  if (r) r.style.opacity = (!s || !s.redo.length) ? '0.4' : '';
+  const canU = !!(s && s.history.length);
+  const canR = !!(s && s.redo.length);
+  if (u) { u.disabled = !canU; u.style.opacity = canU ? '' : '0.4'; }
+  if (r) { r.disabled = !canR; r.style.opacity = canR ? '' : '0.4'; }
 }
 
 async function toggleNoteDraw() {
@@ -1669,19 +1926,15 @@ async function toggleNoteDraw() {
     if (hasText && !confirm('Switch to drawing mode? Your typed text is kept but hidden while you draw — toggle back to see it.')) {
       return;
     }
-    // Persist any pending text edits before we hide the text body.
     if (_noteBodyDirty) { try { await _autoSaveNote(); } catch (_) {} }
     n.drawMode = true;
     if (n.tickBoxesVisible) {
-      // Leave tick mode without destroying tick data; just stop showing it.
       n.tickBoxesVisible = false;
       document.getElementById('note-btn-tick')?.classList.toggle('active', false);
       const ticksEl = document.getElementById('note-ticks-body');
       if (ticksEl) ticksEl.style.display = 'none';
     }
   } else {
-    // Switching OUT of draw mode back to text. Drawing is preserved in
-    // n.drawing / encrypted body; the text body (n.body) reappears.
     n.drawMode = false;
     _noteDrawState = null;
   }
@@ -1697,17 +1950,20 @@ async function toggleNoteDraw() {
 
 function _getCurrentEditorBody(n) {
   if (n.drawMode) {
-    // In draw mode the "body" is the canvas bitmap as a data-URL, wrapped
-    // in a sentinel so locked-note sync (which only carries the body
-    // string) round-trips the drawing. For unlocked notes we also mirror
-    // it onto n.drawing so cards/preview can read it without decrypting.
-    const canvas = document.getElementById('note-draw-canvas');
-    let dataUrl = n.drawing || '';
-    if (canvas && _noteDrawState && _noteDrawState.noteId === n.id) {
-      dataUrl = _noteDrawIsBlank() ? '' : canvas.toDataURL('image/png');
+    // In draw mode the "body" carries the vector strokes as JSON wrapped in
+    // a sentinel, so locked-note sync (body string only) round-trips them.
+    // For unlocked notes we also mirror onto n.drawStrokes/n.drawAspect so
+    // cards/viewer can render without decrypting.
+    const s = (_noteDrawState && _noteDrawState.noteId === n.id) ? _noteDrawState : null;
+    const strokes = s ? s.strokes : (Array.isArray(n.drawStrokes) ? n.drawStrokes : []);
+    const aspect  = s ? s.aspect  : (n.drawAspect || 1);
+    if (!n.locked) {
+      n.drawStrokes = strokes.map(_cloneStroke);
+      n.drawAspect  = aspect;
+      n.drawing = undefined;
     }
-    if (!n.locked) n.drawing = dataUrl || null;
-    return dataUrl ? `\u0001DRAW\u0001${dataUrl}` : '';
+    if (!strokes.length) return '';
+    return `\u0001VDRAW\u0001${JSON.stringify({ s: strokes, a: aspect })}`;
   }
   if (n.tickBoxesVisible) {
     // Source of truth in tick mode is n.tickItems (original order) so saves
