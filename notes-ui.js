@@ -1776,6 +1776,12 @@ function _initNoteDrawCanvas(n) {
     view: keep ? keep.view : { zoom: 1, panX: 0, panY: 0 },
     handMode: keep ? keep.handMode : false,  // Hand-tool toggle (one-finger pan)
     _gesture: null,      // active pinch/two-finger gesture state
+    // Palm rejection (Auto): once a stylus (pen pointer) is used, touch
+    // input stops drawing and only pans. Reverts to finger-draw a few
+    // seconds after the pen is set down. lastPenAt = ms of last pen activity.
+    penDown: 0,          // count of active pen pointers
+    lastPenAt: 0,        // performance.now() of last pen down/move
+    _activePointerId: null,  // pointer that owns the in-progress stroke
   };
 
   // Legacy PNG notes (old engine, no vector strokes) are not editable as
@@ -1823,6 +1829,18 @@ function _clampView(v) {
   v.panX = Math.max(-lim, Math.min(lim, v.panX));
   v.panY = Math.max(-lim, Math.min(lim, v.panY));
   return v;
+}
+
+// Palm rejection (Auto). Returns true when stylus input is currently the
+// active drawing modality — i.e. a pen is down now, or one was down within
+// the recent window. While true, touch input is demoted to pan-only so a
+// resting palm or stray finger can't ink. Reverts automatically once the
+// pen has been idle past the window, restoring finger-draw.
+const _NOTE_DRAW_PEN_WINDOW_MS = 2500;
+function _noteDrawStylusActive(s) {
+  if (!s) return false;
+  if (s.penDown > 0) return true;
+  return (performance.now() - (s.lastPenAt || 0)) < _NOTE_DRAW_PEN_WINDOW_MS;
 }
 
 // Repaint the whole canvas from the stroke list. Cheap for typical notes
@@ -1907,7 +1925,9 @@ function _bindNoteDrawPointer(canvas) {
     // Discard any stroke the first finger began — it wasn't meant as ink.
     if (s.cur) { s.cur = null; }
     s.drawing = false;
-    const pts = [...active.values()];
+    s._activePointerId = null;
+    // Pinch uses the two non-pen contacts so a stylus never warps the view.
+    const pts = [...active.values()].filter(p => p.type !== 'pen');
     if (pts.length < 2) return;
     const dx = pts[1].x - pts[0].x, dy = pts[1].y - pts[0].y;
     s._gesture = {
@@ -1921,7 +1941,7 @@ function _bindNoteDrawPointer(canvas) {
 
   const updateGesture = () => {
     const s = _noteDrawState; if (!s || !s._gesture) return;
-    const pts = [...active.values()];
+    const pts = [...active.values()].filter(p => p.type !== 'pen');
     if (pts.length < 2) return;
     const g = s._gesture;
     const dx = pts[1].x - pts[0].x, dy = pts[1].y - pts[0].y;
@@ -1969,36 +1989,83 @@ function _bindNoteDrawPointer(canvas) {
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
     const sp = screenPos(e);
-    active.set(e.pointerId, sp);
+    active.set(e.pointerId, { x: sp.x, y: sp.y, type: e.pointerType });
 
-    // Two pointers down → pinch/pan gesture, regardless of tool.
-    if (active.size === 2) { beginGesture(); return; }
-    if (active.size > 2)  { return; }  // ignore extra fingers
+    // Track stylus activity for palm rejection.
+    if (e.pointerType === 'pen') {
+      s.penDown++; s.lastPenAt = performance.now();
+      // Palm-before-pen: if a touch had started a stroke or pan just before
+      // the stylus landed, discard it — it was the palm, not intentional.
+      if (s.drawing && s._activePointerId != null) {
+        const owner = active.get(s._activePointerId);
+        if (owner && owner.type === 'touch') {
+          s.drawing = false; s.cur = null; s._activePointerId = null;
+          _redrawNoteStrokes();
+        }
+      }
+      if (s._pan) { s._pan = null; canvas.classList.remove('grabbing'); }
+    }
 
-    // One pointer. Hand mode → pan. Otherwise draw/erase.
-    if (s.handMode) { beginPan(e); return; }
+    const stylusMode = _noteDrawStylusActive(s);
+    const isPen = e.pointerType === 'pen';
+    const isTouch = e.pointerType === 'touch';
+
+    // ── Palm rejection (Auto) ──
+    // In stylus mode, touch never inks. A palm landing while the pen is
+    // actively drawing is ignored outright; otherwise a lone finger pans.
+    if (stylusMode && isTouch) {
+      // If a pen stroke is in progress, ignore the touch completely so a
+      // resting palm can't disturb the view or the stroke.
+      if (s.drawing && s.cur && !s.handMode) { return; }
+      // Two touches → pinch/pan as usual.
+      const touchCount = [...active.values()].filter(p => p.type === 'touch').length;
+      if (touchCount >= 2) { beginGesture(); return; }
+      // Single finger in stylus mode → pan the view (not ink).
+      beginPan(e);
+      return;
+    }
+
+    // ── Normal (no stylus active) ──
+    // Two pointers down → pinch/pan gesture, regardless of tool. (When a pen
+    // is the second pointer we don't pinch — pen is for drawing.)
+    const ptList = [...active.values()];
+    const nonPen = ptList.filter(p => p.type !== 'pen');
+    if (!isPen && nonPen.length === 2 && active.size === 2) { beginGesture(); return; }
+    if (active.size > 2) { return; }  // ignore extra fingers
+
+    // One pointer (or a pen). Hand mode → pan. Otherwise draw/erase.
+    if (s.handMode && !isPen) { beginPan(e); return; }
 
     const p = npos(e);
     if (s.tool === 'eraser') {
       s.drawing = true;
+      s._activePointerId = e.pointerId;
       s._preGesture = s.strokes.map(_cloneStroke);  // for one-step undo
       s.erasedSomething = false;
       _eraseAt(p[0], p[1]);
       return;
     }
     s.drawing = true;
+    s._activePointerId = e.pointerId;
     s.cur = { t: 'p', c: s.colour, w: s.size, pts: [p] };
     _redrawNoteStrokes();
   });
 
   canvas.addEventListener('pointermove', (e) => {
     const s = _noteDrawState; if (!s) return;
-    if (active.has(e.pointerId)) active.set(e.pointerId, screenPos(e));
+    if (active.has(e.pointerId)) {
+      const sp = screenPos(e);
+      active.set(e.pointerId, { x: sp.x, y: sp.y, type: e.pointerType });
+    }
+    if (e.pointerType === 'pen') s.lastPenAt = performance.now();
 
     // Active multi-touch gesture takes priority.
     if (s._gesture && active.size >= 2) { e.preventDefault(); updateGesture(); return; }
-    if (s._pan && s.handMode)          { e.preventDefault(); updatePan(e); return; }
+    if (s._pan)                         { e.preventDefault(); updatePan(e); return; }
     if (!s.drawing) return;
+    // Only the pointer that started the stroke may extend it — a palm or
+    // stray finger arriving mid-stroke is ignored.
+    if (s._activePointerId != null && e.pointerId !== s._activePointerId) return;
     e.preventDefault();
 
     const events = (typeof e.getCoalescedEvents === 'function') ? e.getCoalescedEvents() : [e];
@@ -2017,6 +2084,8 @@ function _bindNoteDrawPointer(canvas) {
     active.delete(e.pointerId);
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
 
+    if (e.pointerType === 'pen') { s.penDown = Math.max(0, s.penDown - 1); s.lastPenAt = performance.now(); }
+
     // End of a pinch/pan gesture (a finger lifted).
     if (s._gesture) {
       if (active.size < 2) { s._gesture = null; }
@@ -2027,7 +2096,10 @@ function _bindNoteDrawPointer(canvas) {
       return;
     }
     if (!s.drawing) return;
+    // Only finish the stroke when the owning pointer lifts.
+    if (s._activePointerId != null && e.pointerId !== s._activePointerId) return;
     s.drawing = false;
+    s._activePointerId = null;
     if (s.tool === 'eraser') {
       if (s.erasedSomething && s._preGesture) {
         s.history.push(s._preGesture);
