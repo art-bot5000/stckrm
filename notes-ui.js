@@ -2149,6 +2149,30 @@ function _initNoteDrawCanvas(n) {
   _updateNoteDrawZoomReadout();
   _updateNoteDrawPhotoUI();
   _updateNoteDrawTextControls();
+
+  // Keep the canvas backing store and cssW/cssH in sync with the host if it
+  // resizes after init (toolbar wrapping, on-screen keyboard, orientation).
+  // Without this, input mapping and rendering drift because the captured
+  // dimensions go stale. Strokes are normalised, so a redraw reflows them.
+  if (!host._noteDrawResizeObs && typeof ResizeObserver !== 'undefined') {
+    host._noteDrawResizeObs = new ResizeObserver(() => {
+      const s = _noteDrawState; if (!s || s.canvas !== canvas) return;
+      const rr = host.getBoundingClientRect();
+      const nw = Math.max(1, Math.round(rr.width));
+      const nh = Math.max(1, Math.round(rr.height));
+      if (nw === s.cssW && nh === s.cssH) return;  // no change
+      const ndpr = window.devicePixelRatio || 1;
+      canvas.width = nw * ndpr; canvas.height = nh * ndpr;
+      s.cssW = nw; s.cssH = nh; s.dpr = ndpr;
+      s.aspect = nw / Math.max(1, nh);
+      const cx = canvas.getContext('2d');
+      cx.lineCap = 'round'; cx.lineJoin = 'round';
+      s.ctx = cx;
+      _applyNoteDrawBg((notes.find(x => x.id === s.noteId) || {}).drawBg || 'none', s.view, nw, nh);
+      _redrawNoteStrokes();
+    });
+    host._noteDrawResizeObs.observe(host);
+  }
 }
 
 function _cloneStroke(st) {
@@ -2428,7 +2452,17 @@ function _bindNoteDrawPointer(canvas) {
   // Screen px relative to the canvas element.
   const screenPos = (e) => {
     const r = canvas.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
+    const s = _noteDrawState;
+    // The canvas fills its host via CSS (width/height:100%), so its rendered
+    // size can differ from the cssW/cssH captured at init if the host resized
+    // afterwards (toolbar wrapping, on-screen keyboard, orientation change).
+    // Map the pointer through the LIVE rect into the stored coordinate space
+    // so the mapping never drifts: fraction-of-canvas × stored size.
+    const rw = r.width || 1, rh = r.height || 1;
+    const fx = (e.clientX - r.left) / rw;
+    const fy = (e.clientY - r.top) / rh;
+    const cw = (s && s.cssW) || rw, ch = (s && s.cssH) || rh;
+    return { x: fx * cw, y: fy * ch };
   };
   // Stored normalised coordinate (accounts for pan/zoom), with pressure.
   const npos = (e) => {
