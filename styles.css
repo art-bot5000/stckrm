@@ -1682,14 +1682,19 @@
   /* Grocery: hide Edit button + Add Item in multi-list picker view */
   body.grocery-multilist #grocery-edit-toggle { display:none !important; }
   body.grocery-multilist .grocery-toolbar .btn-primary { display:none !important; }
-  /* Notes view on desktop - must clear the 220px sidebar since it is at body level.
-     Width constrained to 800px to match Reminders/Savings/etc (the 800px max-width
-     rule above doesn't apply because position:fixed + right:0 would override it).
-     top:52px clears the sticky omnibox above (input-row 10+22+8+10 + 1px border ≈ 51px).
-     Omnibox sits at top:0 / z-index:95; #view-notes is z-index:10 so without this
-     offset the omnibox covers the view header. */
-  #view-notes { position:fixed; top:52px; bottom:0; left:220px; width:800px; overflow-y:auto; padding:28px 36px; display:none; background:var(--bg); z-index:10; }
+  /* Notes view on desktop - must clear the 220px sidebar since it is at body
+     level. The view spans to the right edge (right:0) so its scrollbar sits at
+     the far right of the window instead of mid-screen. Content readability is
+     preserved by capping the direct children at 800px (left-aligned), matching
+     Reminders/Savings/etc.
+     top:52px clears the sticky omnibox above (input-row 10+22+8+10 + 1px border
+     ≈ 51px). Omnibox sits at top:0 / z-index:95; #view-notes is z-index:10 so
+     without this offset the omnibox covers the view header. */
+  #view-notes { position:fixed; top:52px; bottom:0; left:220px; right:0; overflow-y:auto; padding:28px 36px; display:none; background:var(--bg); z-index:10; }
   #view-notes.active { display:block; }
+  /* Cap the readable width of the content while the scroll container fills the
+     viewport width (so the scrollbar is flush right). */
+  #view-notes > * { max-width: 800px; }
   /* Width constraints centralised in the desktop @media block above */
   #view-account-security.active { display:block; }
   /* Settings view — same width as Account & Security */
