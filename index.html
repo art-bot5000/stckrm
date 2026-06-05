@@ -4825,6 +4825,7 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
         <button class="note-draw-tool" id="note-draw-eraser" onclick="setNoteDrawTool('eraser')" title="Eraser"><svg class="icon" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>
         <div style="width:1px;height:18px;background:var(--border);margin:0 2px;flex-shrink:0"></div>
         <button class="note-draw-tool" id="note-draw-bg" onclick="cycleNoteDrawBg()" title="Background: none → ruled → grid → dots">▦</button>
+        <button class="note-draw-tool" id="note-draw-hand" onclick="toggleNoteDrawHand()" title="Pan / hand tool (or use two fingers / pinch to zoom)">✋</button>
         <div style="width:1px;height:18px;background:var(--border);margin:0 2px;flex-shrink:0"></div>
         <span style="display:flex;align-items:center;gap:4px" title="Brush size">
           <button class="note-draw-size" data-size="2"  onclick="setNoteDrawSize(2)"  title="Fine"><span style="width:4px;height:4px;border-radius:50%;background:currentColor;display:block"></span></button>
@@ -4844,6 +4845,8 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
           </label>
         </span>
         <div style="flex:1"></div>
+        <span id="note-draw-zoom" title="Zoom level" style="font-family:var(--mono);font-size:11px;color:var(--muted);min-width:34px;text-align:right;flex-shrink:0">100%</span>
+        <button class="note-draw-tool" id="note-draw-reset-view" onclick="resetNoteDrawView()" title="Reset view (fit to screen)" style="display:none">⤢</button>
         <button class="note-draw-tool" id="note-draw-undo"  onclick="noteDrawUndo()"  title="Undo stroke">↩</button>
         <button class="note-draw-tool" id="note-draw-redo"  onclick="noteDrawRedo()"  title="Redo stroke">↪</button>
         <button class="note-draw-tool" id="note-draw-export" onclick="exportNoteDrawingPng()" title="Export as PNG"><svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg></button>

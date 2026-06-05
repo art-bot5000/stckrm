@@ -1478,23 +1478,35 @@ function _noteLegacyPngUrl(n) {
 
 // Render a stroke list to an inline SVG string sized to fit a box, while
 // preserving the drawing's original aspect ratio (aspect = cssW/cssH at
-// draw time). Points are normalised per-axis (x∈[0,1] vs width, y∈[0,1]
-// vs height), so we map the unit square to a w×h box of the right shape.
+// draw time). Points are normalised per-axis; the "page" is the unit
+// square [0,1]², but because zoom-out drawing can place strokes outside
+// that range, we expand the rendered region to include all content so
+// nothing is clipped in cards / the shared viewer / export.
 function _strokesToSvg(strokes, aspect, boxW, boxH, bg) {
   if ((!strokes || !strokes.length) && (!bg || bg === 'none')) return '';
   const a = aspect && aspect > 0 ? aspect : 1;  // width/height
-  // Fit an a:1 (w:h) box inside boxW×boxH.
-  let w = boxW, h = boxW / a;
-  if (h > boxH) { h = boxH; w = boxH * a; }
+  // Content bounds in normalised space, unioned with the unit page.
+  let minX = 0, minY = 0, maxX = 1, maxY = 1;
+  for (const st of (strokes || [])) {
+    for (const p of (st.pts || [])) {
+      if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+      if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+    }
+  }
+  const spanX = maxX - minX, spanY = maxY - minY;
+  // Fit the content span (width:height = spanX*a : spanY) into the box.
+  const contentAspect = (spanX * a) / spanY;
+  let w = boxW, h = boxW / contentAspect;
+  if (h > boxH) { h = boxH; w = boxH * contentAspect; }
   const bgFrag = _noteDrawBgSvg(bg, w, h, Math.max(10, w / 14));
   let paths = '';
   for (const st of (strokes || [])) {
     if (!st.pts || !st.pts.length) continue;
-    const sw = Math.max(0.6, (st.w || 5) * (w / 320) * 1.0); // scale stroke to box
+    const sw = Math.max(0.6, (st.w || 5) * (w / 320) * 1.0);
     let d = '';
     for (let i = 0; i < st.pts.length; i++) {
-      const px = st.pts[i][0] * w;
-      const py = st.pts[i][1] * h;
+      const px = ((st.pts[i][0] - minX) / spanX) * w;
+      const py = ((st.pts[i][1] - minY) / spanY) * h;
       d += (i === 0 ? 'M' : 'L') + px.toFixed(1) + ',' + py.toFixed(1) + ' ';
     }
     paths += `<path d="${d.trim()}" fill="none" stroke="${esc(st.c || '#e8a838')}" stroke-width="${sw.toFixed(1)}" stroke-linecap="round" stroke-linejoin="round"/>`;
@@ -1528,13 +1540,61 @@ function _noteDrawBgCss(style, step) {
   return { backgroundImage: 'none', backgroundSize: 'auto' };
 }
 
-function _applyNoteDrawBg(style) {
+function _applyNoteDrawBg(style, view, cssW, cssH) {
   const host = document.getElementById('note-draw-canvas-host');
   if (!host) return;
-  const css = _noteDrawBgCss(style, 26);
+  const v = view || (_noteDrawState && _noteDrawState.view) || { zoom: 1, panX: 0, panY: 0 };
+  const baseStep = 26;
+  const step = baseStep * v.zoom;  // guides scale with zoom to track strokes
+  const css = _noteDrawBgCss(style, step);
   host.style.backgroundImage = css.backgroundImage;
-  host.style.backgroundSize  = css.backgroundSize;
-  host.style.backgroundPosition = '0 0';
+  // For ruled/grid the size is the step; for dots it's set in _noteDrawBgCss.
+  if (style === 'dots') {
+    host.style.backgroundSize = `${step}px ${step}px`;
+  } else if (style === 'ruled' || style === 'grid') {
+    host.style.backgroundSize = 'auto';  // repeating-gradient uses px in image
+  } else {
+    host.style.backgroundSize = 'auto';
+  }
+  // Offset the pattern to follow panning. The grid origin in stored space is
+  // 0; on screen that's at px = -panX*zoom*cssW (and same for Y).
+  const w = cssW || (_noteDrawState && _noteDrawState.cssW) || 1;
+  const h = cssH || (_noteDrawState && _noteDrawState.cssH) || 1;
+  const ox = -(v.panX * v.zoom * w);
+  const oy = -(v.panY * v.zoom * h);
+  host.style.backgroundPosition = `${ox.toFixed(1)}px ${oy.toFixed(1)}px`;
+}
+
+// ── Pan & zoom controls ──────────────────────────────────────────────
+// Toggle the Hand tool: when on, a one-finger/mouse drag pans instead of
+// drawing. Two-finger pinch/pan and wheel-zoom work regardless of this.
+function toggleNoteDrawHand() {
+  const s = _noteDrawState; if (!s) return;
+  s.handMode = !s.handMode;
+  const btn = document.getElementById('note-draw-hand');
+  if (btn) btn.classList.toggle('active', s.handMode);
+  const cv = document.getElementById('note-draw-canvas');
+  if (cv) cv.classList.toggle('hand', s.handMode);
+}
+
+// Reset pan & zoom to the default 1:1 view.
+function resetNoteDrawView() {
+  const s = _noteDrawState; if (!s) return;
+  s.view = { zoom: 1, panX: 0, panY: 0 };
+  _applyNoteDrawBg((notes.find(x => x.id === _editingNoteId) || {}).drawBg || 'none', s.view, s.cssW, s.cssH);
+  _redrawNoteStrokes();
+}
+
+// Update the on-screen zoom % readout, and show/hide the reset button.
+function _updateNoteDrawZoomReadout() {
+  const s = _noteDrawState; if (!s) return;
+  const el = document.getElementById('note-draw-zoom');
+  if (el) el.textContent = Math.round(s.view.zoom * 100) + '%';
+  const reset = document.getElementById('note-draw-reset-view');
+  if (reset) {
+    const atDefault = Math.abs(s.view.zoom - 1) < 0.001 && Math.abs(s.view.panX) < 0.001 && Math.abs(s.view.panY) < 0.001;
+    reset.style.display = atDefault ? 'none' : '';
+  }
 }
 
 async function cycleNoteDrawBg() {
@@ -1582,11 +1642,21 @@ function exportNoteDrawingPng() {
   const aspect  = s ? s.aspect  : (_noteVectorData(n).aspect || 1);
   if (!strokes || !strokes.length) { toast('Nothing to export'); return; }
 
+  // Content bounds (union with the unit page) so zoom-out strokes outside
+  // [0,1] are still exported, mirroring _strokesToSvg.
+  let minX = 0, minY = 0, maxX = 1, maxY = 1;
+  for (const st of strokes) for (const p of (st.pts || [])) {
+    if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+    if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+  }
+  const spanX = maxX - minX, spanY = maxY - minY;
+  const contentAspect = (spanX * aspect) / spanY;
+
   // Target ~1600px on the long edge for a crisp export.
   const long = 1600;
   let w, h;
-  if (aspect >= 1) { w = long; h = Math.round(long / aspect); }
-  else { h = long; w = Math.round(long * aspect); }
+  if (contentAspect >= 1) { w = long; h = Math.round(long / contentAspect); }
+  else { h = long; w = Math.round(long * contentAspect); }
 
   const cv = document.createElement('canvas');
   cv.width = w; cv.height = h;
@@ -1600,21 +1670,23 @@ function exportNoteDrawingPng() {
   // Background guides.
   _paintBgOnCanvas(ctx, n.drawBg, w, h);
 
-  // Strokes (denormalise against the export size).
+  // Strokes (map content bounds → export size).
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const mapX = (nx) => ((nx - minX) / spanX) * w;
+  const mapY = (ny) => ((ny - minY) / spanY) * h;
   for (const st of strokes) {
     ctx.strokeStyle = st.c || '#e8a838';
     ctx.fillStyle   = st.c || '#e8a838';
     const scale = w / 320;  // match the on-screen stroke scaling feel
     for (let i = 1; i < st.pts.length; i++) {
-      const x0 = st.pts[i-1][0]*w, y0 = st.pts[i-1][1]*h;
-      const x1 = st.pts[i][0]*w,   y1 = st.pts[i][1]*h;
+      const x0 = mapX(st.pts[i-1][0]), y0 = mapY(st.pts[i-1][1]);
+      const x1 = mapX(st.pts[i][0]),   y1 = mapY(st.pts[i][1]);
       const pr = st.pts[i][2] != null ? st.pts[i][2] : 0.5;
       ctx.lineWidth = (st.w || 5) * (0.5 + pr) * scale * 0.5;
       ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
     }
     if (st.pts.length === 1) {
-      const x = st.pts[0][0]*w, y = st.pts[0][1]*h;
+      const x = mapX(st.pts[0][0]), y = mapY(st.pts[0][1]);
       const pr = st.pts[0][2] != null ? st.pts[0][2] : 0.5;
       ctx.beginPath();
       ctx.arc(x, y, ((st.w || 5) * (0.5 + pr) * (w/320) * 0.5) / 2, 0, Math.PI*2);
@@ -1697,6 +1769,13 @@ function _initNoteDrawCanvas(n) {
     cur: null,           // stroke currently being drawn
     _preGesture: null,   // pre-erase-gesture snapshot
     erasedSomething: false,
+    // View transform (session-only, never persisted). A stored normalised
+    // point (nx,ny) maps to canvas px: ((n - pan) * zoom) * cssSize.
+    // Strokes are always stored untransformed; this only affects what's
+    // shown and where input lands while editing.
+    view: keep ? keep.view : { zoom: 1, panX: 0, panY: 0 },
+    handMode: keep ? keep.handMode : false,  // Hand-tool toggle (one-finger pan)
+    _gesture: null,      // active pinch/two-finger gesture state
   };
 
   // Legacy PNG notes (old engine, no vector strokes) are not editable as
@@ -1707,28 +1786,69 @@ function _initNoteDrawCanvas(n) {
   // vector art that becomes the source of truth on save.
 
   _redrawNoteStrokes();
-  _applyNoteDrawBg(n.drawBg || 'none');
+  _applyNoteDrawBg(n.drawBg || 'none', _noteDrawState.view, w, h);
   const bgBtn = document.getElementById('note-draw-bg');
   if (bgBtn) bgBtn.title = `Background: ${_NOTE_DRAW_BG_LABEL[n.drawBg || 'none']} (tap to change)`;
+  const handBtn = document.getElementById('note-draw-hand');
+  if (handBtn) handBtn.classList.toggle('active', !!_noteDrawState.handMode);
+  if (canvas) canvas.classList.toggle('hand', !!_noteDrawState.handMode);
   _bindNoteDrawPointer(canvas);
   _updateNoteDrawToolUI();
   _updateNoteDrawUndoRedoBtns();
+  _updateNoteDrawZoomReadout();
 }
 
 function _cloneStroke(st) {
   return { t: st.t || 'p', c: st.c, w: st.w, pts: st.pts.map(p => p.slice()) };
 }
 
+// ── View transform (pan & zoom) ──────────────────────────────────────
+// Convert a screen pixel (relative to the canvas) to a stored normalised
+// coordinate, accounting for the current pan/zoom. Inverse of the paint
+// transform applied in _redrawNoteStrokes.
+function _screenToNorm(s, px, py) {
+  const v = s.view;
+  return [
+    (px / s.cssW) / v.zoom + v.panX,
+    (py / s.cssH) / v.zoom + v.panY,
+  ];
+}
+
+// Clamp zoom to a sane range and keep panX/panY from drifting absurdly far.
+function _clampView(v) {
+  v.zoom = Math.max(0.25, Math.min(8, v.zoom));
+  // Allow panning into margin (for zoom-out drawing surface) but not to
+  // infinity — keep the unit square at least partly reachable.
+  const lim = 3;
+  v.panX = Math.max(-lim, Math.min(lim, v.panX));
+  v.panY = Math.max(-lim, Math.min(lim, v.panY));
+  return v;
+}
+
 // Repaint the whole canvas from the stroke list. Cheap for typical notes
-// (a few hundred segments); called on every commit, undo/redo, erase.
+// (a few hundred segments); called on every commit, undo/redo, erase, and
+// on pan/zoom. The view transform is applied here so _paintStroke stays in
+// simple normalised×cssSize space.
 function _redrawNoteStrokes() {
   const s = _noteDrawState; if (!s) return;
   const ctx = s.ctx;
+  const v = s.view;
+  // Reset to device-pixel transform, clear, then layer the view transform.
+  ctx.setTransform(s.dpr, 0, 0, s.dpr, 0, 0);
   ctx.clearRect(0, 0, s.cssW, s.cssH);
   ctx.globalCompositeOperation = 'source-over';
+  // Apply pan & zoom: translate by -pan*zoom*cssSize then scale by zoom.
+  // Combined with dpr so lines stay crisp.
+  ctx.setTransform(
+    s.dpr * v.zoom, 0,
+    0, s.dpr * v.zoom,
+    -v.panX * v.zoom * s.cssW * s.dpr,
+    -v.panY * v.zoom * s.cssH * s.dpr,
+  );
   for (const st of s.strokes) _paintStroke(ctx, st, s.cssW, s.cssH, s.aspect);
   // Paint the in-progress stroke last so it appears on top while drawing.
   if (s.cur) _paintStroke(ctx, s.cur, s.cssW, s.cssH, s.aspect);
+  _updateNoteDrawZoomReadout();
 }
 
 // Paint one stroke onto the live canvas, denormalising its points.
@@ -1763,20 +1883,101 @@ function _bindNoteDrawPointer(canvas) {
   if (canvas._noteDrawBound) return;  // bind once per element
   canvas._noteDrawBound = true;
 
-  // Normalised position: x in [0,1] against width, y in [0,1] against height.
-  const npos = (e) => {
+  // Track active pointers so we can detect pinch/two-finger pan.
+  const active = new Map();  // pointerId -> {x, y}
+
+  // Screen px relative to the canvas element.
+  const screenPos = (e) => {
     const r = canvas.getBoundingClientRect();
-    return [
-      Math.min(1, Math.max(0, (e.clientX - r.left) / Math.max(1, r.width))),
-      Math.min(1, Math.max(0, (e.clientY - r.top)  / Math.max(1, r.height))),
-      (e.pressure && e.pressure > 0) ? e.pressure : 0.5,
-    ];
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+  // Stored normalised coordinate (accounts for pan/zoom), with pressure.
+  const npos = (e) => {
+    const s = _noteDrawState;
+    const sp = screenPos(e);
+    const [nx, ny] = _screenToNorm(s, sp.x, sp.y);
+    return [nx, ny, (e.pressure && e.pressure > 0) ? e.pressure : 0.5];
+  };
+
+  // Begin a two-pointer pinch/pan gesture: cancel any in-progress stroke
+  // (the first finger may have started one), and capture the initial
+  // distance/midpoint in screen space + the view at gesture start.
+  const beginGesture = () => {
+    const s = _noteDrawState; if (!s) return;
+    // Discard any stroke the first finger began — it wasn't meant as ink.
+    if (s.cur) { s.cur = null; }
+    s.drawing = false;
+    const pts = [...active.values()];
+    if (pts.length < 2) return;
+    const dx = pts[1].x - pts[0].x, dy = pts[1].y - pts[0].y;
+    s._gesture = {
+      startDist: Math.hypot(dx, dy) || 1,
+      startMidX: (pts[0].x + pts[1].x) / 2,
+      startMidY: (pts[0].y + pts[1].y) / 2,
+      startView: { ...s.view },
+    };
+    _redrawNoteStrokes();
+  };
+
+  const updateGesture = () => {
+    const s = _noteDrawState; if (!s || !s._gesture) return;
+    const pts = [...active.values()];
+    if (pts.length < 2) return;
+    const g = s._gesture;
+    const dx = pts[1].x - pts[0].x, dy = pts[1].y - pts[0].y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const midX = (pts[0].x + pts[1].x) / 2;
+    const midY = (pts[0].y + pts[1].y) / 2;
+    const factor = dist / g.startDist;
+    const newZoom = Math.max(0.25, Math.min(8, g.startView.zoom * factor));
+    // Keep the gesture midpoint anchored in stored space while zooming, and
+    // also translate by the midpoint movement (two-finger pan).
+    const sv = g.startView;
+    // Stored coord under the start midpoint:
+    const anchorNx = (g.startMidX / s.cssW) / sv.zoom + sv.panX;
+    const anchorNy = (g.startMidY / s.cssH) / sv.zoom + sv.panY;
+    // After zoom, choose pan so that anchor maps to the *current* midpoint.
+    s.view.zoom = newZoom;
+    s.view.panX = anchorNx - (midX / s.cssW) / newZoom;
+    s.view.panY = anchorNy - (midY / s.cssH) / newZoom;
+    _clampView(s.view);
+    _applyNoteDrawBg((notes.find(x => x.id === _editingNoteId) || {}).drawBg || 'none', s.view, s.cssW, s.cssH);
+    _redrawNoteStrokes();
+  };
+
+  // One-pointer pan (hand mode).
+  const beginPan = (e) => {
+    const s = _noteDrawState; if (!s) return;
+    const sp = screenPos(e);
+    s._pan = { startX: sp.x, startY: sp.y, startView: { ...s.view } };
+    canvas.classList.add('grabbing');
+  };
+  const updatePan = (e) => {
+    const s = _noteDrawState; if (!s || !s._pan) return;
+    const sp = screenPos(e);
+    const dxN = (sp.x - s._pan.startX) / s.cssW / s.view.zoom;
+    const dyN = (sp.y - s._pan.startY) / s.cssH / s.view.zoom;
+    s.view.panX = s._pan.startView.panX - dxN;
+    s.view.panY = s._pan.startView.panY - dyN;
+    _clampView(s.view);
+    _applyNoteDrawBg((notes.find(x => x.id === _editingNoteId) || {}).drawBg || 'none', s.view, s.cssW, s.cssH);
+    _redrawNoteStrokes();
   };
 
   canvas.addEventListener('pointerdown', (e) => {
     const s = _noteDrawState; if (!s) return;
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
+    const sp = screenPos(e);
+    active.set(e.pointerId, sp);
+
+    // Two pointers down → pinch/pan gesture, regardless of tool.
+    if (active.size === 2) { beginGesture(); return; }
+    if (active.size > 2)  { return; }  // ignore extra fingers
+
+    // One pointer. Hand mode → pan. Otherwise draw/erase.
+    if (s.handMode) { beginPan(e); return; }
+
     const p = npos(e);
     if (s.tool === 'eraser') {
       s.drawing = true;
@@ -1785,15 +1986,21 @@ function _bindNoteDrawPointer(canvas) {
       _eraseAt(p[0], p[1]);
       return;
     }
-    // Begin a new pen stroke.
     s.drawing = true;
     s.cur = { t: 'p', c: s.colour, w: s.size, pts: [p] };
     _redrawNoteStrokes();
   });
 
   canvas.addEventListener('pointermove', (e) => {
-    const s = _noteDrawState; if (!s || !s.drawing) return;
+    const s = _noteDrawState; if (!s) return;
+    if (active.has(e.pointerId)) active.set(e.pointerId, screenPos(e));
+
+    // Active multi-touch gesture takes priority.
+    if (s._gesture && active.size >= 2) { e.preventDefault(); updateGesture(); return; }
+    if (s._pan && s.handMode)          { e.preventDefault(); updatePan(e); return; }
+    if (!s.drawing) return;
     e.preventDefault();
+
     const events = (typeof e.getCoalescedEvents === 'function') ? e.getCoalescedEvents() : [e];
     const list = events.length ? events : [e];
     if (s.tool === 'eraser') {
@@ -1806,12 +2013,22 @@ function _bindNoteDrawPointer(canvas) {
   });
 
   const end = (e) => {
-    const s = _noteDrawState; if (!s || !s.drawing) return;
-    s.drawing = false;
+    const s = _noteDrawState; if (!s) return;
+    active.delete(e.pointerId);
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+
+    // End of a pinch/pan gesture (a finger lifted).
+    if (s._gesture) {
+      if (active.size < 2) { s._gesture = null; }
+      return;
+    }
+    if (s._pan) {
+      if (active.size === 0) { s._pan = null; canvas.classList.remove('grabbing'); }
+      return;
+    }
+    if (!s.drawing) return;
+    s.drawing = false;
     if (s.tool === 'eraser') {
-      // Commit the erase gesture as one history step (only if it changed
-      // anything — the pre-gesture snapshot was taken on pointerdown).
       if (s.erasedSomething && s._preGesture) {
         s.history.push(s._preGesture);
         if (s.history.length > _NOTE_DRAW_MAX_HISTORY) s.history.shift();
@@ -1826,9 +2043,9 @@ function _bindNoteDrawPointer(canvas) {
       // Simplify the captured points before storing — a high-frequency
       // stylus emits far more points than needed; thinning them is what
       // makes the vector format genuinely smaller than a PNG and keeps
-      // redraw cheap, with no visible quality loss.
-      s.cur.pts = _simplifyPoints(s.cur.pts, 0.0015);
-      // Push the pre-stroke list as a history step, then add the new stroke.
+      // redraw cheap, with no visible quality loss. Tolerance is divided
+      // by zoom so detail drawn while zoomed-in isn't flattened away.
+      s.cur.pts = _simplifyPoints(s.cur.pts, 0.0015 / (s.view ? s.view.zoom : 1));
       s.history.push(s.strokes.map(_cloneStroke));
       if (s.history.length > _NOTE_DRAW_MAX_HISTORY) s.history.shift();
       s.strokes.push(s.cur);
@@ -1841,6 +2058,22 @@ function _bindNoteDrawPointer(canvas) {
   canvas.addEventListener('pointerup', end);
   canvas.addEventListener('pointercancel', end);
   canvas.addEventListener('pointerleave', end);
+
+  // Mouse wheel / trackpad zoom (desktop), anchored at the cursor.
+  canvas.addEventListener('wheel', (e) => {
+    const s = _noteDrawState; if (!s) return;
+    e.preventDefault();
+    const sp = screenPos(e);
+    const before = _screenToNorm(s, sp.x, sp.y);
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    s.view.zoom = Math.max(0.25, Math.min(8, s.view.zoom * factor));
+    // Keep the cursor anchored over the same stored point.
+    s.view.panX = before[0] - (sp.x / s.cssW) / s.view.zoom;
+    s.view.panY = before[1] - (sp.y / s.cssH) / s.view.zoom;
+    _clampView(s.view);
+    _applyNoteDrawBg((notes.find(x => x.id === _editingNoteId) || {}).drawBg || 'none', s.view, s.cssW, s.cssH);
+    _redrawNoteStrokes();
+  }, { passive: false });
 }
 
 // Eraser: remove any stroke whose path passes near the point, using a hit
@@ -1849,7 +2082,9 @@ function _bindNoteDrawPointer(canvas) {
 function _eraseAt(nx, ny) {
   const s = _noteDrawState; if (!s) return;
   const a = s.aspect || 1;
-  const hitR = (s.size * 1.5) / Math.max(s.cssW, s.cssH); // normalised radius
+  // Hit radius is in stored-normalised units; divide by zoom so the eraser
+  // feels the same size on screen regardless of magnification.
+  const hitR = (s.size * 1.5) / Math.max(s.cssW, s.cssH) / (s.view ? s.view.zoom : 1);
   const before = s.strokes.length;
   s.strokes = s.strokes.filter(st => !_strokeNearPoint(st, nx, ny, hitR, a));
   if (s.strokes.length !== before) {

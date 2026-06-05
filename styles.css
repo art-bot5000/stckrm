@@ -1659,7 +1659,10 @@
 .note-draw-swatch:hover, .note-draw-swatch.active { border-color:var(--accent); }
 .note-draw-custom.active { box-shadow:0 0 0 2px var(--accent); }
 #note-draw-bg { font-size:15px; line-height:1; }
+#note-draw-hand { font-size:14px; line-height:1; }
 #note-draw-canvas { cursor:crosshair; }
+#note-draw-canvas.hand { cursor:grab; }
+#note-draw-canvas.hand.grabbing { cursor:grabbing; }
 .note-row-drawing { object-fit:contain; }
 /* Contenteditable placeholder */
 #note-body-input:empty:before { content:attr(data-placeholder); color:var(--muted); pointer-events:none; }
