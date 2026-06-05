@@ -2293,20 +2293,48 @@ function _paintSelectionOverlay(ctx, s, v) {
     ctx.restore();
   }
   if (!s._sel || !s._sel.length) return;
-  const b = _selectionBounds(s._sel); if (!b) return;
-  const x = b.x * s.cssW, y = b.y * s.cssH, w = b.w * s.cssW, h = b.h * s.cssH;
   const hs = 7 / v.zoom;  // handle half-size on screen
+  const xf = s._selXf;
+  // While a rotate gesture is live, draw the box/handles rotated to match the
+  // artwork (using the gesture's starting box + accumulated angle), so the
+  // frame and rotate handle track the rotation instead of staying put.
+  const rotating = xf && xf.mode === 'rotate' && xf.liveRot;
+  const b = rotating ? xf.box : _selectionBounds(s._sel);
+  if (!b) return;
+  const aspect = s.aspect || 1;
+  const rot = rotating ? xf.liveRot : 0;
+  const ccx = rotating ? xf.cx : (b.x + b.w / 2);
+  const ccy = rotating ? xf.cy : (b.y + b.h / 2);
+  const cos = Math.cos(rot), sin = Math.sin(rot);
+  // Map a normalised point through the (aspect-corrected) rotation about the
+  // selection centre, then to canvas px. Matches _applyNoteSelTransform.
+  const M = (nx, ny) => {
+    if (!rot) return [nx * s.cssW, ny * s.cssH];
+    const rx = (nx - ccx) * aspect, ry = (ny - ccy);
+    const ox = rx * cos - ry * sin, oy = rx * sin + ry * cos;
+    return [(ccx + ox / aspect) * s.cssW, (ccy + oy) * s.cssH];
+  };
+  // Box corners in normalised space, then mapped.
+  const c_nw = M(b.x, b.y), c_ne = M(b.x + b.w, b.y),
+        c_se = M(b.x + b.w, b.y + b.h), c_sw = M(b.x, b.y + b.h);
   ctx.save();
   ctx.strokeStyle = accent; ctx.fillStyle = accent;
   ctx.lineWidth = 1.5 / v.zoom; ctx.setLineDash([5 / v.zoom, 4 / v.zoom]);
-  ctx.strokeRect(x, y, w, h);
+  ctx.beginPath();
+  ctx.moveTo(c_nw[0], c_nw[1]); ctx.lineTo(c_ne[0], c_ne[1]);
+  ctx.lineTo(c_se[0], c_se[1]); ctx.lineTo(c_sw[0], c_sw[1]); ctx.closePath();
+  ctx.stroke();
   ctx.setLineDash([]);
-  // Corner scale handles.
-  const corners = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
-  for (const [cx, cy] of corners) { ctx.fillRect(cx - hs, cy - hs, hs * 2, hs * 2); }
-  // Rotate handle: a small circle above the top-centre, with a connector.
-  const rcx = x + w / 2, rcy = y - 24 / v.zoom;
-  ctx.beginPath(); ctx.moveTo(x + w / 2, y); ctx.lineTo(rcx, rcy); ctx.stroke();
+  // Corner scale handles at the (possibly rotated) corners.
+  for (const c of [c_nw, c_ne, c_se, c_sw]) { ctx.fillRect(c[0] - hs, c[1] - hs, hs * 2, hs * 2); }
+  // Rotate handle: above the top edge midpoint, offset along the box's
+  // (rotated) "up" direction so it tracks the rotation too.
+  const topMidX = (c_nw[0] + c_ne[0]) / 2, topMidY = (c_nw[1] + c_ne[1]) / 2;
+  // "Up" = perpendicular to the top edge, pointing away from the box centre.
+  let ux = topMidX - (c_sw[0] + c_se[0]) / 2, uy = topMidY - (c_sw[1] + c_se[1]) / 2;
+  const ul = Math.hypot(ux, uy) || 1; ux /= ul; uy /= ul;
+  const rcx = topMidX + ux * (24 / v.zoom), rcy = topMidY + uy * (24 / v.zoom);
+  ctx.beginPath(); ctx.moveTo(topMidX, topMidY); ctx.lineTo(rcx, rcy); ctx.stroke();
   ctx.beginPath(); ctx.arc(rcx, rcy, hs, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
 }
@@ -2978,6 +3006,7 @@ function _applyNoteSelTransform(p) {
   } else if (xf.mode === 'rotate') {
     const ang = Math.atan2(p[1] - xf.cy, p[0] - xf.cx);
     dRot = ang - xf.startAngle;
+    xf.liveRot = dRot;  // so the overlay can rotate the box/handle to match
     const cos = Math.cos(dRot), sin = Math.sin(dRot);
     // Rotate about centre; correct for aspect so rotation looks circular on
     // screen (normalised x and y have different px scales).
