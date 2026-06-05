@@ -756,6 +756,8 @@ function _showNoteBody(n) {
 
 async function closeNoteEditor() {
   const id = _editingNoteId;
+  // Commit any open inline text editor so typed text isn't lost on close.
+  if (_noteDrawState && _noteDrawState._textEdit) _commitNoteTextEdit();
   if (_noteBodyDirty) await _autoSaveNote();
   _closeNoteEditorImmediate();
   // Discard untitled empty notes — don't litter the grid with blank cards
@@ -1128,6 +1130,7 @@ async function toggleNoteTicks() {
   // Tick mode and draw mode are mutually exclusive. If we're drawing,
   // leave draw mode (artwork preserved) before turning ticks on.
   if (n.drawMode) {
+    if (_noteDrawState && _noteDrawState._textEdit) _commitNoteTextEdit();
     n.drawMode = false;
     _noteDrawState = null;
     document.getElementById('note-btn-draw')?.classList.toggle('active', false);
@@ -1460,7 +1463,10 @@ function _noteHasVector(n) {
 // truth for the locked-note / sync payload so the two write sites can't
 // drift. Omits empty fields to keep the payload tight.
 function _serializeVDraw(strokes, aspect, photo, photoT) {
-  const obj = { s: strokes || [], a: aspect || 1 };
+  // Clone elements so transient flags (e.g. a text element's _editing) never
+  // get persisted into the saved/encrypted payload.
+  const clean = (strokes || []).map(_cloneStroke);
+  const obj = { s: clean, a: aspect || 1 };
   if (photo) { obj.p = photo; if (photoT) obj.pt = photoT; }
   return `\u0001VDRAW\u0001${JSON.stringify(obj)}`;
 }
@@ -1509,6 +1515,14 @@ function _strokesToSvg(strokes, aspect, boxW, boxH, bg, photo, photoT, photoNatA
   // photo extent so nothing is clipped.
   let minX = 0, minY = 0, maxX = 1, maxY = 1;
   for (const st of (strokes || [])) {
+    if (st.t === 't') {
+      const b = _textElemBounds(st);
+      if (b) {
+        if (b.x < minX) minX = b.x; if (b.x + b.w > maxX) maxX = b.x + b.w;
+        if (b.y < minY) minY = b.y; if (b.y + b.h > maxY) maxY = b.y + b.h;
+      }
+      continue;
+    }
     for (const p of (st.pts || [])) {
       if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
       if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
@@ -1538,6 +1552,18 @@ function _strokesToSvg(strokes, aspect, boxW, boxH, bg, photo, photoT, photoNatA
   const bgFrag = _noteDrawBgSvg(bg, w, h, Math.max(10, w / 14));
   let paths = '';
   for (const st of (strokes || [])) {
+    if (st.t === 't') {
+      if (!st.str) continue;
+      const fpx = (st.fs || 0.04) * h * (1 / spanY);  // font px in the scaled box
+      const tx = ((st.x - minX) / spanX) * w;
+      let ty = ((st.y - minY) / spanY) * h;
+      const lines = String(st.str).split('\n');
+      for (const ln of lines) {
+        paths += `<text x="${tx.toFixed(1)}" y="${(ty + fpx).toFixed(1)}" font-family="system-ui, sans-serif" font-weight="600" font-size="${fpx.toFixed(1)}" fill="${esc(st.c || '#e8a838')}">${esc(ln)}</text>`;
+        ty += fpx * 1.25;
+      }
+      continue;
+    }
     if (!st.pts || !st.pts.length) continue;
     const sw = Math.max(0.6, (st.w || 5) * (w / 320) * 1.0);
     let d = '';
@@ -1860,12 +1886,21 @@ function exportNoteDrawingPng() {
   const photoT   = s ? s.photoT   : (_noteVectorData(n).photoT || null);
   if ((!strokes || !strokes.length) && !photoImg) { toast('Nothing to export'); return; }
 
-  // Content bounds (union with the unit page and the photo extent) so
-  // zoom-out strokes and the photo are fully included.
+  // Content bounds (union with the unit page, photo extent, and any text).
   let minX = 0, minY = 0, maxX = 1, maxY = 1;
-  for (const st of strokes) for (const p of (st.pts || [])) {
-    if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
-    if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+  for (const st of strokes) {
+    if (st.t === 't') {
+      const b = _textElemBounds(st);
+      if (b) {
+        if (b.x < minX) minX = b.x; if (b.x + b.w > maxX) maxX = b.x + b.w;
+        if (b.y < minY) minY = b.y; if (b.y + b.h > maxY) maxY = b.y + b.h;
+      }
+      continue;
+    }
+    for (const p of (st.pts || [])) {
+      if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+      if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+    }
   }
   if (photoImg && photoT) {
     const pw = photoT.scale;
@@ -1903,9 +1938,19 @@ function exportNoteDrawingPng() {
   // Background guides.
   _paintBgOnCanvas(ctx, n.drawBg, w, h);
 
-  // Strokes (map content bounds → export size).
+  // Strokes + text (map content bounds → export size).
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   for (const st of strokes) {
+    if (st.t === 't') {
+      if (!st.str) continue;
+      const fpx = (st.fs || 0.04) * (h / spanY);
+      ctx.fillStyle = st.c || '#e8a838';
+      ctx.font = `600 ${fpx}px system-ui, sans-serif`;
+      ctx.textBaseline = 'top';
+      let ty = mapY(st.y);
+      for (const ln of String(st.str).split('\n')) { ctx.fillText(ln, mapX(st.x), ty); ty += fpx * 1.25; }
+      continue;
+    }
     ctx.strokeStyle = st.c || '#e8a838';
     ctx.fillStyle   = st.c || '#e8a838';
     const scale = w / 320;  // match the on-screen stroke scaling feel
@@ -2022,6 +2067,13 @@ function _initNoteDrawCanvas(n) {
     photoT: null,
     photoNatAspect: 1,   // natural width/height of the photo
     placingPhoto: false,
+    // Text tool: its own colour + size (normalised height fraction). While a
+    // text element is being typed, _textEdit holds {idx, x, y} of the element
+    // being created/edited so commit/cancel know what to write back.
+    textColour: keep ? keep.textColour : '#ffffff',
+    textSize:   keep ? keep.textSize   : 0.045,  // normalised-height units
+    _textEdit:  null,
+    _textDrag:  null,    // dragging an existing text element
   };
 
   // Load any existing photo backdrop for this note.
@@ -2064,9 +2116,14 @@ function _initNoteDrawCanvas(n) {
   _updateNoteDrawUndoRedoBtns();
   _updateNoteDrawZoomReadout();
   _updateNoteDrawPhotoUI();
+  _updateNoteDrawTextControls();
 }
 
 function _cloneStroke(st) {
+  // Text element: { t:'t', x, y, str, fs, c }. Strokes: { t:'p', c, w, pts }.
+  if (st.t === 't') {
+    return { t: 't', x: st.x, y: st.y, str: st.str, fs: st.fs, c: st.c };
+  }
   return { t: st.t || 'p', c: st.c, w: st.w, pts: st.pts.map(p => p.slice()) };
 }
 
@@ -2165,6 +2222,21 @@ function _redrawNoteStrokes() {
 // Paint one stroke onto the live canvas, denormalising its points.
 // Points are stored normalised: x in [0,1] vs width, y in [0,1] vs height.
 function _paintStroke(ctx, st, cssW, cssH, aspect) {
+  // Text element: draw the string at (x,y) top-left, font size in
+  // normalised-height units so it scales with the canvas.
+  if (st.t === 't') {
+    if (!st.str || st._editing) return;
+    const px = (st.fs || 0.04) * cssH;
+    ctx.save();
+    ctx.fillStyle = st.c || '#e8a838';
+    ctx.font = `600 ${px}px 'Inter', system-ui, sans-serif`;
+    ctx.textBaseline = 'top';
+    const lines = String(st.str).split('\n');
+    let y = st.y * cssH;
+    for (const ln of lines) { ctx.fillText(ln, st.x * cssW, y); y += px * 1.25; }
+    ctx.restore();
+    return;
+  }
   if (!st.pts || !st.pts.length) return;
   ctx.strokeStyle = st.c || '#e8a838';
   ctx.lineCap = 'round';
@@ -2388,6 +2460,25 @@ function _bindNoteDrawPointer(canvas) {
     if (s.handMode && !isPen) { beginPan(e); return; }
 
     const p = npos(e);
+    // ── Text tool ── tap existing text to edit; tap+drag to move; tap empty
+    // space to create. Drag is detected in pointermove via _textDrag.
+    if (s.tool === 'text') {
+      // If an editor is already open, a tap elsewhere commits it first.
+      if (s._textEdit) { _commitNoteTextEdit(); }
+      const hit = _textElemAt(p[0], p[1]);
+      if (hit >= 0) {
+        const el = s.strokes[hit];
+        s._textDrag = {
+          idx: hit, pointerId: e.pointerId,
+          startNx: p[0], startNy: p[1],
+          origX: el.x, origY: el.y, moved: false,
+          preSnap: s.strokes.map(_cloneStroke),
+        };
+      } else {
+        s._pendingTextAt = { x: p[0], y: p[1], pointerId: e.pointerId };
+      }
+      return;
+    }
     if (s.tool === 'eraser') {
       s.drawing = true;
       s._activePointerId = e.pointerId;
@@ -2417,6 +2508,20 @@ function _bindNoteDrawPointer(canvas) {
       return;
     }
 
+    // Text drag: move an existing text element under the pointer.
+    if (s._textDrag && e.pointerId === s._textDrag.pointerId) {
+      e.preventDefault();
+      const p = npos(e);
+      const el = s.strokes[s._textDrag.idx];
+      if (el) {
+        el.x = s._textDrag.origX + (p[0] - s._textDrag.startNx);
+        el.y = s._textDrag.origY + (p[1] - s._textDrag.startNy);
+        if (Math.abs(p[0] - s._textDrag.startNx) > 0.005 || Math.abs(p[1] - s._textDrag.startNy) > 0.005) s._textDrag.moved = true;
+        _redrawNoteStrokes();
+      }
+      return;
+    }
+
     // Active multi-touch gesture takes priority.
     if (s._gesture && active.size >= 2) { e.preventDefault(); updateGesture(); return; }
     if (s._pan)                         { e.preventDefault(); updatePan(e); return; }
@@ -2443,6 +2548,27 @@ function _bindNoteDrawPointer(canvas) {
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
 
     if (e.pointerType === 'pen') { s.penDown = Math.max(0, s.penDown - 1); s.lastPenAt = performance.now(); }
+
+    // Text drag finished: if it moved, record an undo step; if it was a tap
+    // (no movement), open the editor on that element instead.
+    if (s._textDrag && e.pointerId === s._textDrag.pointerId) {
+      const td = s._textDrag; s._textDrag = null;
+      if (td.moved) {
+        s.history.push(td.preSnap);
+        if (s.history.length > _NOTE_DRAW_MAX_HISTORY) s.history.shift();
+        s.redo = [];
+        _noteDrawCommit();
+      } else {
+        _openNoteTextEditor(0, 0, td.idx);  // coords come from the element
+      }
+      return;
+    }
+    // Pending text create: a tap on empty space with the text tool.
+    if (s._pendingTextAt && e.pointerId === s._pendingTextAt.pointerId) {
+      const at = s._pendingTextAt; s._pendingTextAt = null;
+      _openNoteTextEditor(at.x, at.y, null);
+      return;
+    }
 
     // Photo placement: end of a move/scale gesture.
     if (s.placingPhoto) {
@@ -2540,8 +2666,15 @@ function _eraseAt(nx, ny) {
   }
 }
 
-// Distance test: is point (nx,ny) within r of any segment of the stroke?
+// Distance test: is point (nx,ny) within r of any segment of the stroke,
+// or inside a text element's bounding box?
 function _strokeNearPoint(st, nx, ny, r, aspect) {
+  if (st.t === 't') {
+    const b = _textElemBounds(st);
+    if (!b) return false;
+    // Inflate the box by the hit radius so it's easy to catch.
+    return nx >= b.x - r && nx <= b.x + b.w + r && ny >= b.y - r && ny <= b.y + b.h + r;
+  }
   const pts = st.pts; if (!pts || !pts.length) return false;
   if (pts.length === 1) {
     return _dist2(pts[0][0], pts[0][1], nx, ny) <= r * r;
@@ -2550,6 +2683,29 @@ function _strokeNearPoint(st, nx, ny, r, aspect) {
     if (_distToSeg2(nx, ny, pts[i-1][0], pts[i-1][1], pts[i][0], pts[i][1]) <= r * r) return true;
   }
   return false;
+}
+
+// Measure a text element's bounding box in normalised space. Uses the live
+// draw canvas's context for font metrics; falls back to a rough estimate.
+let _noteTextMeasureCtx = null;
+function _textElemBounds(st) {
+  const s = _noteDrawState;
+  // When measuring outside the editor (card/viewer/export) there's no live
+  // canvas; use a neutral reference size — the returned values are
+  // normalised, so only the ratio matters.
+  const cssW = s ? s.cssW : 1000, cssH = s ? s.cssH : 1000;
+  const px = (st.fs || 0.04) * cssH;
+  if (!_noteTextMeasureCtx) {
+    const c = document.createElement('canvas');
+    _noteTextMeasureCtx = c.getContext('2d');
+  }
+  const mc = _noteTextMeasureCtx;
+  mc.font = `600 ${px}px 'Inter', system-ui, sans-serif`;
+  const lines = String(st.str || '').split('\n');
+  let maxW = 0;
+  for (const ln of lines) { const w = mc.measureText(ln).width; if (w > maxW) maxW = w; }
+  const hPx = lines.length * px * 1.25;
+  return { x: st.x, y: st.y, w: maxW / cssW, h: hPx / cssH };
 }
 function _dist2(x0, y0, x1, y1) { const dx = x1-x0, dy = y1-y0; return dx*dx + dy*dy; }
 function _distToSeg2(px, py, ax, ay, bx, by) {
@@ -2645,8 +2801,38 @@ function noteDrawClear() {
 
 function setNoteDrawTool(tool) {
   const s = _noteDrawState; if (!s) return;
+  // Leaving the text tool while an inline editor is open → commit it first.
+  if (s._textEdit && tool !== 'text') _commitNoteTextEdit();
   s.tool = tool;
   _updateNoteDrawToolUI();
+  _updateNoteDrawTextControls();
+}
+
+// Text styling setters (separate from pen colour/size).
+function setNoteTextColour(colour) {
+  const s = _noteDrawState; if (!s) return;
+  s.textColour = colour;
+  if (s._textEdit) { const ta = document.getElementById('note-draw-text-input'); if (ta) ta.style.color = colour; }
+  _updateNoteDrawTextControls();
+}
+function setNoteTextSize(fs) {
+  const s = _noteDrawState; if (!s) return;
+  s.textSize = fs;
+  if (s._textEdit) { const ta = document.getElementById('note-draw-text-input'); if (ta) ta.style.fontSize = (fs * s.cssH * s.view.zoom) + 'px'; }
+  _updateNoteDrawTextControls();
+}
+
+// Show the text colour/size controls only when the Text tool is active.
+function _updateNoteDrawTextControls() {
+  const s = _noteDrawState;
+  const wrap = document.getElementById('note-draw-text-controls');
+  if (wrap) wrap.style.display = (s && s.tool === 'text') ? 'flex' : 'none';
+  if (!s) return;
+  document.querySelectorAll('.note-draw-tsize').forEach(b => {
+    b.classList.toggle('active', Math.abs(Number(b.dataset.tsize) - s.textSize) < 0.001);
+  });
+  const ti = document.getElementById('note-draw-text-colour');
+  if (ti && /^#[0-9a-fA-F]{6}$/.test(s.textColour || '')) ti.value = s.textColour;
 }
 
 function setNoteDrawColour(colour) {
@@ -2666,6 +2852,7 @@ function _updateNoteDrawToolUI() {
   const s = _noteDrawState; if (!s) return;
   document.getElementById('note-draw-pen')?.classList.toggle('active', s.tool === 'pen');
   document.getElementById('note-draw-eraser')?.classList.toggle('active', s.tool === 'eraser');
+  document.getElementById('note-draw-text')?.classList.toggle('active', s.tool === 'text');
   document.querySelectorAll('.note-draw-size').forEach(b => {
     b.classList.toggle('active', Number(b.dataset.size) === s.size);
   });
@@ -2681,6 +2868,121 @@ function _updateNoteDrawToolUI() {
   const isCustom = s.tool === 'pen' && !presets.includes((s.colour || '').toLowerCase());
   if (custom) custom.classList.toggle('active', isCustom);
   if (customInput && /^#[0-9a-fA-F]{6}$/.test(s.colour || '')) customInput.value = s.colour;
+}
+
+// ── Text element editing ─────────────────────────────────────────────
+// Open the inline text editor at a normalised point. If editingIdx is given,
+// edit that existing text element; otherwise create a new one on commit.
+function _openNoteTextEditor(nx, ny, editingIdx) {
+  const s = _noteDrawState; if (!s) return;
+  const host = document.getElementById('note-draw-canvas-host');
+  if (!host) return;
+  // If editing an existing element, seed from it; else start blank.
+  let initial = '';
+  if (editingIdx != null && s.strokes[editingIdx] && s.strokes[editingIdx].t === 't') {
+    const el = s.strokes[editingIdx];
+    initial = el.str || '';
+    nx = el.x; ny = el.y;
+    s.textColour = el.c || s.textColour;
+    s.textSize = el.fs || s.textSize;
+    // Hide the element while editing so it isn't drawn twice (canvas + box).
+    el._editing = true;
+    _redrawNoteStrokes();
+  }
+  s._textEdit = { x: nx, y: ny, idx: (editingIdx != null ? editingIdx : null) };
+
+  let ta = document.getElementById('note-draw-text-input');
+  if (!ta) {
+    ta = document.createElement('textarea');
+    ta.id = 'note-draw-text-input';
+    ta.setAttribute('rows', '1');
+    ta.style.cssText = 'position:absolute;z-index:5;margin:0;padding:0;border:0;outline:1px dashed var(--accent);background:rgba(0,0,0,0.35);resize:none;overflow:hidden;line-height:1.25;font-family:var(--sans),system-ui,sans-serif;font-weight:600;white-space:pre;min-width:24px;box-sizing:content-box';
+    host.appendChild(ta);
+    ta.addEventListener('blur', () => _commitNoteTextEdit());
+    ta.addEventListener('keydown', (ev) => {
+      // Enter commits (Shift+Enter for newline); Esc cancels.
+      if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ta.blur(); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); _cancelNoteTextEdit(); }
+    });
+    ta.addEventListener('input', () => _sizeNoteTextInput(ta));
+  }
+  // Position & style the box at the normalised point under the view.
+  const fontPx = s.textSize * s.cssH * s.view.zoom;
+  const left = (nx - s.view.panX) * s.view.zoom * s.cssW;
+  // Canvas paints with textBaseline 'top'; the textarea's line-height:1.25
+  // adds half-leading (0.125em) above the first line, so shift the box up by
+  // that amount so the visible glyphs line up with where they'll be painted.
+  const top  = (ny - s.view.panY) * s.view.zoom * s.cssH - fontPx * 0.125;
+  ta.style.left = left.toFixed(1) + 'px';
+  ta.style.top  = top.toFixed(1) + 'px';
+  ta.style.color = s.textColour;
+  ta.style.fontSize = fontPx.toFixed(1) + 'px';
+  ta.style.display = 'block';
+  ta.value = initial;
+  _sizeNoteTextInput(ta);
+  setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
+}
+
+function _sizeNoteTextInput(ta) {
+  ta.style.width = 'auto'; ta.style.height = 'auto';
+  ta.style.width = Math.max(24, ta.scrollWidth + 6) + 'px';
+  ta.style.height = ta.scrollHeight + 'px';
+}
+
+function _commitNoteTextEdit() {
+  const s = _noteDrawState; if (!s || !s._textEdit) return;
+  const ta = document.getElementById('note-draw-text-input');
+  const edit = s._textEdit;
+  s._textEdit = null;
+  const str = ta ? ta.value.replace(/\s+$/,'') : '';
+  if (ta) ta.style.display = 'none';
+
+  // Snapshot for undo before mutating.
+  const snap = s.strokes.map(_cloneStroke);
+
+  if (edit.idx != null && s.strokes[edit.idx]) {
+    const el = s.strokes[edit.idx];
+    delete el._editing;
+    if (!str.trim()) {
+      // Emptied → delete the element.
+      s.strokes.splice(edit.idx, 1);
+    } else {
+      el.str = str; el.c = s.textColour; el.fs = s.textSize;
+    }
+    s.history.push(snap);
+    if (s.history.length > _NOTE_DRAW_MAX_HISTORY) s.history.shift();
+    s.redo = [];
+  } else if (str.trim()) {
+    s.strokes.push({ t: 't', x: edit.x, y: edit.y, str, fs: s.textSize, c: s.textColour });
+    s.history.push(snap);
+    if (s.history.length > _NOTE_DRAW_MAX_HISTORY) s.history.shift();
+    s.redo = [];
+  }
+  _redrawNoteStrokes();
+  _noteDrawCommit();
+}
+
+function _cancelNoteTextEdit() {
+  const s = _noteDrawState; if (!s) return;
+  const ta = document.getElementById('note-draw-text-input');
+  if (ta) ta.style.display = 'none';
+  if (s._textEdit && s._textEdit.idx != null && s.strokes[s._textEdit.idx]) {
+    delete s.strokes[s._textEdit.idx]._editing;
+  }
+  s._textEdit = null;
+  _redrawNoteStrokes();
+}
+
+// Find the topmost text element under a normalised point, or -1.
+function _textElemAt(nx, ny) {
+  const s = _noteDrawState; if (!s) return -1;
+  for (let i = s.strokes.length - 1; i >= 0; i--) {
+    const st = s.strokes[i];
+    if (st.t !== 't') continue;
+    const b = _textElemBounds(st);
+    if (b && nx >= b.x && nx <= b.x + b.w && ny >= b.y && ny <= b.y + b.h) return i;
+  }
+  return -1;
 }
 
 function _updateNoteDrawUndoRedoBtns() {
@@ -2716,6 +3018,7 @@ async function toggleNoteDraw() {
       if (ticksEl) ticksEl.style.display = 'none';
     }
   } else {
+    if (_noteDrawState && _noteDrawState._textEdit) _commitNoteTextEdit();
     n.drawMode = false;
     _noteDrawState = null;
   }
