@@ -777,6 +777,7 @@ async function closeNoteEditor() {
     }
   }
   _noteDrawState = null;
+  { const _mb = document.getElementById('note-draw-minibar'); if (_mb) _mb.style.display = 'none'; }
   renderNotes();
 }
 
@@ -1133,6 +1134,7 @@ async function toggleNoteTicks() {
     if (_noteDrawState && _noteDrawState._textEdit) _commitNoteTextEdit();
     n.drawMode = false;
     _noteDrawState = null;
+    { const _mb = document.getElementById('note-draw-minibar'); if (_mb) _mb.style.display = 'none'; }
     document.getElementById('note-btn-draw')?.classList.toggle('active', false);
     const drawWrap = document.getElementById('note-draw-wrap');
     if (drawWrap) drawWrap.style.display = 'none';
@@ -1459,13 +1461,38 @@ function _noteHasVector(n) {
   return !!(n && ((Array.isArray(n.drawStrokes) && n.drawStrokes.length) || n.drawPhoto));
 }
 
+// Quantize a stroke for STORAGE only — round coordinates to 4dp and pressure
+// to 2dp. parseFloat(toFixed) strips trailing zeros so 0.5 stays "0.5" (not
+// "0.5000"), which is where the byte saving comes from. Applied at serialise
+// time only; live-editing copies keep full float precision so repeated
+// transforms (scale/rotate) don't accumulate rounding drift. Text elements
+// (positions/sizes) are rounded too; transient flags already stripped by
+// _cloneStroke upstream.
+function _quantizeStroke(st) {
+  if (st.t === 't') {
+    const o = { t: 't', x: +st.x.toFixed(4), y: +st.y.toFixed(4), str: st.str, fs: +st.fs.toFixed(4), c: st.c };
+    if (st.rot) o.rot = +st.rot.toFixed(4);
+    if (st.skx) o.skx = +st.skx.toFixed(4);
+    if (st.sky) o.sky = +st.sky.toFixed(4);
+    return o;
+  }
+  return {
+    t: st.t || 'p', c: st.c, w: st.w,
+    pts: st.pts.map(p => {
+      const q = [+p[0].toFixed(4), +p[1].toFixed(4)];
+      if (p[2] != null) q[2] = +p[2].toFixed(2);
+      return q;
+    }),
+  };
+}
+
 // Build the \u0001VDRAW\u0001 body string from drawing parts. Single source of
 // truth for the locked-note / sync payload so the two write sites can't
-// drift. Omits empty fields to keep the payload tight.
+// drift. Omits empty fields to keep the payload tight. Coordinates are
+// quantized here (storage only) to shrink the encrypted/sync payload.
 function _serializeVDraw(strokes, aspect, photo, photoT) {
-  // Clone elements so transient flags (e.g. a text element's _editing) never
-  // get persisted into the saved/encrypted payload.
-  const clean = (strokes || []).map(_cloneStroke);
+  // Clone (strips transient flags) then quantize for the wire.
+  const clean = (strokes || []).map(_cloneStroke).map(_quantizeStroke);
   const obj = { s: clean, a: aspect || 1 };
   if (photo) { obj.p = photo; if (photoT) obj.pt = photoT; }
   return `\u0001VDRAW\u0001${JSON.stringify(obj)}`;
@@ -2290,6 +2317,14 @@ function _initNoteDrawCanvas(n) {
     tool:   keep ? keep.tool   : 'pen',
     colour: keep ? keep.colour : '#e8a838',
     size:   keep ? keep.size   : 5,
+    // Pressure sensitivity (stylus dynamic range). 1.0 = device pressure
+    // passes through unchanged; <1 flattens variation toward the midpoint
+    // (steadier width — good for twitchy capacitive styli); >1 exaggerates
+    // it (more dynamic range — good for light-touch users). Persisted in
+    // localStorage so it survives reloads; applied as a contrast curve at
+    // capture time (see npos), so the stored point format is unchanged and
+    // already-drawn strokes keep their look.
+    pressureSens: keep ? keep.pressureSens : _loadPressureSens(),
     drawing: false,
     strokes,
     history,             // snapshots of the stroke list for undo
@@ -2515,6 +2550,7 @@ function _redrawNoteStrokes() {
   }
   _updateNoteDrawZoomReadout();
   _paintSelectionOverlay(ctx, s, v);
+  _positionSelMiniToolbar();
 }
 
 // Hit-test the selection handles at a screen-space point (sx,sy in css px,
@@ -2695,12 +2731,14 @@ function _bindNoteDrawPointer(canvas) {
     const cw = (s && s.cssW) || rw, ch = (s && s.cssH) || rh;
     return { x: fx * cw, y: fy * ch };
   };
-  // Stored normalised coordinate (accounts for pan/zoom), with pressure.
+  // Stored normalised coordinate (accounts for pan/zoom), with pressure
+  // shaped through the user's sensitivity setting before storing.
   const npos = (e) => {
     const s = _noteDrawState;
     const sp = screenPos(e);
     const [nx, ny] = _screenToNorm(s, sp.x, sp.y);
-    return [nx, ny, (e.pressure && e.pressure > 0) ? e.pressure : 0.5];
+    const raw = (e.pressure && e.pressure > 0) ? e.pressure : 0.5;
+    return [nx, ny, _applyPressureSens(raw, s.pressureSens)];
   };
 
   // Begin a two-pointer pinch/pan gesture: cancel any in-progress stroke
@@ -3667,7 +3705,7 @@ function _noteDrawCommit() {
   _updateNoteDrawUndoRedoBtns();
   if (s) s.erasedSomething = false;
   if (!n.locked) {
-    n.drawStrokes = s ? s.strokes.map(_cloneStroke) : [];
+    n.drawStrokes = s ? s.strokes.map(_cloneStroke).map(_quantizeStroke) : [];
     n.drawAspect  = s ? s.aspect : 1;
     n.drawing = undefined;  // vector is now the source of truth; drop legacy PNG
   }
@@ -3699,6 +3737,101 @@ function noteDrawRedo() {
   s._sel = []; s._selXf = null; s._marquee = null;
   _redrawNoteStrokes();
   _noteDrawCommit();
+}
+
+// ── Selection mini-toolbar actions ───────────────────────────────────
+// Operate on the current selection (s._sel). Each snapshots the stroke list
+// for undo (same pattern as stroke commit) before mutating, then redraws and
+// commits. These are the first per-selection edit affordances beyond the
+// transform gestures, surfaced via the floating mini-toolbar near a selection.
+
+// Snapshot helper — push the current stroke list onto the undo stack and
+// invalidate redo. Shared by the mini-toolbar actions.
+function _noteDrawSnapshot() {
+  const s = _noteDrawState; if (!s) return;
+  s.history.push(s.strokes.map(_cloneStroke));
+  if (s.history.length > _NOTE_DRAW_MAX_HISTORY) s.history.shift();
+  s.redo = [];
+}
+
+// Duplicate the selected elements, offset slightly so the copy is visible,
+// and re-select the copies so the user can immediately drag them away.
+function noteDrawDupSel() {
+  const s = _noteDrawState; if (!s || !s._sel || !s._sel.length) return;
+  _noteDrawSnapshot();
+  const off = 0.02;  // small normalised offset so the copy peeks out
+  const newIdx = [];
+  for (const idx of s._sel) {
+    const src = s.strokes[idx]; if (!src) continue;
+    const copy = _cloneStroke(src);
+    if (copy.t === 't') { copy.x += off; copy.y += off; }
+    else { copy.pts = copy.pts.map(p => { const q = p.slice(); q[0] += off; q[1] += off; return q; }); }
+    s.strokes.push(copy);
+    newIdx.push(s.strokes.length - 1);
+  }
+  s._sel = newIdx; s._selXf = null;
+  _redrawNoteStrokes();
+  _noteDrawCommit();
+  toast(`Duplicated ${newIdx.length} ${newIdx.length === 1 ? 'item' : 'items'}`);
+}
+
+// Delete the selected elements. Removes highest indices first so earlier
+// splices don't shift the ones still to remove.
+function noteDrawDeleteSel() {
+  const s = _noteDrawState; if (!s || !s._sel || !s._sel.length) return;
+  _noteDrawSnapshot();
+  const order = [...s._sel].sort((a, b) => b - a);
+  for (const idx of order) s.strokes.splice(idx, 1);
+  const n = s._sel.length;
+  s._sel = []; s._selXf = null; s._marquee = null;
+  _redrawNoteStrokes();
+  _noteDrawCommit();
+  toast(`Deleted ${n} ${n === 1 ? 'item' : 'items'}`);
+}
+
+// Recolour the selected elements to the given colour. Skips text? No — text
+// also carries a colour (c), so recolour both strokes and text uniformly.
+function noteDrawRecolorSel(colour) {
+  const s = _noteDrawState; if (!s || !s._sel || !s._sel.length) return;
+  _noteDrawSnapshot();
+  for (const idx of s._sel) { const el = s.strokes[idx]; if (el) el.c = colour; }
+  _redrawNoteStrokes();
+  _noteDrawCommit();
+}
+
+// Position and show/hide the floating mini-toolbar near the current
+// selection. Called from _paintSelectionOverlay so selection + view state are
+// always current. Hidden when nothing is selected or a transform gesture is
+// mid-flight (so it doesn't fight the handles). Positioned above the
+// selection's top edge in screen px, clamped into the canvas host.
+function _positionSelMiniToolbar() {
+  const bar = document.getElementById('note-draw-minibar');
+  if (!bar) return;
+  const s = _noteDrawState;
+  const v = s && s.view;
+  // Hide during an active gesture, while marquee-dragging, or with no selection.
+  if (!s || !v || !s._sel || !s._sel.length || s._selXf || s._marquee) {
+    bar.style.display = 'none';
+    return;
+  }
+  const b = _selectionBounds(s._sel);
+  if (!b) { bar.style.display = 'none'; return; }
+  // Map normalised top-centre to screen px (same mapping as _selHandleAt).
+  const X = (nx) => (nx - v.panX) * v.zoom * s.cssW;
+  const Y = (ny) => (ny - v.panY) * v.zoom * s.cssH;
+  const cx = X(b.x + b.w / 2);
+  const topY = Y(b.y);
+  bar.style.display = 'flex';
+  // Measure after display so offsetWidth/Height are real.
+  const bw = bar.offsetWidth || 150, bh = bar.offsetHeight || 36;
+  let left = cx - bw / 2;
+  let top = topY - bh - 14;            // sit above the top edge + rotate handle
+  // If there's no room above, drop it below the selection instead.
+  if (top < 4) top = Y(b.y + b.h) + 14;
+  // Clamp horizontally into the host.
+  left = Math.max(4, Math.min(s.cssW - bw - 4, left));
+  bar.style.left = `${left}px`;
+  bar.style.top  = `${Math.max(4, top)}px`;
 }
 
 function noteDrawClear() {
@@ -3754,7 +3887,7 @@ function _updateNoteDrawTextControls() {
   if (wrap) wrap.style.display = isText ? 'flex' : 'none';
   // Pen size/colour are irrelevant for text & transform tools → hide them.
   const hidePen = !!(s && (s.tool === 'text' || s.tool === 'transform'));
-  const flexEls = ['note-draw-sizes', 'note-draw-colours'];
+  const flexEls = ['note-draw-sizes', 'note-draw-pressure', 'note-draw-colours'];
   flexEls.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = hidePen ? 'none' : 'flex'; });
   ['note-draw-div-pen1', 'note-draw-div-pen2'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = hidePen ? 'none' : ''; });
   if (!s) return;
@@ -3776,6 +3909,35 @@ function setNoteDrawSize(size) {
   const s = _noteDrawState; if (!s) return;
   s.size = size;
   _updateNoteDrawToolUI();
+}
+
+// ── Pressure sensitivity ─────────────────────────────────────────────
+// Load/save the stylus pressure-sensitivity preference (localStorage; UI
+// state, not synced user data). Clamped to a sane range; defaults to 1.0
+// (device pressure passes through unchanged).
+const _NOTE_PRESSURE_KEY = 'stckrm.note.pressureSens';
+function _loadPressureSens() {
+  try {
+    const v = parseFloat(localStorage.getItem(_NOTE_PRESSURE_KEY));
+    if (isFinite(v) && v >= 0.2 && v <= 2.5) return v;
+  } catch (_) {}
+  return 1.0;
+}
+function setNoteDrawPressureSens(v) {
+  const s = _noteDrawState; if (!s) return;
+  v = Math.max(0.2, Math.min(2.5, Number(v) || 1.0));
+  s.pressureSens = v;
+  try { localStorage.setItem(_NOTE_PRESSURE_KEY, String(v)); } catch (_) {}
+  const out = document.getElementById('note-draw-pressure-val');
+  if (out) out.textContent = `${v.toFixed(1)}×`;
+}
+
+// Shape a raw device pressure (0–1) through the sensitivity curve: contrast
+// about the 0.5 midpoint. sens=1 is identity; <1 flattens, >1 exaggerates.
+// Result clamped to [0,1] so width math downstream stays well-behaved.
+function _applyPressureSens(raw, sens) {
+  const p = 0.5 + (raw - 0.5) * (sens || 1);
+  return Math.max(0, Math.min(1, p));
 }
 
 function _updateNoteDrawToolUI() {
@@ -3800,6 +3962,12 @@ function _updateNoteDrawToolUI() {
   const isCustom = s.tool === 'pen' && !presets.includes((s.colour || '').toLowerCase());
   if (custom) custom.classList.toggle('active', isCustom);
   if (customInput && /^#[0-9a-fA-F]{6}$/.test(s.colour || '')) customInput.value = s.colour;
+  // Reflect the persisted pressure sensitivity into the slider + readout.
+  const psSlider = document.getElementById('note-draw-pressure-slider');
+  const psVal    = document.getElementById('note-draw-pressure-val');
+  const ps = (s.pressureSens != null) ? s.pressureSens : 1.0;
+  if (psSlider) psSlider.value = String(ps);
+  if (psVal)    psVal.textContent = `${ps.toFixed(1)}×`;
 }
 
 // ── Text element editing ─────────────────────────────────────────────
@@ -3953,6 +4121,7 @@ async function toggleNoteDraw() {
     if (_noteDrawState && _noteDrawState._textEdit) _commitNoteTextEdit();
     n.drawMode = false;
     _noteDrawState = null;
+    { const _mb = document.getElementById('note-draw-minibar'); if (_mb) _mb.style.display = 'none'; }
   }
 
   document.getElementById('note-btn-draw')?.classList.toggle('active', n.drawMode);
@@ -3976,7 +4145,7 @@ function _getCurrentEditorBody(n) {
     const photo   = s ? (s.photoData || '') : (n.drawPhoto || '');
     const photoT  = s ? (s.photoT || null)  : (n.drawPhotoT || null);
     if (!n.locked) {
-      n.drawStrokes = strokes.map(_cloneStroke);
+      n.drawStrokes = strokes.map(_cloneStroke).map(_quantizeStroke);
       n.drawAspect  = aspect;
       n.drawPhoto   = photo || null;
       n.drawPhotoT  = photo ? photoT : null;
