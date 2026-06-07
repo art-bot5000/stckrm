@@ -4855,12 +4855,16 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
           <label class="note-draw-swatch note-draw-custom" id="note-draw-custom-wrap" title="Custom colour" style="position:relative;overflow:hidden;background:conic-gradient(red,#ff0,#0f0,#0ff,#00f,#f0f,red);display:inline-flex;align-items:center;justify-content:center">
             <input type="color" id="note-draw-custom" value="#e8a838" oninput="setNoteDrawColour(this.value)" style="position:absolute;inset:-4px;width:200%;height:200%;border:0;padding:0;cursor:pointer;opacity:0">
           </label>
+          <span class="note-draw-fav-strip" data-fav-strip style="display:inline-flex;align-items:center;gap:5px"></span>
+          <button type="button" class="note-draw-fav-add" onclick="saveCurrentFavColour()" title="Save current colour to favourites">+</button>
         </span>
         <span id="note-draw-text-controls" style="display:none;align-items:center;gap:6px">
           <div style="width:1px;height:18px;background:var(--border);margin:0 2px;flex-shrink:0"></div>
           <label class="note-draw-swatch note-draw-custom" title="Text colour" style="position:relative;overflow:hidden;background:conic-gradient(red,#ff0,#0f0,#0ff,#00f,#f0f,red);display:inline-flex;align-items:center;justify-content:center">
             <input type="color" id="note-draw-text-colour" value="#ffffff" oninput="setNoteTextColour(this.value)" style="position:absolute;inset:-4px;width:200%;height:200%;border:0;padding:0;cursor:pointer;opacity:0">
           </label>
+          <span class="note-draw-fav-strip" data-fav-strip style="display:inline-flex;align-items:center;gap:5px"></span>
+          <button type="button" class="note-draw-fav-add" onclick="saveCurrentFavColour()" title="Save current colour to favourites">+</button>
           <button class="note-draw-tsize note-draw-tool" data-tsize="0.03"  onclick="setNoteTextSize(0.03)"  title="Small text" style="font-size:11px;font-weight:700">T</button>
           <button class="note-draw-tsize note-draw-tool" data-tsize="0.045" onclick="setNoteTextSize(0.045)" title="Medium text" style="font-size:14px;font-weight:700">T</button>
           <button class="note-draw-tsize note-draw-tool" data-tsize="0.07"  onclick="setNoteTextSize(0.07)"  title="Large text" style="font-size:18px;font-weight:700">T</button>
@@ -4878,11 +4882,13 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
         <!-- Floating mini-toolbar: appears near a selection (transform tool).
              Positioned in screen px by _positionSelMiniToolbar(); hidden by
              default and whenever there's no selection / a gesture is live. -->
-        <div id="note-draw-minibar" style="display:none;position:absolute;z-index:5;align-items:center;gap:4px">
+        <div id="note-draw-minibar" style="display:none;position:absolute;z-index:5;align-items:center;gap:4px;max-width:280px;flex-wrap:wrap">
           <button class="note-draw-mini-btn" onclick="noteDrawDupSel()" title="Duplicate selection"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-copy"></use></svg></button>
           <label class="note-draw-mini-btn note-draw-mini-colour" title="Recolour selection" style="position:relative;overflow:hidden;background:conic-gradient(red,#ff0,#0f0,#0ff,#00f,#f0f,red)">
             <input type="color" value="#e8a838" oninput="noteDrawRecolorSel(this.value)" style="position:absolute;inset:-4px;width:200%;height:200%;border:0;padding:0;cursor:pointer;opacity:0">
           </label>
+          <span class="note-draw-fav-strip" data-fav-strip style="display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap"></span>
+          <button type="button" class="note-draw-fav-add" onclick="saveCurrentFavColour()" title="Save selection colour to favourites">+</button>
           <button class="note-draw-mini-btn note-draw-mini-danger" onclick="noteDrawDeleteSel()" title="Delete selection"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-trash-2"></use></svg></button>
         </div>
       </div>

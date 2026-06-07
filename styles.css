@@ -1671,6 +1671,15 @@
 .note-draw-mini-btn:hover { background:var(--border); }
 .note-draw-mini-danger:hover { border-color:var(--danger); color:var(--danger); }
 .note-draw-mini-colour { overflow:hidden; }
+/* Favourite colours: shared strip + save button across all pickers. */
+.note-draw-fav { width:20px; height:20px; }
+.note-draw-fav-add { width:22px; height:22px; border-radius:50%; flex-shrink:0;
+  background:var(--surface2); border:1px dashed var(--border); color:var(--muted);
+  display:inline-flex; align-items:center; justify-content:center; cursor:pointer;
+  font-size:15px; font-weight:700; line-height:1; padding:0;
+  transition:background 0.12s, border-color 0.12s, color 0.12s; }
+.note-draw-fav-add:hover { background:var(--border); border-color:var(--accent); color:var(--accent); }
+.note-draw-fav-strip:empty { display:none !important; }
 #note-draw-canvas { cursor:crosshair; }
 #note-draw-canvas.hand { cursor:grab; }
 #note-draw-canvas.hand.grabbing { cursor:grabbing; }

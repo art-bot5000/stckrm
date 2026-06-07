@@ -2415,6 +2415,7 @@ function _initNoteDrawCanvas(n) {
   _updateNoteDrawZoomReadout();
   _updateNoteDrawPhotoUI();
   _updateNoteDrawTextControls();
+  _renderFavStrips();
 
   // Keep the canvas backing store and cssW/cssH in sync with the host if it
   // resizes after init (toolbar wrapping, on-screen keyboard, orientation).
@@ -3938,6 +3939,100 @@ function setNoteDrawPressureSens(v) {
 function _applyPressureSens(raw, sens) {
   const p = 0.5 + (raw - 0.5) * (sens || 1);
   return Math.max(0, Math.min(1, p));
+}
+
+// ── Favourite colours ────────────────────────────────────────────────
+// A single shared set of up to 10 favourite colours (localStorage; UI state,
+// not synced). The same strip is injected into every colour picker — pen,
+// text, and the selection mini-toolbar — so a saved colour is one tap away
+// wherever you are. Tapping a favourite applies it through the active
+// context (text element, current selection, or the pen). The "+" button
+// saves the colour currently in use for that context.
+const _NOTE_FAV_KEY = 'stckrm.note.favColours';
+const _NOTE_FAV_MAX = 10;
+function _loadFavColours() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(_NOTE_FAV_KEY) || '[]');
+    if (Array.isArray(arr)) return arr.filter(c => /^#[0-9a-fA-F]{6}$/.test(c)).slice(0, _NOTE_FAV_MAX);
+  } catch (_) {}
+  return [];
+}
+function _saveFavColours(arr) {
+  try { localStorage.setItem(_NOTE_FAV_KEY, JSON.stringify(arr.slice(0, _NOTE_FAV_MAX))); } catch (_) {}
+}
+
+// The colour "in use" for the current context — what the "+" button saves.
+// Text tool → the text colour; an active selection → its first element's
+// colour; otherwise the pen colour.
+function _currentContextColour() {
+  const s = _noteDrawState; if (!s) return '#e8a838';
+  if (s.tool === 'text') return s.textColour || '#ffffff';
+  if (s._sel && s._sel.length) {
+    const el = s.strokes[s._sel[0]];
+    if (el && /^#[0-9a-fA-F]{6}$/.test(el.c || '')) return el.c;
+  }
+  return s.colour || '#e8a838';
+}
+
+// Apply a colour through whatever the active context is, mirroring how the
+// "+" decides what to save. Keeps a tapped favourite intuitive everywhere.
+function applyFavColour(colour) {
+  const s = _noteDrawState; if (!s) return;
+  if (s.tool === 'text') { setNoteTextColour(colour); return; }
+  if (s._sel && s._sel.length) { noteDrawRecolorSel(colour); return; }
+  setNoteDrawColour(colour);
+}
+
+// Save the current context colour into the favourites (newest first, dedup,
+// capped at 10), then re-render every strip.
+function saveCurrentFavColour() {
+  const c = (_currentContextColour() || '').toLowerCase();
+  if (!/^#[0-9a-fA-F]{6}$/.test(c)) return;
+  let favs = _loadFavColours().map(x => x.toLowerCase());
+  favs = favs.filter(x => x !== c);   // dedup → moves an existing one to front
+  favs.unshift(c);
+  favs = favs.slice(0, _NOTE_FAV_MAX);
+  _saveFavColours(favs);
+  _renderFavStrips();
+  toast(`Saved ${c} to favourites`);
+}
+
+// Remove a favourite (long-press / right-click on a slot).
+function removeFavColour(colour) {
+  const c = (colour || '').toLowerCase();
+  let favs = _loadFavColours().map(x => x.toLowerCase()).filter(x => x !== c);
+  _saveFavColours(favs);
+  _renderFavStrips();
+}
+
+// Build the favourite-colour swatches into every container marked with the
+// data-fav-strip attribute. Each picker carries one empty container; this
+// fills them identically so all pickers stay in sync. Right-click / long-
+// press a slot removes it.
+function _renderFavStrips() {
+  const favs = _loadFavColours();
+  const strips = document.querySelectorAll('[data-fav-strip]');
+  strips.forEach(strip => {
+    strip.innerHTML = '';
+    for (const c of favs) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'note-draw-swatch note-draw-fav';
+      b.style.background = c;
+      b.title = `${c} — tap to use, long-press to remove`;
+      b.dataset.favc = c;
+      b.addEventListener('click', () => applyFavColour(c));
+      // Right-click (desktop) and long-press (touch) remove the slot.
+      b.addEventListener('contextmenu', (e) => { e.preventDefault(); removeFavColour(c); });
+      let lpTimer = null;
+      b.addEventListener('pointerdown', () => { lpTimer = setTimeout(() => removeFavColour(c), 600); });
+      const clearLp = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
+      b.addEventListener('pointerup', clearLp);
+      b.addEventListener('pointerleave', clearLp);
+      b.addEventListener('pointercancel', clearLp);
+      strip.appendChild(b);
+    }
+  });
 }
 
 function _updateNoteDrawToolUI() {
