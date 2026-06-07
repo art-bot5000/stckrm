@@ -1657,6 +1657,7 @@
 .note-draw-swatch { width:24px; height:24px; border-radius:50%; cursor:pointer;
   border:2px solid transparent; transition:border-color 0.15s; padding:0; flex-shrink:0; }
 .note-draw-swatch:hover, .note-draw-swatch.active { border-color:var(--accent); }
+.note-draw-custom { background-clip:padding-box; }
 .note-draw-custom.active { box-shadow:0 0 0 2px var(--accent); }
 #note-draw-bg { font-size:15px; line-height:1; }
 #note-draw-hand { font-size:14px; line-height:1; }
