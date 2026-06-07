@@ -1657,11 +1657,14 @@
 .note-draw-swatch { width:24px; height:24px; border-radius:50%; cursor:pointer;
   border:2px solid transparent; transition:border-color 0.15s; padding:0; flex-shrink:0; }
 .note-draw-swatch:hover, .note-draw-swatch.active { border-color:var(--accent); }
-.note-draw-custom { background-clip:padding-box; border-radius:50%; }
-/* Custom (wheel) swatch active state: a single thin accent ring. The base
-   .note-draw-swatch.active also tints the 2px border, which the gradient
-   shows through and doubles up the ring — so keep the wheel's border
-   transparent and use one slim box-shadow ring instead. */
+.note-draw-custom { position:relative; overflow:hidden; border-radius:50%; background:transparent !important; }
+/* The wheel gradient lives on a borderless, fully-round inner layer so its
+   corners can't escape past the swatch's border (background-clip proved
+   unreliable on some Android WebViews). The layer fills the padding box. */
+.note-draw-custom::before { content:""; position:absolute; inset:0; border-radius:50%;
+  background:conic-gradient(red,#ff0,#0f0,#0ff,#00f,#f0f,red); pointer-events:none; }
+/* Custom (wheel) swatch active state: a single thin accent ring (base
+   .note-draw-swatch.active tints the 2px border too, which doubled it up). */
 .note-draw-custom.active { border-color:transparent !important; box-shadow:0 0 0 1.5px var(--accent); }
 #note-draw-bg { font-size:15px; line-height:1; }
 #note-draw-hand { font-size:14px; line-height:1; }
