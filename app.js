@@ -8891,6 +8891,21 @@ if (_bc) {
       // writes would go to the wrong place. Reload to pick up the new
       // state cleanly. We do this BEFORE the other handlers so we don't
       // race against e.g. a DATA_CHANGED firing for the new user's data.
+      //
+      // Echo-guard: only reload if the broadcast user actually differs from
+      // the one THIS tab already holds. With two tabs alive, each one
+      // broadcasts USER_CHANGED on its own sign-in / session-restore; without
+      // this guard, two tabs that have BOTH signed in as the same user keep
+      // bouncing each other into reloads — the "login + refresh" loop seen
+      // when a restored tab and a fresh tab both authenticate the same
+      // account. A null incoming emailHash (sign-out) always reloads, since
+      // that's a genuine state change this tab must follow.
+      const incomingHash = event.data.emailHash || null;
+      const currentHash  = _kvEmailHash || null;
+      if (incomingHash && incomingHash === currentHash) {
+        console.log('[bc] USER_CHANGED — same user as this tab, ignoring echo');
+        return;
+      }
       console.log('[bc] USER_CHANGED — reloading to resync auth state');
       location.reload();
       return;
