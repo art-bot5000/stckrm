@@ -721,7 +721,7 @@ function _validateBillsCsv(rows) {
       errors.push({ row: lineNum, msg: 'Missing name — row skipped' });
       continue;
     }
-    const amountRaw = (row[iAmount] || '').trim().replace(/[£$€,]/g, '');
+    const amountRaw = (row[iAmount] || '').trim().replace(/[£$€¥,]|kr/g, '');
     const amount = parseFloat(amountRaw);
     if (!isFinite(amount) || amount < 0) {
       errors.push({ row: lineNum, msg: `"${name}": amount "${row[iAmount]}" is not a valid number — row skipped` });
@@ -883,7 +883,7 @@ function _showBillsImportPreview(items, errors, filename) {
       left.append(nm, meta);
       const amt = document.createElement('div');
       amt.style.cssText = 'font-weight:700;font-size:13px;color:var(--text);flex-shrink:0;font-family:var(--mono)';
-      amt.textContent = `£${item.amount.toFixed(2)}`;
+      amt.textContent = _money(item.amount);
       r.append(left, amt);
       list.appendChild(r);
     }
@@ -3082,7 +3082,7 @@ function openBudgetSetupModal() {
       <input type="checkbox" id="setup-row-${i}-on" checked>
       <input type="text" id="setup-row-${i}-name" value="${_escapeHtml(s.name)}" maxlength="40"
         style="flex:2;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-family:var(--sans);font-size:13px">
-      <span style="color:var(--muted);font-size:12px">£</span>
+      <span style="color:var(--muted);font-size:12px">${currencySymbol()}</span>
       <input type="number" id="setup-row-${i}-amount" value="${s.monthlyBudget}" min="0" step="1"
         style="width:80px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:13px">
       <span style="color:var(--muted);font-size:11px">/ mo</span>
@@ -3509,7 +3509,7 @@ function _renderAccountRow(acc) {
   return `
     <div class="bill-row ${acc.archived ? 'is-skipped' : ''} ${balanceClass}" onclick="openAccountEditor('${acc.id}')" style="cursor:pointer">
       <div class="bill-day" style="background:${acc.color || 'var(--surface)'};color:#000;border-color:${acc.color || 'var(--border)'};font-size:9px">
-        ${acc.type === 'credit_card' ? 'CC' : acc.type === 'savings' ? 'S' : '£'}
+        ${acc.type === 'credit_card' ? 'CC' : acc.type === 'savings' ? 'S' : (currencySymbol()||'$')}
       </div>
       <div class="bill-info">
         <div class="bill-name">${_escapeHtml(acc.name)} ${primaryBadge}</div>
@@ -5519,7 +5519,7 @@ function generateCsvExport(startIso, endIso) {
   billRows.sort((a, b) => a[0].localeCompare(b[0]));
   sections.push(_buildCsvSection(
     'BILLS',
-    ['Due date', 'Name', 'Amount (£)', 'Status', 'Paid date', 'Notes'],
+    ['Due date', 'Name', `Amount (${currencySymbol()||'no currency'})`, 'Status', 'Paid date', 'Notes'],
     billRows,
   ));
 
@@ -5541,7 +5541,7 @@ function generateCsvExport(startIso, endIso) {
   txRows.sort((a, b) => a[0].localeCompare(b[0]));
   sections.push(_buildCsvSection(
     'TRANSACTIONS',
-    ['Date', 'Where', 'Amount (£)', 'Category', 'Notes'],
+    ['Date', 'Where', `Amount (${currencySymbol()||'no currency'})`, 'Category', 'Notes'],
     txRows,
   ));
 
@@ -5567,7 +5567,7 @@ function generateCsvExport(startIso, endIso) {
   incomeRows.sort((a, b) => a[0].localeCompare(b[0]));
   sections.push(_buildCsvSection(
     'INCOME',
-    ['Date', 'Source', 'Amount (£)', 'Status', 'Received date', 'Account'],
+    ['Date', 'Source', `Amount (${currencySymbol()||'no currency'})`, 'Status', 'Received date', 'Account'],
     incomeRows,
   ));
 
@@ -5738,7 +5738,7 @@ _renderBillRow = function(inst, opts = {}) {
 
   // (a) Inject the override button when unpaid + not skipped
   if (!inst.paidAt && !inst.skipped) {
-    const overrideBtn = `<button class="bill-action-btn" onclick="event.stopPropagation();openBillOverrideModal('${yyyymm}','${inst.billId}','${inst.dueDate}')" title="Override amount this month" style="font-size:10px;font-family:var(--mono);font-weight:700">±£</button>`;
+    const overrideBtn = `<button class="bill-action-btn" onclick="event.stopPropagation();openBillOverrideModal('${yyyymm}','${inst.billId}','${inst.dueDate}')" title="Override amount this month" style="font-size:10px;font-family:var(--mono);font-weight:700">±${currencySymbol()}</button>`;
     // Insert before the existing edit button (matches `bill-action-edit` class)
     html = html.replace(/(<button[^>]*bill-action-btn bill-action-edit[^<]*<\/button>)/, `${overrideBtn}$1`);
   }
@@ -6892,7 +6892,7 @@ function _azHtmlPreview() {
           <span style="font-family:var(--mono);font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.ASIN)}</span>
           <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span>
           <span style="color:var(--muted);font-size:11px">${r.date}</span>
-          <span style="text-align:right;font-family:var(--mono);font-size:11px;color:var(--ok)">£${r.price.toFixed(2)}</span>
+          <span style="text-align:right;font-family:var(--mono);font-size:11px;color:var(--ok)">${_money(r.price)}</span>
           <button onclick="_azDeleteRow(${r._id},this)" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:2px"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
         </div>`).join('')}
     </div>
@@ -6957,8 +6957,8 @@ function _azGroupCard(g) {
         <div style="font-weight:700;font-size:14px;line-height:1.3;margin-bottom:4px">${esc(g.name)}</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <span style="font-size:11px;color:var(--muted)">ASINs: ${g.asins.slice(0,3).map(a=>`<span style="font-family:var(--mono);background:var(--bg);padding:1px 5px;border-radius:4px;font-size:10px">${esc(a)}</span>`).join('')}${g.asins.length>3?`<span style="font-size:10px;color:var(--muted)"> +${g.asins.length-3}</span>`:''}</span>
-          <span style="font-size:11px;color:var(--ok);font-weight:600">£${g.totalSpend.toFixed(2)} spent</span>
-          ${g.avgPrice?`<span style="font-size:11px;color:var(--muted)">avg £${g.avgPrice.toFixed(2)}</span>`:''}
+          <span style="font-size:11px;color:var(--ok);font-weight:600">${_money(g.totalSpend)} spent</span>
+          ${g.avgPrice?`<span style="font-size:11px;color:var(--muted)">avg ${_money(g.avgPrice)}</span>`:''}
         </div>
       </div>
       <button onclick="_azDeleteGroup('${g.id}',this)" style="background:none;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px;font-weight:600;flex-shrink:0">Remove</button>
@@ -6970,7 +6970,7 @@ function _azGroupCard(g) {
         <div style="text-align:center;flex-shrink:0">
           <div style="width:8px;height:8px;border-radius:50%;background:var(--accent);margin:0 auto 3px"></div>
           <div style="font-size:9px;color:var(--muted);font-family:var(--mono);white-space:nowrap">${item.date.slice(5)}</div>
-          <div style="font-size:9px;color:var(--ok);font-family:var(--mono)">£${item.price.toFixed(0)}</div>
+          <div style="font-size:9px;color:var(--ok);font-family:var(--mono)">${currencySymbol()}${item.price.toFixed(0)}</div>
         </div>`).join('')}
       ${projDate?`
         <div style="width:20px;height:1px;border-top:1px dashed var(--border);flex-shrink:0"></div>
@@ -7000,7 +7000,7 @@ function _azGroupCard(g) {
             <input type="checkbox" ${isSplit?'checked':''} onchange="_azToggleSplit('${g.id}','${asin}',this.checked)" style="accent-color:var(--accent);width:15px;height:15px;flex-shrink:0">
             <div style="flex:1;min-width:0">
               <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${isSplit?'var(--accent)':'var(--text)'}">${esc(asinName)}</div>
-              <div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:1px">${esc(asin)} · ${asinItems.length} orders · avg £${asinAvg.toFixed(2)}</div>
+              <div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:1px">${esc(asin)} · ${asinItems.length} orders · avg ${_money(asinAvg)}</div>
             </div>
             ${isSplit?'<span style="font-size:10px;color:var(--accent);font-family:var(--mono);font-weight:700;flex-shrink:0">SPLIT</span>':''}
           </label>`;
@@ -7042,7 +7042,7 @@ function _azHtmlMerge() {
             <div style="width:32px;height:32px;border-radius:8px;background:rgba(232,168,56,0.12);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">📦</div>
             <div style="flex:1;min-width:0">
               <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name)}</div>
-              <div style="font-size:11px;color:var(--muted);margin-top:1px">${it.logs?.length||0} log entries${it.store?` · ${esc(it.store)}`:''}${avgP?` · avg £${avgP.toFixed(2)}`:''}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:1px">${it.logs?.length||0} log entries${it.store?` · ${esc(it.store)}`:''}${avgP?` · avg ${_money(avgP)}`:''}</div>
             </div>
             <span style="font-size:12px;color:var(--accent);font-weight:600;flex-shrink:0">Match →</span>
           </button>`;
@@ -7071,7 +7071,7 @@ function _azHtmlMerge() {
           <div style="font-size:10px;color:var(--accent);font-family:var(--mono);font-weight:700">FROM AMAZON</div>
           <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.group.name)}</div>
         </div>
-        <div style="font-size:11px;color:var(--muted);text-align:right;flex-shrink:0"><div>${m.group.items.length} orders</div><div style="color:var(--ok)">£${m.group.totalSpend.toFixed(2)}</div></div>
+        <div style="font-size:11px;color:var(--muted);text-align:right;flex-shrink:0"><div>${m.group.items.length} orders</div><div style="color:var(--ok)">${_money(m.group.totalSpend)}</div></div>
       </div>
       <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center;background:rgba(76,187,138,0.03)">
         <div style="width:26px;height:26px;border-radius:7px;background:rgba(76,187,138,0.12);display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0">🏠</div>
@@ -7104,7 +7104,7 @@ function _azHtmlMerge() {
       <div style="width:26px;height:26px;border-radius:7px;background:rgba(91,141,238,0.12);display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0">➕</div>
       <div style="flex:1;min-width:0">
         <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.group.name)}</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(m.group.category)} · ${m.group.items.length} orders · ${_azIntervalLabel(m.group.avgInterval)} · <span style="color:var(--ok)">£${m.group.totalSpend.toFixed(2)}</span></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(m.group.category)} · ${m.group.items.length} orders · ${_azIntervalLabel(m.group.avgInterval)} · <span style="color:var(--ok)">${_money(m.group.totalSpend)}</span></div>
       </div>
       <button onclick="_azOpenPicker(${idx})" style="padding:6px 14px;background:rgba(91,141,238,0.1);border:1px solid #5b8dee;color:#5b8dee;border-radius:7px;font-size:12px;cursor:pointer;font-weight:600;flex-shrink:0">✎ Match manually</button>
     </div>`;

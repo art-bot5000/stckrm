@@ -344,10 +344,14 @@ function mergeBudgetSettings(local, remote) {
 let _budgetActivePanel = 'dashboard'; // 'dashboard' | 'bills'
 let _spendCategoryFilter = null;      // categoryId filter, null = show all. Promoted to core so search-chip 'View all' (in app.js) can set it before the lazy Budget UI loads.
 function _money(n) {
-  if (n == null || isNaN(n)) return '£0.00';
+  // Use the app-wide currency symbol (set on the country/currency screen).
+  // 'No currency' yields an empty symbol → bare number. Falls back to '£' only
+  // if the global helper isn't present (e.g. very early boot / isolated test).
+  const sym = (typeof currencySymbol === 'function') ? currencySymbol() : '£';
+  if (n == null || isNaN(n)) return sym + '0.00';
   const sign = n < 0 ? '-' : '';
   const abs = Math.abs(n);
-  return sign + '£' + abs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return sign + sym + abs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 // _shortDate — alias for fmt(d, { short: true }). Kept for back-compat.
@@ -460,11 +464,11 @@ function _parseQuickAddOne(entry, aliasMap, merchantMap, defaultCategoryId) {
     return { ok: false, raw: entry, error: 'empty' };
   }
 
-  // Find the amount: first token that looks numeric (with optional £ prefix)
+  // Find the amount: first token that looks numeric (with optional currency prefix)
   let amount = null;
   let amountIdx = -1;
   for (let i = 0; i < tokens.length; i++) {
-    const cleaned = tokens[i].replace(/^£/, '');
+    const cleaned = tokens[i].replace(/^[£$€¥]|^kr/, '').trim();
     if (/^-?\d+(\.\d+)?$/.test(cleaned)) {
       amount = parseFloat(cleaned);
       amountIdx = i;

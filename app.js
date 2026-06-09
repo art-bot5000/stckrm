@@ -108,6 +108,62 @@ const STORES_BY_COUNTRY = {
 function getStores(code) { return STORES_BY_COUNTRY[code] || STORES_BY_COUNTRY.OTHER; }
 
 // ═══════════════════════════════════════════
+//  CURRENCY
+// ═══════════════════════════════════════════
+// Symbol always prefixes the amount (£5.00, $5.00, €5.00). 'NONE' renders a
+// bare number (5.00) with no symbol. The active currency lives in
+// settings.currency and rides the encrypted profile/IDB sync like any other
+// setting. Default is derived from the chosen country but is user-overridable.
+const CURRENCIES = [
+  { code:'GBP',  symbol:'£',  name:'British Pound' },
+  { code:'USD',  symbol:'$',  name:'US Dollar' },
+  { code:'CAD',  symbol:'$',  name:'Canadian Dollar' },
+  { code:'AUD',  symbol:'$',  name:'Australian Dollar' },
+  { code:'EUR',  symbol:'€',  name:'Euro' },
+  { code:'SEK',  symbol:'kr', name:'Swedish Krona' },
+  { code:'JPY',  symbol:'¥',  name:'Japanese Yen' },
+  { code:'NONE', symbol:'',   name:'No currency' },
+];
+
+// Country code → default currency code. Anything unmapped falls back to GBP
+// (matching the historical default). OTHER deliberately maps to NONE so users
+// outside the listed regions aren't shown a misleading symbol.
+const CURRENCY_BY_COUNTRY = {
+  GB:'GBP', US:'USD', CA:'CAD', AU:'AUD',
+  DE:'EUR', FR:'EUR', NL:'EUR', IE:'EUR', ES:'EUR', IT:'EUR',
+  SE:'SEK', JP:'JPY', OTHER:'NONE',
+};
+
+function getCurrency(code) {
+  return CURRENCIES.find(c => c.code === code) || CURRENCIES[0]; // GBP fallback
+}
+function currencySymbol() {
+  return getCurrency(settings && settings.currency).symbol;
+}
+function defaultCurrencyForCountry(countryCode) {
+  return CURRENCY_BY_COUNTRY[countryCode] || 'GBP';
+}
+
+// fmtMoney — the single money formatter for the whole app.
+//   n        : numeric amount (NaN/null → 0)
+//   opts.dp  : decimal places (default 2)
+//   opts.grouped : use thousands separators via toLocaleString (default false)
+// Negative amounts render as -£5.00 (sign before symbol).
+function fmtMoney(n, opts) {
+  opts = opts || {};
+  const dp = (opts.dp == null) ? 2 : opts.dp;
+  let v = Number(n);
+  if (n == null || isNaN(v)) v = 0;
+  const sign = v < 0 ? '-' : '';
+  const abs  = Math.abs(v);
+  const sym  = currencySymbol();
+  const body = opts.grouped
+    ? abs.toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp })
+    : abs.toFixed(dp);
+  return sign + sym + body;
+}
+
+// ═══════════════════════════════════════════
 //  DOM HELPERS — show / hide / toggle
 // ═══════════════════════════════════════════
 // Tiny wrappers around getElementById(...).style.display = ... to reduce
@@ -292,7 +348,7 @@ function _resetInMemoryUserState() {
   // load was a no-op and the prior in-memory state survived).
   notifications    = [];
   _history         = [];
-  settings = { threshold:20, country:'GB', email:'', emailInterval:7, emailStartDate:null, emailStartTime:'09:00', displayName:'', mfa:{ enabled:false, method:'email', totpSecret:null }, customTags:[], lastSynced:'' };
+  settings = { threshold:20, country:'GB', currency:'GBP', email:'', emailInterval:7, emailStartDate:null, emailStartTime:'09:00', displayName:'', mfa:{ enabled:false, method:'email', totpSecret:null }, customTags:[], lastSynced:'' };
 }
 
 // (Demo Mode moved to demo.js — extracted 2026-05-21)
@@ -392,7 +448,7 @@ const WORKER_URL      = (typeof location !== 'undefined' && location.origin)
 //  STATE
 // ═══════════════════════════════════════════
 let items = [];
-let settings = { threshold: 20, country: 'GB' };
+let settings = { threshold: 20, country: 'GB', currency: 'GBP' };
 
 // ─── Share Access Control (Part A of granular permissions) ────────────────
 // User-defined allow / deny lists checked client-side when creating or
@@ -874,6 +930,7 @@ let activeStore = 'all';
 let activeRating = 0;
 let currentRating = 0;
 let wizardCountry = 'GB';
+let wizardCurrency = 'GBP'; // onboarding currency choice; defaults from country, user-overridable
 let compactView = false;
 let activeProfile = 'default'; // household profile key
 
@@ -1336,6 +1393,7 @@ async function saveSettings() {
   settings.threshold      = parseInt(document.getElementById('setting-threshold').value);
   // Country: read from Account & Security select (the canonical visible one); hidden input is a fallback mirror
   settings.country        = (document.getElementById('setting-country-sec') || document.getElementById('setting-country'))?.value || settings.country || 'GB';
+  settings.currency       = document.getElementById('setting-currency-sec')?.value || settings.currency || 'GBP';
   settings.email          = document.getElementById('setting-email').value.trim();
   settings.emailInterval  = parseInt(document.getElementById('setting-email-interval').value);
   settings.emailStartDate = document.getElementById('setting-email-start').value || null;
@@ -1408,7 +1466,53 @@ function saveSettingsCountry(val) {
   const sec  = document.getElementById('setting-country-sec');
   if (main) main.value = val;
   if (sec)  sec.value  = val;
+  // Changing country re-suggests that country's default currency. The user can
+  // still override afterwards via the currency select (which writes directly).
+  settings.currency = defaultCurrencyForCountry(val);
+  const cur = document.getElementById('setting-currency-sec');
+  if (cur) cur.value = settings.currency;
   _saveSettings();
+  if (typeof refreshMoneyViews === 'function') refreshMoneyViews();
+}
+
+// User overrides the currency directly (independent of country).
+function saveSettingsCurrency(val) {
+  settings.currency = val || 'GBP';
+  _saveSettings();
+  if (typeof refreshMoneyViews === 'function') refreshMoneyViews();
+}
+
+// Re-render any visible view that displays money so a currency change takes
+// effect immediately without a full reload. Best-effort: only calls renderers
+// that exist and guards each so a missing/lazy module can't throw.
+function refreshMoneyViews() {
+  applyCurrencyLabels();
+  try { if (typeof renderAll === 'function') renderAll(); } catch(_){}
+  try { if (typeof renderReminders === 'function') renderReminders(); } catch(_){}
+  // Budget UI is a lazy bundle; only refresh if it has already loaded.
+  try { if (typeof renderBudget === 'function') renderBudget(); } catch(_){}
+}
+
+// applyCurrencyLabels — rewrites static currency markup that lives in index.html
+// (form labels, hero placeholders, input placeholders) to match the active
+// currency. Static markup can't call currencySymbol() inline, so these carry
+// marker classes/attributes that this function fills in. Safe to call any time;
+// no-ops on elements that aren't present. For 'No currency' the symbol is empty
+// and parenthesised currency hints are hidden entirely (avoids "Amount ()").
+function applyCurrencyLabels() {
+  try {
+    const sym = currencySymbol();
+    // Bare symbol spans (e.g. inside "£0.00" hero figures).
+    document.querySelectorAll('.cur-sym').forEach(el => { el.textContent = sym; });
+    // Parenthesised currency hints in labels: "(£)" → "($)" or removed for NONE.
+    document.querySelectorAll('.cur-paren').forEach(el => {
+      el.textContent = sym ? ` (${sym})` : '';
+    });
+    // Input placeholders like "e.g. £12.99".
+    document.querySelectorAll('[data-cur-ph]').forEach(el => {
+      el.setAttribute('placeholder', sym ? `e.g. ${sym}12.99` : 'e.g. 12.99');
+    });
+  } catch (_) {}
 }
 
 function openSettingsSection(sectionId) {
@@ -2264,6 +2368,10 @@ function buildCountryGrid() {
   if (!grid) return;
   // Pick up any selection made before app.js loaded (via the inline stub)
   if (window._pendingCountry) wizardCountry = window._pendingCountry;
+  if (window._pendingCurrency) wizardCurrency = window._pendingCurrency;
+  else wizardCurrency = defaultCurrencyForCountry(wizardCountry);
+  const _curSel = document.getElementById('wizard-currency');
+  if (_curSel) _curSel.value = wizardCurrency;
   // If buttons already exist (pre-rendered in HTML), just update selected state
   if (grid.children.length > 0) {
     selectCountry(wizardCountry);
@@ -2284,7 +2392,21 @@ function selectCountry(code) {
   window._pendingCountry = null; // clear any pending stub selection
   document.querySelectorAll('.country-btn').forEach(b => b.classList.remove('selected'));
   document.getElementById('cbtn-'+code)?.classList.add('selected');
+  // Auto-set the wizard currency to this country's default. Honour a manual
+  // override the user already made via the select (tracked in _pendingCurrency)
+  // only if it was set AFTER landing on this country — simplest correct rule:
+  // a fresh country pick always re-suggests the default, matching Settings.
+  wizardCurrency = defaultCurrencyForCountry(code);
+  window._pendingCurrency = wizardCurrency;
+  const curSel = document.getElementById('wizard-currency');
+  if (curSel) curSel.value = wizardCurrency;
   updateCountryConfirm();
+}
+
+// User overrides the currency on the onboarding screen.
+function wizardCurrencyInput(val) {
+  wizardCurrency = val || 'GBP';
+  window._pendingCurrency = wizardCurrency;
 }
 
 function updateCountryConfirm() {
@@ -2335,6 +2457,9 @@ async function wizardFinish() {
     // Pick up country selected before app.js loaded (via inline stub)
     if (window._pendingCountry) wizardCountry = window._pendingCountry;
     settings.country = wizardCountry;
+    // Currency: honour an explicit pre-app.js override, else the country default.
+    if (window._pendingCurrency) wizardCurrency = window._pendingCurrency;
+    settings.currency = wizardCurrency || defaultCurrencyForCountry(wizardCountry);
     // Capture name from wizard if entered
     const wizardName = document.getElementById('wizard-display-name')?.value?.trim();
     if (wizardName) settings.displayName = _capitaliseFirst(wizardName);
@@ -7829,7 +7954,7 @@ async function loadProfile(key) {
   if (profile) {
     const deletedIds = await loadDeletedIds();
     items        = (profile.items || []).filter(i => !deletedIds.has(i.id));
-    settings     = { threshold: 20, country: 'GB', ...profile.settings };
+    settings     = { threshold: 20, country: 'GB', currency: 'GBP', ...profile.settings };
     // The profile blob is a snapshot — _saveSettings() writes to IDB but not
     // to the profile, so settings flags (banner dismissals, MFA prompts, etc)
     // can be stale here. Re-read from IDB and overlay so the latest local
@@ -8015,7 +8140,7 @@ async function addProfile() {
     name,
     colour,
     items:       [],
-    settings:    { threshold: 20, country: settings.country || 'GB' },
+    settings:    { threshold: 20, country: settings.country || 'GB', currency: settings.currency || 'GBP' },
     reminders:   [],
     groceries:   [],
     departments: DEFAULT_DEPTS.map(d => ({...d})),
@@ -8167,8 +8292,8 @@ function openAnalyticsModal(id) {
       </div>
       <div style="background:var(--surface2);border-radius:10px;padding:12px">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-bottom:4px">TOTAL SPEND</div>
-        <div style="font-size:22px;font-weight:700;color:var(--ok)">£${totalSpend.toFixed(2)}</div>
-        <div style="font-size:11px;color:var(--muted)">${prices.length} purchase${prices.length !== 1 ? 's' : ''}${avgPrice ? ` · avg £${avgPrice.toFixed(2)}` : ''}</div>
+        <div style="font-size:22px;font-weight:700;color:var(--ok)">${fmtMoney(totalSpend)}</div>
+        <div style="font-size:11px;color:var(--muted)">${prices.length} purchase${prices.length !== 1 ? 's' : ''}${avgPrice ? ` · avg ${fmtMoney(avgPrice)}` : ''}</div>
       </div>
     </div>
     ${gaps.length > 1 ? `
@@ -8319,9 +8444,9 @@ function renderLogHistory(item) {
   if (pricedLogs.length >= 2) {
     const avg = (pricedLogs.reduce((a,b)=>a+b,0) / pricedLogs.length).toFixed(2);
     histEntries.innerHTML += `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);font-family:var(--mono);display:flex;gap:16px">
-      <span>avg £${avg}</span>
-      <span style="color:var(--ok)">low £${minPrice.toFixed(2)}</span>
-      <span style="color:var(--danger)">high £${maxPrice.toFixed(2)}</span>
+      <span>avg ${currencySymbol()}${avg}</span>
+      <span style="color:var(--ok)">low ${fmtMoney(minPrice)}</span>
+      <span style="color:var(--danger)">high ${fmtMoney(maxPrice)}</span>
     </div>`;
   }
 }
@@ -9530,7 +9655,7 @@ function cardHTML(item, threshold) {
   const _prices = (item.storePrices || []).filter(sp => sp.store && sp.price);
   const _parsed = _prices.map(sp => parsePriceValue(sp.price)).filter(v => v !== null);
   const bestPrice = _parsed.length ? Math.min(..._parsed) : null;
-  const bestPriceStr = bestPrice !== null ? '£' + bestPrice.toFixed(2) : null;
+  const bestPriceStr = bestPrice !== null ? fmtMoney(bestPrice) : null;
   const lastBoughtAgo = lastLog?.date ? timeAgo(lastLog.date) : null;
   const expiry = getExpiryStatus(item);
   const stars = [1,2,3,4,5].map(n => `<span class="card-star${(item.rating||0)>=n?' on':''}" onclick="event.stopPropagation();rateItem('${item.id}',${n})" data-id="${item.id}" data-val="${n}" onmouseover="previewCardStars('${item.id}',${n})" onmouseout="resetCardStars('${item.id}')">★</span>`).join('');
@@ -10642,7 +10767,7 @@ function priceTrendHTML(item) {
   if (!history.length) return '';
   const last = history[history.length - 1];
   const trend = getPriceTrend(item);
-  const lastFormatted = last.raw || `£${last.price.toFixed(2)}`;
+  const lastFormatted = last.raw || fmtMoney(last.price);
 
   let trendBadge = '';
   if (trend) {
@@ -10857,7 +10982,7 @@ function renderReport() {
       <tbody>${entries.map(({item,pct,daysLeft}) => {
         const history = getPriceHistory(item);
         const trend = getPriceTrend(item);
-        const lastPrice = history.length ? history[history.length-1].raw || `£${history[history.length-1].price.toFixed(2)}` : '—';
+        const lastPrice = history.length ? history[history.length-1].raw || fmtMoney(history[history.length-1].price) : '—';
         const trendStr = trend ? (trend.dir==='up'?` <span style="color:#e85050">↑${trend.pct}%</span>`:trend.dir==='down'?` <span style="color:#4cbb8a">↓${trend.pct}%</span>`:'') : '';
         return `
         <tr>
@@ -10959,7 +11084,7 @@ function renderSpendChart() {
   // ── 7 / 30 day spend summary ──
   const s7  = calcPeriodSpend(7);
   const s30 = calcPeriodSpend(30);
-  const currency = '£';
+  const currency = currencySymbol();
   const hasAnySpend = s7.total > 0 || s30.total > 0;
   const allMissing  = [...new Set([...s7.missingItems, ...s30.missingItems])];
 
@@ -11219,7 +11344,7 @@ function openPriceHistoryModal(id) {
   const avgP    = prices.reduce((a,b)=>a+b,0) / prices.length;
   const trend   = getPriceTrend(item);
   const lastP   = prices[prices.length-1];
-  const currency = (history.at(-1)?.raw||'').replace(/[\d.,\s]/g,'').trim() || '£';
+  const currency = (history.at(-1)?.raw||'').replace(/[\d.,\s]/g,'').trim() || currencySymbol();
 
   // Subtitle: trend summary
   let trendDesc = 'Stable price';
@@ -11568,8 +11693,8 @@ function renderSavingsView() {
     : `You need <strong>${SNS_MIN_ITEMS - (active.length + eligible.length)}</strong> more eligible item${(SNS_MIN_ITEMS - active.length - eligible.length) !== 1 ? 's' : ''} to reach the 5% discount tier.`;
 
   html += `<div class="sns-summary-card">
-    ${totalAnnualSaving > 0 ? `<div class="sns-summary-stat"><div class="val">£${totalAnnualSaving.toFixed(2)}</div><div class="lbl">Est. annual saving</div></div>` : ''}
-    ${activeAnnualSaving > 0 ? `<div class="sns-summary-stat"><div class="val" style="color:var(--accent2)">£${activeAnnualSaving.toFixed(2)}</div><div class="lbl">Already saving/yr</div></div>` : ''}
+    ${totalAnnualSaving > 0 ? `<div class="sns-summary-stat"><div class="val">${fmtMoney(totalAnnualSaving)}</div><div class="lbl">Est. annual saving</div></div>` : ''}
+    ${activeAnnualSaving > 0 ? `<div class="sns-summary-stat"><div class="val" style="color:var(--accent2)">${fmtMoney(activeAnnualSaving)}</div><div class="lbl">Already saving/yr</div></div>` : ''}
     <div class="sns-summary-stat"><div class="val" style="color:var(--warn)">${active.length + eligible.length}</div><div class="lbl">Eligible items</div></div>
     <div class="sns-summary-stat"><div class="val" style="color:var(--muted)">${tracking.length}</div><div class="lbl">Being tracked</div></div>
     <div style="flex:1;min-width:200px">
@@ -11590,9 +11715,9 @@ function renderSavingsView() {
         : `<span class="sns-badge sns-badge-tracking"><svg class="icon" aria-hidden="true"><use href="#i-timer"></use></svg> Tracking (${purchaseCount}/${SNS_MIN_PURCHASES} purchases)</span>`;
 
     const savingEl = annualSaving
-      ? `<div class="sns-saving">£${annualSaving.toFixed(2)}/yr saving</div>`
+      ? `<div class="sns-saving">${fmtMoney(annualSaving)}/yr saving</div>`
       : lastPrice
-        ? `<div style="font-size:12px;color:var(--muted)">Add prices to see £ saving</div>`
+        ? `<div style="font-size:12px;color:var(--muted)">Add prices to see ${currencySymbol()||"currency"} saving</div>`
         : `<div style="font-size:12px;color:var(--muted)">Log prices to calculate saving</div>`;
 
     const toggleBtn = status !== 'tracking'
@@ -11612,7 +11737,7 @@ function renderSavingsView() {
         <div class="sns-stat"><strong>${purchaseCount}</strong><span>purchases</span></div>
         ${spanDays ? `<div class="sns-stat"><strong>${Math.round(spanDays/AVG_DAYS_PER_MONTH * 10)/10}mo</strong><span>tracked</span></div>` : ''}
         ${lastPrice ? `<div class="sns-stat"><strong>${esc(lastPrice)}</strong><span>last price</span></div>` : ''}
-        ${avgMonthlySpend ? `<div class="sns-stat"><strong>£${avgMonthlySpend.toFixed(2)}</strong><span>/month avg</span></div>` : ''}
+        ${avgMonthlySpend ? `<div class="sns-stat"><strong>${fmtMoney(avgMonthlySpend)}</strong><span>/month avg</span></div>` : ''}
       </div>
       ${savingEl}
       <div class="sns-actions">${toggleBtn}${snsBuyBtn}</div>
@@ -11662,7 +11787,7 @@ function updateSnSBanner() {
 
   const qualifies = total >= SNS_MIN_ITEMS;
   const totalSaving = [...eligible, ...active].reduce((s,r) => s + (r.annualSaving||0), 0);
-  const savingStr   = totalSaving > 0 ? ` — save <strong>£${totalSaving.toFixed(2)}/yr</strong>` : '';
+  const savingStr   = totalSaving > 0 ? ` — save <strong>${fmtMoney(totalSaving)}/yr</strong>` : '';
 
   // Dismiss X — stops propagation so it doesn't trigger switchToSavings
   const dismissBtn = `<button onclick="event.stopPropagation();dismissSnsBanner()" title="Dismiss" style="flex-shrink:0;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:7px;padding:4px 6px;cursor:pointer;display:inline-flex;align-items:center"><svg class="icon" aria-hidden="true" style="width:13px;height:13px"><use href="#i-x"></use></svg></button>`;
@@ -14165,7 +14290,7 @@ function openOrderFlow(id, stage) {
           <div class="form-grid">
             <div class="field"><label>Date purchased</label><input type="date" id="of-date"></div>
             <div class="field"><label>Quantity</label><input type="number" id="of-qty" min="0.1" step="0.1" value="1"></div>
-            <div class="field"><label>Price paid <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="of-price" placeholder="e.g. £12.99"></div>
+            <div class="field"><label>Price paid <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="of-price" placeholder="e.g. ${currencySymbol()}12.99"></div>
             <div class="field"><label>Store <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="of-store" placeholder="Amazon, Tesco…"></div>
           </div>
           <div id="of-purchase-history" style="margin-top:12px"></div>
@@ -16171,6 +16296,11 @@ function buildSettingsCountrySelect() {
     }
     el.value = val;
   });
+  // Currency select options are static in the HTML — just reflect the value.
+  const curEl = document.getElementById('setting-currency-sec');
+  if (curEl) curEl.value = settings.currency || 'GBP';
+  // Refresh any static currency markup (labels/placeholders) on this render.
+  applyCurrencyLabels();
 }
 
 // ═══════════════════════════════════════════
@@ -28159,6 +28289,7 @@ async function init() {
   loadNotifSettings();
   initHouseholdSettingsUI();
   updateHeaderGreeting();
+  applyCurrencyLabels();
   await loadReminders();
   await loadNotes();
   await loadGrocery();
@@ -28256,7 +28387,7 @@ function renderTempStorePrices() {
       <input type="text" value="${esc(sp.store)}" placeholder="Store name"
         style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px"
         oninput="updateStorePrice(${i},'store',this.value)">
-      <input type="text" value="${esc(sp.price)}" placeholder="e.g. £12.99"
+      <input type="text" value="${esc(sp.price)}" placeholder="e.g. ${currencySymbol()}12.99"
         style="width:90px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px;font-family:var(--mono)"
         oninput="updateStorePrice(${i},'price',this.value)">
       <button onclick="removeStorePrice(${i})" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:2px 4px"
@@ -28495,7 +28626,7 @@ function drawShareCard(item) {
     pillX += pw + 8;
   };
   const history = getPriceHistory(item);
-  const lastPrice = history.length ? (history[history.length-1].raw || `£${history[history.length-1].price.toFixed(2)}`) : null;
+  const lastPrice = history.length ? (history[history.length-1].raw || fmtMoney(history[history.length-1].price)) : null;
   if (lastPrice) drawPill('Price', lastPrice, 'rgba(76,187,138,0.15)', '#4cbb8a');
   if (item.store) drawPill('From', item.store, 'rgba(91,141,238,0.15)', '#5b8dee');
   if (item.qty && item.qty !== 1) drawPill('Qty', `×${item.qty}`, 'rgba(120,128,160,0.15)', '#7880a0');
@@ -28580,7 +28711,7 @@ async function doShareText() {
 function buildShareText(item) {
   if (!item) return '';
   const history = getPriceHistory(item);
-  const lastPrice = history.length ? (history[history.length-1].raw || `£${history[history.length-1].price.toFixed(2)}`) : null;
+  const lastPrice = history.length ? (history[history.length-1].raw || fmtMoney(history[history.length-1].price)) : null;
   const storePrices = (item.storePrices || []).filter(sp => sp.store && sp.price);
   const lines = [`📦 ${item.name}`];
   if (item.category) lines.push(`Category: ${item.category}`);

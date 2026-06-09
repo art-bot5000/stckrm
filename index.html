@@ -317,7 +317,7 @@
       </div>
 
       <div class="field form-full">
-        <label>Amount (£)</label>
+        <label>Amount<span class="cur-paren"> (£)</span></label>
         <div style="display:flex;gap:10px;align-items:center">
           <input type="number" id="bill-amount" step="0.01" min="0" placeholder="0.00"
             style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
@@ -455,7 +455,7 @@
     <h2 id="bmp-title" style="font-size:18px;margin-bottom:6px"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--ok)"><use href="#i-check-circle-2"></use></svg> Mark as paid</h2>
     <p class="subtitle" id="bmp-subtitle">—</p>
     <div class="field" style="text-align:left;margin-bottom:8px">
-      <label>Actual amount (£)</label>
+      <label>Actual amount<span class="cur-paren"> (£)</span></label>
       <input type="number" id="bmp-amount" step="0.01" min="0" placeholder="0.00"
         style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
       <div id="bmp-expected-hint" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
@@ -476,7 +476,7 @@
     <h2 style="font-size:18px;margin-bottom:6px"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--ok)"><use href="#i-check-circle-2"></use></svg> Mark as received</h2>
     <p class="subtitle" id="mki-subtitle">—</p>
     <div class="field" style="text-align:left;margin-bottom:8px">
-      <label>Actual amount received (£)</label>
+      <label>Actual amount received<span class="cur-paren"> (£)</span></label>
       <input type="number" id="mki-amount" step="0.01" min="0" placeholder="0.00"
         style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
       <div id="mki-expected-hint" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
@@ -502,7 +502,7 @@
       <br>This change applies to this month only and doesn't affect the template.
     </div>
     <div class="field" style="text-align:left;margin-bottom:8px">
-      <label>This month's expected amount (£)</label>
+      <label>This month's expected amount<span class="cur-paren"> (£)</span></label>
       <input type="number" id="bo-amount" step="0.01" min="0" placeholder="0.00"
         style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
     </div>
@@ -641,7 +641,7 @@
         <input type="text" id="spend-tx-where" maxlength="60" placeholder="e.g. Tesco">
       </div>
       <div class="field form-full">
-        <label>Amount (£)</label>
+        <label>Amount<span class="cur-paren"> (£)</span></label>
         <input type="number" id="spend-tx-amount" step="0.01" min="0"
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
       </div>
@@ -724,12 +724,12 @@
         </select>
       </div>
       <div class="field form-full" id="budget-cat-monthly-row">
-        <label>Monthly budget (£)</label>
+        <label>Monthly budget<span class="cur-paren"> (£)</span></label>
         <input type="number" id="budget-cat-monthly" step="1" min="0" placeholder="0"
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
       </div>
       <div class="field form-full" id="budget-cat-weekly-row" style="display:none">
-        <label>Weekly budget (£)</label>
+        <label>Weekly budget<span class="cur-paren"> (£)</span></label>
         <input type="number" id="budget-cat-weekly" step="1" min="0" placeholder="0"
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
       </div>
@@ -802,7 +802,7 @@
         </select>
       </div>
       <div class="field form-full">
-        <label>Balance (£)</label>
+        <label>Balance<span class="cur-paren"> (£)</span></label>
         <input type="number" id="account-balance" step="0.01" placeholder="0.00"
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
       </div>
@@ -848,7 +848,7 @@
     <h2 style="font-size:18px"><svg class="icon icon-lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-refresh-cw"></use></svg> Update balance</h2>
     <p class="subtitle" id="update-balance-name">Account</p>
     <div class="field" style="text-align:left;margin-bottom:8px">
-      <label>New balance (£)</label>
+      <label>New balance<span class="cur-paren"> (£)</span></label>
       <input type="number" id="update-balance-amount" step="0.01" placeholder="0.00"
         style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:16px">
       <div id="update-balance-current" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
@@ -876,7 +876,7 @@
         <input type="text" id="income-tpl-name" maxlength="60" placeholder="e.g. Pete salary">
       </div>
       <div class="field form-full">
-        <label>Amount (£)</label>
+        <label>Amount<span class="cur-paren"> (£)</span></label>
         <input type="number" id="income-tpl-amount" step="0.01" min="0" placeholder="0.00"
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
       </div>
@@ -970,7 +970,7 @@
         <input type="text" id="income-entry-notes" maxlength="80" placeholder="e.g. Tax refund">
       </div>
       <div class="field form-full">
-        <label>Amount (£)</label>
+        <label>Amount<span class="cur-paren"> (£)</span></label>
         <input type="number" id="income-entry-amount" step="0.01" min="0"
           style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:14px">
       </div>
@@ -1036,7 +1036,7 @@
 
     <div style="background:linear-gradient(135deg,rgba(76,187,138,0.10),rgba(76,187,138,0.04));border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:14px;text-align:center">
       <div style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">Total</div>
-      <div style="font-size:30px;font-weight:700;color:var(--ok);font-family:var(--sans);letter-spacing:-0.5px" id="safe-modal-amount">£0.00</div>
+      <div style="font-size:30px;font-weight:700;color:var(--ok);font-family:var(--sans);letter-spacing:-0.5px" id="safe-modal-amount"><span class="cur-sym">£</span>0.00</div>
     </div>
 
     <div id="safe-modal-body" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden">
@@ -1060,7 +1060,7 @@
 
     <div style="background:linear-gradient(135deg,rgba(91,141,238,0.10),rgba(91,141,238,0.04));border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:14px">
       <div style="font-size:11px;font-weight:700;color:var(--muted);font-family:var(--mono);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">Total set aside</div>
-      <div style="font-size:24px;font-weight:700;color:var(--text);font-family:var(--sans)" id="carryover-modal-total">£0.00</div>
+      <div style="font-size:24px;font-weight:700;color:var(--text);font-family:var(--sans)" id="carryover-modal-total"><span class="cur-sym">£</span>0.00</div>
     </div>
 
     <div id="carryover-modal-list" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;max-height:60vh;overflow-y:auto">
@@ -1571,6 +1571,20 @@
         <button class="country-btn" id="cbtn-SE" onclick="selectCountry('SE')"><span style="font-size:22px">🇸🇪</span><span>Sweden</span><span class="check">✓</span></button>
         <button class="country-btn" id="cbtn-JP" onclick="selectCountry('JP')"><span style="font-size:22px">🇯🇵</span><span>Japan</span><span class="check">✓</span></button>
         <button class="country-btn" id="cbtn-OTHER" onclick="selectCountry('OTHER')"><span style="font-size:22px">🌍</span><span>Other</span><span class="check">✓</span></button>
+      </div>
+      <div id="wizard-currency-wrap" style="margin-top:18px">
+        <label class="form-label" for="wizard-currency">Currency</label>
+        <select class="form-input" id="wizard-currency" onchange="wizardCurrencyInput(this.value)" aria-label="Currency used throughout the app">
+          <option value="GBP">£ — British Pound (GBP)</option>
+          <option value="USD">$ — US Dollar (USD)</option>
+          <option value="CAD">$ — Canadian Dollar (CAD)</option>
+          <option value="AUD">$ — Australian Dollar (AUD)</option>
+          <option value="EUR">€ — Euro (EUR)</option>
+          <option value="SEK">kr — Swedish Krona (SEK)</option>
+          <option value="JPY">¥ — Japanese Yen (JPY)</option>
+          <option value="NONE">No currency (numbers only)</option>
+        </select>
+        <p style="font-size:11px;color:var(--muted);margin-top:6px">Set automatically from your country — change it any time, including showing no symbol at all.</p>
       </div>
       <div class="wizard-btn-row">
         <button class="btn btn-ghost btn-xl" style="flex:1" onclick="showKvLogin()">← Back</button>
@@ -2230,11 +2244,11 @@
           <svg class="icon" aria-hidden="true" style="width:13px;height:13px"><use href="#i-chevron-right"></use></svg> Start new month
         </button>
       </div>
-      <div style="font-size:32px;font-weight:700;font-family:var(--sans);color:var(--text);letter-spacing:-0.5px" id="budget-hero-amount">£0.00</div>
+      <div style="font-size:32px;font-weight:700;font-family:var(--sans);color:var(--text);letter-spacing:-0.5px" id="budget-hero-amount"><span class="cur-sym">£</span>0.00</div>
       <div style="display:flex;gap:20px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
         <div style="flex:1;min-width:0">
           <div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px">Paid so far</div>
-          <div style="font-size:14px;font-weight:600;color:var(--ok)" id="budget-hero-paid">£0.00</div>
+          <div style="font-size:14px;font-weight:600;color:var(--ok)" id="budget-hero-paid"><span class="cur-sym">£</span>0.00</div>
         </div>
         <div style="flex:1;min-width:0">
           <div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px">Next bill</div>
@@ -2401,7 +2415,7 @@
         </div>
         <div style="display:flex;align-items:center;gap:6px">
           <span style="font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.5px">Total</span>
-          <span id="budget-spend-total" style="font-size:18px;font-weight:700;font-family:var(--sans);color:var(--text)">£0.00</span>
+          <span id="budget-spend-total" style="font-size:18px;font-weight:700;font-family:var(--sans);color:var(--text)"><span class="cur-sym">£</span>0.00</span>
         </div>
       </div>
 
@@ -2558,6 +2572,22 @@
             <div class="acc-sec-p">Sets which stores appear in the price checker</div>
           </div>
           <select id="setting-country-sec" onchange="saveSettingsCountry(this.value)" aria-label="Country or region" class="acc-sec-select"></select>
+        </div>
+        <div class="acc-sec-row">
+          <div class="acc-sec-label">
+            <div class="acc-sec-h">Currency</div>
+            <div class="acc-sec-p">Used across Stockroom, Reminders & Budget — changing country resets this</div>
+          </div>
+          <select id="setting-currency-sec" onchange="saveSettingsCurrency(this.value)" aria-label="Currency" class="acc-sec-select">
+            <option value="GBP">£ — British Pound</option>
+            <option value="USD">$ — US Dollar</option>
+            <option value="CAD">$ — Canadian Dollar</option>
+            <option value="AUD">$ — Australian Dollar</option>
+            <option value="EUR">€ — Euro</option>
+            <option value="SEK">kr — Swedish Krona</option>
+            <option value="JPY">¥ — Japanese Yen</option>
+            <option value="NONE">No currency (numbers only)</option>
+          </select>
         </div>
       </div>
     </div>
@@ -4067,7 +4097,7 @@
             <span style="font-weight:400;color:var(--muted);font-size:12px;margin-left:auto">Ordered but not arrived yet</span>
           </label>
         </div>
-        <div class="field"><label>Price paid <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="wiz-last-price" placeholder="e.g. £12.99"></div>
+        <div class="field"><label>Price paid <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="wiz-last-price" placeholder="e.g. £12.99" data-cur-ph="1"></div>
         <div class="field" id="wiz-started-using-field"><label>Started using <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="date" id="wiz-started-using"></div>
         <div class="field form-full" id="wiz-started-using-hint">
           <p style="font-size:12px;color:var(--muted);line-height:1.5;margin:0">If you bought it before opening it, set the date you actually started using it — this keeps the stock estimate accurate.</p>
@@ -4148,7 +4178,7 @@
       <div class="form-grid">
         <div class="field"><label>Date purchased</label><input type="date" id="of-date"></div>
         <div class="field"><label>Quantity</label><input type="number" id="of-qty" min="0.1" step="0.1" value="1"></div>
-        <div class="field"><label>Price paid <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="of-price" placeholder="e.g. £12.99"></div>
+        <div class="field"><label>Price paid <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="of-price" placeholder="e.g. £12.99" data-cur-ph="1"></div>
         <div class="field"><label>Store <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="of-store" placeholder="Amazon, Tesco…"></div>
       </div>
       <div id="of-purchase-history" style="margin-top:12px"></div>
@@ -4403,7 +4433,7 @@
     <div class="form-grid">
       <div class="field"><label>Date purchased</label><input type="date" id="log-date"></div>
       <div class="field"><label>Quantity</label><input type="number" id="log-qty" min="0.1" step="0.1" value="1"></div>
-      <div class="field"><label>Price paid (optional)</label><input type="text" id="log-price" placeholder="e.g. £12.99"></div>
+      <div class="field"><label>Price paid (optional)</label><input type="text" id="log-price" placeholder="e.g. £12.99" data-cur-ph="1"></div>
       <div class="field"><label>Store</label><input type="text" id="log-store" placeholder="Amazon, Costco, Tesco..."></div>
     </div>
     <div id="log-history" class="modal-section" style="display:none">
@@ -4542,6 +4572,19 @@ if (typeof selectCountry === 'undefined') {
     if (confirm) confirm.textContent = names[code] ? '✓ Using ' + names[code] + ' stores' : '';
     // Store selection so app.js picks it up
     try { window._pendingCountry = code; } catch(e) {}
+    // Auto-set the currency select to this country's default (user can override).
+    var curByCountry = {GB:'GBP',US:'USD',CA:'CAD',AU:'AUD',DE:'EUR',FR:'EUR',
+                        NL:'EUR',IE:'EUR',ES:'EUR',IT:'EUR',SE:'SEK',JP:'JPY',OTHER:'NONE'};
+    var defCur = curByCountry[code] || 'GBP';
+    var curSel = document.getElementById('wizard-currency');
+    if (curSel) curSel.value = defCur;
+    try { window._pendingCurrency = defCur; } catch(e) {}
+  };
+}
+// wizardCurrencyInput stub — captures a manual currency override before app.js loads
+if (typeof wizardCurrencyInput === 'undefined') {
+  window.wizardCurrencyInput = function(val) {
+    try { window._pendingCurrency = val || 'GBP'; } catch(e) {}
   };
 }
 // Lazy-load scanner.js only when camera button is tapped
