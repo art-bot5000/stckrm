@@ -6169,13 +6169,19 @@ function _getExpectedIncomeForMonth(yyyymm) {
   let total = 0;
   const seenTemplateDates = new Set();
   for (const e of getIncomeEntriesForMonth(yyyymm)) {
-    if (e.paidAt) continue;
     if (e.accountId !== primary.id) continue;
+    // Register this materialised instance so the projection loop below
+    // never re-adds it as "still to come" — this MUST happen for received
+    // entries too, otherwise marking income as received causes the unpaid
+    // template instance for the same date to leak back in (the bug this
+    // function exists to prevent). Mirrors _eventsOnDay's ordering, where
+    // the template is recorded before the paidAt skip.
     if (e.templateId) {
       const tpl = getIncomeTemplateById(e.templateId);
-      if (!tpl || tpl.archived) continue;          // phantom — skip
+      if (!tpl || tpl.archived) continue;          // phantom — skip entirely
       seenTemplateDates.add(`${e.templateId}__${e.date}`);
     }
+    if (e.paidAt) continue;                         // already received — not still-to-come
     total += (e.actualAmount ?? e.amount) || 0;
   }
   // Also include unmaterialised template instances landing in this month.
@@ -7343,6 +7349,13 @@ function renderBudgetBasicMode() {
   const incomeEntriesThisMonth = (typeof getIncomeEntriesForMonth === 'function')
     ? getIncomeEntriesForMonth(yyyymm)
     : [];
+  // Keys for already-handled income (date|label) so the unmaterialised
+  // template loop below never re-adds an instance we've already accounted
+  // for. This MUST include received income too — otherwise marking income
+  // as received drops it from `events` here but lets the template loop
+  // re-add it as upcoming (same bug class as the Safe-to-spend tile). The
+  // receipt is already reflected in balanceNow.
+  const seenIncomeKeys = new Set();
   for (const e of incomeEntriesThisMonth) {
     if (e.skipped) continue;
     const tpl = e.templateId ? (typeof getIncomeTemplateById === 'function' ? getIncomeTemplateById(e.templateId) : null) : null;
@@ -7351,6 +7364,9 @@ function renderBudgetBasicMode() {
     const dateIso = e.date;
     const amount = (e.actualAmount ?? e.amount) || 0;
     if (amount <= 0) continue;
+    // Mark this date|label as handled regardless of paid state, so the
+    // template loop won't duplicate it.
+    seenIncomeKeys.add(dateIso + '|' + label);
     // Skip already-received income (it's in balanceNow already, can't be
     // added again). Skip past-dated unpaid income for the current month
     // (didn't arrive — would be confusing to project).
@@ -7363,7 +7379,6 @@ function renderBudgetBasicMode() {
     });
   }
   // Unmaterialised template income for the rest of the month
-  const seenIncomeKeys = new Set(events.filter(e => e.kind === 'income').map(e => e.dateIso + '|' + e.label));
   for (const tpl of (incomeTemplates || [])) {
     if (tpl.archived) continue;
     const dates = (typeof getInstanceDatesInMonth === 'function')
