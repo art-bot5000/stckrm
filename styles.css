@@ -3151,6 +3151,21 @@ body.note-open { overflow: hidden; touch-action: none; }
   color: var(--text);
   margin-bottom: 8px;
 }
+.budget-cat-tile-left {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  margin-top: -4px;
+  margin-bottom: 8px;
+  letter-spacing: -0.2px;
+}
+.budget-cat-tile-left.is-ok   { color: var(--ok); }
+.budget-cat-tile-left.is-over { color: var(--danger); }
+.budget-cat-tile-left-lbl {
+  font-weight: 400;
+  opacity: 0.75;
+  font-size: 12px;
+}
 .budget-cat-tile-bar {
   height: 4px;
   background: rgba(255,255,255,0.05);
@@ -3321,6 +3336,7 @@ body.note-open { overflow: hidden; touch-action: none; }
   .budget-cat-tile { min-width: 145px; padding: 10px 12px; }
   .budget-cat-tile-name { font-size: 11px; }
   .budget-cat-tile-amt { font-size: 13px; }
+  .budget-cat-tile-left { font-size: 12px; }
   /* Transaction rows: tighter padding, larger touch target on action */
   .spend-tx-row { padding: 10px 12px; gap: 10px; }
   /* Quick-add chips: stack on small screens */

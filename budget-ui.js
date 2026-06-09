@@ -2605,6 +2605,19 @@ function _renderCategoryTile(cat, startIso, endIso, period, clickable) {
     : '';
   const barWidth = budget ? Math.min(pct * 100, 100) : 0;
 
+  // Remaining line: budget − spent, framed as a result the eye can grab
+  // instantly. Green when within budget, red (negative) when over. Hidden
+  // entirely for categories with no budget set.
+  let remainingText = '';
+  if (budget != null && budget > 0) {
+    const remaining = budget - spent;
+    if (remaining >= 0) {
+      remainingText = `<div class="budget-cat-tile-left is-ok">${_money(remaining)} <span class="budget-cat-tile-left-lbl">left</span></div>`;
+    } else {
+      remainingText = `<div class="budget-cat-tile-left is-over">−${_money(Math.abs(remaining))} <span class="budget-cat-tile-left-lbl">over</span></div>`;
+    }
+  }
+
   return `
     <div class="budget-cat-tile ${isFiltered ? 'is-filtered' : ''}${clickable && bulkSelectionHas('category', cat.id) ? ' selected' : ''}"
          ${clickable ? `data-bulk-id="${cat.id}" data-bulk-section="category" onclick="onCategoryTileClick(event,'${cat.id}')"` : ''}>
@@ -2625,6 +2638,7 @@ function _renderCategoryTile(cat, startIso, endIso, period, clickable) {
         })() : ''}
       </div>
       <div class="budget-cat-tile-amt">${_money(spent)} ${budgetText}</div>
+      ${remainingText}
       <div class="budget-cat-tile-bar"><div class="budget-cat-tile-bar-fill ${barClass}" style="width:${barWidth}%;background:${cat.color || 'var(--accent)'}"></div></div>
     </div>`;
 }
