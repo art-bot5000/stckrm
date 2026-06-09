@@ -1480,6 +1480,8 @@
       border-top: 1px solid var(--border);
       box-shadow: 0 -4px 24px rgba(0,0,0,0.18);
       padding: 16px 20px;
+      padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+      max-height: 85vh; overflow-y: auto;
       display: none;
     }
     .cookie-banner.open { display: block; }
@@ -1531,8 +1533,8 @@
     .cookie-pref-toggle input { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
     .cookie-pref-toggle label { font-size: 13px; color: var(--text); cursor: pointer; }
     @media (max-width: 560px) {
-      .cookie-inner { flex-direction: column; align-items: stretch; }
-      .cookie-actions { justify-content: space-between; }
+      .cookie-inner { flex-direction: column; align-items: stretch; gap: 14px; }
+      .cookie-actions { justify-content: space-between; gap: 12px; }
       .cookie-accept { flex: 1; }
     }
   </style>
