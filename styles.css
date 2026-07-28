@@ -1935,6 +1935,17 @@
 .icon-tab { width: 22px; height: 22px; }
 
 /* Nav tab icons */
+/* ═══ HIDDEN FEATURES ═══
+   Pete's request (Jul 2026): Stockroom, Budget, Reminders, Savings and
+   Report are parked — code/views kept intact, but every nav entry point
+   into them is hidden. Applied to sidebar links, tab buttons, mobile-menu
+   items, omnibox actions and the back-interstitial buttons that used to
+   point at them. See _HIDDEN_VIEWS in app.js for the matching JS-side
+   route guard (redirects any direct/indirect navigation attempt to
+   Groceries). To restore a feature: remove this class from its markup
+   and remove its name from _HIDDEN_VIEWS. */
+.nav-hidden-feature { display: none !important; }
+
 .tab .icon-tab, .tab-btn .icon-tab { color: var(--muted); }
 .tab.active .icon-tab, .tab-btn.active .icon-tab { color: #111; }  /* amber bg → dark icon */
 .app-nav-link .icon-tab { color: var(--muted); }

@@ -11852,7 +11852,17 @@ function updateStockShoppingHeader(mode) {
 
 // ── View Transitions helpers ──────────────────────────────
 const TAB_ORDER = ['stock', 'grocery', 'notes', 'reminders', 'savings', 'report', 'account-security', 'settings'];
-let _currentView = 'stock';
+// ═══ HIDDEN FEATURES ═══
+// Pete's request (Jul 2026): Stockroom, Budget, Reminders, Savings and
+// Report are parked — all underlying code/data/views stay intact, but
+// every navigation entry point into them is hidden (see nav-hidden-feature
+// in styles.css). This set is the enforcement side: showView() redirects
+// any attempt to reach a hidden view — direct call, stale deep link,
+// notification tap, console — to Groceries instead. To restore a feature,
+// remove its name here and remove .nav-hidden-feature from its markup.
+const _HIDDEN_VIEWS = new Set(['stock', 'shopping', 'budget', 'reminders', 'savings', 'report']);
+
+let _currentView = 'grocery';
 
 function _vtSupported() { return !!document.startViewTransition; }
 
@@ -12682,6 +12692,12 @@ const _MOBILE_TAB_META = {
 // settings, falling back to defaults if the stored value is malformed
 // or missing. Guarantees the result is always valid for layout.
 function _getMobileTabs() {
+  // Hidden-features mode (see _HIDDEN_VIEWS): of the 6 swappable views,
+  // only grocery and notes remain reachable, so the "pick 3" system is
+  // parked and we always return just those two. Original pick-3 logic
+  // preserved below, commented, for when features are restored.
+  return ['grocery', 'notes'];
+  /*
   const v = settings && settings.mobileTabs;
   if (Array.isArray(v) && v.length === 3
       && v.every(n => _MOBILE_TAB_SWAPPABLE.includes(n))
@@ -12689,6 +12705,7 @@ function _getMobileTabs() {
     return v.slice();
   }
   return _MOBILE_TAB_DEFAULTS.slice();
+  */
 }
 
 // Map a view name back to its .tab button in #tabs. Returns null if
@@ -12734,7 +12751,10 @@ function _applyMobileTabLayout() {
   //    burger reads predictably regardless of which trio is chosen.
   const host = document.getElementById('mobile-menu-swappable');
   if (host) {
-    const inBurger = _MOBILE_TAB_BURGER_ORDER.filter(v => !chosen.includes(v));
+    // Hidden-features guard — never list a parked view (stock/budget/
+    // reminders/savings) in the burger menu even though it's technically
+    // "not chosen" for the main row. See _HIDDEN_VIEWS.
+    const inBurger = _MOBILE_TAB_BURGER_ORDER.filter(v => !chosen.includes(v) && !_HIDDEN_VIEWS.has(v));
     host.innerHTML = inBurger.map(view => {
       const m = _MOBILE_TAB_META[view];
       if (!m) return '';
@@ -12917,6 +12937,10 @@ function _restoreFromBillingLockscreens() {
 }
 
 function showView(name, btn) {
+  // Hidden-features guard — see _HIDDEN_VIEWS above. Redirects any
+  // navigation attempt (direct call, deep link, notification tap, stale
+  // bookmark) at a parked view to Groceries instead of letting it render.
+  if (_HIDDEN_VIEWS.has(name)) { navTo('grocery'); return; }
   // Exit any bulk-select mode when switching views — the action bar is
   // body-level so it'd otherwise persist into the new view. (Pass 2a:
   // applies to any registered section, not just stockroom.)
@@ -26033,7 +26057,7 @@ let _householdName     = '';
 let _householdColour   = PRESENCE_COLOURS[0];
 let _presenceSSE       = null;
 let _presencePingTimer = null;
-let _currentViewName   = 'stock';
+let _currentViewName   = 'grocery';
 let _otherPresence     = {}; // { userId: { name, colour, view, ts } }
 
 // ── Persistence ───────────────────────────────────────────

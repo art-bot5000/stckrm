@@ -1720,7 +1720,7 @@
          ordered per Notes → Reminders → Savings → (others) by default. -->
   </div>
   <hr class="mobile-menu-divider" id="mobile-menu-divider">
-  <button class="mobile-menu-item" data-view="report" onclick="navFromMobileMenu('report')">
+  <button class="mobile-menu-item nav-hidden-feature" data-view="report" onclick="navFromMobileMenu('report')">
     <svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg>
     <span>Report</span>
   </button>
@@ -1740,7 +1740,7 @@
     <svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg>
     <span>Settings</span>
   </button>
-  <button class="mobile-menu-edit-btn" type="button" onclick="openEditTabsModal()">
+  <button class="mobile-menu-edit-btn nav-hidden-feature" type="button" onclick="openEditTabsModal()">
     <svg class="icon icon-tab" aria-hidden="true"><use href="#i-pencil"></use></svg>
     <span>Edit tabs</span>
   </button>
@@ -1822,13 +1822,13 @@
        above the nav links. -->
   <span id="app-nav-profile" onclick="openProfilePicker()"></span>
   <div class="app-nav-links">
-    <button class="app-nav-link active" data-view="stock"      onclick="navTo('stock')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-package"></use></svg> <span>Stockroom</span></button>
-    <button class="app-nav-link"        data-view="grocery"    onclick="navTo('grocery')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> <span>Groceries</span></button>
-    <button class="app-nav-link"        data-view="budget"     onclick="navTo('budget')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
+    <button class="app-nav-link nav-hidden-feature" data-view="stock"      onclick="navTo('stock')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-package"></use></svg> <span>Stockroom</span></button>
+    <button class="app-nav-link active" data-view="grocery"    onclick="navTo('grocery')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> <span>Groceries</span></button>
+    <button class="app-nav-link nav-hidden-feature" data-view="budget"     onclick="navTo('budget')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
     <button class="app-nav-link"        data-view="notes"      onclick="navTo('notes')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> <span>Notes</span></button>
-    <button class="app-nav-link"        data-view="reminders"  onclick="navTo('reminders')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-bell"></use></svg> <span>Reminders</span></button>
-    <button class="app-nav-link"        data-view="savings"    onclick="navTo('savings')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-piggy-bank"></use></svg> <span>Savings</span></button>
-    <button class="app-nav-link"        data-view="report"     onclick="navTo('report')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> <span>Report</span></button>
+    <button class="app-nav-link nav-hidden-feature" data-view="reminders"  onclick="navTo('reminders')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-bell"></use></svg> <span>Reminders</span></button>
+    <button class="app-nav-link nav-hidden-feature" data-view="savings"    onclick="navTo('savings')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-piggy-bank"></use></svg> <span>Savings</span></button>
+    <button class="app-nav-link nav-hidden-feature" data-view="report"     onclick="navTo('report')"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> <span>Report</span></button>
   </div>
   <div class="app-nav-bottom">
     <div id="app-nav-sync" class="sync-pill pending app-nav-sync-pill" onclick="handleSyncPillTap()">
@@ -1904,7 +1904,7 @@
       <button class="omnibox-action" data-action="search" onclick="omniboxAction('search')">
         <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg> Search
       </button>
-      <button class="omnibox-action" data-action="stockroom" onclick="omniboxAction('stockroom')"
+      <button class="omnibox-action nav-hidden-feature" data-action="stockroom" onclick="omniboxAction('stockroom')"
         data-hint="Add items — comma-separated. Example: yoghurt, eggs, bread">
         <svg class="icon" aria-hidden="true"><use href="#i-package"></use></svg> Stockroom
       </button>
@@ -1912,13 +1912,13 @@
         data-hint="Add to a Quick List — comma items. Example: 2 milk, bread, apples">
         <svg class="icon" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> Groceries
       </button>
-      <button class="omnibox-action" data-action="reminders" onclick="omniboxAction('reminders')">
+      <button class="omnibox-action nav-hidden-feature" data-action="reminders" onclick="omniboxAction('reminders')">
         <svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg> Reminders
       </button>
       <button class="omnibox-action" data-action="notes" onclick="omniboxAction('notes')">
         <svg class="icon" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> Notes
       </button>
-      <button class="omnibox-action" data-action="spend" onclick="omniboxAction('spend')"
+      <button class="omnibox-action nav-hidden-feature" data-action="spend" onclick="omniboxAction('spend')"
         data-hint="Where amount [category]. Example: tesco 47.50 shopping">
         <svg class="icon" aria-hidden="true"><use href="#i-banknote"></use></svg> Spend
       </button>
@@ -1944,13 +1944,13 @@
        wrapping under the logo in the crowded top header. -->
   <div id="tabs-greeting" style="display:none;font-size:12px;color:var(--muted);align-items:center;gap:4px"></div>
   <div id="tabs" role="tablist" aria-label="Main sections">
-    <button class="tab active" role="tab" aria-selected="true" aria-controls="view-stock" onclick="showView('stock',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-package"></use></svg> <span>Stockroom</span></button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="view-budget" onclick="showView('budget',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
+    <button class="tab nav-hidden-feature" role="tab" aria-selected="false" aria-controls="view-stock" onclick="showView('stock',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-package"></use></svg> <span>Stockroom</span></button>
+    <button class="tab nav-hidden-feature" role="tab" aria-selected="false" aria-controls="view-budget" onclick="showView('budget',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-banknote"></use></svg> <span>Budget</span></button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="view-notes" onclick="showView('notes',this)" id="notes-tab"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> <span>Notes</span></button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="view-grocery" onclick="showView('grocery',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> <span>Groceries</span></button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="view-reminders" onclick="showView('reminders',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-bell"></use></svg> <span>Reminders</span></button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="view-savings" onclick="showView('savings',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-piggy-bank"></use></svg> <span>Savings</span></button>
-    <button class="tab" role="tab" aria-selected="false" aria-controls="view-report" onclick="showView('report',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> <span>Report</span></button>
+    <button class="tab active" role="tab" aria-selected="true" aria-controls="view-grocery" onclick="showView('grocery',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> <span>Groceries</span></button>
+    <button class="tab nav-hidden-feature" role="tab" aria-selected="false" aria-controls="view-reminders" onclick="showView('reminders',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-bell"></use></svg> <span>Reminders</span></button>
+    <button class="tab nav-hidden-feature" role="tab" aria-selected="false" aria-controls="view-savings" onclick="showView('savings',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-piggy-bank"></use></svg> <span>Savings</span></button>
+    <button class="tab nav-hidden-feature" role="tab" aria-selected="false" aria-controls="view-report" onclick="showView('report',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-clipboard-list"></use></svg> <span>Report</span></button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="view-billing" onclick="showView('billing',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-credit-card"></use></svg> <span>Billing</span></button>
     <button class="tab" role="tab" aria-selected="false" aria-controls="view-settings" onclick="showView('settings',this)"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-settings"></use></svg> <span>Settings</span></button>
   </div>
@@ -1970,7 +1970,7 @@
   <div id="view-content">
 
   <!-- STOCK VIEW -->
-  <div class="view active" id="view-stock">
+  <div class="view" id="view-stock">
 
   <!-- Shared Stockroom / Shopping List header — inside stock view, shown for both stock+shopping -->
   <div id="stock-shopping-header" class="view-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
@@ -3366,7 +3366,7 @@
   </div>
 
 <!-- ═══ GROCERY VIEW ═══ -->
-<div class="view" id="view-grocery">
+<div class="view active" id="view-grocery">
   <!-- Mobile full-screen header (shown only when body.grocery-list-open is set) -->
   <div id="grocery-fs-header" class="grocery-fs-header">
     <div class="grocery-fs-topbar">
@@ -4978,10 +4978,10 @@ window.quickAddBarcodeScan = function(...a) { window._scannerStub('quickAddBarco
     <h3 style="font-size:16px;font-weight:700;text-align:center;margin-bottom:6px">Leave STOCKROOM?</h3>
     <p style="font-size:13px;color:var(--muted);text-align:center;line-height:1.5;margin-bottom:20px">Back gesture detected. Go to a section or exit the app.</p>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
-      <button class="btn btn-ghost" onclick="backInterstitialGoTo('stock')"   style="justify-content:flex-start;gap:8px"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-package"></use></svg> <span>Stockroom</span></button>
+      <button class="btn btn-ghost nav-hidden-feature" onclick="backInterstitialGoTo('stock')"   style="justify-content:flex-start;gap:8px"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-package"></use></svg> <span>Stockroom</span></button>
       <button class="btn btn-ghost" onclick="backInterstitialGoTo('grocery')" style="justify-content:flex-start;gap:8px"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-shopping-cart"></use></svg> <span>Groceries</span></button>
       <button class="btn btn-ghost" onclick="backInterstitialGoTo('notes')"   style="justify-content:flex-start;gap:8px"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-notebook-pen"></use></svg> <span>Notes</span></button>
-      <button class="btn btn-ghost" onclick="backInterstitialGoTo('reminders')" style="justify-content:flex-start;gap:8px"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-bell"></use></svg> <span>Reminders</span></button>
+      <button class="btn btn-ghost nav-hidden-feature" onclick="backInterstitialGoTo('reminders')" style="justify-content:flex-start;gap:8px"><svg class="icon icon-tab" aria-hidden="true"><use href="#i-bell"></use></svg> <span>Reminders</span></button>
     </div>
     <button class="btn btn-danger" style="width:100%;margin-bottom:8px" onclick="backInterstitialExit()">Exit app →</button>
     <button class="btn btn-ghost" style="width:100%" onclick="closeModal('back-interstitial-modal')">Stay here</button>
